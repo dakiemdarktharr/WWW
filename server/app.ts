@@ -2,7 +2,7 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { Activity, Member, Project, Task } from '../shared/types.ts';
+import type { Activity, Member, Project, Task, Workflow } from '../shared/types.ts';
 import { DomainError } from './store.ts';
 import { Workspace } from './service.ts';
 import { inside, normalizeScope, redact, safeEqual, secret } from './security.ts';
@@ -230,6 +230,10 @@ export async function buildApp(
   });
   app.patch('/api/tasks/:id', async (request) => {
     const task = workspace.store.get<Task>('task', params(request));
+    if (task.workflowId)
+      throw new DomainError(
+        'Workflow tasks are managed by the team. Use review feedback, pause, or resume.',
+      );
     if (['running', 'review', 'done'].includes(task.status) || workspace.store.lease(task.id))
       throw new DomainError('This task cannot be edited while claimed, in review, or integrated.');
     const patch = taskInput
@@ -246,11 +250,39 @@ export async function buildApp(
     workspace.run(params(request), z.object({ memberId: id }).parse(request.body).memberId),
   );
   app.post('/api/projects/:id/dispatch', async (request) => workspace.dispatch(params(request)));
+  app.post('/api/projects/:id/workflows', async (request, reply) => {
+    const input = z
+      .object({ prompt: z.string().trim().min(1).max(16000) })
+      .strict()
+      .parse(request.body);
+    const workflow = await workspace.workflows.start(params(request), input.prompt);
+    return reply.code(202).send(workflow);
+  });
+  app.post('/api/workflows/:id/pause', async (request) =>
+    workspace.workflows.pause(params(request)),
+  );
+  app.post('/api/workflows/:id/resume', async (request) =>
+    workspace.workflows.resume(params(request)),
+  );
+  app.post('/api/workflows/:id/cancel', async (request) =>
+    workspace.workflows.cancel(params(request)),
+  );
   app.post('/api/tasks/:id/stop', async (request) => workspace.stop(params(request)));
   app.get('/api/tasks/:id/diff', async (request) => workspace.diff(params(request)));
   app.post('/api/tasks/:id/accept', async (request) => workspace.accept(params(request)));
   app.post('/api/tasks/:id/revise', async (request) => {
     const task = workspace.store.get<Task>('task', params(request));
+    if (workspace.mergeBusy.has(task.projectId))
+      throw new DomainError('Wait for the current integration before requesting a revision.');
+    if (
+      task.workflowId &&
+      ['cancelled', 'cancelling'].includes(
+        workspace.store.get<Workflow>('workflow', task.workflowId).status,
+      )
+    )
+      throw new DomainError(
+        'This workflow has been cancelled. Create a new task for further changes.',
+      );
     if (task.status !== 'review') throw new DomainError('Only a task in review can be sent back.');
     const { feedback } = z
       .object({ feedback: z.string().trim().min(1).max(8000) })
@@ -264,11 +296,13 @@ export async function buildApp(
       kind: 'message',
       content: feedback,
     });
-    return workspace.store.updateTask(task.id, {
+    const revised = workspace.store.updateTask(task.id, {
       status: 'ready',
       description: task.description + '\n\nReview feedback: ' + feedback,
       error: null,
     });
+    workspace.workflows.wakeProject(task.projectId);
+    return revised;
   });
   app.post('/api/messages', async (request) => {
     const input = z

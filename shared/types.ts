@@ -43,6 +43,62 @@ export interface Task {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  workflowId?: string;
+  phase?: 'proposal' | 'plan' | 'execution';
+  parentTaskId?: string | null;
+  stage?: string;
+  effort?: number;
+  planKey?: string;
+}
+export interface PlanTask {
+  key: string;
+  title: string;
+  description: string;
+  kind: TaskKind;
+  scope: string[];
+  dependsOn: string[];
+  acceptance: string;
+  effort: number;
+  stage: string;
+}
+export interface TeamPlan {
+  summary: string;
+  tasks: PlanTask[];
+}
+export interface Proposal {
+  summary: string;
+  risks: string[];
+  suggestions: {
+    title: string;
+    kind: TaskKind;
+    scope: string[];
+    acceptance: string;
+    effort: number;
+  }[];
+}
+export interface Workflow {
+  id: string;
+  controlVersion: number;
+  projectId: string;
+  prompt: string;
+  status:
+    | 'planning'
+    | 'running'
+    | 'review'
+    | 'completed'
+    | 'blocked'
+    | 'paused'
+    | 'cancelling'
+    | 'cancelled';
+  phase: 'proposals' | 'synthesis' | 'execution';
+  leadId: string;
+  memberIds: string[];
+  contributions: { memberId: string; taskId: string; proposal: Proposal }[];
+  plan: TeamPlan | null;
+  hierarchy: { memberId: string; reportsTo: string | null; taskIds: string[]; effort: number }[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface RoomMessage {
   id: string;
@@ -75,6 +131,7 @@ export interface WorkspaceState {
   projects: Project[];
   members: Member[];
   tasks: Task[];
+  workflows: Workflow[];
   messages: RoomMessage[];
   approvals: Approval[];
   activity: Activity[];

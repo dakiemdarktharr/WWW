@@ -434,6 +434,13 @@ export class CodexClient extends EventEmitter {
   }
 }
 
+export interface DynamicTool {
+  type: 'function';
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
 export const relayDynamicTools = [
   {
     type: 'function',
@@ -457,7 +464,7 @@ export const relayDynamicTools = [
       additionalProperties: false,
     },
   },
-] as const;
+] as const satisfies readonly DynamicTool[];
 
 export function dynamicToolResult(
   value: unknown,
@@ -560,6 +567,8 @@ export async function startTask(
     prompt: string;
     developerInstructions?: string;
     model?: string;
+    readOnly?: boolean;
+    dynamicTools?: readonly DynamicTool[];
     onThread?: (threadId: string) => void;
   },
 ): Promise<{ threadId: string; turnId: string }> {
@@ -571,18 +580,18 @@ export async function startTask(
     ...(options.model ? { model: options.model } : {}),
     approvalPolicy: 'on-request',
     approvalsReviewer: 'user',
-    sandbox: 'workspace-write',
+    sandbox: options.readOnly ? 'read-only' : 'workspace-write',
     serviceName: 'relay_workspace',
     developerInstructions: options.developerInstructions ?? null,
-    dynamicTools: relayDynamicTools,
+    dynamicTools: options.dynamicTools ?? relayDynamicTools,
   });
   if (
-    result.sandbox?.type !== 'workspaceWrite' ||
+    result.sandbox?.type !== (options.readOnly ? 'readOnly' : 'workspaceWrite') ||
     result.approvalPolicy !== 'on-request' ||
     result.approvalsReviewer !== 'user'
   ) {
     throw new Error(
-      'Codex did not honor the requested workspace sandbox and human approval policy. Task was not started.',
+      'Codex did not honor the requested sandbox and human approval policy. Task was not started.',
     );
   }
   const threadId = result.thread?.id;

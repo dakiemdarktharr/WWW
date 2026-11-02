@@ -2,10 +2,9 @@
   <img src="public/relay.svg" width="72" alt="RELAY" />
   <h1>RELAY</h1>
   <p><strong>Room for Execution, Local Agents & Yield</strong></p>
-  <p>Your agents. One room. Shared momentum.</p>
 </div>
 
-RELAY là workspace chạy trên máy cá nhân để nhiều tài khoản Codex cùng làm một dự án. Mỗi tài khoản có hồ sơ đăng nhập riêng. Bộ điều phối giao từng nhiệm vụ, giữ phạm vi đang làm, tạo Git worktree riêng và đưa kết quả vào hàng đợi review.
+RELAY là workspace chạy trên máy cá nhân để nhiều tài khoản Codex cùng làm một dự án. Nhập một prompt: cả team đề xuất, lead tổng hợp workflow, hệ thống chia việc theo khối lượng ước lượng và tự chạy các task đủ điều kiện. Mỗi tài khoản có hồ sơ riêng; mỗi task thực thi có Git worktree và hàng đợi review.
 
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
@@ -39,16 +38,19 @@ npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
 3. Đăng nhập lần lượt bằng **Sign in with ChatGPT** hoặc device code. Nếu trình duyệt đang giữ tài khoản trước, hãy chọn đúng tài khoản trên trang OpenAI. Kiểm tra email hiện trong từng thẻ. Không đăng nhập đồng thời vì callback OAuth dùng cổng cục bộ.
 4. Dùng **Refresh** để đọc lại trạng thái, hạn mức và capabilities. **Import local skills** sao chép các standalone skills từ `~/.codex/skills` và `~/.agents/skills`, bỏ qua symlink, cấu hình xác thực và các file có tên nhạy cảm. Đây là thao tác bạn chủ động chọn.
 5. Trong phần setup của mỗi hồ sơ, xem `CODEX_HOME` riêng để cài plugins hoặc cấu hình MCP. Plugins và quyền truy cập không được giả định tự đồng bộ qua tài khoản ChatGPT. Không chép `auth.json` hoặc credentials từ hồ sơ khác. Khởi động lại RELAY sau khi sửa cấu hình plugin/MCP.
-6. Trong **Tasks**, tạo việc với phạm vi file/thư mục, tiêu chí nghiệm thu, người nhận tùy chọn và dependencies. Ví dụ `src/ui`, `server`, `docs/research`, `tests`. Dùng `.` nếu nhiệm vụ cần cả repository; phạm vi đó sẽ ngăn các nhiệm vụ khác trong cùng dự án chạy đồng thời.
-7. **Dispatch** giao các nhiệm vụ ready cho thành viên rảnh; hoặc mở một task và chọn **Run**. Thành viên đăng xuất, dependency chưa tích hợp và phạm vi chồng lấn sẽ bị bỏ qua kèm lý do. Dispatch là thao tác chủ động, không phải vòng tự chạy vô hạn.
-8. Theo dõi tiến độ và blockers ở **Workroom**. Các agent có công cụ đọc phòng và báo tiến độ/bàn giao. Tin nhắn phòng là ngữ cảnh chia sẻ; không tự tạo lượt model mới cho mọi tài khoản.
-9. Kiểm tra diff, handoff và bằng chứng test trong **Reviews**. **Accept & integrate** tạo squash commit trên nhánh đang checkout của dự án. **Request revision** trả nhiệm vụ về ready cùng phản hồi. Agent tự báo hoàn thành chưa làm dependency được mở khóa.
+6. Trong **Workroom**, nhập yêu cầu rồi chọn **Run team**. Toàn bộ hồ sơ đã đăng nhập sẽ tham gia; các thành viên cần hoàn tất task/review đang giữ trước khi bắt đầu. Mỗi thành viên đọc repository và gửi đề xuất trong sandbox chỉ đọc. Lead tổng hợp thành kế hoạch có stages, dependencies, scope, acceptance và effort; không có task mẫu dựng sẵn.
+7. Bộ điều phối kiểm tra DAG, loại kế hoạch trùng tên nhiệm vụ đang mở và phân công theo tổng effort. Vai trò chuyên môn được ưu tiên khi tải bằng nhau. Các task độc lập tự chạy song song; một thành viên chỉ giữ một task. Phạm vi `.` giữ toàn repository nên các task khác phải chờ.
+8. Theo dõi hierarchy, nhiệm vụ và trao đổi giữa các agent ở **Workroom**. Feed có bộ lọc thành viên/loại hoạt động. **Pause** ngừng giao việc mới, cho lượt đã nhận tiếp tục; **Resume** tiếp tục hoặc thử lại task bị chặn. **Cancel** dừng các lượt đang chạy, giữ lại worktree và kết quả đang review.
+9. Kiểm tra diff, handoff và bằng chứng test trong **Reviews**. **Accept & integrate** tạo squash commit trên nhánh đang checkout của dự án, rồi tự mở các task phụ thuộc. **Request revision** gửi phản hồi và tự chạy lại nếu workflow còn hoạt động. Agent tự báo hoàn thành chưa mở khóa dependency. Sau khi khởi động lại ứng dụng, workflow luôn tạm dừng đến khi bạn chọn Resume.
+
+Bạn vẫn có thể tạo và chạy task thủ công trong **Tasks**. Dispatch thủ công chỉ nhận những task ngoài workflow; thành viên đã dành cho workflow không bị lấy sang công việc khác.
 
 RELAY không đăng ký tài khoản thay bạn. Hai hồ sơ đăng nhập cùng một tài khoản vẫn dùng chung hạn mức của tài khoản đó. Chạy một task thật sẽ sử dụng usage của tài khoản được chọn; các bài kiểm thử trong repository dùng client kiểm soát được và không gọi model.
 
 ## Những gì đã có
 
-- Workroom với feed chung, cập nhật realtime qua SSE và sự kiện gắn task/thành viên.
+- Workroom gọn với prompt, hierarchy, tải công việc, dependency queue và feed trao đổi realtime qua SSE.
+- Workflow từ một prompt: toàn team đề xuất → lead lập kế hoạch → cân bằng effort → thực thi theo DAG → review. Pause/resume/cancel có kiểm soát cạnh tranh; restart không tự tiêu usage.
 - Team với nhiều hồ sơ Codex riêng, browser/device login, logout, quota và inventory skills/plugins thực tế.
 - Board nhiệm vụ, priorities, dependencies, phạm vi công việc, assignment và dispatch.
 - Nhận việc nguyên tử bằng SQLite; một hồ sơ không nhận hai việc, hai việc không giữ phạm vi giao nhau. Khóa vẫn giữ khi chờ review.
@@ -56,12 +58,12 @@ RELAY không đăng ký tài khoản thay bạn. Hai hồ sơ đăng nhập cùn
 - Human approval cho lệnh/file changes. Không có nút “approve everything”. Sandbox hoặc approval policy bị hạ cấp thì không khởi chạy turn.
 - Tích hợp squash có kiểm tra scope, phát hiện conflict và rollback; Git hooks vẫn được thực thi.
 - Trạng thái bền vững, fencing token, heartbeat và khôi phục có xác nhận sau lần dừng bất thường. Không tự tái giao việc khi chưa biết worker cũ đã dừng.
-- Research notebook đối chiếu năm sản phẩm và sáu paper arXiv.
+- Tài liệu nghiên cứu đối chiếu năm sản phẩm và sáu paper arXiv trong repository.
 
 ## Giới hạn hiện tại
 
 - Đây là **workspace local trên một máy**, cho các tài khoản do người vận hành tin cậy. Chưa phải dịch vụ nhiều người dùng qua Internet, chưa có đăng nhập tổ chức hoặc kết nối worker từ máy khác.
-- Khóa ID và phạm vi ngăn nhận trùng kỹ thuật; không chứng minh hai mô tả khác nhau không trùng ý nghĩa. Người giao việc vẫn cần chia scope và acceptance rõ ràng.
+- Khóa ID, tên nhiệm vụ và phạm vi ngăn nhận trùng kỹ thuật; không chứng minh hai mô tả khác nhau không trùng ý nghĩa. Lead được yêu cầu hợp nhất việc trùng; người review vẫn cần xem kế hoạch. Effort là ước lượng của model, không phải thời gian hay usage đo được. Task DAG và scope có thể giới hạn mức chạy song song.
 - Worktree cách ly checkout, **không phải container hoặc ranh giới bảo mật giữa tài khoản**. Các tiến trình cùng người dùng hệ điều hành có thể tiếp cận tài nguyên cùng quyền. Chỉ chạy repository, skills, plugins và hooks đáng tin cậy. Đọc [security model](docs/SECURITY.md).
 - Scope được dùng cho điều phối và kiểm tra trước tích hợp; sandbox cấp quyền trên worktree, không tạo ACL riêng cho từng thư mục scope. Quyền đọc của Codex phụ thuộc sandbox/hệ điều hành.
 - Handoff/test output của agent cần người review xác minh. RELAY không tự coi lời khẳng định “tests passed” là kết quả test đã được server kiểm chứng.
@@ -87,6 +89,8 @@ src/              React UI, local API client, responsive styles
 shared/           Contracts dùng chung
 server/app.ts     API, browser session, CSRF, host/origin checks, SSE
 server/service.ts Coordination, room tools, approval and recovery
+server/workflows.ts Whole-team planning, hierarchy and automatic scheduling
+server/workflow-plan.ts Bounded plan validation and effort allocation
 server/store.ts   SQLite records, atomic claims and fencing
 server/codex.ts   Official App Server stdio bridge per profile
 server/git.ts     Worktree, diff and reviewed squash integration

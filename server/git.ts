@@ -143,7 +143,16 @@ export async function integrate(
   try {
     // Import the final proposal only. Worker commits can contain reverted private
     // or out-of-scope files and must not become ancestors of the project branch.
-    await git(repo, ['merge', '--squash', '--', workerHead]);
+    await git(repo, [
+      '-c',
+      'user.name=RELAY',
+      '-c',
+      'user.email=relay@localhost',
+      'merge',
+      '--squash',
+      '--',
+      workerHead,
+    ]);
     if (options.validateDiff) await options.validateDiff(await taskDiff(repo, startingHead));
     if (await git(repo, ['diff', '--cached', '--name-only']))
       await git(repo, [

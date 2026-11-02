@@ -1,28 +1,21 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  Activity as ActivityIcon,
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
-  Bell,
-  BookOpen,
   Check,
-  CheckCheck,
   ChevronDown,
   ChevronRight,
   Circle,
   CircleCheck,
   CircleDot,
   Code2,
-  Command,
   Copy,
   Cpu,
   ExternalLink,
-  FileCode2,
   FolderGit2,
   GitBranch,
   GitMerge,
-  Globe,
   Layers3,
   LayoutGrid,
   ListTodo,
@@ -30,24 +23,17 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
-  MessageSquare,
-  MoreHorizontal,
   Plus,
-  Radio,
   RefreshCw,
   Search,
-  Send,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Square,
   Terminal,
   Users,
-  Wifi,
   X,
   Zap,
   AlertTriangle,
-  Braces,
   Palette,
   FlaskConical,
   PanelLeftClose,
@@ -57,16 +43,16 @@ import type {
   LoginResult,
   Member,
   Project,
-  Role,
   Task,
   TaskDiff,
-  TaskKind,
   TaskStatus,
   WorkspaceState,
+  Workflow,
 } from '../shared/types';
 import { api } from './api';
+import Workroom from './Workroom';
 
-type View = 'workroom' | 'tasks' | 'team' | 'reviews' | 'research' | 'settings';
+type View = 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings';
 type ModalState =
   | { type: 'member' | 'project' | 'task' | 'search' }
   | { type: 'detail'; taskId: string }
@@ -78,7 +64,6 @@ const nav = [
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'team', label: 'Team', icon: Users },
   { id: 'reviews', label: 'Reviews', icon: GitMerge },
-  { id: 'research', label: 'Research', icon: BookOpen },
 ] as const;
 const roleIcons = {
   engineer: Code2,
@@ -159,7 +144,6 @@ function Badge({ status }: { status: TaskStatus | Member['status'] }) {
 function Empty({
   icon: Icon,
   title,
-  text,
   action,
 }: {
   icon: typeof Users;
@@ -173,7 +157,6 @@ function Empty({
         <Icon size={22} />
       </span>
       <h3>{title}</h3>
-      <p>{text}</p>
       {action}
     </div>
   );
@@ -206,7 +189,6 @@ function Button({
 }
 function Modal({
   title,
-  eyebrow,
   children,
   close,
   wide = false,
@@ -268,7 +250,6 @@ function Modal({
       >
         <div className="modal-heading">
           <div>
-            {eyebrow && <div className="eyebrow">{eyebrow}</div>}
             <h2 id="modal-title">{title}</h2>
           </div>
           <button className="icon-button" aria-label="Close dialog" onClick={close}>
@@ -284,7 +265,7 @@ function Modal({
 export default function App() {
   const initialView = window.location.hash.slice(1);
   const [view, setView] = useState<View>(
-    ['workroom', 'tasks', 'team', 'reviews', 'research', 'settings'].includes(initialView)
+    ['workroom', 'tasks', 'team', 'reviews', 'settings'].includes(initialView)
       ? (initialView as View)
       : 'workroom',
   );
@@ -298,13 +279,11 @@ export default function App() {
   const [sidebar, setSidebar] = useState(false);
   const [taskFilter, setTaskFilter] = useState('all');
   const [taskSearch, setTaskSearch] = useState('');
-  const [message, setMessage] = useState('');
   const [detailMember, setDetailMember] = useState('');
   const [diff, setDiff] = useState<TaskDiff | null>(null);
   const [diffError, setDiffError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [quickSearch, setQuickSearch] = useState('');
-  const roomRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -342,7 +321,7 @@ export default function App() {
   useEffect(() => {
     const updateView = () => {
       const next = window.location.hash.slice(1);
-      if (['workroom', 'tasks', 'team', 'reviews', 'research', 'settings'].includes(next))
+      if (['workroom', 'tasks', 'team', 'reviews', 'settings'].includes(next))
         setView(next as View);
     };
     window.addEventListener('hashchange', updateView);
@@ -365,9 +344,6 @@ export default function App() {
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
   }, []);
-  useEffect(() => {
-    roomRef.current?.scrollTo({ top: roomRef.current.scrollHeight, behavior: 'smooth' });
-  }, [state?.messages.length]);
   useEffect(() => {
     if (modal?.type !== 'detail') return;
     setDiff(null);
@@ -402,10 +378,7 @@ export default function App() {
   }
   const project = state?.projects.find((p) => p.id === selectedProject) || state?.projects[0];
   const tasks = state?.tasks.filter((t) => t.projectId === project?.id) || [];
-  const messages = state?.messages.filter((m) => m.projectId === project?.id) || [];
   const members = state?.members || [];
-  const activeMembers = members.filter((m) => ['ready', 'working'].includes(m.status));
-  const running = tasks.filter((t) => t.status === 'running');
   const reviews = tasks.filter((t) => t.status === 'review');
   const approvals = state?.approvals.filter((a) => tasks.some((t) => t.id === a.taskId)) || [];
   const selectedTask =
@@ -445,15 +418,6 @@ export default function App() {
     } catch (err) {
       setToast({ text: (err as Error).message, error: true });
     }
-  }
-  async function sendMessage(event: FormEvent) {
-    event.preventDefault();
-    if (!message.trim() || !project) return;
-    const result = await perform('message', '/messages', {
-      projectId: project.id,
-      content: message.trim(),
-    });
-    if (result) setMessage('');
   }
   async function acceptTask(task: Task) {
     if (
@@ -520,7 +484,6 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-brand">
           <Logo />
-          <span className="version-tag">BETA</span>
           <button
             className="icon-button mobile-only"
             aria-label="Close navigation"
@@ -534,7 +497,9 @@ export default function App() {
             <FolderGit2 size={17} />
           </span>
           <div>
-            <label htmlFor="workspace-choice">WORKSPACE</label>
+            <label className="sr-only" htmlFor="workspace-choice">
+              Project
+            </label>
             <select
               id="workspace-choice"
               value={project?.id || ''}
@@ -547,13 +512,12 @@ export default function App() {
                   </option>
                 ))
               ) : (
-                <option value="">Your workspace</option>
+                <option value="">Select project</option>
               )}
             </select>
           </div>
           <ChevronDown size={13} />
         </div>
-        <div className="nav-label">BUILD TOGETHER</div>
         <nav aria-label="Main navigation">
           {nav.map((item) => (
             <button
@@ -570,79 +534,24 @@ export default function App() {
               {item.id === 'reviews' && reviews.length + approvals.length > 0 && (
                 <span className="nav-count highlight">{reviews.length + approvals.length}</span>
               )}
-              {item.id === 'workroom' && <span className="live-dot" />}
             </button>
           ))}
         </nav>
-        <div className="sidebar-team">
-          <div className="nav-label">
-            IN THE ROOM <span>{activeMembers.length}</span>
-          </div>
-          {members.length ? (
-            members.slice(0, 5).map((m) => (
-              <button className="mini-member" key={m.id} onClick={() => navigate('team')}>
-                <Avatar member={m} />
-                <span>
-                  <strong>{m.name}</strong>
-                  <small>{m.role}</small>
-                </span>
-                <span className={`presence ${m.status}`} />
-              </button>
-            ))
-          ) : (
-            <div className="team-placeholder">
-              <span className="mini-avatars">
-                <span>
-                  <Code2 size={12} />
-                </span>
-                <span>
-                  <FlaskConical size={12} />
-                </span>
-                <span>
-                  <Palette size={12} />
-                </span>
-              </span>
-              <p>
-                Great work starts
-                <br />
-                with a great team.
-              </p>
-            </div>
-          )}
-          <button className="sidebar-invite" onClick={() => setModal({ type: 'member' })}>
-            <Plus size={15} /> Add a Codex account
-          </button>
-        </div>
+        <button className="sidebar-invite" onClick={() => setModal({ type: 'project' })}>
+          <Plus size={14} /> Connect project
+        </button>
         <div className="sidebar-bottom">
-          <div className="local-card">
-            <span>
-              <LockKeyhole size={14} /> YOUR MACHINE. YOUR KEYS.
-            </span>
-            <p>
-              Private by default.
-              <br />
-              Connected by design.
-            </p>
-            <span className="local-caption">
-              <span className="live-dot" /> Local workspace
-            </span>
-          </div>
           <button
             className={`nav-item ${view === 'settings' ? 'active' : ''}`}
             onClick={() => navigate('settings')}
           >
             <Settings2 size={17} />
             <span>Settings</span>
-            <span className="shortcut">⌘ ,</span>
           </button>
-          <div className="user-row">
-            <span className="you-avatar">Y</span>
-            <div>
-              <strong>Your workspace</strong>
-              <span>Local administrator</span>
-            </div>
-            <ShieldCheck size={16} />
-          </div>
+          <span className="local-status">
+            <LockKeyhole size={13} />
+            Local workspace
+          </span>
         </div>
       </aside>
 
@@ -676,11 +585,6 @@ export default function App() {
               <Search size={15} />
               <kbd>Ctrl K</kbd>
             </button>
-            <div className="topbar-divider" />
-            <Button primary onClick={createTask}>
-              <Plus size={15} />
-              <span>New task</span>
-            </Button>
           </div>
         </header>
 
@@ -713,379 +617,40 @@ export default function App() {
           )}
 
           {view === 'workroom' && (
-            <>
-              <section className="page-heading">
-                <div>
-                  <div className="eyebrow">
-                    <span className="eyebrow-line" /> THE COLLECTIVE WORKSPACE
-                  </div>
-                  <h1>
-                    Your agents. <span>One room.</span>
-                  </h1>
-                  <p>A shared place to think, build, and move your project forward.</p>
-                </div>
-                <Button
-                  onClick={dispatch}
-                  disabled={!project || pending || !tasks.some((t) => t.status === 'ready')}
-                >
-                  <Zap size={15} /> Dispatch tasks
-                  <ArrowUpRight size={14} />
-                </Button>
-              </section>
-
-              <section className="room-hero">
-                <div className="hero-grid" />
-                <div className="room-hero-copy">
-                  <span className="pill">
-                    <span className="live-dot" />
-                    {running.length ? 'THE ROOM IS WORKING' : 'READY WHEN YOU ARE'}
-                  </span>
-                  <h2>
-                    {running.length ? (
-                      <>
-                        Different minds.
-                        <br />
-                        <span>Shared momentum.</span>
-                      </>
-                    ) : (
-                      <>
-                        Big ideas deserve
-                        <br />
-                        <span>a room of their own.</span>
-                      </>
-                    )}
-                  </h2>
-                  <p>
-                    {project?.goal ||
-                      'Bring your Codex accounts together. Give each agent a clear mission. Build something greater, together.'}
-                  </p>
-                  <div className="hero-actions">
-                    <Button
-                      primary
-                      onClick={() => (members.length ? createTask() : setModal({ type: 'member' }))}
-                    >
-                      {members.length ? <Plus size={16} /> : <Users size={16} />}{' '}
-                      {members.length ? 'Create a task' : 'Assemble your team'}
-                      <ArrowRight size={16} />
-                    </Button>
-                    <button className="text-button" onClick={() => navigate('research')}>
-                      The thinking behind RELAY
-                      <ArrowUpRight size={14} />
-                    </button>
-                  </div>
-                  <div className="hero-footnote">
-                    <ShieldCheck size={13} /> Isolated accounts<span>·</span>
-                    <GitBranch size={13} /> Dedicated worktrees<span>·</span>
-                    <CheckCheck size={13} /> Shared context
-                  </div>
-                </div>
-                <RoomDiagram members={members} />
-              </section>
-
-              <section className="metrics-grid">
-                <Metric
-                  icon={Users}
-                  value={activeMembers.length}
-                  total={members.length || undefined}
-                  label="Agents connected"
-                  note={
-                    members.length
-                      ? `${members.length} profile${members.length === 1 ? '' : 's'} in your team`
-                      : 'Your team starts here'
-                  }
-                />
-                <Metric
-                  icon={CircleDot}
-                  value={running.length}
-                  label="Tasks in progress"
-                  note={running.length ? 'Working in isolated branches' : 'Ready for the next idea'}
-                />
-                <Metric
-                  icon={GitMerge}
-                  value={reviews.length}
-                  label="Awaiting review"
-                  note="You have the final say"
-                />
-                <Metric
-                  icon={CheckCheck}
-                  value={tasks.filter((t) => t.status === 'done').length}
-                  label="Tasks completed"
-                  note="Every handoff moves you forward"
-                />
-              </section>
-
-              <div className="workroom-columns">
-                <div className="workroom-primary">
-                  <section className="panel team-strip-panel">
-                    <div className="panel-heading">
-                      <h2>
-                        <Users size={16} /> The team{' '}
-                        <span className="count-bubble">{members.length}</span>
-                      </h2>
-                      <button className="text-button" onClick={() => navigate('team')}>
-                        Manage team
-                        <ArrowUpRight size={14} />
-                      </button>
-                    </div>
-                    <div className="agent-strip">
-                      {members.slice(0, 4).map((m) => (
-                        <button
-                          key={m.id}
-                          className={`agent-tile ${m.status === 'working' ? 'working' : ''}`}
-                          onClick={() => navigate('team')}
-                        >
-                          <div>
-                            <Avatar member={m} />
-                            <span className={`presence ${m.status}`} />
-                          </div>
-                          <strong>{m.name}</strong>
-                          <span>{m.role}</span>
-                          <small>
-                            {m.status === 'working'
-                              ? 'On a mission'
-                              : tasks.some((t) => t.assignedTo === m.id && t.status === 'review')
-                                ? 'Awaiting review'
-                                : m.account
-                                  ? 'Ready to collaborate'
-                                  : 'Waiting for sign-in'}
-                          </small>
-                        </button>
-                      ))}
-                      {Array.from({ length: Math.max(0, 4 - members.length) }, (_, i) => (
-                        <button
-                          key={`empty-${i}`}
-                          className="agent-tile empty-agent"
-                          onClick={() => setModal({ type: 'member' })}
-                        >
-                          <span className="empty-agent-plus">
-                            <Plus size={19} />
-                          </span>
-                          <strong>Open seat</strong>
-                          <span>
-                            {
-                              ['Engineer', 'Researcher', 'Designer', 'Reviewer'][
-                                (members.length + i) % 4
-                              ]
-                            }
-                          </span>
-                          <small>
-                            Add an agent
-                            <ArrowUpRight size={11} />
-                          </small>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                  <section className="panel tasks-panel">
-                    <div className="panel-heading">
-                      <h2>
-                        <ListTodo size={16} /> On the board{' '}
-                        <span className="count-bubble">{tasks.length}</span>
-                      </h2>
-                      <button className="text-button" onClick={() => navigate('tasks')}>
-                        All tasks
-                        <ArrowUpRight size={14} />
-                      </button>
-                    </div>
-                    {tasks.length ? (
-                      <div>
-                        {[...tasks]
-                          .sort(
-                            (a, b) =>
-                              ['running', 'review', 'ready', 'blocked', 'backlog', 'done'].indexOf(
-                                a.status,
-                              ) -
-                              ['running', 'review', 'ready', 'blocked', 'backlog', 'done'].indexOf(
-                                b.status,
-                              ),
-                          )
-                          .slice(0, 5)
-                          .map(taskRow)}
-                      </div>
-                    ) : (
-                      <div className="task-empty">
-                        <div className="ghost-task">
-                          <span />
-                          <div />
-                          <span />
-                        </div>
-                        <div className="ghost-task second">
-                          <span />
-                          <div />
-                          <span />
-                        </div>
-                        <h3>A clear task. A single owner.</h3>
-                        <p>Turn your next idea into a mission for the team.</p>
-                        <button className="text-button accent" onClick={createTask}>
-                          <Plus size={14} /> Create your first task
-                        </button>
-                      </div>
-                    )}
-                  </section>
-                  <section className="workflow-strip">
-                    <div>
-                      <span>01</span>
-                      <p>
-                        <strong>Assign a mission</strong>
-                        <small>One task, one owner</small>
-                      </p>
-                    </div>
-                    <ArrowRight size={15} />
-                    <div>
-                      <span>02</span>
-                      <p>
-                        <strong>Work in parallel</strong>
-                        <small>Separate branches, shared room</small>
-                      </p>
-                    </div>
-                    <ArrowRight size={15} />
-                    <div>
-                      <span>03</span>
-                      <p>
-                        <strong>Review & merge</strong>
-                        <small>Ship with confidence</small>
-                      </p>
-                    </div>
-                  </section>
-                </div>
-                <section className="panel room-feed">
-                  <div className="panel-heading">
-                    <h2>
-                      <Radio size={16} /> Room feed
-                    </h2>
-                    <span className="feed-live">
-                      <span className="live-dot" /> SHARED
-                    </span>
-                  </div>
-                  <div className="room-messages" ref={roomRef}>
-                    <div className="feed-day">
-                      <span />
-                      TODAY
-                      <span />
-                    </div>
-                    <div className="room-welcome">
-                      <span className="system-icon">
-                        <img src="/relay.svg" alt="" />
-                      </span>
-                      <div>
-                        <div className="message-byline">
-                          <strong>RELAY</strong>
-                          <span>system</span>
-                        </div>
-                        <p>
-                          Welcome to the room.
-                          <br />
-                          Progress, questions, and handoffs happen here. Everyone stays in the loop.
-                        </p>
-                        <div className="welcome-rule">
-                          <LockKeyhole size={12} /> Stored on this machine
-                        </div>
-                      </div>
-                    </div>
-                    {messages.map((m) => {
-                      const member = members.find((a) => a.id === m.authorId);
-                      return (
-                        <div key={m.id} className={`room-message ${m.kind}`}>
-                          <Avatar member={member} />
-                          <div>
-                            <div className="message-byline">
-                              <strong>
-                                {member?.name || (m.kind === 'system' ? 'RELAY' : 'You')}
-                              </strong>
-                              <span>{relative(m.createdAt)}</span>
-                            </div>
-                            {m.kind !== 'message' && (
-                              <span className={`message-kind ${m.kind}`}>{m.kind}</span>
-                            )}
-                            <p>{m.content}</p>
-                            {m.taskId && (
-                              <button
-                                className="message-task"
-                                onClick={() => {
-                                  const t = tasks.find((t) => t.id === m.taskId);
-                                  if (t) openDetail(t);
-                                }}
-                              >
-                                <ListTodo size={11} />
-                                {shortId(m.taskId)}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {!messages.length && (
-                      <div className="quiet-room">
-                        <span />
-                        <span />
-                        <span />
-                        <p>A little quiet. A lot of possibility.</p>
-                      </div>
-                    )}
-                  </div>
-                  <form className="chat-form" onSubmit={sendMessage}>
-                    <label className="sr-only" htmlFor="room-message">
-                      Message your team
-                    </label>
-                    <textarea
-                      id="room-message"
-                      rows={2}
-                      placeholder={
-                        project
-                          ? 'Share an update with the room…'
-                          : 'Add a project to start the conversation…'
-                      }
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      disabled={!project}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          void sendMessage(e);
-                        }
-                      }}
-                    />
-                    <div>
-                      <span>
-                        <MessageSquare size={12} /> Your whole team is listening
-                      </span>
-                      <button
-                        type="submit"
-                        className="send-button"
-                        disabled={!message.trim() || !project || busy === 'message'}
-                        aria-label="Send message"
-                      >
-                        <ArrowUpRight size={17} />
-                      </button>
-                    </div>
-                  </form>
-                </section>
-              </div>
-            </>
+            <Workroom
+              key={project?.id || 'empty'}
+              state={state}
+              project={project}
+              busy={pending}
+              openTask={openDetail}
+              addProject={() => setModal({ type: 'project' })}
+              addMember={() => setModal({ type: 'member' })}
+              manageTeam={() => navigate('team')}
+              review={() => navigate('reviews')}
+              start={async (prompt) =>
+                project
+                  ? perform<Workflow>('workflow', `/projects/${project.id}/workflows`, { prompt })
+                  : undefined
+              }
+              control={(workflow, action) =>
+                perform('workflow-control', `/workflows/${workflow.id}/${action}`, {})
+              }
+              send={(content) =>
+                perform('message', '/messages', { projectId: project?.id, content })
+              }
+            />
           )}
 
           {view === 'team' && (
             <>
               <section className="page-heading">
                 <div>
-                  <div className="eyebrow">THE PEOPLE BEHIND THE PROGRESS</div>
-                  <h1>
-                    Meet your <span>collective.</span>
-                  </h1>
-                  <p>Individual accounts. Their own capabilities. One shared mission.</p>
+                  <h1>Team</h1>
                 </div>
                 <Button primary onClick={() => setModal({ type: 'member' })}>
                   <Plus size={16} /> Add account
                 </Button>
               </section>
-              <div className="info-strip">
-                <ShieldCheck size={18} />
-                <p>
-                  Every account signs in directly with OpenAI and uses its own Codex plan.
-                  Credentials stay on this machine.
-                </p>
-                <span className="outline-tag">LOCAL FIRST</span>
-              </div>
               <div className="team-grid">
                 {members.map((member) => (
                   <MemberCard
@@ -1124,45 +689,17 @@ export default function App() {
                     setup={() => void openSetup(member)}
                   />
                 ))}
-                <button className="add-member-card" onClick={() => setModal({ type: 'member' })}>
-                  <span>
-                    <Plus size={28} />
-                  </span>
-                  <h3>
-                    {members.length
-                      ? 'Make room for another mind.'
-                      : 'Your first agent starts here.'}
-                  </h3>
-                  <p>Connect a Codex account and give it a place in your team.</p>
-                  <strong>
-                    Add an account
-                    <ArrowRight size={15} />
-                  </strong>
-                </button>
+                {!members.length && (
+                  <div className="panel compact-empty">
+                    <Users size={22} />
+                    <span>No accounts</span>
+                    <Button onClick={() => setModal({ type: 'member' })}>
+                      <Plus size={14} />
+                      Add account
+                    </Button>
+                  </div>
+                )}
               </div>
-              <section className="team-explainer">
-                <div>
-                  <span className="explainer-number">01</span>
-                  <h3>A home for each account</h3>
-                  <p>Separate sign-ins keep account sessions and subscription usage independent.</p>
-                </div>
-                <div>
-                  <span className="explainer-number">02</span>
-                  <h3>Bring the right capabilities</h3>
-                  <p>
-                    Import your local skills. Installed plugins are discovered from each account’s
-                    Codex profile.
-                  </p>
-                </div>
-                <div>
-                  <span className="explainer-number">03</span>
-                  <h3>Stay in control</h3>
-                  <p>
-                    Agents work on assigned tasks. Requested approvals and completed changes come
-                    back to you.
-                  </p>
-                </div>
-              </section>
             </>
           )}
 
@@ -1170,11 +707,7 @@ export default function App() {
             <>
               <section className="page-heading">
                 <div>
-                  <div className="eyebrow">CLEAR OWNERSHIP. SHARED MOMENTUM.</div>
-                  <h1>
-                    The mission <span>board.</span>
-                  </h1>
-                  <p>Every task has a purpose. Every agent knows what comes next.</p>
+                  <h1>Tasks</h1>
                 </div>
                 <div className="heading-actions">
                   <Button onClick={dispatch} disabled={!project || pending}>
@@ -1250,42 +783,15 @@ export default function App() {
                   )}
                 </section>
               ) : (
-                <section className="panel large-empty">
-                  <div className="board-illustration">
-                    {['BACKLOG', 'IN PROGRESS', 'REVIEW'].map((name, i) => (
-                      <div key={name}>
-                        <span>
-                          <i />
-                          {name}
-                        </span>
-                        {Array.from({ length: i === 1 ? 2 : 1 }, (_, j) => (
-                          <div className="board-ghost" key={j}>
-                            <span />
-                            <span />
-                            <div>
-                              <i />
-                              <i />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                  <h2>Make the next move.</h2>
-                  <p>
-                    Break the project into focused tasks. RELAY handles ownership,
-                    <br />
-                    dependencies, and a clean place for every agent to work.
-                  </p>
-                  <Button primary onClick={createTask}>
-                    <Plus size={15} /> Create your first task
+                <section className="panel compact-empty">
+                  <ListTodo size={22} />
+                  <span>No tasks</span>
+                  <Button onClick={createTask}>
+                    <Plus size={14} />
+                    New task
                   </Button>
                 </section>
               )}
-              <div className="subtle-note">
-                <LockKeyhole size={13} /> Tasks are claimed atomically. Overlapping scopes and
-                unfinished dependencies stay queued.
-              </div>
             </>
           )}
 
@@ -1293,13 +799,7 @@ export default function App() {
             <>
               <section className="page-heading">
                 <div>
-                  <div className="eyebrow">THE FINAL HANDOFF</div>
-                  <h1>
-                    Good work. <span>Your call.</span>
-                  </h1>
-                  <p>
-                    Review what changed, guide the next iteration, and integrate it when it’s ready.
-                  </p>
+                  <h1>Reviews</h1>
                 </div>
                 <span className="heading-stat">
                   {reviews.length + approvals.length}
@@ -1365,40 +865,19 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <section className="panel review-empty">
-                  <div className="review-orbit">
-                    <span>
-                      <GitMerge size={30} />
-                    </span>
-                    <i />
-                    <i />
-                  </div>
-                  <h2>Nothing waiting in the wings.</h2>
-                  <p>
-                    When an agent finishes a task, its changes land here.
-                    <br />
-                    Every merge stays in your hands.
-                  </p>
-                  <Button onClick={() => navigate('tasks')}>
-                    Go to the mission board
-                    <ArrowRight size={14} />
-                  </Button>
+                <section className="panel compact-empty">
+                  <GitMerge size={22} />
+                  <span>No tasks awaiting review</span>
                 </section>
               )}
             </>
           )}
 
-          {view === 'research' && <Research />}
-
           {view === 'settings' && (
             <>
               <section className="page-heading">
                 <div>
-                  <div className="eyebrow">MAKE YOURSELF AT HOME</div>
-                  <h1>
-                    Workspace <span>settings.</span>
-                  </h1>
-                  <p>The foundation for a well-coordinated team.</p>
+                  <h1>Settings</h1>
                 </div>
               </section>
               <div className="settings-grid">
@@ -1431,7 +910,7 @@ export default function App() {
                   ) : (
                     <Empty
                       icon={FolderGit2}
-                      title="Give your team a project"
+                      title="No projects"
                       text="Connect an existing local Git repository. Each task gets its own worktree."
                       action={
                         <Button onClick={() => setModal({ type: 'project' })}>
@@ -1478,13 +957,6 @@ export default function App() {
                       <dd className="mono">{state?.runtime.dataDir || '—'}</dd>
                     </div>
                   </dl>
-                  <div className="runtime-note">
-                    <LockKeyhole size={15} />
-                    <p>
-                      Profiles and workspace data stay on this machine. RELAY does not host your
-                      credentials.
-                    </p>
-                  </div>
                   {!state?.runtime.codexAvailable && (
                     <div className="install-hint">
                       <p>Install the official Codex CLI, then restart RELAY.</p>
@@ -1493,39 +965,6 @@ export default function App() {
                   )}
                 </section>
               </div>
-              <section className="panel settings-panel security-settings">
-                <div className="panel-heading">
-                  <h2>
-                    <ShieldCheck size={17} /> Built-in boundaries
-                  </h2>
-                  <span className="outline-tag">ALWAYS ON</span>
-                </div>
-                <div className="security-grid">
-                  {[
-                    [LockKeyhole, 'Isolated sign-ins', 'A separate Codex home for every account.'],
-                    [
-                      GitBranch,
-                      'Dedicated worktrees',
-                      'Agents work outside your main working tree.',
-                    ],
-                    [ShieldCheck, 'Explicit approvals', 'Permission requests come to you.'],
-                    [
-                      GitMerge,
-                      'Reviewed merges',
-                      'Finishing a task never merges it automatically.',
-                    ],
-                  ].map(([Icon, title, text]) => {
-                    const I = Icon as typeof LockKeyhole;
-                    return (
-                      <div key={title as string}>
-                        <I size={19} />
-                        <strong>{title as string}</strong>
-                        <p>{text as string}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
               {state?.runtime.recoveryRequired && (
                 <section className="panel recovery-panel">
                   <AlertTriangle size={24} />
@@ -1559,16 +998,6 @@ export default function App() {
               )}
             </>
           )}
-          <footer className="page-footer">
-            <span>
-              <Logo small />
-              <span>Room for Execution, Local Agents & Yield</span>
-            </span>
-            <span>
-              <span className="live-dot" />
-              Built to work together.
-            </span>
-          </footer>
         </main>
       </div>
 
@@ -1587,7 +1016,7 @@ export default function App() {
       )}
 
       {modal?.type === 'member' && (
-        <Modal title="Make room for a new agent." eyebrow="GROW YOUR TEAM" close={closeModal}>
+        <Modal title="Add account" close={closeModal}>
           <form
             className="form"
             onSubmit={async (e) => {
@@ -1605,10 +1034,6 @@ export default function App() {
               }
             }}
           >
-            <p className="form-intro">
-              Create a separate profile, then sign in with the Codex account you want to use. Your
-              other accounts stay untouched.
-            </p>
             <label>
               Agent name
               <input
@@ -1622,10 +1047,10 @@ export default function App() {
             <label>
               Specialty
               <select name="role" defaultValue="engineer">
-                <option value="engineer">Engineer · Build and implement</option>
-                <option value="researcher">Researcher · Explore and synthesize</option>
-                <option value="designer">Designer · Shape the experience</option>
-                <option value="reviewer">Reviewer · Verify and improve</option>
+                <option value="engineer">Engineer</option>
+                <option value="researcher">Researcher</option>
+                <option value="designer">Designer</option>
+                <option value="reviewer">Reviewer</option>
               </select>
             </label>
             <fieldset className="color-field">
@@ -1645,13 +1070,6 @@ export default function App() {
                 </label>
               ))}
             </fieldset>
-            <div className="form-info">
-              <LockKeyhole size={16} />
-              <span>
-                No password or API key needed. You’ll sign in securely with OpenAI after creating
-                the profile.
-              </span>
-            </div>
             <div className="modal-footer">
               <Button onClick={closeModal}>Cancel</Button>
               <Button primary type="submit" disabled={pending}>
@@ -1664,7 +1082,7 @@ export default function App() {
       )}
 
       {modal?.type === 'project' && (
-        <Modal title="A place to build together." eyebrow="CONNECT A PROJECT" close={closeModal}>
+        <Modal title="Connect project" close={closeModal}>
           <form
             className="form"
             onSubmit={async (e) => {
@@ -1682,18 +1100,13 @@ export default function App() {
               }
             }}
           >
-            <p className="form-intro">
-              Connect an existing local Git repository with at least one commit. RELAY gives each
-              task a separate worktree.
-            </p>
             <label>
               Project name
-              <input name="name" required maxLength={80} placeholder="Something worth building" />
+              <input name="name" required maxLength={80} placeholder="Project name" />
             </label>
             <label>
               Repository path
               <input name="path" required placeholder="D:\projects\your-project" className="mono" />
-              <small>Absolute path on the machine running RELAY.</small>
             </label>
             <label>
               Shared goal
@@ -1716,7 +1129,7 @@ export default function App() {
       )}
 
       {modal?.type === 'task' && (
-        <Modal title="Give your team a clear mission." eyebrow="NEW TASK" close={closeModal} wide>
+        <Modal title="New task" close={closeModal} wide>
           <form
             className="form"
             onSubmit={async (e) => {
@@ -1844,13 +1257,6 @@ export default function App() {
                 </div>
               </fieldset>
             )}
-            <div className="form-info">
-              <GitBranch size={15} />
-              <span>
-                The task will run in its own worktree. Results return for your review before
-                merging.
-              </span>
-            </div>
             <div className="modal-footer">
               <Button onClick={closeModal}>Cancel</Button>
               <Button primary type="submit" disabled={pending}>
@@ -1863,7 +1269,7 @@ export default function App() {
 
       {modal?.type === 'login' && (
         <Modal
-          title="Connect your Codex account."
+          title="Sign in"
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
           close={closeModal}
         >
@@ -1949,7 +1355,7 @@ export default function App() {
       )}
 
       {modal?.type === 'setup' && (
-        <Modal title="Your agent’s own space." eyebrow="SKILLS & PLUGINS" close={closeModal}>
+        <Modal title="Skills & plugins" close={closeModal}>
           <div className="setup-content">
             <p>
               Skills, plugins, and MCP configuration belong to this Codex profile. They do not
@@ -1982,13 +1388,6 @@ export default function App() {
                 : `CODEX_HOME='${modal.home.replace(/'/g, "'\\''")}' codex`}
             </pre>
             <p className="setup-instructions">{modal.instructions}</p>
-            <div className="form-info">
-              <ShieldCheck size={15} />
-              <span>
-                Configure only plugins and tools you trust. Sign out and sign back in after changing
-                this profile’s configuration so its runtime reloads.
-              </span>
-            </div>
             <div className="modal-footer">
               <Button onClick={closeModal}>Done</Button>
             </div>
@@ -2065,7 +1464,6 @@ export default function App() {
               <div className="branch-bar">
                 <GitBranch size={14} />
                 <code>{selectedTask.branch}</code>
-                <span>Isolated worktree</span>
               </div>
             )}
             {selectedTask.summary && (
@@ -2147,47 +1545,48 @@ export default function App() {
                     <Square size={14} /> Stop task
                   </Button>
                 )}
-                {['ready', 'backlog', 'blocked'].includes(selectedTask.status) && (
-                  <>
-                    <select
-                      aria-label="Agent to run this task"
-                      value={detailMember || selectedTask.assignedTo || ''}
-                      onChange={(e) => setDetailMember(e.target.value)}
-                    >
-                      <option value="">Choose an agent</option>
-                      {members
-                        .filter(
-                          (m) =>
-                            m.status === 'ready' &&
-                            !tasks.some(
-                              (t) =>
-                                t.assignedTo === m.id && ['running', 'review'].includes(t.status),
-                            ),
-                        )
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                            {m.status !== 'ready' ? ' (not ready)' : ''}
-                          </option>
-                        ))}
-                    </select>
-                    <Button
-                      primary
-                      disabled={pending || !(detailMember || selectedTask.assignedTo)}
-                      onClick={async () => {
-                        const result = await perform(
-                          'run',
-                          `/tasks/${selectedTask.id}/run`,
-                          { memberId: detailMember || selectedTask.assignedTo },
-                          'Agent started. Follow progress in the room.',
-                        );
-                        if (result) closeModal();
-                      }}
-                    >
-                      <Zap size={14} /> Run task
-                    </Button>
-                  </>
-                )}
+                {!selectedTask.workflowId &&
+                  ['ready', 'backlog', 'blocked'].includes(selectedTask.status) && (
+                    <>
+                      <select
+                        aria-label="Agent to run this task"
+                        value={detailMember || selectedTask.assignedTo || ''}
+                        onChange={(e) => setDetailMember(e.target.value)}
+                      >
+                        <option value="">Choose an agent</option>
+                        {members
+                          .filter(
+                            (m) =>
+                              m.status === 'ready' &&
+                              !tasks.some(
+                                (t) =>
+                                  t.assignedTo === m.id && ['running', 'review'].includes(t.status),
+                              ),
+                          )
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                              {m.status !== 'ready' ? ' (not ready)' : ''}
+                            </option>
+                          ))}
+                      </select>
+                      <Button
+                        primary
+                        disabled={pending || !(detailMember || selectedTask.assignedTo)}
+                        onClick={async () => {
+                          const result = await perform(
+                            'run',
+                            `/tasks/${selectedTask.id}/run`,
+                            { memberId: detailMember || selectedTask.assignedTo },
+                            'Agent started. Follow progress in the room.',
+                          );
+                          if (result) closeModal();
+                        }}
+                      >
+                        <Zap size={14} /> Run task
+                      </Button>
+                    </>
+                  )}
                 {selectedTask.status === 'review' && (
                   <>
                     <Button
@@ -2215,7 +1614,7 @@ export default function App() {
                 )}
                 {selectedTask.status === 'done' && (
                   <span className="completed-label">
-                    <CircleCheck size={16} /> Integrated and complete
+                    <CircleCheck size={16} /> Complete
                   </span>
                 )}
               </div>
@@ -2225,7 +1624,7 @@ export default function App() {
       )}
 
       {modal?.type === 'search' && (
-        <Modal title="Find your next move." close={closeModal}>
+        <Modal title="Search" close={closeModal}>
           <div className="quick-search">
             <label>
               <Search size={19} />
@@ -2273,83 +1672,8 @@ export default function App() {
   );
 }
 
-function Metric({
-  icon: Icon,
-  value,
-  total,
-  label,
-  note,
-}: {
-  icon: typeof Users;
-  value: number;
-  total?: number;
-  label: string;
-  note: string;
-}) {
-  return (
-    <div className="metric">
-      <div>
-        <span>{label}</span>
-        <Icon size={17} />
-      </div>
-      <strong>
-        {value}
-        {total !== undefined && <small> / {total}</small>}
-      </strong>
-      <p>{note}</p>
-    </div>
-  );
-}
 function PriorityDot({ priority }: { priority: string }) {
   return <span className={`priority-dot ${priority}`} />;
-}
-
-function RoomDiagram({ members }: { members: Member[] }) {
-  return (
-    <div className="room-diagram" aria-label="Each agent connects to one shared project">
-      <div className="diagram-orbit orbit-one" />
-      <div className="diagram-orbit orbit-two" />
-      <svg className="diagram-lines" viewBox="0 0 420 250" aria-hidden="true">
-        <path d="M90 65L210 125L330 65M90 195L210 125L330 195" />
-        <path d="M210 125v-72" className="dashed" />
-      </svg>
-      <div className="diagram-hub">
-        <img src="/relay.svg" alt="RELAY" />
-        <span>SHARED CONTEXT</span>
-      </div>
-      {Array.from({ length: 4 }, (_, i) => {
-        const m = members[i];
-        const Icon = m ? roleIcons[m.role] : [Code2, FlaskConical, Palette, ShieldCheck][i];
-        return (
-          <div
-            key={i}
-            className={`diagram-node node-${i} ${m?.status === 'working' ? 'active' : ''}`}
-            style={m ? ({ '--node-color': m.color } as React.CSSProperties) : undefined}
-          >
-            <span>
-              <Icon size={19} />
-            </span>
-            <div>
-              <strong>{m?.name || ['Engineering', 'Research', 'Design', 'Review'][i]}</strong>
-              <small>
-                <i />
-                {m
-                  ? m.status === 'working'
-                    ? 'Working'
-                    : m.account
-                      ? 'Connected'
-                      : 'Not connected'
-                  : 'Your next teammate'}
-              </small>
-            </div>
-          </div>
-        );
-      })}
-      <span className="diagram-label">
-        <span className="diagram-cross">+</span> ONE PROJECT. MANY PERSPECTIVES.
-      </span>
-    </div>
-  );
 }
 
 function MemberCard({
@@ -2384,7 +1708,7 @@ function MemberCard({
       <h2>{member.name}</h2>
       <span className="role-label">{member.role}</span>
       <div className="member-account">
-        <span>{member.account?.email || 'No account connected'}</span>
+        <span>{member.account?.email || 'Not connected'}</span>
         {member.account?.planType && <span className="plan-tag">{member.account.planType}</span>}
       </div>
       {member.error && (
@@ -2393,25 +1717,17 @@ function MemberCard({
           {member.error}
         </p>
       )}
-      {task ? (
+      {task && (
         <button className="member-current-task" onClick={() => openTask(task)}>
           <span className="live-dot" />
-          <span>
-            {task.status === 'review' ? 'Awaiting review · ' : ''}
-            {task.title}
-          </span>
+          <span>{task.title}</span>
           <ArrowUpRight size={14} />
         </button>
-      ) : (
-        <div className="member-idle">
-          <CircleDot size={14} />
-          {member.account ? 'Ready for a new mission' : 'Sign in to start collaborating'}
-        </div>
       )}
       <div className="member-usage">
         <div>
           <span>Plan usage</span>
-          <span>{limits.length ? `${Math.round(limits[0].used)}% used` : 'Not available yet'}</span>
+          <span>{limits.length ? `${Math.round(limits[0].used)}% used` : '—'}</span>
         </div>
         {limits.length ? (
           limits.map((limit, i) => (
@@ -2453,7 +1769,7 @@ function MemberCard({
               ))}
             </div>
           ) : (
-            <p>No skills discovered in this profile yet.</p>
+            <p>No skills</p>
           )}
           <h4>INSTALLED PLUGINS</h4>
           {member.plugins.length ? (
@@ -2463,7 +1779,7 @@ function MemberCard({
               ))}
             </div>
           ) : (
-            <p>No plugins discovered. Plugins are configured per Codex home.</p>
+            <p>No plugins</p>
           )}
           {member.capabilitiesError && <p className="error-text">{member.capabilitiesError}</p>}
           <button className="text-button accent" onClick={importSkills} disabled={busy}>
@@ -2472,10 +1788,6 @@ function MemberCard({
           <button className="text-button capability-setup" onClick={setup}>
             <Terminal size={14} /> Configure skills & plugins
           </button>
-          <p className="capability-note">
-            Only standalone skill files are imported. Account credentials and plugin secrets are not
-            copied.
-          </p>
         </div>
       )}
       <div className="member-actions">
@@ -2608,141 +1920,5 @@ function ProjectSettings({
         <Check size={14} />
       </Button>
     </form>
-  );
-}
-
-function Research() {
-  const papers = [
-    {
-      n: '01',
-      tag: 'COORDINATION',
-      title: 'MetaGPT',
-      subtitle: 'Meta Programming for a Multi-Agent Collaborative Framework',
-      text: 'Make responsibilities explicit. Pass structured deliverables between roles instead of relying on an unbounded group conversation.',
-      link: 'https://arxiv.org/abs/2308.00352',
-      lesson: 'Clear roles & structured handoffs',
-    },
-    {
-      n: '02',
-      tag: 'COLLABORATION',
-      title: 'ChatDev',
-      subtitle: 'Communicative Agents for Software Development',
-      text: 'Treat building as a sequence of collaborative stages, with visible communication connecting design, implementation, and verification.',
-      link: 'https://arxiv.org/abs/2307.07924',
-      lesson: 'A shared room with a purpose',
-    },
-    {
-      n: '03',
-      tag: 'RELIABILITY',
-      title: 'Why Do Multi-Agent LLM Systems Fail?',
-      subtitle: 'A taxonomy of multi-agent failure modes',
-      text: 'More agents do not automatically mean better outcomes. Defined ownership, termination, and checks matter as much as communication.',
-      link: 'https://arxiv.org/abs/2503.13657',
-      lesson: 'Verification over agent count',
-    },
-    {
-      n: '04',
-      tag: 'PARALLEL DEVELOPMENT',
-      title: 'Asynchronous Engineering Agents',
-      subtitle: 'Effective Strategies for Asynchronous Software Engineering Agents',
-      text: 'Coordinate dependencies and isolate working environments, then bring changes together through explicit review and integration.',
-      link: 'https://arxiv.org/abs/2603.21489',
-      lesson: 'Isolated work, deliberate integration',
-    },
-  ];
-  return (
-    <>
-      <section className="page-heading">
-        <div>
-          <div className="eyebrow">BUILT ON IDEAS, GROUNDED IN PRACTICE</div>
-          <h1>
-            Behind the <span>collective.</span>
-          </h1>
-          <p>The research and tools that informed how this room works.</p>
-        </div>
-        <span className="research-icon">
-          <BookOpen size={28} />
-        </span>
-      </section>
-      <div className="research-intro">
-        <span className="quote-mark">“</span>
-        <h2>
-          Coordination is a system.
-          <br />
-          <span>Not just a conversation.</span>
-        </h2>
-        <p>
-          RELAY combines a shared communication space with concrete ownership, isolated worktrees,
-          and review gates. These papers inform the design; they do not establish RELAY’s
-          performance.
-        </p>
-      </div>
-      <div className="section-label">
-        <span>FROM THE LITERATURE</span>
-        <span>ARXIV / PRIMARY SOURCES</span>
-      </div>
-      <div className="research-grid">
-        {papers.map((p) => (
-          <a className="panel paper-card" href={p.link} target="_blank" rel="noreferrer" key={p.n}>
-            <div className="paper-top">
-              <span>{p.tag}</span>
-              <ArrowUpRight size={18} />
-            </div>
-            <span className="paper-number">{p.n}</span>
-            <h2>{p.title}</h2>
-            <h3>{p.subtitle}</h3>
-            <p>{p.text}</p>
-            <div className="paper-lesson">
-              <ArrowDownLeft size={14} />
-              {p.lesson}
-            </div>
-          </a>
-        ))}
-      </div>
-      <div className="section-label">
-        <span>IN THE SAME ORBIT</span>
-        <span>PRODUCT REFERENCES</span>
-      </div>
-      <div className="references-list">
-        {[
-          {
-            name: 'Amoeba',
-            url: 'https://useamoeba.com',
-            text: 'A shared workspace for human and AI collaboration.',
-          },
-          {
-            name: 'CodeAgentSwarm',
-            url: 'https://codeagentswarm.com',
-            text: 'A workspace for coordinating parallel coding agents.',
-          },
-          {
-            name: 'Nimbalyst',
-            url: 'https://github.com/nimbalyst/nimbalyst',
-            text: 'A visual workspace for agent-driven development.',
-          },
-          {
-            name: 'T3 Code',
-            url: 'https://github.com/pingdotgg/t3code',
-            text: 'An open-source interface for coding agents.',
-          },
-          {
-            name: 'Paradev',
-            url: 'https://paradev.com',
-            text: 'Parallel agents with separate Git worktrees.',
-          },
-        ].map((item, i) => (
-          <a key={item.name} href={item.url} target="_blank" rel="noreferrer">
-            <span className="reference-index">0{i + 1}</span>
-            <strong>{item.name}</strong>
-            <p>{item.text}</p>
-            <ArrowUpRight size={16} />
-          </a>
-        ))}
-      </div>
-      <div className="subtle-note">
-        <BookOpen size={14} /> Full sources, evidence boundaries, and design decisions are
-        documented in docs/RESEARCH.md.
-      </div>
-    </>
   );
 }

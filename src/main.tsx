@@ -4,7 +4,7 @@ import '@fontsource-variable/geist';
 import '@fontsource/jetbrains-mono/400.css';
 import App from './App';
 import './styles.css';
-import './readability.css';
+import './components.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

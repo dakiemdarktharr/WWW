@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import type { Activity, Member, Project, RoomMessage, Task } from '../shared/types.ts';
+import type { Activity, Member, Project, RoomMessage, Task, Workflow } from '../shared/types.ts';
 import { normalizeScope, scopesOverlap } from './security.ts';
 
 export class DomainError extends Error {
@@ -76,6 +76,17 @@ export class Store extends EventEmitter {
   projects() {
     return this.all<Project>('project');
   }
+  workflows() {
+    return this.all<Workflow>('workflow');
+  }
+  updateWorkflow(id: string, patch: Partial<Workflow>): Workflow {
+    return this.put('workflow', {
+      ...this.get<Workflow>('workflow', id),
+      ...patch,
+      id,
+      updatedAt: new Date().toISOString(),
+    });
+  }
   leases(): Lease[] {
     return (
       this.db.prepare('SELECT * FROM leases').all() as unknown as (Omit<Lease, 'scopes'> & {
@@ -124,9 +135,19 @@ export class Store extends EventEmitter {
       | 'scope'
       | 'dependsOn'
       | 'acceptance'
-    > & { assignedTo?: string | null; status?: 'ready' | 'backlog' },
+    > & {
+      assignedTo?: string | null;
+      status?: 'ready' | 'backlog';
+    } & Partial<
+        Pick<Task, 'workflowId' | 'phase' | 'parentTaskId' | 'stage' | 'effort' | 'planKey'>
+      >,
   ): Task {
     this.get<Project>('project', input.projectId);
+    if (
+      input.workflowId &&
+      this.get<Workflow>('workflow', input.workflowId).projectId !== input.projectId
+    )
+      throw new DomainError('The workflow belongs to another project.');
     if (input.assignedTo) this.get<Member>('member', input.assignedTo);
     const normalized = input.title.toLowerCase().replace(/\s+/g, ' ').trim();
     if (
@@ -134,6 +155,7 @@ export class Store extends EventEmitter {
         (t) =>
           t.projectId === input.projectId &&
           t.status !== 'done' &&
+          (!t.workflowId || this.get<Workflow>('workflow', t.workflowId).status !== 'cancelled') &&
           t.title.toLowerCase().replace(/\s+/g, ' ').trim() === normalized,
       )
     )
@@ -147,7 +169,12 @@ export class Store extends EventEmitter {
     return this.put('task', {
       ...input,
       id: randomUUID(),
-      scope: input.scope.length ? input.scope.map(normalizeScope) : ['.'],
+      scope:
+        input.workflowId && (input.phase === 'proposal' || input.phase === 'plan')
+          ? []
+          : input.scope.length
+            ? input.scope.map(normalizeScope)
+            : ['.'],
       assignedTo: input.assignedTo || null,
       status: input.status || 'ready',
       branch: null,
@@ -179,6 +206,19 @@ export class Store extends EventEmitter {
       const task = this.get<Task>('task', taskId),
         member = this.get<Member>('member', memberId);
       if (task.status !== 'ready') throw new DomainError('Only a ready task can be claimed.');
+      const reservation = this.workflows().find(
+        (workflow) =>
+          workflow.status !== 'completed' &&
+          workflow.status !== 'cancelled' &&
+          workflow.memberIds.includes(memberId),
+      );
+      if (reservation && reservation.id !== task.workflowId)
+        throw new DomainError('This teammate is reserved by an active team workflow.');
+      if (task.workflowId) {
+        const workflow = this.get<Workflow>('workflow', task.workflowId);
+        if (!['planning', 'running', 'review'].includes(workflow.status))
+          throw new DomainError('Resume this workflow before starting a task.');
+      }
       if (!member.account || member.status !== 'ready')
         throw new DomainError('This Codex profile must be signed in and ready.');
       if (task.assignedTo && task.assignedTo !== memberId)

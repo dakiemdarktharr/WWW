@@ -12,6 +12,8 @@ import {
   readRateLimits,
   startTask,
   dynamicToolResult,
+  relayDynamicTools,
+  type DynamicTool,
 } from '../server/codex.ts';
 
 // A child process speaking the real stdio protocol. It never contacts OpenAI.
@@ -178,6 +180,85 @@ test('server tool calls are replied to using the exact request ID and contentIte
     id: 'server-1',
     result: { contentItems: [{ type: 'inputText', text: '{"messages":[]}' }], success: true },
   });
+});
+
+test('planning uses a read-only sandbox with its supplied tools and binds ownership before completion', async (t) => {
+  const client = await clientFor(
+    t,
+    fixture.replace("sandbox:{type:'workspaceWrite'}", "sandbox:{type:'readOnly'}"),
+  );
+  const planTool: DynamicTool = {
+    type: 'function',
+    name: 'relay_submit_plan',
+    description: 'Submit the controlled plan.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  };
+  const events: { method: string; params: any }[] = [];
+  let threadBound = false;
+  let completionWasBound = false;
+  client.on('notification', (method, params) => {
+    events.push({ method, params });
+    if (method === 'turn/completed') completionWasBound = threadBound;
+  });
+  await startTask(client, {
+    cwd: process.cwd(),
+    prompt: 'Produce a plan without changing files.',
+    readOnly: true,
+    dynamicTools: [...relayDynamicTools, planTool],
+    onThread: () => {
+      threadBound = true;
+    },
+  });
+  const parameters = events.find((event) => event.method === 'fixture/threadParams')?.params;
+  assert.equal(parameters.sandbox, 'read-only');
+  assert.equal(parameters.approvalPolicy, 'on-request');
+  assert.equal(parameters.approvalsReviewer, 'user');
+  assert.deepEqual(parameters.dynamicTools, [...relayDynamicTools, planTool]);
+  assert.equal(completionWasBound, true);
+});
+
+test('planning refuses a writable sandbox before binding ownership or starting a turn', async (t) => {
+  const client = await clientFor(t);
+  let bound = false;
+  let completed = false;
+  client.on('notification', (method) => {
+    if (method === 'turn/completed') completed = true;
+  });
+  await assert.rejects(
+    startTask(client, {
+      cwd: process.cwd(),
+      prompt: 'Must never run with writes enabled.',
+      readOnly: true,
+      onThread: () => {
+        bound = true;
+      },
+    }),
+    /did not honor/,
+  );
+  assert.equal(bound, false);
+  assert.equal(completed, false);
+});
+
+test('planning refuses an automatic approval reviewer before starting a turn', async (t) => {
+  const client = await clientFor(
+    t,
+    fixture
+      .replace("sandbox:{type:'workspaceWrite'}", "sandbox:{type:'readOnly'}")
+      .replace("approvalsReviewer:'user'", "approvalsReviewer:'guardian_subagent'"),
+  );
+  let bound = false;
+  await assert.rejects(
+    startTask(client, {
+      cwd: process.cwd(),
+      prompt: 'Keep human approval routing.',
+      readOnly: true,
+      onThread: () => {
+        bound = true;
+      },
+    }),
+    /did not honor/,
+  );
+  assert.equal(bound, false);
 });
 
 test('unsupported server requests receive a protocol error instead of hanging', async (t) => {
