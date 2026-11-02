@@ -1,0 +1,350 @@
+import Fastify, { type FastifyRequest } from 'fastify';
+import { z } from 'zod';
+import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+import type { Activity, Member, Project, Task } from '../shared/types.ts';
+import { DomainError } from './store.ts';
+import { Workspace } from './service.ts';
+import { inside, normalizeScope, redact, safeEqual, secret } from './security.ts';
+
+const text = z.string().trim().min(1).max(200);
+const id = z.string().uuid();
+const scopePath = z
+  .string()
+  .max(500)
+  .superRefine((value, ctx) => {
+    try {
+      normalizeScope(value);
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: (error as Error).message });
+    }
+  });
+const taskInput = z
+  .object({
+    projectId: id,
+    title: text,
+    description: z.string().max(16000).default(''),
+    kind: z.enum(['code', 'research', 'design', 'review']).default('code'),
+    priority: z.enum(['high', 'medium', 'low']).default('medium'),
+    scope: z.array(scopePath).max(50).default(['.']),
+    dependsOn: z.array(id).max(50).default([]),
+    acceptance: z.string().max(8000).default(''),
+    assignedTo: id.nullable().optional(),
+    status: z.enum(['ready', 'backlog']).default('ready'),
+  })
+  .strict();
+type Session = { token: string; expires: number };
+export async function buildApp(
+  workspace: Workspace,
+  options: { port?: number; development?: boolean; distDir?: string } = {},
+) {
+  const app = Fastify({
+    logger: false,
+    bodyLimit: 128 * 1024,
+    requestTimeout: 30000,
+    forceCloseConnections: true,
+  });
+  const eventConnections = new Set<() => void>();
+  const sessions = new Map<string, Session>();
+  const port = options.port || 4317;
+  const allowed = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+  if (options.development) {
+    allowed.add('http://127.0.0.1:5173');
+    allowed.add('http://localhost:5173');
+  }
+  const sessionFor = (request: FastifyRequest) => {
+    const value = request.headers.cookie
+      ?.split(';')
+      .map((v) => v.trim())
+      .find((v) => v.startsWith('relay_session='))
+      ?.slice(14);
+    return value ? sessions.get(value) : undefined;
+  };
+  app.addHook('onRequest', async (request, reply) => {
+    reply
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('X-Frame-Options', 'DENY')
+      .header('Referrer-Policy', 'no-referrer')
+      .header('Cache-Control', 'no-store');
+    reply.header(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    );
+    const host = request.headers.host,
+      origin = request.headers.origin;
+    if (!host || !allowed.has(`http://${host}`))
+      return reply.code(403).send({ error: 'RELAY only accepts requests to its local address.' });
+    if (origin && !allowed.has(origin))
+      return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
+    if (request.headers['sec-fetch-site'] === 'cross-site')
+      return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
+    if (request.url.startsWith('/api/') && !request.url.startsWith('/api/session')) {
+      const session = sessionFor(request);
+      if (!session || session.expires < Date.now())
+        return reply.code(401).send({ error: 'Your local session expired. Reload the workspace.' });
+      if (!['GET', 'HEAD'].includes(request.method)) {
+        const token = request.headers['x-relay-token'];
+        if (typeof token !== 'string' || !safeEqual(token, session.token))
+          return reply.code(403).send({ error: 'Missing or invalid local request token.' });
+        if (!request.headers['content-type']?.startsWith('application/json'))
+          return reply.code(415).send({ error: 'Use application/json for workspace changes.' });
+      }
+    }
+  });
+  app.setErrorHandler((error, request, reply) => {
+    if (error instanceof z.ZodError)
+      return reply
+        .code(400)
+        .send({ error: error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; ') });
+    const e = error as Error & { statusCode?: number };
+    const status = error instanceof DomainError ? error.status : e.statusCode || 500;
+    reply.code(status).send({ error: redact(e.message || 'The request could not be completed.') });
+  });
+  app.get('/api/session', async (request, reply) => {
+    let session = sessionFor(request);
+    if (!session || session.expires < Date.now()) {
+      for (const [key, value] of sessions) if (value.expires < Date.now()) sessions.delete(key);
+      if (sessions.size > 200) sessions.delete(sessions.keys().next().value!);
+      const key = secret();
+      session = { token: secret(), expires: Date.now() + 24 * 60 * 60 * 1000 };
+      sessions.set(key, session);
+      reply.header(
+        'Set-Cookie',
+        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400`,
+      );
+    }
+    return { token: session.token };
+  });
+  app.get('/api/state', async () => workspace.snapshot());
+  app.get('/api/events', async (request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    reply.raw.write('event: connected\ndata: {}\n\n');
+    let queued = false;
+    const changed = () => {
+      if (queued) return;
+      queued = true;
+      setTimeout(() => {
+        queued = false;
+        if (!reply.raw.destroyed && !reply.raw.writableEnded)
+          reply.raw.write('event: change\ndata: {}\n\n');
+      }, 40).unref();
+    };
+    const ping = setInterval(() => reply.raw.write(': heartbeat\n\n'), 20000);
+    ping.unref();
+    workspace.store.on('change', changed);
+    const cleanup = () => {
+      clearInterval(ping);
+      workspace.store.off('change', changed);
+      eventConnections.delete(disconnect);
+    };
+    const disconnect = () => {
+      cleanup();
+      reply.raw.end();
+    };
+    eventConnections.add(disconnect);
+    reply.raw.on('close', cleanup);
+  });
+  const params = (request: FastifyRequest) => z.object({ id }).parse(request.params).id;
+  app.post('/api/members', async (request) => {
+    const input = z
+      .object({
+        name: text,
+        role: z.enum(['engineer', 'researcher', 'designer', 'reviewer']),
+        color: z
+          .string()
+          .regex(/^#[a-fA-F0-9]{6}$/)
+          .optional(),
+      })
+      .strict()
+      .parse(request.body);
+    const member = workspace.store.addMember(input);
+    workspace.log(`Added ${member.name} as ${member.role}.`, null, member.id, 'member');
+    return member;
+  });
+  app.post('/api/members/:id/login', async (request) =>
+    workspace.login(
+      params(request),
+      z.object({ method: z.enum(['browser', 'device']).default('browser') }).parse(request.body)
+        .method,
+    ),
+  );
+  app.post('/api/members/:id/login/cancel', async (request) => {
+    const memberId = params(request);
+    if (workspace.loginOwner !== memberId)
+      throw new DomainError('This profile has no pending sign-in.');
+    const input = z.object({ loginId: z.string().min(1) }).parse(request.body);
+    await (await workspace.client(memberId)).request('account/login/cancel', input);
+    workspace.loginOwner = null;
+    return { ok: true };
+  });
+  app.post('/api/members/:id/refresh', async (request) => workspace.refresh(params(request)));
+  app.post('/api/members/:id/logout', async (request) => workspace.logout(params(request)));
+  app.post('/api/members/:id/skills/import', async (request) =>
+    workspace.importSkills(params(request)),
+  );
+  app.get('/api/members/:id/capabilities', async (request) => {
+    const member = await workspace.refresh(params(request));
+    return {
+      skills: member.skills,
+      plugins: member.plugins,
+      errors: member.capabilitiesError ? [member.capabilitiesError] : [],
+    };
+  });
+  app.get('/api/members/:id/setup', async (request) => ({
+    home: workspace.home(params(request)),
+    instructions:
+      'Use this CODEX_HOME for skills, plugins, and MCP configuration. Restart this profile after editing config. Never copy auth.json between profiles.',
+  }));
+  app.post('/api/projects', async (request) =>
+    workspace.addProject(
+      z
+        .object({
+          name: text,
+          path: z.string().min(1).max(2000),
+          goal: z.string().max(16000).default(''),
+        })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.patch('/api/projects/:id', async (request) => {
+    const project = workspace.store.get<Project>('project', params(request));
+    return workspace.store.put('project', {
+      ...project,
+      ...z
+        .object({ name: text.optional(), goal: z.string().max(16000).optional() })
+        .strict()
+        .parse(request.body),
+    });
+  });
+  app.post('/api/tasks', async (request) => {
+    const task = workspace.store.addTask(taskInput.parse(request.body));
+    workspace.log(`Created “${task.title}”.`, task.id, null, 'task');
+    return task;
+  });
+  app.patch('/api/tasks/:id', async (request) => {
+    const task = workspace.store.get<Task>('task', params(request));
+    if (['running', 'review', 'done'].includes(task.status) || workspace.store.lease(task.id))
+      throw new DomainError('This task cannot be edited while claimed, in review, or integrated.');
+    const patch = taskInput
+      .omit({ projectId: true, kind: true })
+      .partial()
+      .strict()
+      .parse(request.body);
+    if (patch.dependsOn) workspace.store.validateDependencies(task.id, patch.dependsOn);
+    if (patch.scope) patch.scope = patch.scope.length ? patch.scope.map(normalizeScope) : ['.'];
+    if (patch.assignedTo) workspace.store.get<Member>('member', patch.assignedTo);
+    return workspace.store.updateTask(task.id, patch);
+  });
+  app.post('/api/tasks/:id/run', async (request) =>
+    workspace.run(params(request), z.object({ memberId: id }).parse(request.body).memberId),
+  );
+  app.post('/api/projects/:id/dispatch', async (request) => workspace.dispatch(params(request)));
+  app.post('/api/tasks/:id/stop', async (request) => workspace.stop(params(request)));
+  app.get('/api/tasks/:id/diff', async (request) => workspace.diff(params(request)));
+  app.post('/api/tasks/:id/accept', async (request) => workspace.accept(params(request)));
+  app.post('/api/tasks/:id/revise', async (request) => {
+    const task = workspace.store.get<Task>('task', params(request));
+    if (task.status !== 'review') throw new DomainError('Only a task in review can be sent back.');
+    const { feedback } = z
+      .object({ feedback: z.string().trim().min(1).max(8000) })
+      .parse(request.body);
+    const lease = workspace.store.lease(task.id);
+    if (lease) workspace.store.release(task.id, lease.token);
+    workspace.store.message({
+      projectId: task.projectId,
+      taskId: task.id,
+      authorId: null,
+      kind: 'message',
+      content: feedback,
+    });
+    return workspace.store.updateTask(task.id, {
+      status: 'ready',
+      description: task.description + '\n\nReview feedback: ' + feedback,
+      error: null,
+    });
+  });
+  app.post('/api/messages', async (request) => {
+    const input = z
+      .object({
+        projectId: id,
+        taskId: id.nullable().optional(),
+        content: z.string().trim().min(1).max(10000),
+      })
+      .strict()
+      .parse(request.body);
+    workspace.store.get('project', input.projectId);
+    if (
+      input.taskId &&
+      workspace.store.get<Task>('task', input.taskId).projectId !== input.projectId
+    )
+      throw new DomainError('The task belongs to another project.');
+    return workspace.store.message({
+      ...input,
+      content: redact(input.content),
+      taskId: input.taskId || null,
+      authorId: null,
+      kind: 'message',
+    });
+  });
+  app.post('/api/approvals/:id', async (request) =>
+    workspace.decide(
+      params(request),
+      z.object({ decision: z.enum(['accept', 'decline']) }).parse(request.body).decision,
+    ),
+  );
+  app.get('/api/tasks/:id/events', async (request) => {
+    const taskId = params(request);
+    workspace.store.get('task', taskId);
+    return workspace.store
+      .all<Activity>('activity')
+      .filter((a) => a.taskId === taskId)
+      .slice(-300);
+  });
+  app.post('/api/recovery/acknowledge', async () => workspace.recover());
+  if (options.distDir) {
+    const root = path.resolve(options.distDir);
+    app.get('/*', async (request, reply) => {
+      if (request.url.startsWith('/api/'))
+        return reply.code(404).send({ error: 'API route not found.' });
+      let pathname: string;
+      try {
+        pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname);
+      } catch {
+        return reply.code(400).send('Invalid path');
+      }
+      let file = path.resolve(root, '.' + pathname);
+      if (!inside(root, file)) return reply.code(403).send('Forbidden');
+      try {
+        if (!(await stat(file)).isFile()) file = path.join(root, 'index.html');
+      } catch {
+        file = path.join(root, 'index.html');
+      }
+      const types: Record<string, string> = {
+        '.html': 'text/html; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.svg': 'image/svg+xml',
+        '.woff2': 'font/woff2',
+        '.woff': 'font/woff',
+        '.png': 'image/png',
+        '.ico': 'image/x-icon',
+      };
+      reply.type(types[path.extname(file)] || 'application/octet-stream');
+      return readFile(file);
+    });
+  }
+  app.addHook('preClose', async () => {
+    for (const disconnect of eventConnections) disconnect();
+  });
+  app.addHook('onClose', async () => {
+    await workspace.close();
+  });
+  return app;
+}

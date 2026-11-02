@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.local/
+.relay/
+.env
+.env.*
+!.env.example
+*.log
+playwright-report/
+test-results/
+.playwright-mcp/
+coverage/
+*.tsbuildinfo
+auth.json
+*.db
+*.db-shm
+*.db-wal

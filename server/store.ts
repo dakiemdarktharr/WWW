@@ -1,0 +1,279 @@
+import { DatabaseSync } from 'node:sqlite';
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import type { Activity, Member, Project, RoomMessage, Task } from '../shared/types.ts';
+import { normalizeScope, scopesOverlap } from './security.ts';
+
+export class DomainError extends Error {
+  constructor(
+    message: string,
+    public status = 409,
+  ) {
+    super(message);
+  }
+}
+export interface Lease {
+  taskId: string;
+  memberId: string;
+  projectId: string;
+  token: string;
+  scopes: string[];
+  heartbeat: number;
+  orphaned: number;
+}
+export class Store extends EventEmitter {
+  db: DatabaseSync;
+  constructor(filename: string) {
+    super();
+    this.db = new DatabaseSync(filename);
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
+      CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
+      CREATE TABLE IF NOT EXISTS leases (taskId TEXT PRIMARY KEY, memberId TEXT UNIQUE NOT NULL, projectId TEXT NOT NULL, token TEXT NOT NULL, scopes TEXT NOT NULL, heartbeat INTEGER NOT NULL, orphaned INTEGER NOT NULL DEFAULT 0);`);
+  }
+  all<T>(kind: string): T[] {
+    return (
+      this.db.prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid').all(kind) as {
+        data: string;
+      }[]
+    ).map((r) => JSON.parse(r.data));
+  }
+  get<T>(kind: string, id: string): T {
+    const row = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id) as
+      { data: string } | undefined;
+    if (!row) throw new DomainError(`${kind} not found.`, 404);
+    return JSON.parse(row.data);
+  }
+  put<T extends { id: string }>(kind: string, data: T): T {
+    this.db
+      .prepare(
+        'INSERT INTO records(kind,id,data) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET data=excluded.data',
+      )
+      .run(kind, data.id, JSON.stringify(data));
+    this.emit('change');
+    return data;
+  }
+  remove(kind: string, id: string) {
+    this.db.prepare('DELETE FROM records WHERE kind=? AND id=?').run(kind, id);
+    this.emit('change');
+  }
+  transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const value = fn();
+      this.db.exec('COMMIT');
+      return value;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  members() {
+    return this.all<Member>('member');
+  }
+  tasks() {
+    return this.all<Task>('task');
+  }
+  projects() {
+    return this.all<Project>('project');
+  }
+  leases(): Lease[] {
+    return (
+      this.db.prepare('SELECT * FROM leases').all() as unknown as (Omit<Lease, 'scopes'> & {
+        scopes: string;
+      })[]
+    ).map((l) => ({ ...l, scopes: JSON.parse(l.scopes) }));
+  }
+  lease(taskId: string) {
+    return this.leases().find((l) => l.taskId === taskId);
+  }
+  addMember(input: { name: string; role: Member['role']; color?: string }): Member {
+    if (this.members().length >= 16)
+      throw new DomainError('This room supports up to 16 local profiles.');
+    return this.put('member', {
+      id: randomUUID(),
+      name: input.name,
+      role: input.role,
+      color: input.color || ['#b8f682', '#a8bbff', '#e9a8ee', '#f6c47e'][this.members().length % 4],
+      status: 'offline',
+      account: null,
+      skills: [],
+      plugins: [],
+      rateLimits: null,
+      createdAt: new Date().toISOString(),
+    } satisfies Member);
+  }
+  updateMember(id: string, patch: Partial<Member>): Member {
+    return this.put('member', { ...this.get<Member>('member', id), ...patch, id });
+  }
+  updateTask(id: string, patch: Partial<Task>): Task {
+    return this.put('task', {
+      ...this.get<Task>('task', id),
+      ...patch,
+      id,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+  addTask(
+    input: Pick<
+      Task,
+      | 'projectId'
+      | 'title'
+      | 'description'
+      | 'kind'
+      | 'priority'
+      | 'scope'
+      | 'dependsOn'
+      | 'acceptance'
+    > & { assignedTo?: string | null; status?: 'ready' | 'backlog' },
+  ): Task {
+    this.get<Project>('project', input.projectId);
+    if (input.assignedTo) this.get<Member>('member', input.assignedTo);
+    const normalized = input.title.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (
+      this.tasks().some(
+        (t) =>
+          t.projectId === input.projectId &&
+          t.status !== 'done' &&
+          t.title.toLowerCase().replace(/\s+/g, ' ').trim() === normalized,
+      )
+    )
+      throw new DomainError(
+        'An unfinished task with this title already exists. Add detail or use the existing task.',
+      );
+    for (const id of input.dependsOn)
+      if (this.get<Task>('task', id).projectId !== input.projectId)
+        throw new DomainError('Dependencies must belong to this project.');
+    const now = new Date().toISOString();
+    return this.put('task', {
+      ...input,
+      id: randomUUID(),
+      scope: input.scope.length ? input.scope.map(normalizeScope) : ['.'],
+      assignedTo: input.assignedTo || null,
+      status: input.status || 'ready',
+      branch: null,
+      worktree: null,
+      baseCommit: null,
+      threadId: null,
+      turnId: null,
+      summary: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies Task);
+  }
+  validateDependencies(taskId: string, deps: string[]) {
+    const task = this.get<Task>('task', taskId);
+    const visit = (id: string, seen: Set<string>) => {
+      if (id === taskId) throw new DomainError('Dependencies cannot form a cycle.');
+      if (seen.has(id)) return;
+      seen.add(id);
+      const dep = this.get<Task>('task', id);
+      if (dep.projectId !== task.projectId)
+        throw new DomainError('Dependency belongs to a different project.');
+      dep.dependsOn.forEach((x) => visit(x, seen));
+    };
+    deps.forEach((id) => visit(id, new Set()));
+  }
+  claim(taskId: string, memberId: string): { task: Task; lease: Lease } {
+    return this.transaction(() => {
+      const task = this.get<Task>('task', taskId),
+        member = this.get<Member>('member', memberId);
+      if (task.status !== 'ready') throw new DomainError('Only a ready task can be claimed.');
+      if (!member.account || member.status !== 'ready')
+        throw new DomainError('This Codex profile must be signed in and ready.');
+      if (task.assignedTo && task.assignedTo !== memberId)
+        throw new DomainError('This task is assigned to another teammate.');
+      if (task.dependsOn.some((id) => this.get<Task>('task', id).status !== 'done'))
+        throw new DomainError('Dependencies must be integrated before this task can start.');
+      for (const lease of this.leases()) {
+        if (lease.memberId === memberId)
+          throw new DomainError('This teammate already owns another task.');
+        if (lease.projectId === task.projectId && scopesOverlap(task.scope, lease.scopes))
+          throw new DomainError(
+            'Scope overlaps another claimed task. Wait for its handoff or narrow the scope.',
+          );
+      }
+      const lease: Lease = {
+        taskId,
+        memberId,
+        projectId: task.projectId,
+        token: randomUUID(),
+        scopes: task.scope,
+        heartbeat: Date.now(),
+        orphaned: 0,
+      };
+      this.db
+        .prepare(
+          'INSERT INTO leases(taskId,memberId,projectId,token,scopes,heartbeat,orphaned) VALUES(?,?,?,?,?,?,0)',
+        )
+        .run(
+          taskId,
+          memberId,
+          task.projectId,
+          lease.token,
+          JSON.stringify(lease.scopes),
+          lease.heartbeat,
+        );
+      this.updateMember(memberId, { status: 'working', error: null });
+      return {
+        task: this.updateTask(taskId, { status: 'running', assignedTo: memberId, error: null }),
+        lease,
+      };
+    });
+  }
+  heartbeat(taskId: string, token: string) {
+    this.db
+      .prepare('UPDATE leases SET heartbeat=? WHERE taskId=? AND token=? AND orphaned=0')
+      .run(Date.now(), taskId, token);
+  }
+  owns(taskId: string, token: string) {
+    return this.lease(taskId)?.token === token && this.lease(taskId)?.orphaned === 0;
+  }
+  release(taskId: string, token: string) {
+    this.db.prepare('DELETE FROM leases WHERE taskId=? AND token=?').run(taskId, token);
+    this.emit('change');
+  }
+  orphanAll() {
+    const leases = this.leases().filter(
+      (l) => this.get<Task>('task', l.taskId).status !== 'review',
+    );
+    for (const l of leases)
+      this.db.prepare('UPDATE leases SET orphaned=1 WHERE taskId=?').run(l.taskId);
+    for (const l of leases) {
+      this.updateTask(l.taskId, {
+        status: 'blocked',
+        error:
+          'The coordinator stopped during this run. Confirm its old Codex processes have stopped before recovering.',
+      });
+      this.updateMember(l.memberId, { status: 'offline' });
+    }
+    for (const m of this.members())
+      this.updateMember(m.id, { status: 'offline', account: null, rateLimits: null });
+    return leases.length;
+  }
+  recoverOrphans() {
+    for (const l of this.leases().filter((x) => x.orphaned)) {
+      this.release(l.taskId, l.token);
+      this.updateTask(l.taskId, { status: 'ready', error: null, threadId: null, turnId: null });
+    }
+  }
+  message(input: Omit<RoomMessage, 'id' | 'createdAt'>) {
+    return this.put('message', { ...input, id: randomUUID(), createdAt: new Date().toISOString() });
+  }
+  activity(input: Omit<Activity, 'id' | 'createdAt'>) {
+    const result = this.put('activity', {
+      ...input,
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+    });
+    this.db
+      .prepare(
+        "DELETE FROM records WHERE kind='activity' AND rowid NOT IN (SELECT rowid FROM records WHERE kind='activity' ORDER BY rowid DESC LIMIT 5000)",
+      )
+      .run();
+    return result;
+  }
+  close() {
+    this.db.close();
+  }
+}

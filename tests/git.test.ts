@@ -1,0 +1,236 @@
+import assert from 'node:assert/strict';
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { test, type TestContext } from 'node:test';
+import { createWorktree, git, integrate, taskDiff, validateRepo } from '../server/git.ts';
+
+async function fixture(t: TestContext) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'relay-git-test-'));
+  const repo = path.join(root, 'repo with spaces');
+  const storage = path.join(root, 'private runtime');
+  await mkdir(repo);
+  await git(repo, ['init', '-b', 'main']);
+  await git(repo, ['config', 'user.name', 'RELAY test']);
+  await git(repo, ['config', 'user.email', 'relay-test@example.test']);
+  await git(repo, ['config', 'core.autocrlf', 'false']);
+  await writeFile(path.join(repo, 'shared.txt'), 'original\n');
+  await writeFile(path.join(repo, '.gitignore'), '.env\n');
+  await git(repo, ['add', '--all']);
+  await git(repo, ['commit', '-m', 'Initial fixture']);
+  t.after(async () => {
+    const actual = await realpath(root);
+    const tempRoot = await realpath(os.tmpdir());
+    assert.equal(path.dirname(actual), tempRoot);
+    assert.ok(path.basename(actual).startsWith('relay-git-test-'));
+    await rm(actual, { recursive: true, force: true });
+  });
+  return { root, repo, storage };
+}
+
+test('repository validation accepts a root with spaces and rejects a subdirectory', async (t) => {
+  const f = await fixture(t);
+  assert.equal(await validateRepo(f.repo), await realpath(f.repo));
+  const subdirectory = path.join(f.repo, 'nested');
+  await mkdir(subdirectory);
+  await assert.rejects(validateRepo(subdirectory), /repository root/);
+  await assert.rejects(validateRepo('relative/repo'), /absolute path/);
+});
+
+test('two real worktrees isolate edits to the same file and leave the project untouched', async (t) => {
+  const f = await fixture(t);
+  const a = await createWorktree(f.repo, f.storage, 'task-alpha-1111');
+  const b = await createWorktree(f.repo, f.storage, 'task-bravo-2222');
+  await writeFile(path.join(a.worktree, 'shared.txt'), 'engineer A\n');
+  await writeFile(path.join(b.worktree, 'shared.txt'), 'engineer B\n');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'original\n');
+  assert.equal(await readFile(path.join(a.worktree, 'shared.txt'), 'utf8'), 'engineer A\n');
+  assert.equal(await readFile(path.join(b.worktree, 'shared.txt'), 'utf8'), 'engineer B\n');
+  assert.equal(await git(a.worktree, ['branch', '--show-current']), a.branch);
+  assert.equal(await git(b.worktree, ['branch', '--show-current']), b.branch);
+  assert.notEqual(a.branch, b.branch);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+});
+
+test('review diff shows modified and new files without including ignored secrets', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'diff-task-3333');
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'changed\n');
+  await writeFile(path.join(worker.worktree, 'report.md'), 'A research result\n');
+  await writeFile(path.join(worker.worktree, '.env'), 'SECRET=not-for-review\n');
+  const result = await taskDiff(worker.worktree);
+  assert.deepEqual([...result.files].sort(), ['report.md', 'shared.txt']);
+  assert.match(result.diff, /\+changed/);
+  assert.match(result.diff, /report\.md/);
+  assert.doesNotMatch(result.diff, /SECRET|not-for-review/);
+  assert.equal(result.truncated, false);
+});
+
+test('review against the recorded base includes agent commits as well as subsequent edits', async (t) => {
+  const f = await fixture(t);
+  const baseCommit = await git(f.repo, ['rev-parse', 'HEAD']);
+  const worker = await createWorktree(f.repo, f.storage, 'commit-diff-7777');
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'committed by agent\n');
+  await git(worker.worktree, ['add', '--all']);
+  await git(worker.worktree, ['commit', '-m', 'Agent checkpoint']);
+  await writeFile(path.join(worker.worktree, 'second.txt'), 'not committed yet\n');
+  const result = await taskDiff(worker.worktree, baseCommit);
+  assert.deepEqual([...result.files].sort(), ['second.txt', 'shared.txt']);
+  assert.match(result.diff, /\+committed by agent/);
+});
+
+test('review supports Unicode artifact names without treating Git-quoted paths as filenames', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'unicode-artifact-8888');
+  await writeFile(path.join(worker.worktree, 'báo cáo.md'), 'Research findings in Vietnamese.\n');
+  const result = await taskDiff(worker.worktree);
+  assert.deepEqual(result.files, ['báo cáo.md']);
+  assert.match(result.diff, /Research findings in Vietnamese/);
+});
+
+test('integration commits an approved worktree and merges it into a clean project branch', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'merge-task-4444');
+  const before = await git(f.repo, ['rev-parse', 'HEAD']);
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'approved implementation\n');
+  await writeFile(path.join(worker.worktree, 'new.txt'), 'new artifact\n');
+  await integrate(f.repo, worker.worktree, worker.branch, 'Approved task');
+  assert.equal(
+    await readFile(path.join(f.repo, 'shared.txt'), 'utf8'),
+    'approved implementation\n',
+  );
+  assert.equal(await readFile(path.join(f.repo, 'new.txt'), 'utf8'), 'new artifact\n');
+  assert.notEqual(await git(f.repo, ['rev-parse', 'HEAD']), before);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  assert.equal(await git(worker.worktree, ['status', '--porcelain']), '');
+  assert.equal(await git(f.repo, ['branch', '--show-current']), 'main');
+  assert.equal(
+    (await git(f.repo, ['rev-list', '--parents', '-n', '1', 'HEAD'])).split(' ').length,
+    2,
+  );
+});
+
+test('squash integration never imports reverted private or out-of-scope worker commit history', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'history-test-9999');
+  const startingHead = await git(f.repo, ['rev-parse', 'HEAD']);
+  await writeFile(path.join(worker.worktree, 'auth.json'), '{"fixture":"not-a-real-secret"}\n');
+  await writeFile(
+    path.join(worker.worktree, 'outside-owned-scope.txt'),
+    'Should not enter the accepted history.\n',
+  );
+  await git(worker.worktree, ['add', '--all']);
+  await git(worker.worktree, ['commit', '-m', 'Unapproved intermediate checkpoint']);
+  const unapprovedCommit = await git(worker.worktree, ['rev-parse', 'HEAD']);
+  await rm(path.join(worker.worktree, 'auth.json'));
+  await rm(path.join(worker.worktree, 'outside-owned-scope.txt'));
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'approved final result\n');
+  await git(worker.worktree, ['add', '--all']);
+  await git(worker.worktree, ['commit', '-m', 'Remove unapproved intermediate files']);
+  assert.deepEqual((await taskDiff(worker.worktree, startingHead)).files, ['shared.txt']);
+  await integrate(f.repo, worker.worktree, worker.branch, 'Accept only the final proposal');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'approved final result\n');
+  assert.equal(
+    await git(f.repo, ['log', '--format=%H', 'HEAD', '--', 'auth.json', 'outside-owned-scope.txt']),
+    '',
+  );
+  await assert.rejects(git(f.repo, ['merge-base', '--is-ancestor', unapprovedCommit, 'HEAD']));
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD^']), startingHead);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+});
+
+test('a conflicting integration aborts the merge and preserves both histories and original files', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'conflict-5555');
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'worker proposal\n');
+  await writeFile(path.join(f.repo, 'shared.txt'), 'human accepted change\n');
+  await git(f.repo, ['add', '--all']);
+  await git(f.repo, ['commit', '-m', 'Human change while agent worked']);
+  const before = await git(f.repo, ['rev-parse', 'HEAD']);
+  await assert.rejects(integrate(f.repo, worker.worktree, worker.branch, 'Conflicting proposal'));
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), before);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'human accepted change\n');
+  assert.equal(
+    await readFile(path.join(worker.worktree, 'shared.txt'), 'utf8'),
+    'worker proposal\n',
+  );
+  assert.equal(await git(worker.worktree, ['status', '--porcelain']), '');
+  await assert.rejects(git(f.repo, ['rev-parse', '--verify', 'MERGE_HEAD']));
+});
+
+test('dirty project preflight does not stage or commit the agent worktree', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'dirty-task-6666');
+  await writeFile(path.join(f.repo, 'shared.txt'), 'unsaved user work\n');
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'agent proposal\n');
+  const head = await git(worker.worktree, ['rev-parse', 'HEAD']);
+  await assert.rejects(
+    integrate(f.repo, worker.worktree, worker.branch, 'Do not overwrite user work'),
+    /uncommitted changes/,
+  );
+  assert.equal(await git(worker.worktree, ['rev-parse', 'HEAD']), head);
+  assert.equal(await git(worker.worktree, ['diff', '--cached', '--name-only']), '');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'unsaved user work\n');
+});
+
+test('worker commit hooks are honored and their out-of-scope additions are rejected before integration', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'worker-hook-1010');
+  const startingHead = await git(f.repo, ['rev-parse', 'HEAD']);
+  const hook = path.join(f.repo, '.git', 'hooks', 'pre-commit');
+  await writeFile(
+    hook,
+    '#!/bin/sh\ncase "$(git branch --show-current)" in\nrelay/*)\n  printf "hook-created file\\n" > outside.txt\n  git add -- outside.txt\n  ;;\nesac\n',
+  );
+  await chmod(hook, 0o755);
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'approved scoped change\n');
+  await assert.rejects(
+    integrate(f.repo, worker.worktree, worker.branch, 'Scoped task', {
+      baseCommit: startingHead,
+      validateDiff(diff) {
+        if (diff.files.some((file) => file !== 'shared.txt'))
+          throw new Error('Outside the approved scope');
+      },
+    }),
+    /Outside the approved scope/,
+  );
+  assert.equal(
+    await readFile(path.join(worker.worktree, 'outside.txt'), 'utf8'),
+    'hook-created file\n',
+  );
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), startingHead);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'original\n');
+});
+
+test('project commit hooks are honored and a scope violation rolls back only the integration', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'project-hook-2020');
+  const startingHead = await git(f.repo, ['rev-parse', 'HEAD']);
+  const hook = path.join(f.repo, '.git', 'hooks', 'pre-commit');
+  await writeFile(
+    hook,
+    '#!/bin/sh\nif [ "$(git branch --show-current)" = "main" ]; then\n  printf "main-hook addition\\n" > outside.txt\n  git add -- outside.txt\nfi\n',
+  );
+  await chmod(hook, 0o755);
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'approved scoped change\n');
+  await assert.rejects(
+    integrate(f.repo, worker.worktree, worker.branch, 'Scoped task', {
+      baseCommit: startingHead,
+      validateDiff(diff) {
+        if (diff.files.some((file) => file !== 'shared.txt'))
+          throw new Error('Outside the approved scope');
+      },
+    }),
+    /Outside the approved scope/,
+  );
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), startingHead);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'original\n');
+  assert.equal(
+    await readFile(path.join(worker.worktree, 'shared.txt'), 'utf8'),
+    'approved scoped change\n',
+  );
+  await assert.rejects(readFile(path.join(f.repo, 'outside.txt'), 'utf8'), /ENOENT/);
+});

@@ -1,0 +1,42 @@
+{
+  "name": "relay-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Room for Execution, Local Agents & Yield — a local multiplayer Codex workspace",
+  "engines": {
+    "node": ">=24.22.1"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "start": "tsx server/index.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run format:check && npm test && npm run build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource/jetbrains-mono": "5.3.0",
+    "fastify": "5.12.7",
+    "lucide-react": "1.66.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

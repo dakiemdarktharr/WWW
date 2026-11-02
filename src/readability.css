@@ -1,0 +1,736 @@
+/* Readable type at real workstation sizes. Small metadata never carries primary instructions. */
+.metric > p {
+  white-space: normal;
+  line-height: 1.65;
+  min-height: 18px;
+  font-size: 11px;
+}
+.metric > div {
+  font-size: 12px;
+}
+.hero-footnote {
+  flex-wrap: wrap;
+  row-gap: 8px;
+  font-size: 10px;
+}
+.hero-actions {
+  flex-wrap: wrap;
+  row-gap: 13px;
+}
+.diagram-node {
+  min-width: 165px;
+  padding: 11px 10px;
+}
+.diagram-node strong {
+  font-size: 12px;
+}
+.diagram-node small {
+  font-size: 10px;
+  line-height: 1.5;
+}
+.diagram-node > div {
+  max-width: 125px;
+  gap: 3px;
+}
+.diagram-node > span {
+  width: 27px;
+  height: 27px;
+}
+.diagram-hub > span {
+  font-size: 10px;
+  top: 86px;
+}
+.diagram-label {
+  font-size: 10px;
+  left: 42px;
+}
+.agent-tile {
+  min-height: 145px;
+}
+.agent-tile > small {
+  white-space: normal;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.agent-tile > span:not(.empty-agent-plus) {
+  font-size: 11px;
+}
+.workflow-strip {
+  align-items: flex-start;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+.workflow-strip > div {
+  gap: 8px;
+}
+.workflow-strip p {
+  gap: 6px;
+}
+.workflow-strip strong {
+  font-size: 11px;
+}
+.workflow-strip small {
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: normal;
+}
+.workflow-strip > svg {
+  margin-top: 5px;
+}
+.room-feed {
+  min-height: 590px;
+  max-height: 760px;
+}
+.room-welcome p,
+.room-message p {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.message-byline strong {
+  font-size: 12px;
+}
+.message-byline > span {
+  font-size: 10px;
+}
+.welcome-rule {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.chat-form textarea {
+  font-size: 13px;
+}
+.chat-form > div > span {
+  font-size: 10px;
+  line-height: 1.6;
+}
+.chat-form > div {
+  gap: 8px;
+}
+.page-heading p {
+  font-size: 13px;
+}
+.room-hero-copy > p {
+  font-size: 13px;
+  max-width: 420px;
+}
+.hero-actions .button {
+  font-size: 12px;
+}
+.hero-actions .text-button {
+  font-size: 11px;
+}
+.page-footer {
+  align-items: flex-start;
+}
+.page-footer > span {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.page-footer > span:last-child {
+  font-size: 10px;
+}
+.local-card > span:first-child {
+  font-size: 10px;
+  white-space: normal;
+  line-height: 1.8;
+}
+.sidebar-team {
+  margin-top: 28px;
+}
+.nav-label {
+  font-size: 10px;
+}
+.workspace-picker label {
+  font-size: 10px;
+}
+.workspace-picker select {
+  font-size: 13px;
+}
+.sidebar-invite {
+  font-size: 12px;
+}
+.team-placeholder p {
+  font-size: 11px;
+}
+.user-row strong {
+  font-size: 11px;
+}
+.user-row > div > span {
+  font-size: 10px;
+}
+.sidebar-bottom .shortcut {
+  display: none;
+}
+.form-intro,
+.form-info {
+  font-size: 12px;
+}
+.form > label,
+.form-grid > label,
+.detail-feedback {
+  font-size: 12px;
+}
+.form input:not([type='checkbox']):not([type='radio']),
+.form textarea,
+.form select,
+.detail-feedback textarea {
+  font-size: 13px;
+  min-height: 42px;
+}
+.form small {
+  font-size: 11px;
+}
+.badge,
+.task-row .badge {
+  font-size: 10px;
+}
+.task-row-title strong {
+  font-size: 13px;
+}
+.task-row-title > span,
+.task-row-title > span .mono {
+  font-size: 10px;
+}
+.task-row {
+  padding-top: 17px;
+  padding-bottom: 17px;
+}
+.member-card .role-label,
+.member-account,
+.member-idle,
+.member-current-task,
+.member-usage > div:first-child,
+.capability-toggle,
+.member-actions .button {
+  font-size: 12px;
+}
+.member-actions .text-button {
+  font-size: 11px;
+}
+.member-usage > div:first-child > span:last-child,
+.member-card .badge {
+  font-size: 10px;
+}
+.research-intro p,
+.paper-card > p,
+.team-explainer p {
+  font-size: 13px;
+}
+.paper-card h3,
+.paper-lesson,
+.references-list p {
+  font-size: 12px;
+}
+.references-list strong {
+  font-size: 13px;
+}
+.detail-section > p {
+  font-size: 13px;
+}
+.task-detail h3 {
+  font-size: 10px;
+}
+.task-detail .diff-view,
+.task-detail .diff-stat {
+  font-size: 11px;
+}
+.detail-meta > span:not(.badge) {
+  font-size: 11px;
+}
+.runtime-list dt,
+.runtime-list dd {
+  font-size: 12px;
+}
+.runtime-list dd.mono {
+  font-size: 10px;
+}
+.runtime-note p {
+  font-size: 12px;
+}
+.security-grid strong {
+  font-size: 13px;
+}
+.security-grid p {
+  font-size: 12px;
+}
+.team-explainer h3 {
+  font-size: 14px;
+}
+.add-member-card p {
+  font-size: 13px;
+}
+.add-member-card h3 {
+  font-size: 17px;
+}
+.add-member-card strong {
+  font-size: 13px;
+}
+.room-hero h2 {
+  font-size: 32px;
+}
+.info-strip p {
+  font-size: 13px;
+}
+.empty-state p,
+.large-empty > p,
+.review-empty > p {
+  font-size: 13px;
+}
+.subtle-note {
+  font-size: 11px;
+}
+.task-toolbar .tabs > button {
+  font-size: 12px;
+}
+.task-toolbar .tabs > button > span {
+  font-size: 10px;
+}
+.input-search input {
+  font-size: 12px;
+}
+.room-diagram {
+  margin-left: 15px;
+  scale: 0.94;
+}
+.page-heading .eyebrow {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.task-empty h3 {
+  font-size: 15px;
+}
+.task-empty p,
+.task-empty .text-button {
+  font-size: 12px;
+}
+.quiet-room p {
+  font-size: 11px;
+  line-height: 1.7;
+}
+@media (max-width: 1250px) {
+  .room-diagram {
+    display: none;
+  }
+  .room-hero-copy {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .room-hero-copy > p {
+    max-width: 620px;
+  }
+  .room-hero {
+    min-height: 300px;
+  }
+  .hero-actions {
+    gap: 20px;
+  }
+  .workroom-columns {
+    grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
+  }
+  .agent-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .agent-tile {
+    padding: 15px;
+    min-height: 140px;
+  }
+  .room-feed {
+    max-height: 900px;
+  }
+  .workflow-strip > svg {
+    display: none;
+  }
+  .workflow-strip > div {
+    flex: 1;
+    min-width: 110px;
+  }
+  .workflow-strip small {
+    font-size: 10px;
+  }
+  .topbar .button {
+    font-size: 12px;
+  }
+  .hero-footnote {
+    font-size: 11px;
+  }
+}
+@media (max-width: 1050px) {
+  .workroom-columns {
+    grid-template-columns: 1fr;
+  }
+  .agent-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .agent-tile {
+    padding: 12px;
+    min-height: 150px;
+  }
+  .room-feed {
+    min-height: 520px;
+    max-height: 650px;
+  }
+  .hero-actions .text-button {
+    font-size: 12px;
+  }
+  .hero-actions .button {
+    font-size: 13px;
+  }
+  .metrics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .research-intro h2 {
+    font-size: 26px;
+  }
+  .paper-card h2 {
+    font-size: 22px;
+  }
+}
+@media (max-width: 800px) {
+  .agent-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hero-footnote {
+    font-size: 10px;
+  }
+  .workflow-strip > div {
+    min-width: 95px;
+  }
+  .room-hero h2 {
+    font-size: 31px;
+  }
+  .task-toolbar .tabs {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .task-toolbar .tabs > button {
+    font-size: 11px;
+  }
+  .form-grid.three,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+  .modal-heading h2 {
+    font-size: 20px;
+  }
+}
+@media (max-width: 650px) {
+  .sidebar {
+    padding-top: 24px;
+  }
+  .nav-item {
+    font-size: 14px;
+    padding: 12px;
+  }
+  .topbar .button {
+    font-size: 12px;
+  }
+  .topbar {
+    padding: 0 12px;
+  }
+  .breadcrumbs {
+    font-size: 12px;
+    gap: 7px;
+  }
+  .breadcrumb-project {
+    max-width: 80px;
+  }
+  .topbar-actions {
+    gap: 3px;
+  }
+  .page-heading h1 {
+    font-size: 29px;
+  }
+  .page-heading .eyebrow {
+    font-size: 10px;
+  }
+  .page-heading p {
+    font-size: 13px;
+    max-width: 100%;
+  }
+  .room-hero {
+    padding: 24px 20px;
+    min-height: 320px;
+  }
+  .room-hero h2 {
+    font-size: 29px;
+  }
+  .room-hero-copy > p {
+    font-size: 13px;
+    line-height: 1.85;
+    -webkit-line-clamp: 4;
+  }
+  .hero-footnote {
+    font-size: 10px;
+    gap: 7px;
+    line-height: 1.8;
+  }
+  .hero-footnote svg {
+    width: 12px;
+  }
+  .hero-footnote > span {
+    display: none;
+  }
+  .hero-actions {
+    gap: 14px;
+  }
+  .hero-actions .button {
+    font-size: 12px;
+  }
+  .hero-actions .text-button {
+    font-size: 11px;
+  }
+  .pill {
+    font-size: 10px;
+  }
+  .metrics-grid .metric {
+    padding: 17px 14px;
+  }
+  .metrics-grid .metric > div {
+    font-size: 12px;
+    line-height: 1.6;
+    align-items: flex-start;
+  }
+  .metrics-grid .metric > div > svg {
+    margin-top: 3px;
+  }
+  .metrics-grid .metric > p {
+    font-size: 11px;
+    line-height: 1.7;
+    min-height: 36px;
+  }
+  .metric > strong {
+    font-size: 30px;
+  }
+  .panel-heading h2 {
+    font-size: 13px;
+  }
+  .panel-heading .text-button {
+    font-size: 11px;
+  }
+  .count-bubble {
+    font-size: 10px;
+  }
+  .agent-tile > strong {
+    font-size: 14px;
+  }
+  .agent-tile > span:not(.empty-agent-plus) {
+    font-size: 12px;
+  }
+  .agent-tile > small,
+  .agent-tile.empty-agent > small {
+    font-size: 11px;
+  }
+  .workflow-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 10px 5px;
+  }
+  .workflow-strip > div {
+    gap: 12px;
+    width: 100%;
+  }
+  .workflow-strip > div > span {
+    font-size: 11px;
+    width: 30px;
+    height: 30px;
+  }
+  .workflow-strip strong {
+    font-size: 13px;
+  }
+  .workflow-strip small {
+    font-size: 12px;
+  }
+  .room-feed {
+    min-height: 540px;
+    max-height: 680px;
+  }
+  .room-messages {
+    padding: 0 16px 20px;
+  }
+  .chat-form .send-button {
+    height: 32px;
+    width: 32px;
+  }
+  .task-empty p {
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .page-footer {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .page-footer .brand {
+    font-size: 15px;
+  }
+  .page-footer > span > span:not(.brand) {
+    display: inline;
+  }
+  .page-footer > span:first-child > span:last-child {
+    display: none;
+  }
+  .info-strip p {
+    font-size: 12px;
+  }
+  .member-card .role-label,
+  .member-account {
+    font-size: 13px;
+  }
+  .capability-list p {
+    font-size: 12px;
+  }
+  .capability-list .capability-note {
+    font-size: 11px;
+  }
+  .task-toolbar .tabs {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .task-toolbar .tabs > button {
+    font-size: 12px;
+    padding: 8px;
+    gap: 6px;
+  }
+  .task-toolbar .tabs > button > span {
+    font-size: 10px;
+  }
+  .task-row-title strong {
+    font-size: 12px;
+    white-space: normal;
+    line-height: 1.6;
+  }
+  .task-row .badge {
+    font-size: 10px;
+    padding: 4px 5px;
+  }
+  .task-row-title > span {
+    font-size: 10px;
+    gap: 5px;
+  }
+  .task-row-title > span .mono {
+    font-size: 10px;
+  }
+  .task-row {
+    align-items: flex-start;
+  }
+  .task-state {
+    margin-top: 4px;
+  }
+  .list-head {
+    font-size: 10px;
+  }
+  .large-empty p,
+  .review-empty p {
+    font-size: 13px;
+    line-height: 1.85;
+  }
+  .large-empty .button {
+    font-size: 13px;
+  }
+  .board-illustration > div > span {
+    font-size: 10px;
+    white-space: normal;
+    line-height: 1.7;
+  }
+  .review-card > p {
+    font-size: 13px;
+  }
+  .review-card-bottom .button {
+    font-size: 11px;
+  }
+  .review-card-bottom > span {
+    font-size: 12px;
+  }
+  .approval-card strong {
+    font-size: 13px;
+  }
+  .approval-card p {
+    font-size: 12px;
+  }
+  .settings-panel .panel-heading .button {
+    font-size: 11px;
+  }
+  .section-label {
+    font-size: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .section-label > span:last-child {
+    font-size: 10px;
+  }
+  .references-list strong {
+    font-size: 14px;
+  }
+  .form input:not([type='checkbox']):not([type='radio']),
+  .form textarea,
+  .form select,
+  .detail-feedback textarea {
+    font-size: 14px;
+    min-height: 43px;
+  }
+  .form-grid.three > label {
+    font-size: 12px;
+  }
+  .form-grid.three select {
+    font-size: 14px;
+  }
+  .modal-footer .button {
+    font-size: 12px;
+  }
+  .modal-heading .eyebrow {
+    font-size: 10px;
+  }
+  .detail-owner {
+    font-size: 12px;
+  }
+  .branch-bar code {
+    font-size: 11px;
+  }
+  .branch-bar > span {
+    font-size: 10px;
+  }
+  .detail-footer .button {
+    font-size: 12px;
+  }
+  .detail-footer > div > select {
+    font-size: 12px;
+    max-width: 170px;
+  }
+  .detail-footer {
+    margin-top: 23px;
+  }
+  .quick-search > label input,
+  .quick-results > button {
+    font-size: 13px;
+  }
+  .login-content > p {
+    font-size: 13px;
+  }
+  .login-content > .login-help {
+    font-size: 11px;
+  }
+  .quick-results > button .badge {
+    font-size: 10px;
+  }
+  .setup-content {
+    padding: 20px 20px 0;
+  }
+  .recovery-panel p {
+    font-size: 12px;
+  }
+  .recovery-panel h3 {
+    font-size: 14px;
+  }
+  .recovery-panel .button,
+  .warning-banner,
+  .error-banner {
+    font-size: 12px;
+  }
+  .warning-banner span {
+    font-size: 11px;
+  }
+  .warning-banner .button {
+    font-size: 12px;
+  }
+}
