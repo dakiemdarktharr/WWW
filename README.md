@@ -6,9 +6,11 @@
 
 RELAY là workspace chạy trên máy cá nhân để nhiều tài khoản Codex cùng làm một dự án. Nhập một prompt: cả team đề xuất, lead tổng hợp workflow, hệ thống chia việc theo khối lượng ước lượng và tự chạy các task đủ điều kiện. Mỗi tài khoản có hồ sơ riêng; mỗi task thực thi có Git worktree và hàng đợi review.
 
+Phiên bản **0.2** bổ sung **MESH**, session Codex tương tác chạy bằng CLI/App Server thật, nhiều session trên một account, quota chung, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn nền tảng](docs/FOUNDATION.md) mô tả các quy tắc và phạm vi đã triển khai.
+
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
-![RELAY Workroom trước khi kết nối tài khoản](docs/images/workroom.png)
+![MESH trước khi kết nối dự án](docs/images/mesh.png)
 
 ## Chạy nhanh
 
@@ -33,6 +35,17 @@ npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
 
 ## Thử với bốn tài khoản
 
+Để dùng nền tảng mới:
+
+1. Thêm project Git trong Settings, tạo hồ sơ và tự đăng nhập trong Team.
+2. Mở **MESH** để trò chuyện theo project. Tin người dùng được nhận việc một lần và chuyển tới session chỉ đọc khi có account/quota phù hợp; agent không tự mở vòng trả lời nhau. `!!` chỉ đánh dấu lệnh từ người dùng thật.
+3. Trong **Sessions**, mở session theo account, chọn read-only hoặc scope ghi file và gửi prompt. Mỗi cửa sổ có output/tool events thật, follow-up/steering và Pause/Stop. Có thể pop out một session hoặc mở demo bằng URL localhost. Đây là rich console của runtime thật; chưa nhúng native TUI/ứng dụng Codex Desktop.
+4. Trong panel Usage, refresh quota. Còn ≤50% ở một cửa sổ áp dụng sẽ ngừng giao việc và pause các session của account. Nếu cần dùng phần dự trữ, người dùng cấp quyền theo account/project, mức sàn và thời hạn. Quota chưa biết/quá cũ không được coi là còn đầy.
+5. Trước code handoff, cấu hình owner GitHub/name/email trong Team và origin của project. Handoff dừng source, commit progress với author đã cấu hình, push và xác nhận remote SHA. Người nhận đọc/ACK, rồi tiếp tục từ session được chuyển quyền. Push lỗi giữ khóa và hiện Needs you.
+6. Sau gián đoạn, kiểm tra PID cũ, xác nhận worker đã dừng rồi Recover; Resume là bước riêng. Database migration giữ hồ sơ, task và lịch sử cũ.
+
+Luồng team workflow từ bản trước vẫn dùng được:
+
 1. Trong **Settings**, thêm đường dẫn tuyệt đối tới một Git repository đã có commit đầu tiên. Đặt mục tiêu chung cho dự án. Repository đang mở trong editor khác vẫn sử dụng được; nhánh chính cần sạch trước khi tích hợp.
 2. Trong **Team**, tạo bốn hồ sơ, ví dụ Atlas / Vega / Echo / Nova, rồi chọn vai trò. Đây là nhãn bạn đặt, không phải tài khoản đã được tạo sẵn.
 3. Đăng nhập lần lượt bằng **Sign in with ChatGPT** hoặc device code. Nếu trình duyệt đang giữ tài khoản trước, hãy chọn đúng tài khoản trên trang OpenAI. Kiểm tra email hiện trong từng thẻ. Không đăng nhập đồng thời vì callback OAuth dùng cổng cục bộ.
@@ -53,7 +66,7 @@ RELAY không đăng ký tài khoản thay bạn. Hai hồ sơ đăng nhập cùn
 - Workflow từ một prompt: toàn team đề xuất → lead lập kế hoạch → cân bằng effort → thực thi theo DAG → review. Pause/resume/cancel có kiểm soát cạnh tranh; restart không tự tiêu usage.
 - Team với nhiều hồ sơ Codex riêng, browser/device login, logout, quota và inventory skills/plugins thực tế.
 - Board nhiệm vụ, priorities, dependencies, phạm vi công việc, assignment và dispatch.
-- Nhận việc nguyên tử bằng SQLite; một hồ sơ không nhận hai việc, hai việc không giữ phạm vi giao nhau. Khóa vẫn giữ khi chờ review.
+- Nhận việc nguyên tử bằng SQLite; mỗi task/session có một owner, hai session ghi file không giữ phạm vi giao nhau. Account có giới hạn session và quota chung; khóa vẫn giữ khi chờ review.
 - Git worktree và branch riêng, base commit được lưu, diff gồm thay đổi đã commit và chưa commit, tên file Unicode được hỗ trợ.
 - Human approval cho lệnh/file changes. Không có nút “approve everything”. Sandbox hoặc approval policy bị hạ cấp thì không khởi chạy turn.
 - Tích hợp squash có kiểm tra scope, phát hiện conflict và rollback; Git hooks vẫn được thực thi.

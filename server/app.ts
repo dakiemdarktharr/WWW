@@ -78,7 +78,7 @@ export async function buildApp(
       return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
     if (request.headers['sec-fetch-site'] === 'cross-site')
       return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
-    if (request.url.startsWith('/api/') && !request.url.startsWith('/api/session')) {
+    if (request.url.startsWith('/api/') && request.url.split('?')[0] !== '/api/session') {
       const session = sessionFor(request);
       if (!session || session.expires < Date.now())
         return reply.code(401).send({ error: 'Your local session expired. Reload the workspace.' });
@@ -167,6 +167,173 @@ export async function buildApp(
     workspace.log(`Added ${member.name} as ${member.role}.`, null, member.id, 'member');
     return member;
   });
+  app.patch('/api/members/:id', async (request) => {
+    const memberId = params(request);
+    const patch = z
+      .object({
+        name: text.optional(),
+        maxSessions: z.number().int().min(1).max(8).optional(),
+        owner: z
+          .object({
+            login: z.string().regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})$/),
+            name: z
+              .string()
+              .trim()
+              .min(1)
+              .max(100)
+              .regex(/^[^\r\n<>\x00]+$/),
+            email: z.email().max(200),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .parse(request.body);
+    return workspace.store.updateMember(memberId, patch);
+  });
+  app.post('/api/members/:id/quota/refresh', async (request) =>
+    workspace.quota.refresh(params(request)),
+  );
+  app.post('/api/members/:id/quota/grants', async (request) => {
+    const grant = workspace.quota.grant(
+      params(request),
+      z
+        .object({
+          projectId: id,
+          floor: z.number().int().min(0).max(49),
+          expiresAt: z.iso.datetime({ offset: true }),
+        })
+        .strict()
+        .parse(request.body),
+    );
+    void workspace.inbox
+      .dispatch(grant.projectId)
+      .catch((error) => workspace.log(redact(error), null, null, 'error', grant.projectId));
+    return grant;
+  });
+  app.post('/api/quota/grants/:id/revoke', async (request) =>
+    workspace.quota.revoke(params(request)),
+  );
+  app.post('/api/sessions', async (request) =>
+    workspace.sessions.create(
+      z
+        .object({
+          memberId: id,
+          projectId: id,
+          taskId: id.optional(),
+          title: text.optional(),
+          scope: z.array(scopePath).max(50).optional(),
+          readOnly: z.boolean().default(true),
+          prompt: z.string().max(16000).optional(),
+        })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.get('/api/sessions/:id/events', async (request) =>
+    workspace.sessions.events(params(request)),
+  );
+  app.post('/api/sessions/:id/send', async (request) =>
+    workspace.sessions.send(
+      params(request),
+      z
+        .object({ prompt: z.string().trim().min(1).max(16000) })
+        .strict()
+        .parse(request.body).prompt,
+    ),
+  );
+  app.post('/api/sessions/:id/stop', async (request) => workspace.sessions.stop(params(request)));
+  app.post('/api/sessions/:id/pause', async (request) =>
+    workspace.sessions.interrupt(params(request), 'Paused by the human.'),
+  );
+  app.post('/api/sessions/:id/resume', async (request) =>
+    workspace.sessions.resume(params(request)),
+  );
+  app.post('/api/sessions/:id/recover', async (request) =>
+    workspace.sessions.recover(
+      params(request),
+      z
+        .object({ confirmedStopped: z.literal(true) })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.get('/api/mesh/:id/inbox', async (request) => {
+    const query = z
+      .object({
+        memberId: id,
+        after: z.coerce.number().int().nonnegative().optional(),
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+      })
+      .strict()
+      .parse(request.query);
+    return workspace.mesh.readRoom(params(request), query.memberId, {
+      after: query.after,
+      limit: query.limit,
+    });
+  });
+  app.post('/api/mesh/messages', async (request) => {
+    const message = workspace.mesh.post({
+      ...z
+        .object({
+          projectId: id,
+          content: z.string().trim().min(1).max(10000),
+          replyTo: id.nullable().optional(),
+          mentions: z.array(id).max(16).optional(),
+          taskId: id.nullable().optional(),
+        })
+        .strict()
+        .parse(request.body),
+      authorId: null,
+      kind: 'message',
+    });
+    void workspace.inbox
+      .dispatch(message.projectId)
+      .catch((error) => workspace.log(redact(error), null, null, 'error', message.projectId));
+    return message;
+  });
+  app.post('/api/mesh/:id/read', async (request) => {
+    const input = z
+      .object({ memberId: id, sequence: z.number().int().nonnegative() })
+      .strict()
+      .parse(request.body);
+    return workspace.mesh.markRead(params(request), input.memberId, input.sequence);
+  });
+  app.post('/api/mesh/:id/ack', async (request) => {
+    const input = z
+      .object({ memberId: id, sequence: z.number().int().nonnegative() })
+      .strict()
+      .parse(request.body);
+    return workspace.mesh.ack(params(request), input.memberId, input.sequence);
+  });
+  app.post('/api/mesh/messages/:id/claim', async (request) =>
+    workspace.mesh.claim(
+      params(request),
+      z.object({ memberId: id }).strict().parse(request.body).memberId,
+    ),
+  );
+  app.post('/api/requests/:id/resolve', async (request) => workspace.mesh.resolve(params(request)));
+  app.post('/api/handoffs', async (request) =>
+    workspace.handoffs.create(
+      z
+        .object({
+          sessionId: id,
+          toMemberId: id,
+          summary: z.string().trim().min(1).max(6000),
+          nextSteps: z.string().trim().min(1).max(10000),
+          testEvidence: z.string().trim().min(1).max(10000),
+        })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.post('/api/handoffs/:id/retry', async (request) => workspace.handoffs.retry(params(request)));
+  app.post('/api/handoffs/:id/accept', async (request) =>
+    workspace.handoffs.accept(params(request)),
+  );
+  app.post('/api/handoffs/:id/cancel', async (request) =>
+    workspace.handoffs.cancel(params(request)),
+  );
   app.post('/api/members/:id/login', async (request) =>
     workspace.login(
       params(request),

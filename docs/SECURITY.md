@@ -10,7 +10,7 @@ RELAY trusts its local operator and the accounts they connect. It is a loopback 
 - Codex owns browser/device authentication and stores credentials in its profile. RELAY never reads or exposes `auth.json`, never handles passwords and never substitutes a shared API key. Profile directories use mode 0700 on Unix and restricted inherited ACLs on Windows.
 - OAuth starts are serialized. Returned identity and limits come from the actual provider; a disconnected account has no fabricated balance.
 - Execution requests workspace-write sandboxing; proposal and synthesis turns request read-only. Both require human on-request approvals. The returned policy is verified before starting the turn. Unsupported requests fail closed.
-- SQLite transactions plus a unique member lease enforce task ownership. File/directory scopes are checked for ancestor overlap. A fencing token rejects obsolete completion, room-tool and approval events. Locks are held through review.
+- SQLite transactions plus unique task/session leases enforce ownership. Account concurrency and quota apply across sessions/projects; legacy dispatch retains one task per member. File/directory scopes are checked for ancestor overlap. A fencing token rejects obsolete completion, room-tool and approval events. Locks are held through review.
 - A timed-out turn-start might still be running. RELAY stops the owning process tree before releasing its lease; if termination cannot be confirmed the lease remains orphaned. Restart does not silently reassign interrupted work.
 - Review uses the recorded base commit, including committed and uncommitted changes. Scope and common private-path checks are re-run around Git hooks. Squash integration avoids importing raw worker ancestry. Conflicts restore the pre-integration state when Git permits rollback.
 - App Server stderr is drained without retaining it. Visible errors, events and structured approval details redact common credential formats. Redaction is defensive pattern matching, not a proof that arbitrary text contains no secrets.
@@ -30,6 +30,8 @@ Run team authorizes model turns for every signed-in profile in the roster. Norma
 Accepting a review explicitly permits writing a squash commit on the project's currently checked-out branch. Clean-tree checks and an in-process integration lock reduce collisions; avoid editing or committing in that primary checkout while integration is underway. Worker worktrees and Git objects remain available locally. If a real secret was accidentally committed, rotate it and follow a deliberate Git-history cleanup procedure; squash is not secret erasure.
 
 ## Recovery
+
+The 0.2 foundation also checks exact source session/token ownership throughout handoff, verifies pushed checkpoint SHAs, separates inbox delivery/read/ACK, and binds reserve grants to account/project/floor/expiry. Sender identity comes from the coordinator; an agent emitting `!!` cannot gain human authority. Session routes require the same cookie and CSRF checks as the rest of the API. Native Codex processes share an account home only within the same trusted operator's local account boundary.
 
 After a crash, the UI retains interrupted tasks and locks. Stop any old RELAY-owned Codex process trees before acknowledging recovery. The coordinator also stops any old client it still owns before releasing orphaned locks. Reviewed tasks keep their reservations through restart and need review or revision, not orphan recovery.
 

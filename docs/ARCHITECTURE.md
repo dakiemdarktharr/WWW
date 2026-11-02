@@ -19,7 +19,7 @@ flowchart LR
 
 ## ADR-002: deterministic ownership, model-driven work
 
-Accepted. Models implement tasks and communicate progress. SQL transactions decide who owns which task, dependency checks decide readiness, and a human decides integration. We do not spend a second model call to make a decision that a transaction can enforce. One member holds one task lease, and overlapping scopes are mutually exclusive. Semantic duplicate tasks remain a product-level judgment.
+Accepted. Models implement tasks and communicate progress. SQL transactions decide who owns which task, dependency checks decide readiness, and a human decides integration. We do not spend a second model call to make a decision that a transaction can enforce. Legacy dispatch holds one task lease per member; interactive sessions in ADR-008 use per-session leases. Overlapping writing scopes are mutually exclusive. Semantic duplicate tasks remain a product-level judgment.
 
 ## ADR-003: App Server per account
 
@@ -57,3 +57,9 @@ flowchart LR
 Planning submissions are fenced to the active lease and accepted only after a successful turn. Invalid plans return structured tool errors so the lead can correct them in the same turn. Missing output blocks the workflow; retries require Resume. A late materialization conflict rolls back every generated task and sends synthesis back for revision.
 
 The team roster stays reserved for that workflow. A single-flight event-driven pump responds to completions, integrations and revisions; it is not a polling loop that repeatedly spends usage. Read-only planning releases its lease on completion; execution retains ownership through review. Pause blocks new claims, Cancel blocks Resume and drains in-flight starts before stopping workers, and control revisions ensure a later Pause wins over an older Resume. Every unfinished workflow starts paused after a coordinator restart.
+
+## ADR-008: account budgets and independent session ownership
+
+Accepted for the 0.2 foundation. Account identity/quota is shared; session processes, worktrees and task leases are independent. SQLite migrates the lease uniqueness key to session while preserving legacy claim behavior. A per-account process allocation lock caps live children, safely evicting only finished idle processes while preserving saved thread state and review reservations. Failed termination blocks allocation and retains evidence for recovery.
+
+MESH uses persistent inbox cursors and atomic request claims. Human chat dispatch is bounded, read-only and never triggered by agent/system replies. Quota is normalized from provider windows, fails closed when unknown/stale, and is applied across projects. Handoff checkpoints use existing remotes and configured owner attribution, revalidate the source token across every await, then rotate ownership only after remote confirmation and recipient acknowledgement. See [foundation details](FOUNDATION.md).

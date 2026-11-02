@@ -14,6 +14,8 @@ export interface Member {
   rateLimits: unknown;
   error?: string | null;
   createdAt: string;
+  owner?: { login: string; name: string; email: string };
+  maxSessions?: number;
 }
 export interface Project {
   id: string;
@@ -49,6 +51,7 @@ export interface Task {
   stage?: string;
   effort?: number;
   planKey?: string;
+  sessionId?: string;
 }
 export interface PlanTask {
   key: string;
@@ -108,6 +111,108 @@ export interface RoomMessage {
   kind: 'message' | 'progress' | 'handoff' | 'blocker' | 'system';
   content: string;
   createdAt: string;
+  sequence?: number;
+  sessionId?: string | null;
+  replyTo?: string | null;
+  mentions?: string[];
+  humanCommand?: boolean;
+  requestStatus?: 'open' | 'claimed' | 'done';
+  claimedBy?: string | null;
+}
+export interface CodexSession {
+  id: string;
+  memberId: string;
+  projectId: string;
+  taskId: string;
+  title: string;
+  status:
+    | 'idle'
+    | 'starting'
+    | 'running'
+    | 'paused'
+    | 'review'
+    | 'stopped'
+    | 'interrupted'
+    | 'error'
+    | 'handoff';
+  readOnly: boolean;
+  threadId: string | null;
+  turnId: string | null;
+  pid: number | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface SessionEvent {
+  id: string;
+  sessionId: string;
+  kind: 'user' | 'agent' | 'command' | 'files' | 'system' | 'error';
+  text: string;
+  createdAt: string;
+}
+export interface QuotaWindow {
+  id: string;
+  label: string;
+  usedPercent: number;
+  remainingPercent: number;
+  windowMinutes: number | null;
+  resetsAt: number | null;
+}
+export interface AccountQuota {
+  id: string;
+  memberId: string;
+  windows: QuotaWindow[];
+  observedAt: string;
+  source: 'provider';
+  ordinaryUsageAllowed: boolean | null;
+  status: 'available' | 'reserve' | 'unknown' | 'stale' | 'blocked';
+  error: string | null;
+}
+export interface QuotaGrant {
+  id: string;
+  memberId: string;
+  projectId: string;
+  floor: number;
+  expiresAt: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+export interface MeshCursor {
+  id: string;
+  projectId: string;
+  memberId: string;
+  readThrough: number;
+  acknowledgedThrough: number;
+  updatedAt: string;
+}
+export interface HumanRequest {
+  id: string;
+  projectId: string;
+  kind: 'quota' | 'question' | 'recovery' | 'handoff';
+  title: string;
+  content: string;
+  status: 'open' | 'resolved';
+  createdAt: string;
+  resolvedAt: string | null;
+}
+export interface Handoff {
+  id: string;
+  projectId: string;
+  taskId: string;
+  fromSessionId: string;
+  toMemberId: string;
+  toSessionId: string | null;
+  status: 'checkpointing' | 'blocked' | 'awaiting_ack' | 'accepted' | 'cancelled';
+  branch: string | null;
+  commitSha: string | null;
+  remote: string | null;
+  summary: string;
+  nextSteps: string;
+  testEvidence: string;
+  quota: AccountQuota | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface Approval {
   id: string;
@@ -132,6 +237,12 @@ export interface WorkspaceState {
   members: Member[];
   tasks: Task[];
   workflows: Workflow[];
+  sessions: CodexSession[];
+  quotas: AccountQuota[];
+  quotaGrants: QuotaGrant[];
+  meshCursors: MeshCursor[];
+  humanRequests: HumanRequest[];
+  handoffs: Handoff[];
   messages: RoomMessage[];
   approvals: Approval[];
   activity: Activity[];

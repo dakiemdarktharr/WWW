@@ -23,6 +23,7 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
+  MessageSquare,
   Plus,
   RefreshCw,
   Search,
@@ -51,8 +52,15 @@ import type {
 } from '../shared/types';
 import { api } from './api';
 import Workroom from './Workroom';
+import {
+  AccountSettings,
+  MeshPage,
+  QuotaCard,
+  SessionsPage,
+  type FoundationRequest,
+} from './Foundation';
 
-type View = 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings';
+type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings';
 type ModalState =
   | { type: 'member' | 'project' | 'task' | 'search' }
   | { type: 'detail'; taskId: string }
@@ -60,9 +68,11 @@ type ModalState =
   | { type: 'setup'; memberId: string; home: string; instructions: string }
   | null;
 const nav = [
+  { id: 'mesh', label: 'MESH', icon: MessageSquare },
+  { id: 'sessions', label: 'Sessions', icon: Terminal },
   { id: 'workroom', label: 'Workroom', icon: LayoutGrid },
-  { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'team', label: 'Team', icon: Users },
+  { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'reviews', label: 'Reviews', icon: GitMerge },
 ] as const;
 const roleIcons = {
@@ -264,10 +274,17 @@ function Modal({
 
 export default function App() {
   const initialView = window.location.hash.slice(1);
+  const [focusedSessionId, setFocusedSessionId] = useState(
+    initialView.startsWith('session=') ? initialView.slice(8) : '',
+  );
   const [view, setView] = useState<View>(
-    ['workroom', 'tasks', 'team', 'reviews', 'settings'].includes(initialView)
-      ? (initialView as View)
-      : 'workroom',
+    initialView.startsWith('session=')
+      ? 'sessions'
+      : ['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings'].includes(
+            initialView,
+          )
+        ? (initialView as View)
+        : 'mesh',
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
   const [selectedProject, setSelectedProject] = useState('');
@@ -288,7 +305,15 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       const data = await api<WorkspaceState>('/state');
-      setState(data);
+      setState({
+        ...data,
+        sessions: data.sessions || [],
+        quotas: data.quotas || [],
+        quotaGrants: data.quotaGrants || [],
+        meshCursors: data.meshCursors || [],
+        humanRequests: data.humanRequests || [],
+        handoffs: data.handoffs || [],
+      });
       setLoadError('');
     } catch (err) {
       setLoadError((err as Error).message);
@@ -321,7 +346,13 @@ export default function App() {
   useEffect(() => {
     const updateView = () => {
       const next = window.location.hash.slice(1);
-      if (['workroom', 'tasks', 'team', 'reviews', 'settings'].includes(next))
+      if (next.startsWith('session=')) {
+        setFocusedSessionId(next.slice(8));
+        setView('sessions');
+        return;
+      }
+      setFocusedSessionId('');
+      if (['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings'].includes(next))
         setView(next as View);
     };
     window.addEventListener('hashchange', updateView);
@@ -370,12 +401,15 @@ export default function App() {
       if (success) setToast({ text: success });
       return result;
     } catch (err) {
+      await refresh();
       setToast({ text: (err as Error).message, error: true });
       return undefined;
     } finally {
       setBusy('');
     }
   }
+  const foundationRequest: FoundationRequest = <T,>(path: string, body: unknown, method = 'POST') =>
+    perform<T>('foundation', path, body, undefined, method);
   const project = state?.projects.find((p) => p.id === selectedProject) || state?.projects[0];
   const tasks = state?.tasks.filter((t) => t.projectId === project?.id) || [];
   const members = state?.members || [];
@@ -384,6 +418,17 @@ export default function App() {
   const selectedTask =
     modal?.type === 'detail' ? state?.tasks.find((t) => t.id === modal.taskId) : undefined;
   const pending = !!busy;
+  useEffect(() => {
+    const session = state?.sessions.find((entry) => entry.id === focusedSessionId);
+    document.title = session
+      ? `${session.title} · RELAY`
+      : `${view === 'mesh' ? 'MESH' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · RELAY`;
+  }, [
+    focusedSessionId,
+    view,
+    project?.name,
+    state?.sessions.find((entry) => entry.id === focusedSessionId)?.title,
+  ]);
   const createTask = () => (project ? setModal({ type: 'task' }) : setModal({ type: 'project' }));
   const openDetail = (task: Task) => {
     setDiff(null);
@@ -435,7 +480,12 @@ export default function App() {
     if (result) closeModal();
   }
 
-  const pageTitle = view === 'workroom' ? 'Workroom' : view[0].toUpperCase() + view.slice(1);
+  const pageTitle =
+    view === 'mesh'
+      ? 'MESH'
+      : view === 'workroom'
+        ? 'Workroom'
+        : view[0].toUpperCase() + view.slice(1);
   const taskRow = (task: Task) => {
     const Icon = kindIcons[task.kind];
     const owner = members.find((m) => m.id === task.assignedTo);
@@ -473,7 +523,9 @@ export default function App() {
   };
 
   return (
-    <div className={`app ${sidebar ? 'sidebar-open' : ''}`}>
+    <div
+      className={`app ${sidebar ? 'sidebar-open' : ''} ${focusedSessionId ? 'session-popout' : ''}`}
+    >
       {sidebar && (
         <button
           className="sidebar-scrim"
@@ -616,6 +668,28 @@ export default function App() {
             </div>
           )}
 
+          {view === 'mesh' && state && (
+            <MeshPage
+              key={project?.id || 'empty-mesh'}
+              state={state}
+              project={project}
+              busy={pending}
+              request={foundationRequest}
+              selectProject={setSelectedProject}
+              addProject={() => setModal({ type: 'project' })}
+              openSessions={() => navigate('sessions')}
+            />
+          )}
+          {view === 'sessions' && state && (
+            <SessionsPage
+              state={state}
+              project={project}
+              busy={pending}
+              request={foundationRequest}
+              addProject={() => setModal({ type: 'project' })}
+              focusedId={focusedSessionId || undefined}
+            />
+          )}
           {view === 'workroom' && (
             <Workroom
               key={project?.id || 'empty'}
@@ -653,41 +727,53 @@ export default function App() {
               </section>
               <div className="team-grid">
                 {members.map((member) => (
-                  <MemberCard
-                    key={member.id}
-                    member={member}
-                    task={tasks.find(
-                      (t) => t.assignedTo === member.id && ['running', 'review'].includes(t.status),
-                    )}
-                    busy={pending}
-                    login={(method) => void login(member, method)}
-                    refresh={() =>
-                      void perform(
-                        `refresh-${member.id}`,
-                        `/members/${member.id}/refresh`,
-                        {},
-                        'Account status refreshed.',
-                      )
-                    }
-                    logout={() =>
-                      void perform(
-                        `logout-${member.id}`,
-                        `/members/${member.id}/logout`,
-                        {},
-                        'Account signed out.',
-                      )
-                    }
-                    importSkills={() =>
-                      void perform(
-                        `skills-${member.id}`,
-                        `/members/${member.id}/skills/import`,
-                        {},
-                        'Local skills imported. Refreshing capabilities.',
-                      )
-                    }
-                    openTask={openDetail}
-                    setup={() => void openSetup(member)}
-                  />
+                  <div className="account-card-group" key={member.id}>
+                    <MemberCard
+                      member={member}
+                      task={tasks.find(
+                        (t) =>
+                          t.assignedTo === member.id && ['running', 'review'].includes(t.status),
+                      )}
+                      busy={pending}
+                      login={(method) => void login(member, method)}
+                      refresh={() =>
+                        void perform(
+                          `refresh-${member.id}`,
+                          `/members/${member.id}/refresh`,
+                          {},
+                          'Account status refreshed.',
+                        )
+                      }
+                      logout={() =>
+                        void perform(
+                          `logout-${member.id}`,
+                          `/members/${member.id}/logout`,
+                          {},
+                          'Account signed out.',
+                        )
+                      }
+                      importSkills={() =>
+                        void perform(
+                          `skills-${member.id}`,
+                          `/members/${member.id}/skills/import`,
+                          {},
+                          'Local skills imported. Refreshing capabilities.',
+                        )
+                      }
+                      openTask={openDetail}
+                      setup={() => void openSetup(member)}
+                    />
+                    <div className="account-control-panel panel">
+                      <QuotaCard
+                        member={member}
+                        project={project}
+                        state={state!}
+                        busy={pending}
+                        request={foundationRequest}
+                      />
+                      <AccountSettings member={member} busy={pending} request={foundationRequest} />
+                    </div>
+                  </div>
                 ))}
                 {!members.length && (
                   <div className="panel compact-empty">
@@ -1698,7 +1784,6 @@ function MemberCard({
   setup: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const limits = parseLimits(member.rateLimits);
   return (
     <section className="panel member-card">
       <div className="member-top">
@@ -1724,29 +1809,6 @@ function MemberCard({
           <ArrowUpRight size={14} />
         </button>
       )}
-      <div className="member-usage">
-        <div>
-          <span>Plan usage</span>
-          <span>{limits.length ? `${Math.round(limits[0].used)}% used` : '—'}</span>
-        </div>
-        {limits.length ? (
-          limits.map((limit, i) => (
-            <div className="usage-window" key={i}>
-              <div className="usage-track">
-                <span style={{ width: `${Math.max(0, Math.min(100, limit.used))}%` }} />
-              </div>
-              <small>
-                {limit.label}
-                {limit.reset ? ` · resets ${new Date(limit.reset * 1000).toLocaleString()}` : ''}
-              </small>
-            </div>
-          ))
-        ) : (
-          <div className="usage-track unknown">
-            <span />
-          </div>
-        )}
-      </div>
       <button
         className="capability-toggle"
         onClick={() => setExpanded(!expanded)}
@@ -1821,27 +1883,6 @@ function MemberCard({
       </div>
     </section>
   );
-}
-
-function parseLimits(input: unknown): { used: number; label: string; reset?: number }[] {
-  if (!input || typeof input !== 'object') return [];
-  const root = input as Record<string, any>;
-  const limits = root.rateLimits || root;
-  return ['primary', 'secondary'].flatMap((key, i) => {
-    const window = limits[key];
-    if (!window || typeof window.usedPercent !== 'number') return [];
-    return [
-      {
-        used: window.usedPercent,
-        label: window.windowDurationMins
-          ? `${window.windowDurationMins < 1440 ? `${Math.round(window.windowDurationMins / 60)} hour` : `${Math.round(window.windowDurationMins / 1440)} day`} window`
-          : i === 0
-            ? 'Primary window'
-            : 'Secondary window',
-        reset: window.resetsAt,
-      },
-    ];
-  });
 }
 
 function ApprovalCard({

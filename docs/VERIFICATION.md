@@ -1,12 +1,12 @@
 # Verification record
 
-Date: 2026-11-02. Host: Windows. Application runtime: Node.js 24.22.1. Installed Codex: `0.166.0-alpha.5.1`.
+Latest verification: 2026-11-03. Host: Windows. Application runtime: Node.js 24.22.1. Installed Codex: `0.166.0-alpha.5.1`.
 
 ## Automated checks
 
 The suite uses temporary repositories, real SQLite transactions, real worker threads competing over one database, real Git worktrees and controlled Codex protocol processes. It makes no paid model calls.
 
-Current local run: **85 tests passed, 0 failed**. Prettier validation, TypeScript checking and the production Vite build also passed. Dependencies are unchanged from the initial audited release.
+Foundation local full run: **136 tests passed, 0 failed**. The final quota-only run passed all **9 tests**, including the subsequently added queued-prompt regression; the complete suite now contains **137 tests**. Prettier validation, TypeScript checking and the production Vite build also passed. Dependencies are unchanged from the initial audited release.
 
 - Store: competing claims, unique member ownership, scope overlap, dependency acceptance, duplicate titles, cycle detection, fencing, persistence, restart and retained review locks.
 - Git: real checkout isolation, clean-tree preflight, committed/uncommitted/Unicode diffs, squash history boundaries, conflict rollback and scope revalidation around hooks.
@@ -47,6 +47,18 @@ The new interface was checked with browser-only workflow fixtures against a sepa
 - Checked all five views at 390px and the modal keyboard focus trap. No page errors; one expected HTTP 409 console entry came from the no-login test.
 
 These browser fixtures verify rendering and interaction contracts. The separate controlled-protocol integration tests verify actual coordinator transitions, SQLite ownership and Git integration. Neither establishes live paid-account behavior.
+
+## Foundation 0.2 checks
+
+- Actual installed CLI initialized in a new isolated `.local/foundation-runtime-proof` profile, returned no signed-in account, and its owned process stopped successfully. This consumed no model turn.
+- Session tests cover same-account concurrency, separate worktree/scope leases, output streams, steering, sandbox checks, foreign event/tool rejection, review reservations and cancellation during startup.
+- MESH tests cover persistent unread/delivery/read/ACK boundaries, introductions, scoped threads, spoofed human prefixes and atomic competing request claims.
+- Quota tests cover multiple buckets, sparse hard-block updates, unknown/stale data, scoped/time-limited reserve grants and enforcement across projects.
+- Handoff tests exercise real Git commits and bare remotes: author mapping, remote SHA, failed pushes, hook changes, private root/merge history, stale source/session tokens, ACK replay and restart interruption.
+- HTTP regressions verify the `/api/sessions` routes do not inherit the public `/api/session` bootstrap exception and that all mutations retain session/CSRF validation.
+- Browser checks used isolated QA data plus explicitly marked browser fixtures. MESH threads, mentions, claims, Needs you, quota grant, handoff ACK, actual session event rendering, prompt controls, recovery checkbox and popout were checked.
+- Actual unauthenticated profile/project/message forms were exercised; session startup failed before a model turn. Seven views at 390px had no horizontal overflow. Focus trap, Escape, loopback demo validation and session re-bootstrap after 401 passed.
+- Production data was not seeded with fixture accounts/messages. Existing one-profile state remained present; the migrated service returned version 0.2.0, no sessions/tasks and honest unknown quota.
 
 ## Still requires the user's accounts
 

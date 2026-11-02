@@ -5,6 +5,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import App from './App';
 import './styles.css';
 import './components.css';
+import './foundation.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

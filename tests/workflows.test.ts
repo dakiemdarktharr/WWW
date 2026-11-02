@@ -32,6 +32,18 @@ class PlanningCodex extends CodexClient {
       result = {
         account: { type: 'chatgpt', email: `${this.memberId}@example.test`, planType: 'plus' },
       };
+    else if (method === 'account/rateLimits/read')
+      result = {
+        rateLimits: {
+          limitId: 'test',
+          primary: {
+            usedPercent: 10,
+            windowDurationMins: 300,
+            resetsAt: Math.floor(Date.now() / 1000) + 3600,
+          },
+        },
+        ordinaryUsageAllowed: true,
+      };
     else if (method === 'thread/start') {
       result = {
         thread: { id: `${this.memberId}-thread-${++this.sequence}` },

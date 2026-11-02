@@ -33,6 +33,18 @@ class ControlledCodex extends CodexClient {
     let result: unknown = {};
     if (method === 'account/read')
       result = { account: { type: 'chatgpt', email: 'controlled@example.test', planType: 'plus' } };
+    else if (method === 'account/rateLimits/read')
+      result = {
+        rateLimits: {
+          limitId: 'test',
+          primary: {
+            usedPercent: 10,
+            windowDurationMins: 300,
+            resetsAt: Math.floor(Date.now() / 1000) + 3600,
+          },
+        },
+        ordinaryUsageAllowed: true,
+      };
     else if (method === 'thread/start') {
       if (this.beforeThreadResponse) await this.beforeThreadResponse();
       result = {

@@ -1,7 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import type { Activity, Member, Project, RoomMessage, Task, Workflow } from '../shared/types.ts';
+import type {
+  Activity,
+  Member,
+  Project,
+  RoomMessage,
+  Task,
+  Workflow,
+  CodexSession,
+} from '../shared/types.ts';
 import { normalizeScope, scopesOverlap } from './security.ts';
 
 export class DomainError extends Error {
@@ -20,15 +28,31 @@ export interface Lease {
   scopes: string[];
   heartbeat: number;
   orphaned: number;
+  sessionId?: string;
 }
 export class Store extends EventEmitter {
   db: DatabaseSync;
+  private transactionDepth = 0;
+  private savepoint = 0;
   constructor(filename: string) {
     super();
     this.db = new DatabaseSync(filename);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS leases (taskId TEXT PRIMARY KEY, memberId TEXT UNIQUE NOT NULL, projectId TEXT NOT NULL, token TEXT NOT NULL, scopes TEXT NOT NULL, heartbeat INTEGER NOT NULL, orphaned INTEGER NOT NULL DEFAULT 0);`);
+    const columns = this.db.prepare('PRAGMA table_info(leases)').all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'sessionId'))
+      this.transaction(() => {
+        this.db.exec(`ALTER TABLE leases RENAME TO leases_v1;
+        CREATE TABLE leases (taskId TEXT PRIMARY KEY, memberId TEXT NOT NULL, sessionId TEXT UNIQUE NOT NULL, projectId TEXT NOT NULL, token TEXT NOT NULL, scopes TEXT NOT NULL, heartbeat INTEGER NOT NULL, orphaned INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO leases(taskId,memberId,sessionId,projectId,token,scopes,heartbeat,orphaned) SELECT taskId,memberId,memberId,projectId,token,scopes,heartbeat,orphaned FROM leases_v1;
+        DROP TABLE leases_v1;`);
+      });
+    let sequence = 0;
+    for (const message of this.all<RoomMessage>('message')) {
+      sequence = Math.max(sequence + 1, message.sequence || 0);
+      if (!message.sequence) this.put('message', { ...message, sequence });
+    }
   }
   all<T>(kind: string): T[] {
     return (
@@ -57,14 +81,21 @@ export class Store extends EventEmitter {
     this.emit('change');
   }
   transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
+    const nested = this.transactionDepth > 0;
+    const point = `relay_${++this.savepoint}`;
+    this.db.exec(nested ? `SAVEPOINT ${point}` : 'BEGIN IMMEDIATE');
+    this.transactionDepth++;
     try {
       const value = fn();
-      this.db.exec('COMMIT');
+      this.db.exec(nested ? `RELEASE SAVEPOINT ${point}` : 'COMMIT');
       return value;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      this.db.exec(
+        nested ? `ROLLBACK TO SAVEPOINT ${point}; RELEASE SAVEPOINT ${point}` : 'ROLLBACK',
+      );
       throw error;
+    } finally {
+      this.transactionDepth--;
     }
   }
   members() {
@@ -75,6 +106,17 @@ export class Store extends EventEmitter {
   }
   projects() {
     return this.all<Project>('project');
+  }
+  sessions() {
+    return this.all<CodexSession>('session');
+  }
+  updateSession(id: string, patch: Partial<CodexSession>) {
+    return this.put('session', {
+      ...this.get<CodexSession>('session', id),
+      ...patch,
+      id,
+      updatedAt: new Date().toISOString(),
+    });
   }
   workflows() {
     return this.all<Workflow>('workflow');
@@ -201,11 +243,20 @@ export class Store extends EventEmitter {
     };
     deps.forEach((id) => visit(id, new Set()));
   }
-  claim(taskId: string, memberId: string): { task: Task; lease: Lease } {
+  claim(taskId: string, memberId: string, sessionId?: string): { task: Task; lease: Lease } {
     return this.transaction(() => {
       const task = this.get<Task>('task', taskId),
         member = this.get<Member>('member', memberId);
+      const session = sessionId ? this.get<CodexSession>('session', sessionId) : null;
+      const scopes = session?.readOnly ? [] : task.scope;
       if (task.status !== 'ready') throw new DomainError('Only a ready task can be claimed.');
+      if (
+        this.all<{ taskId: string; status: string }>('handoff').some(
+          (handoff) =>
+            handoff.taskId === taskId && !['accepted', 'cancelled'].includes(handoff.status),
+        )
+      )
+        throw new DomainError('This task is reserved by a pending handoff.');
       const reservation = this.workflows().find(
         (workflow) =>
           workflow.status !== 'completed' &&
@@ -219,36 +270,54 @@ export class Store extends EventEmitter {
         if (!['planning', 'running', 'review'].includes(workflow.status))
           throw new DomainError('Resume this workflow before starting a task.');
       }
-      if (!member.account || member.status !== 'ready')
+      if (
+        !member.account ||
+        (member.status !== 'ready' && !(sessionId && member.status === 'working'))
+      )
         throw new DomainError('This Codex profile must be signed in and ready.');
       if (task.assignedTo && task.assignedTo !== memberId)
         throw new DomainError('This task is assigned to another teammate.');
       if (task.dependsOn.some((id) => this.get<Task>('task', id).status !== 'done'))
         throw new DomainError('Dependencies must be integrated before this task can start.');
       for (const lease of this.leases()) {
-        if (lease.memberId === memberId)
+        if (lease.memberId === memberId && (!sessionId || lease.sessionId === sessionId))
           throw new DomainError('This teammate already owns another task.');
-        if (lease.projectId === task.projectId && scopesOverlap(task.scope, lease.scopes))
+        if (lease.projectId === task.projectId && scopesOverlap(scopes, lease.scopes))
           throw new DomainError(
             'Scope overlaps another claimed task. Wait for its handoff or narrow the scope.',
           );
+      }
+      if (sessionId) {
+        if (
+          session!.memberId !== memberId ||
+          session!.projectId !== task.projectId ||
+          session!.taskId !== taskId
+        )
+          throw new DomainError('Session does not own this task or account.');
+        if (
+          this.leases().filter((lease) => lease.memberId === memberId).length >=
+          (member.maxSessions || 2)
+        )
+          throw new DomainError('This account has reached its session concurrency limit.');
       }
       const lease: Lease = {
         taskId,
         memberId,
         projectId: task.projectId,
         token: randomUUID(),
-        scopes: task.scope,
+        scopes,
         heartbeat: Date.now(),
         orphaned: 0,
+        sessionId: sessionId || memberId,
       };
       this.db
         .prepare(
-          'INSERT INTO leases(taskId,memberId,projectId,token,scopes,heartbeat,orphaned) VALUES(?,?,?,?,?,?,0)',
+          'INSERT INTO leases(taskId,memberId,sessionId,projectId,token,scopes,heartbeat,orphaned) VALUES(?,?,?,?,?,?,?,0)',
         )
         .run(
           taskId,
           memberId,
+          lease.sessionId!,
           task.projectId,
           lease.token,
           JSON.stringify(lease.scopes),
@@ -256,7 +325,12 @@ export class Store extends EventEmitter {
         );
       this.updateMember(memberId, { status: 'working', error: null });
       return {
-        task: this.updateTask(taskId, { status: 'running', assignedTo: memberId, error: null }),
+        task: this.updateTask(taskId, {
+          status: 'running',
+          assignedTo: memberId,
+          error: null,
+          ...(sessionId ? { sessionId } : {}),
+        }),
         lease,
       };
     });
@@ -289,6 +363,13 @@ export class Store extends EventEmitter {
     }
     for (const m of this.members())
       this.updateMember(m.id, { status: 'offline', account: null, rateLimits: null });
+    for (const session of this.sessions())
+      if (['running', 'starting', 'idle'].includes(session.status))
+        this.updateSession(session.id, {
+          status: 'interrupted',
+          error:
+            'Coordinator restarted. Confirm the last observed session PID stopped before recovery.',
+        });
     return leases.length;
   }
   recoverOrphans() {
@@ -298,7 +379,14 @@ export class Store extends EventEmitter {
     }
   }
   message(input: Omit<RoomMessage, 'id' | 'createdAt'>) {
-    return this.put('message', { ...input, id: randomUUID(), createdAt: new Date().toISOString() });
+    const message = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
+    const row = this.db
+      .prepare(
+        "INSERT INTO records(kind,id,data) SELECT 'message',?,json_set(?,'$.sequence',(SELECT COALESCE(MAX(json_extract(data,'$.sequence')),0)+1 FROM records WHERE kind='message')) RETURNING data",
+      )
+      .get(message.id, JSON.stringify(message)) as { data: string };
+    this.emit('change');
+    return JSON.parse(row.data) as RoomMessage;
   }
   activity(input: Omit<Activity, 'id' | 'createdAt'>) {
     const result = this.put('activity', {

@@ -569,21 +569,23 @@ export async function startTask(
     model?: string;
     readOnly?: boolean;
     dynamicTools?: readonly DynamicTool[];
+    resumeThreadId?: string;
     onThread?: (threadId: string) => void;
   },
 ): Promise<{ threadId: string; turnId: string }> {
   await client.start();
   if (!(await readAccount(client)))
     throw new Error("Sign in to this member's ChatGPT account before running a task.");
-  const result = await client.request('thread/start', {
+  const result = await client.request(options.resumeThreadId ? 'thread/resume' : 'thread/start', {
+    ...(options.resumeThreadId ? { threadId: options.resumeThreadId } : {}),
     cwd: options.cwd,
     ...(options.model ? { model: options.model } : {}),
     approvalPolicy: 'on-request',
     approvalsReviewer: 'user',
     sandbox: options.readOnly ? 'read-only' : 'workspace-write',
-    serviceName: 'relay_workspace',
+    ...(!options.resumeThreadId ? { serviceName: 'relay_workspace' } : {}),
     developerInstructions: options.developerInstructions ?? null,
-    dynamicTools: options.dynamicTools ?? relayDynamicTools,
+    ...(!options.resumeThreadId ? { dynamicTools: options.dynamicTools ?? relayDynamicTools } : {}),
   });
   if (
     result.sandbox?.type !== (options.readOnly ? 'readOnly' : 'workspaceWrite') ||

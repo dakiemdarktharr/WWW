@@ -16,6 +16,11 @@ import { Store, DomainError } from './store.ts';
 import { createWorktree, git, integrate, taskDiff, validateRepo } from './git.ts';
 import { inside, privateDirectory, redact, safeDetails } from './security.ts';
 import { Workflows, planningTask } from './workflows.ts';
+import { SessionManager } from './sessions.ts';
+import { QuotaManager } from './quota.ts';
+import { Mesh } from './mesh.ts';
+import { Handoffs } from './handoffs.ts';
+import { InboxDispatcher } from './inbox.ts';
 
 interface Running {
   taskId: string;
@@ -45,7 +50,7 @@ export class Workspace {
   runtime = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.1.0',
+    version: '0.2.0',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -54,6 +59,11 @@ export class Workspace {
   closing = false;
   mergeBusy = new Set<string>();
   workflows: Workflows;
+  sessions: SessionManager;
+  quota: QuotaManager;
+  mesh: Mesh;
+  handoffs: Handoffs;
+  inbox: InboxDispatcher;
   constructor(
     public store: Store,
     public dataDir: string,
@@ -62,11 +72,17 @@ export class Workspace {
     this.runtime.dataDir = dataDir;
     this.runtime.recoveryRequired = store.orphanAll() > 0;
     this.workflows = new Workflows(this);
+    this.sessions = new SessionManager(this);
+    this.quota = new QuotaManager(this);
+    this.mesh = new Mesh(this);
+    this.handoffs = new Handoffs(this);
+    this.inbox = new InboxDispatcher(this);
   }
   async initialize() {
     const p = await probeCodex();
     this.runtime.codexAvailable = p.available;
     this.runtime.codexVersion = p.version;
+    this.quota.start();
   }
   snapshot(): WorkspaceState {
     return {
@@ -74,9 +90,17 @@ export class Workspace {
       members: this.store.members(),
       tasks: this.store.tasks(),
       workflows: this.store.workflows(),
+      sessions: this.store.all('session'),
+      quotas: this.quota.snapshot(),
+      quotaGrants: this.store.all('quotaGrant'),
+      meshCursors: this.store.all('meshCursor'),
+      humanRequests: this.store.all('humanRequest'),
+      handoffs: this.store.all('handoff'),
       messages: this.store.all('message').slice(-300) as WorkspaceState['messages'],
       activity: this.store.all<Activity>('activity').slice(-250),
-      approvals: [...this.approvals.values()].map((a) => a.public),
+      approvals: [...this.approvals.values()]
+        .map((a) => a.public)
+        .concat(this.sessions.approvals()),
       runtime: { ...this.runtime, recoveryRequired: this.store.leases().some((l) => !!l.orphaned) },
     };
   }
@@ -162,7 +186,18 @@ export class Workspace {
     const caps = await readCapabilities(client, cwd);
     return this.store.updateMember(id, {
       account,
-      status: this.running.has(id) ? 'working' : account ? 'ready' : 'offline',
+      status:
+        this.running.has(id) ||
+        this.sessions
+          .all()
+          .some(
+            (session) =>
+              session.memberId === id && ['starting', 'running'].includes(session.status),
+          )
+          ? 'working'
+          : account
+            ? 'ready'
+            : 'offline',
       skills: caps.skills,
       plugins: caps.plugins,
       capabilitiesError: caps.errors.join('; ') || undefined,
@@ -171,7 +206,7 @@ export class Workspace {
     });
   }
   async login(id: string, method: 'browser' | 'device') {
-    if (this.running.has(id))
+    if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before changing its login.');
     if (this.loginOwner)
       throw new DomainError(
@@ -186,7 +221,7 @@ export class Workspace {
     }
   }
   async logout(id: string) {
-    if (this.running.has(id))
+    if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before signing out.');
     const client = await this.client(id);
     await client.request('account/logout');
@@ -214,7 +249,7 @@ export class Workspace {
     return project;
   }
   async importSkills(id: string) {
-    if (this.running.has(id))
+    if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Wait until this teammate is idle before importing skills.');
     const destination = path.join(this.home(id), 'skills');
     await privateDirectory(this.home(id));
@@ -283,8 +318,11 @@ export class Workspace {
   async run(taskId: string, memberId: string) {
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
     await this.refresh(memberId);
+    await this.quota.refresh(memberId);
+    this.quota.assertCanRun(memberId, this.store.get<Task>('task', taskId).projectId);
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
     const { task, lease } = this.store.claim(taskId, memberId);
+    this.sessions.mirrorLegacy(task, memberId);
     const heartbeat = setInterval(() => this.store.heartbeat(taskId, lease.token), 10000);
     heartbeat.unref();
     const run: Running = {
@@ -341,12 +379,18 @@ export class Workspace {
         onThread: (threadId: string) => {
           run.threadId = threadId;
           this.store.updateTask(taskId, { threadId });
+          this.sessions.update(taskId, { threadId, pid: this.clients.get(memberId)?.pid || null });
         },
       });
       run.threadId = ids.threadId;
       run.turnId = ids.turnId;
       // A fast worker can complete before turn/start resolves; never overwrite its terminal state.
       this.store.updateTask(taskId, ids);
+      this.sessions.update(taskId, {
+        ...ids,
+        ...(!run.finished ? { status: 'running' } : {}),
+        pid: this.clients.get(memberId)?.pid || null,
+      });
       return this.store.get<Task>('task', taskId);
     } catch (error) {
       // A timed-out RPC may have started a turn. Stop the owning process before releasing its lock.
@@ -425,6 +469,8 @@ export class Workspace {
     }
     if (method === 'account/rateLimits/updated') {
       this.store.updateMember(memberId, { rateLimits: params.rateLimits });
+      this.quota.ingest(memberId, params, true);
+      void this.quota.enforce();
       return;
     }
     const run = this.running.get(memberId);
@@ -446,20 +492,32 @@ export class Workspace {
       if (item?.type === 'agentMessage' && item.text) {
         run.buffer = String(item.text).slice(-30000);
         this.log(item.text, run.taskId, memberId, 'agent');
-      } else if (item?.type === 'commandExecution')
+        this.sessions.event(run.taskId, 'agent', item.text);
+      } else if (item?.type === 'commandExecution') {
         this.log(
           `Command ${item.status || 'finished'}: ${item.command || ''}\n${item.aggregatedOutput || ''}`,
           run.taskId,
           memberId,
           'command',
         );
-      else if (item?.type === 'fileChange')
+        this.sessions.event(
+          run.taskId,
+          'command',
+          `${item.command || ''}\n${item.aggregatedOutput || ''}`,
+        );
+      } else if (item?.type === 'fileChange') {
         this.log(
           `Files changed: ${(item.changes || []).map((x: any) => x.path).join(', ')}`,
           run.taskId,
           memberId,
           'files',
         );
+        this.sessions.event(
+          run.taskId,
+          'files',
+          (item.changes || []).map((change: any) => change.path).join('\n'),
+        );
+      }
     }
     if (method === 'error')
       this.log(params?.error?.message || 'Codex reported an error.', run.taskId, memberId, 'error');
@@ -502,6 +560,14 @@ export class Workspace {
       error: success ? null : redact(summary),
     });
     if (!success || readOnly) this.store.release(run.taskId, run.token);
+    const session = this.store.all<any>('session').find((entry) => entry.id === run.taskId);
+    if (session)
+      this.sessions.update(session.id, {
+        status: success ? (readOnly ? 'idle' : 'review') : 'error',
+        error: success ? null : redact(summary),
+        threadId: run.threadId || null,
+        turnId: run.turnId || null,
+      });
     this.store.updateMember(run.memberId, {
       status: this.clients.has(run.memberId) ? 'ready' : 'offline',
     });
@@ -648,7 +714,7 @@ export class Workspace {
   }
   decide(id: string, decision: 'accept' | 'decline') {
     const approval = this.approvals.get(id);
-    if (!approval) throw new DomainError('This approval is no longer pending.', 404);
+    if (!approval) return this.sessions.decide(id, decision);
     const run = this.running.get(approval.public.memberId);
     if (
       !run ||
@@ -750,6 +816,13 @@ export class Workspace {
   }
   async recover() {
     for (const lease of this.store.leases().filter((l) => !!l.orphaned)) {
+      if (
+        lease.sessionId &&
+        this.store.sessions().some((session) => session.id === lease.sessionId)
+      ) {
+        await this.sessions.recover(lease.sessionId, { confirmedStopped: true });
+        continue;
+      }
       const client = this.clients.get(lease.memberId);
       if (client) {
         await client.stop();
@@ -768,8 +841,12 @@ export class Workspace {
     return { ok: true };
   }
   async close() {
+    if (this.closing) return;
     this.closing = true;
+    await this.inbox.close();
+    await this.quota.close();
     await this.workflows.idle();
+    await this.sessions.close();
     const failed = new Set<string>();
     for (const [id, client] of this.clients) {
       const run = this.running.get(id);
