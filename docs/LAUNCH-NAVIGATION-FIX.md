@@ -1,5 +1,7 @@
 # Hosted launcher navigation fix
 
+This records the earlier launcher-only fix. The reported failure continued because localhost still required a running local app. The hosted frontend now renders the complete workspace and uses an explicit consent-based browser connection; see [current deployment and connection flow](DEPLOYMENT.md). The original HTTP navigation exception remains narrowly scoped as described below.
+
 The reported Open MESH / Sessions issue was reproduced with a browser following the hosted launch link into the real local runner: `GET /#mesh` returned HTTP 403 with `Cross-site requests are not allowed.` The backend's blanket Fetch Metadata check was incorrectly treating a user opening the SPA like a cross-site API request. Directly opening the local address returned 200, so checking only the href or a direct HTTP request missed the failure.
 
 The coordinator now permits exactly a `GET /` document navigation with Fetch Metadata `navigate`, `document` and user activation. Host and Origin validation still run. Cross-site API requests, bootstrap, files, frames and mutations remain denied. Tests exercise both the accepted navigation and rejected neighboring cases.

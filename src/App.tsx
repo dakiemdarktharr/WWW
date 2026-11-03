@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -51,6 +58,8 @@ import type {
   Workflow,
 } from '../shared/types';
 import { api } from './api';
+import { bridgeSnapshot, hosted, subscribeBridge, subscribeChanges } from './bridge';
+import RunnerConnection from './HostedWorkspace';
 import Workroom from './Workroom';
 import UsageGuide from './UsageGuide';
 import {
@@ -277,6 +286,7 @@ function Modal({
 }
 
 export default function App() {
+  const bridge = useSyncExternalStore(subscribeBridge, bridgeSnapshot);
   const initialView = window.location.hash.slice(1);
   const [focusedSessionId, setFocusedSessionId] = useState(
     initialView.startsWith('session=') ? initialView.slice(8) : '',
@@ -307,8 +317,11 @@ export default function App() {
   const [quickSearch, setQuickSearch] = useState('');
 
   const refresh = useCallback(async () => {
+    const source = bridgeSnapshot();
+    if (hosted && source.status !== 'connected') return;
     try {
       const data = await api<WorkspaceState>('/state');
+      if (hosted && bridgeSnapshot() !== source) return;
       setState({
         ...data,
         sessions: data.sessions || [],
@@ -319,10 +332,13 @@ export default function App() {
         handoffs: data.handoffs || [],
       });
       setLoadError('');
+      if (hosted) setConnected(true);
     } catch (err) {
+      if (hosted && bridgeSnapshot() !== source) return;
       setLoadError((err as Error).message);
+      if (hosted) setConnected(false);
     }
-  }, []);
+  }, [bridge.status]);
   const closeModal = useCallback(() => {
     setModal(null);
     setDiff(null);
@@ -341,12 +357,24 @@ export default function App() {
   }, [refresh]);
   useEffect(() => {
     if (!state) return;
+    if (hosted) {
+      setConnected(bridge.status === 'connected');
+      return subscribeChanges(() => void refresh());
+    }
     const events = new EventSource('/api/events', { withCredentials: true });
     events.onopen = () => setConnected(true);
     events.onerror = () => setConnected(false);
     events.addEventListener('change', refresh);
     return () => events.close();
-  }, [!!state, refresh]);
+  }, [!!state, refresh, bridge.status]);
+  useEffect(() => {
+    if (hosted && bridge.status !== 'connected') {
+      setState(null);
+      setConnected(false);
+      setLoadError('');
+      closeModal();
+    }
+  }, [bridge.status, closeModal]);
   useEffect(() => {
     const updateView = () => {
       const next = window.location.hash.slice(1);
@@ -372,6 +400,7 @@ export default function App() {
     const listener = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
+        if (hosted && bridgeSnapshot().status !== 'connected') return;
         setModal({ type: 'search' });
         setQuickSearch('');
       }
@@ -593,7 +622,10 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <button className="sidebar-invite" onClick={() => setModal({ type: 'project' })}>
+        <button
+          className="sidebar-invite"
+          onClick={() => (hosted && !state ? navigate('settings') : setModal({ type: 'project' }))}
+        >
           <Plus size={14} /> Connect project
         </button>
         <div className="sidebar-bottom">
@@ -606,7 +638,7 @@ export default function App() {
           </button>
           <span className="local-status">
             <LockKeyhole size={13} />
-            Local workspace
+            {hosted ? 'Web workspace' : 'Local workspace'}
           </span>
         </div>
       </aside>
@@ -626,13 +658,24 @@ export default function App() {
             <strong>{pageTitle}</strong>
           </div>
           <div className="topbar-actions">
-            {state && !focusedSessionId && <UsageGuide stage={view} enabled={!modal} />}
+            {(state || hosted) && !focusedSessionId && (
+              <UsageGuide stage={hosted && !state ? 'hosted' : view} enabled={!modal} />
+            )}
             <span className={`connection-label ${connected ? 'online' : ''}`}>
               <span />
-              {connected ? 'Live' : state ? 'Reconnecting' : 'Connecting'}
+              {connected
+                ? 'Live'
+                : hosted && bridge.status !== 'connected'
+                  ? bridge.status === 'connecting'
+                    ? 'Awaiting approval'
+                    : 'Disconnected'
+                  : state
+                    ? 'Reconnecting'
+                    : 'Connecting'}
             </span>
             <button
               className="search-trigger"
+              disabled={hosted && !state}
               onClick={() => {
                 setQuickSearch('');
                 setModal({ type: 'search' });
@@ -656,11 +699,19 @@ export default function App() {
               <button onClick={() => void refresh()}>Retry</button>
             </div>
           )}
-          {!state && !loadError && (
+          {!hosted && !state && !loadError && (
             <div className="initial-loading">
               <Loader2 className="spin" size={24} />
               <p>Opening your workspace…</p>
             </div>
+          )}
+          {hosted && !state && (
+            <section className="page-heading">
+              <h1>{pageTitle}</h1>
+            </section>
+          )}
+          {hosted && (!state || view === 'settings') && (
+            <RunnerConnection status={bridge.status} message={bridge.message} />
           )}
           {state?.runtime.recoveryRequired && (
             <div className="warning-banner">
@@ -698,7 +749,7 @@ export default function App() {
               focusedId={focusedSessionId || undefined}
             />
           )}
-          {view === 'workroom' && (
+          {view === 'workroom' && (!hosted || state) && (
             <Workroom
               key={project?.id || 'empty'}
               state={state}
@@ -711,7 +762,9 @@ export default function App() {
               review={() => navigate('reviews')}
               start={async (prompt) =>
                 project
-                  ? perform<Workflow>('workflow', `/projects/${project.id}/workflows`, { prompt })
+                  ? perform<Workflow>('workflow', `/projects/${project.id}/workflows`, {
+                      prompt,
+                    })
                   : undefined
               }
               control={(workflow, action) =>
@@ -723,7 +776,7 @@ export default function App() {
             />
           )}
 
-          {view === 'team' && (
+          {view === 'team' && (!hosted || state) && (
             <>
               <section className="page-heading">
                 <div>
@@ -797,7 +850,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'tasks' && (
+          {view === 'tasks' && (!hosted || state) && (
             <>
               <section className="page-heading">
                 <div>
@@ -889,7 +942,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'reviews' && (
+          {view === 'reviews' && (!hosted || state) && (
             <>
               <section className="page-heading">
                 <div>
@@ -967,7 +1020,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'settings' && (
+          {view === 'settings' && (!hosted || state) && (
             <>
               <section className="page-heading">
                 <div>

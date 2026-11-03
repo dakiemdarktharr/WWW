@@ -1,124 +1,123 @@
 import { useState } from 'react';
-import { ArrowUpRight, Check, Copy, Code2, Terminal } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, Link2, Unplug } from 'lucide-react';
+import { hostedOrigin, runnerOrigin } from '../shared/browser-bridge';
+import { connectBridge, disconnectBridge } from './bridge';
 import './hosted.css';
-import UsageGuide from './UsageGuide';
 
 const repository = 'https://github.com/dakiemdarktharr/WWW';
 const commands = `git clone ${repository}.git\ncd WWW\nnpm ci\nnpm run build\nnpm start`;
 
-/** Hosted entry point. Account access and Codex execution stay on the local runner. */
-export default function HostedWorkspace() {
+export default function RunnerConnection({
+  status,
+  message,
+}: {
+  status: 'disconnected' | 'connecting' | 'connected' | 'error';
+  message: string;
+}) {
   const [port, setPort] = useState('4317');
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const number = Number(port);
-  const valid = /^\d{4,5}$/.test(port) && number >= 1024 && number <= 65535;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(commands);
-      setCopied(true);
-      setCopyError(false);
-      window.setTimeout(() => setCopied(false), 2500);
-    } catch {
-      setCopyError(true);
-    }
+  let valid = true;
+  try {
+    runnerOrigin(port);
+  } catch {
+    valid = false;
   }
-
+  const connected = status === 'connected';
   return (
-    <div className="hosted-workspace">
-      <header className="hosted-header">
-        <a href="/" className="hosted-brand" aria-label="WWW home">
-          <img src="/relay.svg" alt="" width="28" height="28" />
-          <strong>WWW</strong>
-          <span>RELAY + MESH</span>
-        </a>
-        <div className="hosted-header-actions">
-          <UsageGuide stage="hosted" />
-          <a href={repository} target="_blank" rel="noopener noreferrer" className="hosted-link">
-            <Code2 size={16} /> Private repository <ArrowUpRight size={14} />
-          </a>
-        </div>
-      </header>
-      <main className="hosted-main">
-        <div className="hosted-title">
-          <Terminal size={22} />
-          <h1>Open your workspace</h1>
-        </div>
-        <p className="hosted-explanation">
-          Codex sessions, accounts and project files run on your computer. Start the local runner,
-          then open MESH or Sessions.
+    <section className="runner-connection panel" aria-labelledby="runner-heading">
+      <div className="panel-heading">
+        <h2 id="runner-heading">
+          <Link2 size={17} /> Runner
+        </h2>
+        <span
+          className={`presence ${connected ? 'ready' : ''}`}
+          aria-label={connected ? 'Connected' : 'Disconnected'}
+        />
+      </div>
+      <div className="runner-body">
+        <p>
+          {connected
+            ? 'Đã kết nối Codex thật. MESH, Sessions và Team thao tác trực tiếp với runner này.'
+            : 'MESH và Sessions mở ngay trên web. Kết nối runner để dùng tài khoản Codex và dữ liệu dự án trên máy của bạn.'}
         </p>
-        <section className="hosted-panel" aria-labelledby="runner-heading">
-          <div className="hosted-panel-heading">
-            <h2 id="runner-heading">Local runner</h2>
-            <span className="hosted-label">Node 24.22.1+ · Git · Codex CLI</span>
-          </div>
-          <div className="hosted-command" data-usage="setup">
-            <pre>
-              <code>{commands}</code>
-            </pre>
-            <button
-              onClick={() => void copy()}
-              aria-label="Copy setup commands"
-              title="Copy setup commands"
-            >
-              {copied ? <Check size={17} /> : <Copy size={17} />}
-            </button>
-          </div>
-          {copyError && (
-            <p className="hosted-note" role="status">
-              Select the commands above to copy them.
+        {!connected && (
+          <details>
+            <summary>Cài đặt runner lần đầu</summary>
+            <p>Node 24.22.1+ · Git · Codex CLI · quyền truy cập repo private</p>
+            <div className="runner-command" data-usage="setup">
+              <pre>
+                <code>{commands}</code>
+              </pre>
+              <button
+                className="icon-button"
+                aria-label="Copy setup commands"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(commands);
+                    setCopied(true);
+                    setCopyError(false);
+                  } catch {
+                    setCopyError(true);
+                  }
+                }}
+              >
+                {copied ? <Check size={16} /> : <Copy size={16} />}
+              </button>
+            </div>
+            {copyError && <p role="status">Chọn các lệnh trên để sao chép.</p>}
+            <p>
+              Giữ <code>npm start</code> chạy trên cùng máy đang mở trình duyệt.
             </p>
-          )}
-          <div className="hosted-actions">
+            <a href={repository} target="_blank" rel="noopener noreferrer">
+              Private repository <ArrowUpRight size={13} />
+            </a>
+          </details>
+        )}
+        {window.location.origin !== hostedOrigin && (
+          <p>
+            Để kết nối, mở{' '}
+            <a href={`${hostedOrigin}/${window.location.hash}`}>nosleepclub-relay.vercel.app</a>.
+          </p>
+        )}
+        <div className="runner-buttons" data-usage="runner-connect">
+          {!connected && (
             <label htmlFor="runner-port">
-              Port
+              Port{' '}
               <input
                 id="runner-port"
                 data-usage="port"
                 inputMode="numeric"
-                pattern="[0-9]*"
                 value={port}
                 onChange={(event) => setPort(event.target.value)}
                 aria-invalid={!valid}
                 maxLength={5}
+                disabled={status === 'connecting'}
               />
             </label>
-            <a
+          )}
+          {connected || status === 'connecting' ? (
+            <button className="button" onClick={() => disconnectBridge()}>
+              <Unplug size={15} /> {connected ? 'Ngắt kết nối' : 'Hủy kết nối'}
+            </button>
+          ) : (
+            <button
               className="button primary"
-              data-usage="open-mesh"
-              href={valid ? `http://127.0.0.1:${number}/#mesh` : undefined}
-              aria-disabled={!valid}
-              tabIndex={valid ? 0 : -1}
-              target="_blank"
-              rel="noopener noreferrer"
+              disabled={!valid}
+              onClick={() => connectBridge(port)}
             >
-              Open MESH <ArrowUpRight size={15} />
-            </a>
-            <a
-              className="button"
-              data-usage="open-sessions"
-              href={valid ? `http://127.0.0.1:${number}/#sessions` : undefined}
-              aria-disabled={!valid}
-              tabIndex={valid ? 0 : -1}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Sessions <ArrowUpRight size={15} />
-            </a>
-          </div>
-        </section>
-        <div className="hosted-footer">
-          <span>Không mở được? Chạy npm start trên chính máy này và kiểm tra cổng.</span>
-          <button
-            className="hosted-link"
-            onClick={() => window.dispatchEvent(new Event('relay-open-guide'))}
-          >
-            Setup guide <ArrowUpRight size={14} />
-          </button>
+              <Link2 size={15} /> Kết nối runner
+            </button>
+          )}
         </div>
-      </main>
-    </div>
+        {message && <p role={status === 'error' ? 'alert' : 'status'}>{message}</p>}
+        {!connected && (
+          <p className="runner-hint">
+            Cho phép popup, xác nhận kết nối rồi giữ cửa sổ runner mở. Web không tự khởi động Codex
+            khi bạn chưa đăng nhập và gửi prompt.
+          </p>
+        )}
+      </div>
+    </section>
   );
 }

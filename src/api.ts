@@ -1,3 +1,5 @@
+import { bridgeApi, hosted } from './bridge';
+
 let sessionToken = '';
 let sessionPromise: Promise<void> | null = null;
 
@@ -18,6 +20,7 @@ async function session() {
 }
 
 export async function api<T>(path: string, body?: unknown, method = 'POST'): Promise<T> {
+  if (hosted) return bridgeApi<T>(path, body, method);
   await session();
   const tokenUsed = sessionToken;
   const send = () =>

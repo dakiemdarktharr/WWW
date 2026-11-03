@@ -14,6 +14,7 @@
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
     "test": "tsx --test tests/*.test.ts",
+    "test:bridge": "tsx tests/browser-bridge.e2e.ts",
     "typecheck": "tsc --noEmit",
     "check": "npm run format:check && npm test && npm run build",
     "format": "prettier --write .",

@@ -10,6 +10,8 @@ Phiên bản **0.2** bổ sung **MESH**, session Codex tương tác chạy bằn
 
 Mở [NoSleepClub RELAY](https://nosleepclub-relay.vercel.app). Nút **Hướng dẫn** trong web có popup tiếng Việt, minh họa và tour trỏ vào từng thao tác; có thể bỏ qua hoặc xem lại. [Chi tiết hướng dẫn trong web](docs/ONBOARDING.md).
 
+[MESH](https://nosleepclub-relay.vercel.app/#mesh) và [Sessions](https://nosleepclub-relay.vercel.app/#sessions) mở trực tiếp trên web. Chạy runner trên cùng máy, bấm **Kết nối runner** rồi **Cho phép kết nối** trong cửa sổ được mở. Giữ cửa sổ kết nối và runner hoạt động; web đọc dữ liệu và điều khiển Codex thật qua kênh trong trình duyệt. Tài khoản, Git và database vẫn ở máy; chưa hỗ trợ điều khiển runner từ thiết bị khác. [Cách kết nối và quyền truy cập](docs/DEPLOYMENT.md).
+
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
 ![MESH trước khi kết nối dự án](docs/images/mesh.png)

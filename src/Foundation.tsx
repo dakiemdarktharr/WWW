@@ -35,6 +35,7 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
+import { registerSessionWindow } from './bridge';
 
 export type FoundationRequest = <T = unknown>(
   path: string,
@@ -59,10 +60,12 @@ const localInputTime = (value: number) => {
   return new Date(value - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
 const popupSession = (id: string) =>
-  window.open(
-    `${window.location.pathname}#session=${encodeURIComponent(id)}`,
-    `relay-session-${id}`,
-    'popup,width=1050,height=780',
+  registerSessionWindow(
+    window.open(
+      `${window.location.pathname}#session=${encodeURIComponent(id)}`,
+      `relay-session-${id}`,
+      'popup,width=1050,height=780',
+    ),
   );
 
 function Face({ member }: { member?: Member }) {

@@ -7,7 +7,7 @@ type Step = { target: string; title: string; text: string };
 type Stage =
   'hosted' | 'mesh' | 'sessions' | 'team' | 'workroom' | 'tasks' | 'reviews' | 'settings';
 const memory = new Set<string>();
-const prefix = 'relay-guide-v1:';
+const prefix = 'relay-guide-v2:';
 const seen = (key: string) => {
   try {
     return memory.has(key) || sessionStorage.getItem(prefix + key) === 'seen';
@@ -33,17 +33,12 @@ const definitions: Record<Stage, Step[]> = {
     {
       target: 'port',
       title: '2. Chọn cổng',
-      text: 'Giữ 4317 nếu dùng cấu hình mặc định. Nếu runner dùng RELAY_PORT khác, nhập đúng cổng đó. Link localhost mở workspace trên máy đang dùng trình duyệt.',
+      text: 'Giữ 4317 nếu dùng cấu hình mặc định. Nếu runner dùng RELAY_PORT khác, nhập đúng cổng đó. Runner cần chạy trên cùng máy đang dùng trình duyệt.',
     },
     {
-      target: 'open-mesh',
-      title: '3. Mở workspace',
-      text: 'Khi runner đã sẵn sàng, bấm Open MESH. Trong Team, tự đăng nhập từng tài khoản Codex rồi kết nối project Git. Trang Vercel chỉ mở workspace; worker chạy trên máy của bạn.',
-    },
-    {
-      target: 'open-sessions',
-      title: '4. Theo dõi Codex',
-      text: 'Sessions mở các cửa sổ output, prompt và trạng thái runtime thật. Bạn có thể mở nhiều session theo giới hạn account và quota chung.',
+      target: 'runner-connect',
+      title: '3. Kết nối runner',
+      text: 'Bấm Kết nối runner, cho phép popup rồi chọn Cho phép kết nối trong cửa sổ local. Giữ cửa sổ đó mở. MESH và Sessions hoạt động ngay trong tab Vercel; tài khoản và worker nằm trên máy.',
     },
   ],
   mesh: [
@@ -427,9 +422,10 @@ export default function UsageGuide({ stage, enabled = true }: { stage: Stage; en
               <section>
                 <h3>1. Mở runner trên máy</h3>
                 <p>
-                  Trang Vercel là lối vào. Clone repo WWW, cài dependencies và chạy{' '}
-                  <code>npm start</code>; sau đó bấm <strong>Open MESH</strong>. Giữ terminal runner
-                  đang chạy.
+                  Clone repo WWW, cài dependencies và chạy <code>npm start</code> trên cùng máy đang
+                  mở trình duyệt. Trên web, bấm <strong>Kết nối runner</strong> rồi xác nhận trong
+                  cửa sổ vừa mở. Giữ terminal và cửa sổ kết nối mở. MESH và Sessions vẫn nằm trên
+                  URL Vercel. Khi dùng giao diện local trực tiếp, không cần bước kết nối.
                 </p>
               </section>
               <section>
