@@ -162,8 +162,24 @@ export class Runners {
     this.polling.add(nodeId);
     try {
       const node = this.host.store.get<RunnerNode>('runner', nodeId);
-      if (body.epoch !== this.epoch)
+      if (body.epoch !== this.epoch) {
+        this.host.store.put('runner', { ...node, ready: false, epoch: undefined });
+        for (const peer of this.peers.values())
+          if (peer.nodeId === nodeId)
+            peer.uncertain(
+              'Machine restarted or lost its coordinator. Inspect retained output and recover explicitly.',
+            );
+        for (const [id, pending] of this.pending)
+          if (pending.nodeId === nodeId) {
+            clearTimeout(pending.timer);
+            this.pending.delete(id);
+            pending.reject(new Error('Machine reset; command will not be replayed.'));
+          }
         return { epoch: this.epoch, reset: true, commands: [], ack: [], applied: [] };
+      }
+      if (body.ready && (node.epoch !== this.epoch || !node.ready))
+        for (const peer of [...this.peers.values()])
+          if (peer.nodeId === nodeId) peer.resetAcknowledged();
       this.host.store.put('runner', {
         ...node,
         epoch: this.epoch,
@@ -349,6 +365,12 @@ export class RemoteCodexClient extends CodexClient {
       run.stopping = true;
     }
     this.host.mesh.ask(task.projectId, this.memberId, 'Execution machine needs recovery', message);
+  }
+  resetAcknowledged() {
+    this.launched = false;
+    this.halted = true;
+    this.broker.retire(this.id);
+    this.emit('exit', { code: 0, reset: true });
   }
   async receive(event: RunnerEvent) {
     try {

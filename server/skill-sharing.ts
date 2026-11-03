@@ -36,7 +36,7 @@ export async function exportSkills(home: string): Promise<SharedSkill[]> {
   }
   return result;
 }
-export async function installSkills(home: string, raw: unknown) {
+export async function installSkills(home: string, raw: unknown, machineImport = false) {
   if (!Array.isArray(raw) || raw.length > 32 || Buffer.byteLength(JSON.stringify(raw)) > 3_000_000)
     throw new Error('Invalid team skills payload.');
   const root = path.join(home, 'skills');
@@ -69,7 +69,7 @@ export async function installSkills(home: string, raw: unknown) {
     }
     const digest = createHash('sha256').update(JSON.stringify(files)).digest('hex'),
       prefix = `mesh-${skill.name}-`,
-      name = `${prefix}${digest.slice(0, 12)}`;
+      name = machineImport ? skill.name : `${prefix}${digest.slice(0, 12)}`;
     const entries = await readdir(root);
     if (entries.some((entry) => entry === skill.name || entry.startsWith(prefix))) {
       result.push({ name: skill.name, digest, status: 'kept-existing' });

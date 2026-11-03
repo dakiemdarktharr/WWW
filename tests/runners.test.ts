@@ -202,6 +202,30 @@ test('outbound RPC materializes an owned workspace, preserves model settings, sy
   await agent.execute(repeated);
   assert.equal(peers[0].calls.filter((call) => call.method === 'thread/start').length, 1);
   // A late machine result must not write after ownership is revoked.
+  const reset = await host.runners.exchange(node.id, {
+    epoch: '',
+    ready: true,
+    busy: false,
+    version: 'test',
+    events: [],
+  });
+  assert.equal(reset.reset, true);
+  assert.equal(store.lease(task.id)!.orphaned, 1);
+  assert.throws(() => host.runners.assertReady(node.id), /offline/);
+  await agent.reset(reset.epoch);
+  await host.runners.exchange(node.id, {
+    epoch: agent.epoch,
+    ready: true,
+    busy: false,
+    version: 'test',
+    events: [],
+  });
+  assert.equal(
+    store.lease(task.id)!.orphaned,
+    1,
+    'Handshake never releases an uncertain task lease.',
+  );
+  await assert.rejects(remote.request('turn/start', {}), /stopped/);
   store.release(task.id, store.lease(task.id)!.token);
   await writeFile(path.join(params.cwd, 'README.md'), 'late result');
   peers[0].emit('notification', 'turn/completed', {

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { chooseModel, skillFiles } from '../server/autonomy.ts';
+import { exportSkills, installSkills } from '../server/skill-sharing.ts';
 import type { CodexModel, Project, CodexSession } from '../shared/types.ts';
 
 async function fixture(t: TestContext) {
@@ -149,4 +150,16 @@ test('agent-created conversations stay in their project/account and cannot escal
   assert.equal(child.modelPolicy, 'auto');
   assert.equal(child.threadId, null);
   assert.equal(store.all<any>('conversationQueue')[0].status, 'queued');
+});
+test('skills imported from the machine remain eligible for sharing with another account', async (t) => {
+  const { root } = await fixture(t);
+  const source = path.join(root, 'personal'),
+    target = path.join(root, 'profile');
+  await mkdir(path.join(source, 'skills', 'example'), { recursive: true });
+  await writeFile(
+    path.join(source, 'skills', 'example', 'SKILL.md'),
+    'Use a bounded source review.',
+  );
+  await installSkills(target, await exportSkills(source), true);
+  assert.equal((await exportSkills(target))[0].name, 'example');
 });

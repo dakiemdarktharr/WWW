@@ -174,7 +174,11 @@ export class MachineAgent {
         else if (command.method === 'relay/skills/install')
           result = await installSkills(home, command.params);
         else if (command.method === 'relay/skills/import')
-          result = await installSkills(home, await exportSkills(path.join(os.homedir(), '.codex')));
+          result = await installSkills(
+            home,
+            await exportSkills(path.join(os.homedir(), '.codex')),
+            true,
+          );
         else {
           const params = structuredClone(command.params || {});
           if (command.method === 'thread/start' || command.method === 'thread/resume') {

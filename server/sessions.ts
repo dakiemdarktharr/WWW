@@ -480,7 +480,10 @@ export class SessionManager {
       }
       if (session.modelPolicy === 'auto') {
         await this.host.autonomy.shareSkills(session.memberId);
-        const selection = await this.host.autonomy.model(session.memberId, originalTask);
+        const selection = await this.host.autonomy.model(session.memberId, {
+          ...originalTask,
+          description: `${originalTask.description}\n${prompt}`,
+        });
         if (this.cancelling.has(id) || this.host.closing)
           throw new DomainError('Session was stopped during model selection.');
         session = this.update(id, selection);
