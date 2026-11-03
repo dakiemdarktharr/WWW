@@ -1,19 +1,19 @@
 :root {
   font-family: 'Geist Variable', sans-serif;
-  color: #e8eaed;
-  background: #111215;
+  color: #eaf5f7;
+  background: #071925;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --bg: #111215;
-  --panel: #17191d;
-  --panel-2: #1d2025;
-  --line: #30333a;
-  --line-soft: #262930;
-  --text: #e8eaed;
-  --muted: #a0a6b1;
-  --subtle: #858d9a;
-  --lime: #b8ee86;
+  --bg: #071925;
+  --panel: #102b39;
+  --panel-2: #143447;
+  --line: #2c4c5b;
+  --line-soft: #203e4c;
+  --text: #eaf5f7;
+  --muted: #a6bdc8;
+  --subtle: #88a6b5;
+  --lime: #8ce8cf;
   --mono: 'JetBrains Mono', monospace;
 }
 * {

@@ -1,0 +1,309 @@
+.ka-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 28px 18px;
+  overflow-y: auto;
+  background: rgb(3 14 23 / 68%);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  color: #eaf5f7;
+}
+.ka-panel {
+  position: relative;
+  width: min(100%, 428px);
+  outline: none;
+  isolation: isolate;
+}
+.ka-surface {
+  position: relative;
+  z-index: 1;
+  padding: 26px 30px 22px;
+  border: 1px solid rgb(206 240 245 / 18%);
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgb(29 67 84 / 92%), rgb(8 28 41 / 98%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 9%),
+    0 32px 100px rgb(0 7 15 / 45%);
+  overflow: hidden;
+}
+.ka-card-under {
+  position: absolute;
+  inset: 0 8px 7px;
+  z-index: 0;
+  border: 1px solid rgb(140 232 207 / 30%);
+  border-radius: 28px;
+  background: #173d49;
+  box-shadow: 0 15px 50px rgb(0 0 0 / 18%);
+  pointer-events: none;
+}
+.ka-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 27px;
+}
+.ka-header img {
+  flex: none;
+}
+.ka-overlay button,
+.ka-overlay input {
+  font: inherit;
+}
+.ka-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgb(234 245 247 / 10%);
+  border-radius: 50%;
+  background: rgb(234 245 247 / 4%);
+  color: #d3e6eb;
+  cursor: pointer;
+}
+.ka-panel h2 {
+  margin: 0 0 25px;
+  font-size: clamp(27px, 6vw, 32px);
+  font-weight: 540;
+  line-height: 1.12;
+  letter-spacing: -0.055em;
+  color: #eaf5f7;
+}
+.ka-form {
+  display: grid;
+  gap: 17px;
+}
+.ka-field {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 450;
+  color: #c7e0e7;
+}
+.ka-field input {
+  width: 100%;
+  height: 49px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  border: 1px solid rgb(185 221 233 / 20%);
+  border-radius: 13px;
+  outline: none;
+  color: #eaf5f7;
+  caret-color: #8ce8cf;
+  background: rgb(2 17 29 / 48%);
+  box-shadow: inset 0 1px 3px rgb(0 4 12 / 16%);
+  font-size: 15px;
+  transition:
+    border-color 160ms,
+    box-shadow 160ms;
+}
+.ka-field input:focus {
+  border-color: #8ce8cf;
+  box-shadow: 0 0 0 3px rgb(140 232 207 / 12%);
+}
+.ka-field input::placeholder {
+  color: #90afb8;
+}
+.ka-field input:-webkit-autofill {
+  -webkit-text-fill-color: #eaf5f7;
+  box-shadow: 0 0 0 100px #102c3b inset;
+}
+.ka-field .ka-code {
+  text-align: center;
+  font-size: 23px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 560;
+  letter-spacing: 0.09em;
+  height: 58px;
+}
+.ka-password-wrap {
+  overflow: hidden;
+  padding: 3px;
+  margin: -3px;
+}
+.ka-primary {
+  width: 100%;
+  min-height: 49px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 17px;
+  border: 1px solid rgb(221 255 245 / 30%);
+  border-radius: 14px;
+  background: #8ce8cf;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 28%),
+    0 5px 20px rgb(37 136 117 / 12%);
+  color: #072b29;
+  font-weight: 590 !important;
+  font-size: 14px !important;
+  cursor: pointer;
+}
+.ka-overlay button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ka-overlay input:disabled {
+  opacity: 0.6;
+}
+.ka-overlay button:focus-visible {
+  outline: 2px solid #8ce8cf;
+  outline-offset: 4px;
+}
+.ka-text {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px;
+  border: 0;
+  background: none;
+  color: #b7ebdd;
+  font-size: 13px !important;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.ka-text:hover {
+  color: #eaf5f7;
+}
+.ka-back {
+  justify-self: start;
+  margin-top: -5px;
+}
+.ka-footer {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding-top: 17px;
+  margin-top: 21px;
+  border-top: 1px solid rgb(234 245 247 / 10%);
+}
+.ka-footer .ka-owner {
+  color: #a8c4ce;
+  font-size: 12px !important;
+}
+.ka-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  color: #b4cdd4;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.ka-password-wrap .ka-note {
+  margin-top: 7px;
+}
+.ka-error {
+  margin: 15px 0 0;
+  color: #ffcbad;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.ka-form .ka-error {
+  margin: 0;
+}
+.ka-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-height: 130px;
+  color: #b4cdd4;
+  font-size: 14px;
+}
+.ka-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+  color: #e1f0f3;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.ka-account-avatar {
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  flex: none;
+  border: 1px solid rgb(140 232 207 / 24%);
+  border-radius: 11px;
+  background: rgb(140 232 207 / 10%);
+  color: #8ce8cf;
+  font-size: 13px;
+}
+.ka-device {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 47px;
+  padding: 10px 13px;
+  border: 1px solid rgb(140 232 207 / 16%);
+  border-radius: 13px;
+  background: rgb(140 232 207 / 5%);
+  color: #d7eee8;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.ka-device svg {
+  flex: none;
+  color: #8ce8cf;
+}
+.ka-legacy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #bcd6df;
+  font-size: 13px;
+}
+.ka-success {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding-top: 2px;
+}
+.ka-success-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgb(140 232 207 / 20%);
+  border-radius: 24px;
+  background: rgb(140 232 207 / 8%);
+  color: #8ce8cf;
+}
+.ka-success p {
+  margin: 0 0 3px;
+  color: #d4e7eb;
+  font-size: 14px;
+  text-align: center;
+}
+@media (max-width: 480px) {
+  .ka-overlay {
+    padding: 24px 14px;
+    align-items: start;
+  }
+  .ka-panel {
+    margin-block: auto;
+  }
+  .ka-surface {
+    padding: 23px 22px 20px;
+    border-radius: 25px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ka-overlay *,
+  .ka-overlay *::before,
+  .ka-overlay *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

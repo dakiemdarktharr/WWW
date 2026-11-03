@@ -1,12 +1,12 @@
 {
   "name": "relay-workspace",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "overrides": {
     "zod": "$zod"
   },
   "type": "module",
-  "description": "Room for Execution, Local Agents & Yield — a local multiplayer Codex workspace",
+  "description": "Kivuno — a desktop workspace for real Codex teams",
   "engines": {
     "node": ">=24.22.1 <25"
   },
@@ -40,6 +40,7 @@
     "ethers": "6.17.0",
     "fastify": "5.12.7",
     "lucide-react": "1.66.0",
+    "motion": "14.9.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "tar": "7.5.22",

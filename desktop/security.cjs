@@ -12,7 +12,7 @@ function cloudOrigin(value, testing = false) {
     (url.protocol !== 'https:' &&
       !(testing && url.protocol === 'http:' && url.hostname === '127.0.0.1'))
   )
-    throw new Error('RELAY identity must use an exact HTTPS origin.');
+    throw new Error('Kivuno identity must use an exact HTTPS origin.');
   return url.origin;
 }
 
@@ -48,7 +48,7 @@ function externalUrl(value, identityOrigin) {
     url.password ||
     (url.origin !== identityOrigin && (url.protocol !== 'https:' || !known))
   )
-    throw new Error('This link is outside RELAY’s approved sign-in and documentation sites.');
+    throw new Error('This link is outside Kivuno’s approved sign-in and documentation sites.');
   return url.href;
 }
 
@@ -91,8 +91,18 @@ function validIdentity(value, pinnedOwner) {
   )
     throw new Error('The identity server returned an invalid desktop session.');
   if (pinnedOwner && value.owner.id !== pinnedOwner)
-    throw new Error('This local workspace belongs to a different RELAY owner.');
+    throw new Error('This local workspace belongs to a different Kivuno owner.');
   return value;
+}
+
+function secureCredentialStorage(storage, platform) {
+  if (!storage.isEncryptionAvailable()) return false;
+  return (
+    platform !== 'linux' ||
+    ['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'].includes(
+      storage.getSelectedStorageBackend(),
+    )
+  );
 }
 
 function runtimeEnvironment(source, additions) {
@@ -120,6 +130,7 @@ function runtimeEnvironment(source, additions) {
     'LC_ALL',
     'LC_CTYPE',
     'SHELL',
+    'SSH_AUTH_SOCK',
     'HTTP_PROXY',
     'HTTPS_PROXY',
     'NO_PROXY',
@@ -137,7 +148,7 @@ function runtimeEnvironment(source, additions) {
 
 function machineConfiguration(value, identityOrigin, privateRoot) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Choose a RELAY private machine configuration.');
+    throw new Error('Choose a Kivuno private machine configuration.');
   const fields = new Set([
     'origin',
     'id',
@@ -158,7 +169,7 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
     throw new Error('The private machine credential is invalid.');
   const origin = cloudOrigin(value.origin);
   if (origin !== identityOrigin)
-    throw new Error('This machine configuration belongs to another RELAY website.');
+    throw new Error('This machine configuration belongs to another Kivuno website.');
   const exchange = new URL(value.exchangeUrl || `${origin}/api/runner/exchange`);
   if (
     exchange.origin !== origin ||
@@ -217,4 +228,5 @@ module.exports = {
   runtimeEnvironment,
   machineConfiguration,
   previewUrl,
+  secureCredentialStorage,
 };

@@ -26,9 +26,11 @@ const {
   runtimeEnvironment,
   machineConfiguration,
   previewUrl,
+  secureCredentialStorage,
 } = require('./security.cjs');
 
-app.setName('RELAY');
+app.setName('Kivuno');
+// Keep the existing storage location across the product rename.
 app.setPath('userData', path.join(app.getPath('appData'), 'RELAY'));
 const testing = !app.isPackaged && process.env.RELAY_DESKTOP_TESTING === '1';
 if (testing && process.env.RELAY_DESKTOP_DATA_DIR)
@@ -102,18 +104,16 @@ async function cloudRequest(route, body, token) {
   try {
     bodyValue = JSON.parse(raw);
   } catch {
-    throw new Error('The RELAY website is not ready. Try again.');
+    throw new Error('The Kivuno website is not ready. Try again.');
   }
   return { response, body: bodyValue };
 }
 
 async function persistIdentity(value) {
-  if (!safeStorage.isEncryptionAvailable())
+  if (!secureCredentialStorage(safeStorage, process.platform))
     throw new Error(
-      'Windows credential protection is unavailable. RELAY did not save your session.',
+      'Secure operating-system credential storage is unavailable. Kivuno did not save your session.',
     );
-  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
-    throw new Error('A secure operating-system credential store is required.');
   const encrypted = safeStorage.encryptString(JSON.stringify(value));
   const temporary = identityFile + '.tmp';
   await writeFile(temporary, encrypted, { mode: 0o600 });
@@ -129,7 +129,7 @@ async function readIdentity() {
     pinnedOwner = JSON.parse(await readFile(ownerFile, 'utf8')).id || '';
   } catch {}
   try {
-    if (!safeStorage.isEncryptionAvailable()) return;
+    if (!secureCredentialStorage(safeStorage, process.platform)) return;
     identity = validIdentity(
       JSON.parse(safeStorage.decryptString(await readFile(identityFile))),
       pinnedOwner,
@@ -388,9 +388,9 @@ function registerIpc() {
     trusted(event);
     if (!identity) throw new Error('Sign in first.');
     const choice = await dialog.showOpenDialog(window, {
-      title: 'Connect this computer to a RELAY project',
+      title: 'Connect this computer to a Kivuno project',
       properties: ['openFile'],
-      filters: [{ name: 'RELAY private machine configuration', extensions: ['json'] }],
+      filters: [{ name: 'Kivuno private machine configuration', extensions: ['json'] }],
     });
     if (choice.canceled || !choice.filePaths[0]) return null;
     const filename = choice.filePaths[0];
@@ -437,7 +437,11 @@ function runtimePaths() {
     ? path.join(process.resourcesPath, 'workspace')
     : path.resolve(__dirname, '..');
   const node = app.isPackaged
-    ? path.join(process.resourcesPath, 'runtime', 'node.exe')
+    ? path.join(
+        process.resourcesPath,
+        'runtime',
+        process.platform === 'win32' ? 'node.exe' : 'node',
+      )
     : process.env.RELAY_NODE_BINARY;
   if (!node || !path.isAbsolute(node) || !existsSync(node))
     throw new Error('The bundled Node runtime is unavailable.');
@@ -445,7 +449,9 @@ function runtimePaths() {
     Object.entries(process.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] || '';
   const binPath = [
     path.dirname(node),
-    ...(app.isPackaged ? [path.join(process.resourcesPath, 'runtime', 'git', 'cmd')] : []),
+    ...(app.isPackaged && process.platform === 'win32'
+      ? [path.join(process.resourcesPath, 'runtime', 'git', 'cmd')]
+      : []),
     inheritedPath,
   ]
     .filter(Boolean)
@@ -617,7 +623,7 @@ async function startBackend() {
   });
   for (let attempt = 0; attempt < 160; attempt++) {
     if (runtime === 'stopped')
-      throw new Error('The local workspace could not start. Reopen RELAY to enter recovery.');
+      throw new Error('The local workspace could not start. Reopen Kivuno to enter recovery.');
     try {
       const response = await fetch(backendOrigin + '/api/session', {
         headers: { 'X-Relay-Desktop': desktopSecret },
@@ -630,7 +636,7 @@ async function startBackend() {
     } catch {}
     await pause(250);
   }
-  throw new Error('The local workspace did not become ready. Reopen RELAY to retry.');
+  throw new Error('The local workspace did not become ready. Reopen Kivuno to retry.');
 }
 
 async function stopBackend() {
@@ -665,7 +671,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 660,
     show: false,
-    title: 'RELAY',
+    title: 'Kivuno',
     icon: path.join(__dirname, 'icon.png'),
     backgroundColor: '#101211',
     autoHideMenuBar: true,
@@ -739,18 +745,18 @@ function createWindow() {
     .createFromPath(path.join(__dirname, 'icon.png'))
     .resize({ width: 16, height: 16 });
   tray = new Tray(icon);
-  tray.setToolTip('RELAY — Codex workspace');
+  tray.setToolTip('Kivuno — Codex workspace');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: 'Open RELAY',
+        label: 'Open Kivuno',
         click: () => {
           window.show();
           window.focus();
         },
       },
       { type: 'separator' },
-      { label: 'Quit RELAY and stop agents', click: () => app.quit() },
+      { label: 'Quit Kivuno and stop agents', click: () => app.quit() },
     ]),
   );
   tray.on('double-click', () => {
@@ -796,13 +802,13 @@ else {
     .catch(async (error) => {
       if (testing)
         console.error(
-          'RELAY desktop test startup failed:',
+          'Kivuno desktop test startup failed:',
           error instanceof Error ? error.message : 'unknown error',
         );
       else
         dialog.showErrorBox(
-          'RELAY could not start',
-          'The local runtime could not start. Reinstall the current RELAY build, or restart to recover interrupted work. Your workspace has been kept.',
+          'Kivuno could not start',
+          'The local runtime could not start. Reinstall the current Kivuno build, or restart to recover interrupted work. Your workspace has been kept.',
         );
       await stopBackend();
       quitting = true;

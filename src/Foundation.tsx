@@ -227,7 +227,7 @@ export function MeshPage({
     <div className={`mesh-layout ${panel ? 'has-context' : ''}`}>
       <aside className="mesh-groups" aria-label="Project groups" data-usage="groups">
         <div className="mesh-groups-heading">
-          <strong>MESH</strong>
+          <strong>Neralu</strong>
           <button className="icon-button" onClick={addProject} aria-label="Connect a project group">
             <Plus size={16} />
           </button>
@@ -256,7 +256,7 @@ export function MeshPage({
         <header className="mesh-heading">
           <div>
             <Hash size={18} />
-            <h1>{project?.name || 'MESH'}</h1>
+            <h1>{project?.name || 'Neralu'}</h1>
             {thread && (
               <button className="text-button" onClick={() => setThread(null)}>
                 Group

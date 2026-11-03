@@ -6,6 +6,7 @@ import { DesktopIdentity } from '../server/desktop-auth.ts';
 
 const verifier = () => randomBytes(32).toString('base64url');
 const challenge = (proof: string) => createHash('sha256').update(proof).digest('base64url');
+const owner = { id: 'workspace-owner', name: 'Workspace owner' };
 test('desktop browser consent is bound to PKCE, consumed once, persisted and revoked independently of browser login', () => {
   const store = new Store(':memory:');
   const identity = new DesktopIdentity(store, 'https://relay.example');
@@ -14,7 +15,7 @@ test('desktop browser consent is bound to PKCE, consumed once, persisted and rev
     const grant = identity.authorize(challenge(proof), 'Windows computer', 'test-ip');
     assert.equal(identity.token(grant.deviceCode, proof), null);
     assert.throws(() => identity.token(grant.deviceCode, verifier()), /proof/);
-    identity.approve(grant.userCode);
+    identity.approve(grant.userCode, owner);
     const token = identity.token(grant.deviceCode, proof)!;
     assert.equal(token.owner.id, 'workspace-owner');
     assert.throws(() => identity.token(grant.deviceCode, proof), /already used/);
@@ -45,13 +46,51 @@ test('desktop consent expires and never grants consent by polling; enrollment is
     store.close();
   }
 });
+
+test('desktop consent cannot change owners and legacy credentials never acquire a public account identity', () => {
+  const store = new Store(':memory:');
+  const identity = new DesktopIdentity(store, 'https://relay.example');
+  try {
+    const alice = { id: 'alice-user-id', name: 'Alice' };
+    const bob = { id: 'bob-user-id', name: 'Bob' };
+    const proof = verifier();
+    const grant = identity.authorize(challenge(proof), 'Alice desktop', 'alice-ip');
+    identity.approve(grant.userCode, alice);
+    assert.throws(() => identity.request(grant.userCode, bob), /another account/);
+    assert.throws(() => identity.approve(grant.userCode, bob), /another account/);
+    const token = identity.token(grant.deviceCode, proof)!;
+    assert.deepEqual(token.owner, alice);
+    const restarted = new DesktopIdentity(store, 'https://relay.example');
+    assert.deepEqual(
+      restarted.publicDevice(restarted.authenticate(`Bearer ${token.accessToken}`)).owner,
+      alice,
+    );
+
+    const oldProof = verifier();
+    const oldGrant = identity.authorize(challenge(oldProof), 'Legacy desktop', 'old-ip');
+    const persisted: any = store.all('desktopGrant')[0];
+    store.put('desktopGrant', { ...persisted, approved: true });
+    assert.throws(() => identity.approve(oldGrant.userCode, alice), /another account/);
+    const oldToken = identity.token(oldGrant.deviceCode, oldProof)!;
+    const oldDevice = identity.authenticate(`Bearer ${oldToken.accessToken}`);
+    const { owner: ignored, ...legacyDevice } = oldDevice;
+    store.put('desktopDevice', legacyDevice);
+    assert.deepEqual(
+      identity.publicDevice(identity.authenticate(`Bearer ${oldToken.accessToken}`)).owner,
+      owner,
+    );
+  } finally {
+    identity.close();
+    store.close();
+  }
+});
 test('outbound desktop bridge authenticates each connection, isolates hosts and never redelivers a dispatched request', async () => {
   const store = new Store(':memory:');
   const identity = new DesktopIdentity(store, 'https://relay.example');
   try {
     const proof = verifier();
     const grant = identity.authorize(challenge(proof), 'Desktop', 'ip');
-    identity.approve(grant.userCode);
+    identity.approve(grant.userCode, owner);
     const token = identity.token(grant.deviceCode, proof)!;
     const device = identity.authenticate(`Bearer ${token.accessToken}`);
     const bridgeKey = verifier();

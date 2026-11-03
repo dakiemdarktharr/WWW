@@ -6,9 +6,17 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run build:release through npm.');
-for (const script of ['build', 'desktop:stage', 'desktop:package']) {
+const steps = [
+  ['build', [npmCli, 'run', 'build']],
+  ['desktop:stage', [npmCli, 'run', 'desktop:stage']],
+  ['desktop:package', [npmCli, 'run', 'desktop:package']],
+  ...(process.platform === 'linux'
+    ? [['desktop:linux', [path.join(root, 'scripts', 'package-linux.mjs')]]]
+    : []),
+];
+for (const [script, args] of steps) {
   await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [npmCli, 'run', script], {
+    const child = spawn(process.execPath, args, {
       cwd: root,
       stdio: 'inherit',
       windowsHide: true,

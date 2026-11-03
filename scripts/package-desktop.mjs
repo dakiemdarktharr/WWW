@@ -31,7 +31,7 @@ if (toolsets) {
   });
   console.log('Portable Linux NSIS preflight passed; Wine is not required.');
 }
-const artifactName = `RELAY-${manifest.version}-Setup.exe`;
+const artifactName = `Kivuno-${manifest.version}-Setup.exe`;
 console.log('Packaging the Windows desktop installer…');
 await build({
   projectDir: path.join(root, 'desktop'),
@@ -39,7 +39,7 @@ await build({
   publish: 'never',
   config: {
     appId: 'club.nosleep.relay',
-    productName: 'RELAY',
+    productName: 'Kivuno',
     toolsets,
     electronVersion: rootPackage.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
@@ -84,7 +84,7 @@ await build({
       artifactName,
       icon: path.join(root, 'desktop', 'icon.ico'),
       signExecutable: false,
-      executableName: 'RELAY',
+      executableName: 'Kivuno',
     },
     nsis: {
       oneClick: false,
@@ -142,6 +142,18 @@ await writeFile(
       size: info.size,
       platform: 'win32-x64',
       signed: false,
+      platforms: {
+        windows: {
+          available: true,
+          url: `/downloads/${artifactName}`,
+          sha256,
+          size: info.size,
+          platform: 'win32-x64',
+          signed: false,
+        },
+        linux: { available: false, platform: 'linux-x64', signed: false },
+        macos: { available: false, platform: 'darwin', signed: false },
+      },
     },
     null,
     2,

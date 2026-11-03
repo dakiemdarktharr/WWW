@@ -71,7 +71,7 @@ type ModalState =
   | { type: 'setup'; memberId: string; home: string; instructions: string }
   | null;
 const nav = [
-  { id: 'mesh', label: 'MESH', icon: MessageSquare },
+  { id: 'mesh', label: 'Neralu', icon: MessageSquare },
   { id: 'sessions', label: 'Sessions', icon: Terminal },
   { id: 'workroom', label: 'Workroom', icon: LayoutGrid },
   { id: 'team', label: 'Team', icon: Users },
@@ -94,7 +94,7 @@ const statusNames: Record<TaskStatus, string> = {
   done: 'Done',
   blocked: 'Blocked',
 };
-const colors = ['#b8ee86', '#a6baff', '#e8b07d', '#bba6e4', '#7ccfc3', '#dc91af'];
+const colors = ['#8ce8cf', '#a6baff', '#e8b07d', '#bba6e4', '#7ccfc3', '#dc91af'];
 const relative = (date: string) => {
   const m = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 60000));
   return m < 1
@@ -106,7 +106,7 @@ const relative = (date: string) => {
         : `${Math.floor(m / 1440)}d ago`;
 };
 const shortId = (id: string) =>
-  `RLY-${id
+  `KIV-${id
     .replace(/[^a-z0-9]/gi, '')
     .slice(0, 5)
     .toUpperCase()}`;
@@ -125,10 +125,8 @@ const validAuthUrl = (url?: string) => {
 function Logo({ small = false }: { small?: boolean }) {
   return (
     <span className={`brand ${small ? 'small' : ''}`}>
-      <img src="/relay.svg" alt="" />
-      <span>
-        relay<span className="brand-period">.</span>
-      </span>
+      <img src="/kivuno.svg" alt="" />
+      <span>Kivuno</span>
     </span>
   );
 }
@@ -437,8 +435,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   useEffect(() => {
     const session = state?.sessions.find((entry) => entry.id === focusedSessionId);
     document.title = session
-      ? `${session.title} · RELAY`
-      : `${view === 'mesh' ? 'MESH' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · RELAY`;
+      ? `${session.title} · Kivuno`
+      : `${view === 'mesh' ? 'Neralu' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · Kivuno`;
   }, [
     focusedSessionId,
     view,
@@ -494,7 +492,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   async function acceptTask(task: Task) {
     if (
       !window.confirm(
-        `Integrate “${task.title}” into the project's current branch as a squash commit? RELAY integrates the reviewed changes only if the main working tree is clean.`,
+        `Integrate “${task.title}” into the project's current branch as a squash commit? Kivuno integrates the reviewed changes only if the main working tree is clean.`,
       )
     )
       return;
@@ -509,7 +507,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
 
   const pageTitle =
     view === 'mesh'
-      ? 'MESH'
+      ? 'Neralu'
       : view === 'workroom'
         ? 'Workroom'
         : view[0].toUpperCase() + view.slice(1);
@@ -1088,7 +1086,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       <dd className="mono">{state?.runtime.codexVersion || 'Unknown'}</dd>
                     </div>
                     <div>
-                      <dt>RELAY</dt>
+                      <dt>Kivuno</dt>
                       <dd className="mono">v{state?.runtime.version || '0.1.0'}</dd>
                     </div>
                     <div>
@@ -1108,7 +1106,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   </dl>
                   {!state?.runtime.codexAvailable && (
                     <div className="install-hint">
-                      <p>Install the official Codex CLI, then restart RELAY.</p>
+                      <p>Install the official Codex CLI, then restart Kivuno.</p>
                       <code>npm install -g @openai/codex</code>
                     </div>
                   )}
@@ -1120,7 +1118,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <div>
                     <h3>Recover interrupted tasks</h3>
                     <p>
-                      Stop any orphan Codex processes from the previous RELAY session before
+                      Stop any orphan Codex processes from the previous Kivuno session before
                       releasing their locks. Releasing a lock while an old worker is still running
                       can create conflicting work.
                     </p>
@@ -1129,7 +1127,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       onClick={() => {
                         if (
                           window.confirm(
-                            'I have verified that Codex processes from the interrupted RELAY session have stopped. Release their stale task locks?',
+                            'I have verified that Codex processes from the interrupted Kivuno session have stopped. Release their stale task locks?',
                           )
                         )
                           void perform(

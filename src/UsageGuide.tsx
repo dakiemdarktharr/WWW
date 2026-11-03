@@ -44,25 +44,25 @@ const definitions: Record<Stage, Step[]> = {
   hosted: [
     {
       target: 'setup',
-      title: '1. Cài RELAY',
-      text: 'Tải bản Windows trên web và cài app. App chứa runtime riêng; bạn không cần giữ terminal để làm việc.',
+      title: '1. Cài Kivuno',
+      text: 'Tải bản phù hợp với máy của bạn trên web và mở app. App chứa runtime riêng; bạn không cần giữ terminal để làm việc.',
     },
     {
       target: 'port',
       title: '2. Đăng nhập',
-      text: 'Mở RELAY và chọn Đăng nhập trên web. So sánh mã trên hai màn hình rồi xác nhận kết nối desktop.',
+      text: 'Mở Kivuno và chọn Đăng nhập trên web. So sánh mã trên hai màn hình rồi xác nhận kết nối desktop.',
     },
     {
       target: 'runner-connect',
       title: '3. Bắt đầu làm việc',
-      text: 'Quay lại app. MESH, Sessions và Team ở trong desktop; tab đăng nhập có thể đóng.',
+      text: 'Quay lại app. Neralu, Sessions và Team ở trong desktop; tab đăng nhập có thể đóng.',
     },
   ],
   mesh: [
     {
       target: 'groups',
       title: '1. Chọn nhóm dự án',
-      text: 'Mỗi project có group MESH riêng. Kết nối repository có sẵn hoặc tạo project hackathon. Các account đã đăng nhập tự gia nhập nhóm.',
+      text: 'Mỗi project có group Neralu riêng. Kết nối repository có sẵn hoặc tạo project hackathon. Các account đã đăng nhập tự gia nhập nhóm.',
     },
     {
       target: 'mesh-input',
@@ -166,7 +166,7 @@ function Illustration() {
       <svg
         viewBox="0 0 600 205"
         role="img"
-        aria-label="Minh họa: chọn project, nhắn MESH rồi theo dõi session Codex"
+        aria-label="Minh họa: chọn project, nhắn Neralu rồi theo dõi session Codex"
       >
         <defs>
           <marker
@@ -183,10 +183,10 @@ function Illustration() {
         </defs>
         <rect x="1" y="1" width="598" height="203" rx="16" fill="#f5faef" stroke="#d7e5cb" />
         <rect x="17" y="18" width="122" height="168" rx="9" fill="white" stroke="#dce1d6" />
-        <text x="31" y="44" fontSize="14" fontWeight="700" fill="#202a1c">
-          RELAY + MESH
+        <text x="31" y="44" fontSize="12" fontWeight="700" fill="#202a1c">
+          Kivuno + Neralu
         </text>
-        {['Project', 'MESH', 'Sessions', 'Team'].map((text, i) => (
+        {['Project', 'Neralu', 'Sessions', 'Team'].map((text, i) => (
           <g key={text}>
             <rect
               x="27"
@@ -255,10 +255,10 @@ export default function UsageGuide({
   const baseStep = index === null ? null : definitions[stage][index];
   const cloudText: Record<string, string> = {
     groups:
-      'Mỗi dự án có group MESH riêng. Chọn New project, Codex phụ trách, tên/link cuộc thi và hạn nộp. Hệ thống tạo Git repository trên cloud; chưa tự tạo remote GitHub.',
+      'Mỗi dự án có group Neralu riêng. Chọn New project, Codex phụ trách, tên/link cuộc thi và hạn nộp. Hệ thống tạo Git repository trên cloud; chưa tự tạo remote GitHub.',
     'new-session':
       'Chọn account, model và reasoning từ catalog thật. Mỗi dự án có nhiều cuộc trò chuyện; bỏ trống prompt để lưu trước. Read-only dùng cho research; viết code cần scope riêng.',
-    demo: 'Nhập HTTPS URL của bản demo đã deploy. Demo có thể mở riêng; MESH và Sessions luôn dùng trực tiếp trong web.',
+    demo: 'Nhập HTTPS URL của bản demo đã deploy. Demo có thể mở riêng; Neralu và Sessions luôn dùng trực tiếp trong web.',
   };
   const step =
     baseStep && cloud && cloudText[baseStep.target]
@@ -442,7 +442,7 @@ export default function UsageGuide({
           >
             <header>
               <div>
-                <span>RELAY + MESH</span>
+                <span>Kivuno + Neralu</span>
                 <h2 id="usage-title">Bắt đầu cùng workspace</h2>
               </div>
               <button onClick={() => dismiss(true)} aria-label="Đóng hướng dẫn">
@@ -459,10 +459,10 @@ export default function UsageGuide({
                 <h3>{cloud ? '1. Workspace trên cloud' : '1. Workspace trên desktop'}</h3>
                 <p>
                   {cloud ? (
-                    'MESH, Sessions và Team chạy trên cloud. Đăng nhập workspace trên các thiết bị bạn sử dụng; không cần localhost hoặc giữ cửa sổ kết nối. Sandbox miễn phí có giới hạn thời gian, lưu lại dữ liệu khi tạm ngủ và cần khôi phục công việc bị gián đoạn trước khi chạy tiếp.'
+                    'Neralu, Sessions và Team chạy trên cloud. Đăng nhập workspace trên các thiết bị bạn sử dụng; không cần localhost hoặc giữ cửa sổ kết nối. Sandbox miễn phí có giới hạn thời gian, lưu lại dữ liệu khi tạm ngủ và cần khôi phục công việc bị gián đoạn trước khi chạy tiếp.'
                   ) : (
                     <>
-                      Đăng nhập RELAY qua web, so sánh mã rồi xác nhận desktop. Quay lại app để làm
+                      Đăng nhập Kivuno qua web, so sánh mã rồi xác nhận desktop. Quay lại app để làm
                       việc; tab web có thể đóng. Mặc định Codex chạy trên máy này. Máy ngủ hoặc tắt
                       thì công việc trên máy dừng; hãy bàn giao sang máy đang bật nếu cần tiếp tục.
                     </>
@@ -485,9 +485,9 @@ export default function UsageGuide({
                 </p>
               </section>
               <section>
-                <h3>3. MESH và Sessions</h3>
+                <h3>3. Neralu và Sessions</h3>
                 <p>
-                  Chọn group dự án và nhắn yêu cầu trong <strong>MESH</strong>. Hệ thống ghi nhận
+                  Chọn group dự án và nhắn yêu cầu trong <strong>Neralu</strong>. Hệ thống ghi nhận
                   một người nhận việc; tin chat mở hội thoại chỉ đọc. Muốn sửa code, mở{' '}
                   <strong>Sessions → New session</strong>, chọn account, chế độ ghi và scope.
                 </p>

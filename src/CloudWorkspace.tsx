@@ -93,8 +93,8 @@ export default function CloudWorkspace() {
     );
   return (
     <main className="runner-approval cloud-login">
-      <img src="/relay.svg" width="36" height="36" alt="RELAY" />
-      <h1>NoSleepClub RELAY</h1>
+      <img src="/kivuno.svg" width="36" height="36" alt="Kivuno" />
+      <h1>NoSleepClub Kivuno</h1>
       {status === 'loading' ? (
         <div className="panel runner-consent" role="status">
           <Loader2 className="spin" size={24} />

@@ -48,6 +48,11 @@ test('private cloud drain refuses merge/checkpoint work, then fences new request
       gatewaySecret,
       auth: {
         authorized: async () => true,
+        currentUser: async () => ({
+          id: 'workspace-owner',
+          name: 'Workspace owner',
+          email: 'owner@relay.invalid',
+        }),
         handler: async () => new Response(null, { status: 404 }),
         close() {},
       },

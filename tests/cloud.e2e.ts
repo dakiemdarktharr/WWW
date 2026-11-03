@@ -110,6 +110,7 @@ async function device() {
 async function login(context: BrowserContext) {
   const page = await context.newPage();
   await page.goto(`${origin}/?login`);
+  await page.getByRole('button', { name: 'Chủ workspace cũ', exact: true }).click();
   await page.getByLabel('Mật khẩu chủ workspace').fill(password);
   await page.getByRole('dialog').getByRole('button', { name: 'Đăng nhập', exact: true }).click();
   await page.getByLabel('Mã từ app desktop', { exact: true }).waitFor();
@@ -119,7 +120,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.3.0',
+      version: '0.4.0',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -179,7 +180,7 @@ try {
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await project.waitFor({ state: 'hidden' });
   assert.equal(store.projects()[0].repositoryName, 'NoSleepClub_Browser-challenge_Cloud-project');
-  await nav('MESH').click();
+  await nav('Neralu').click();
   await page.getByLabel('Message the project team').fill('Shared across devices');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByText('Shared across devices', { exact: true }).waitFor();

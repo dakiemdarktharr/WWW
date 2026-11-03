@@ -9,7 +9,7 @@ import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
 
-test('cloud gateway requires owner login, blocks signup/foreign origins and preserves identity across restart', async () => {
+test('cloud gateway retains legacy owner access, blocks reserved signup/foreign origins and preserves identity across restart', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'relay-cloud-auth-'));
   const origin = 'https://relay.example';
   const password = randomBytes(24).toString('hex');
@@ -89,7 +89,7 @@ test('cloud gateway requires owner login, blocks signup/foreign origins and pres
     assert.equal(
       (
         await request('POST', '/api/auth/sign-up/email', {
-          email: 'attacker@example.com',
+          email: 'attacker@relay.invalid',
           password,
           name: 'Attacker',
         })

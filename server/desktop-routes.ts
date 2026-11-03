@@ -1,10 +1,14 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { DesktopIdentity } from './desktop-auth.ts';
+import { DesktopIdentity, type DesktopOwner } from './desktop-auth.ts';
 
 const proof = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const code = z.string().regex(/^[A-Fa-f0-9]{5}-[A-Fa-f0-9]{5}$/);
-export function registerDesktopRoutes(app: FastifyInstance, identity: DesktopIdentity) {
+export function registerDesktopRoutes(
+  app: FastifyInstance,
+  identity: DesktopIdentity,
+  browserOwner: (request: FastifyRequest) => DesktopOwner,
+) {
   app.post('/api/desktop/authorize', async (request) => {
     const input = z
       .object({ challenge: proof, name: z.string().trim().min(1).max(100) })
@@ -22,7 +26,7 @@ export function registerDesktopRoutes(app: FastifyInstance, identity: DesktopIde
   });
   app.get('/api/desktop/request', async (request) => {
     const query = z.object({ code }).strict().parse(request.query);
-    const grant = identity.request(query.code);
+    const grant = identity.request(query.code, browserOwner(request));
     return {
       name: grant.name,
       userCode: grant.code,
@@ -31,7 +35,10 @@ export function registerDesktopRoutes(app: FastifyInstance, identity: DesktopIde
     };
   });
   app.post('/api/desktop/approve', async (request) =>
-    identity.approve(z.object({ userCode: code }).strict().parse(request.body).userCode),
+    identity.approve(
+      z.object({ userCode: code }).strict().parse(request.body).userCode,
+      browserOwner(request),
+    ),
   );
   app.get('/api/desktop/me', async (request) =>
     identity.publicDevice(identity.authenticate(request.headers.authorization)),

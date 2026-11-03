@@ -13,7 +13,22 @@ const {
   runtimeEnvironment,
   machineConfiguration,
   previewUrl,
+  secureCredentialStorage,
 } = require('../desktop/security.cjs');
+
+test('Linux credentials require an OS keyring for both reading and writing sessions', () => {
+  const storage = (available: boolean, backend: string) => ({
+    isEncryptionAvailable: () => available,
+    getSelectedStorageBackend: () => backend,
+  });
+  assert.equal(secureCredentialStorage(storage(false, 'gnome_libsecret'), 'linux'), false);
+  for (const backend of ['basic_text', 'unknown', 'other'])
+    assert.equal(secureCredentialStorage(storage(true, backend), 'linux'), false);
+  for (const backend of ['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'])
+    assert.equal(secureCredentialStorage(storage(true, backend), 'linux'), true);
+  assert.equal(secureCredentialStorage(storage(true, 'unknown'), 'win32'), true);
+  assert.equal(secureCredentialStorage(storage(false, 'unknown'), 'win32'), false);
+});
 
 test('desktop identity origins reject credentials, paths and insecure production origins', () => {
   assert.equal(cloudOrigin('https://relay.example'), 'https://relay.example');

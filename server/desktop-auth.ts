@@ -3,6 +3,8 @@ import { DomainError, type Store } from './store.ts';
 import { safeEqual } from './security.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+export type DesktopOwner = { id: string; name: string };
+const legacyOwner: DesktopOwner = { id: 'workspace-owner', name: 'Workspace owner' };
 type Grant = {
   id: string;
   code: string;
@@ -11,6 +13,7 @@ type Grant = {
   expires: number;
   approved: boolean;
   lastPoll: number;
+  owner?: DesktopOwner;
 };
 export type DesktopDevice = {
   id: string;
@@ -20,6 +23,7 @@ export type DesktopDevice = {
   revoked: boolean;
   bridgeKeyHash?: string;
   lastSeen?: number;
+  owner?: DesktopOwner;
 };
 type BridgeRequest = {
   id: string;
@@ -35,7 +39,6 @@ export class DesktopIdentity {
   private limits = new Map<string, { at: number; count: number }>();
   private pending = new Map<string, Map<string, BridgeRequest>>();
   private polling = new Set<string>();
-  readonly owner = { id: 'workspace-owner', name: 'Workspace owner' };
   constructor(
     private store: Store,
     private origin: string,
@@ -77,15 +80,18 @@ export class DesktopIdentity {
       interval: 3,
     };
   }
-  request(code: string) {
+  request(code: string, owner?: DesktopOwner) {
     const grant = this.store.all<Grant>('desktopGrant').find((g) => g.code === code.toUpperCase());
     if (!grant || grant.expires < Date.now())
       throw new DomainError('This desktop sign-in request expired or does not exist.', 404);
+    if (grant.approved && owner && (grant.owner || legacyOwner).id !== owner.id)
+      throw new DomainError('This desktop sign-in request belongs to another account.', 403);
     return grant;
   }
-  approve(code: string) {
-    const grant = this.request(code);
-    this.store.put('desktopGrant', { ...grant, approved: true });
+  approve(code: string, owner: DesktopOwner) {
+    const grant = this.request(code, owner);
+    // An approved grant cannot change owners, even before its PKCE exchange.
+    this.store.put('desktopGrant', { ...grant, approved: true, owner });
     return { approved: true, name: grant.name };
   }
   token(deviceCode: string, verifier: string) {
@@ -107,6 +113,21 @@ export class DesktopIdentity {
     }
     return this.store.transaction(() => {
       this.store.get('desktopGrant', grant.id);
+      const owner = grant.owner || legacyOwner;
+      const now = Date.now();
+      const devices = this.store.all<DesktopDevice>('desktopDevice');
+      if (
+        devices.filter(
+          (device) =>
+            !device.revoked &&
+            Date.parse(device.expiresAt) > now &&
+            (device.owner || legacyOwner).id === owner.id,
+        ).length >= 10
+      )
+        throw new DomainError('This account has reached its active desktop limit.', 429);
+      for (const device of devices)
+        if (device.revoked || Date.parse(device.expiresAt) <= now)
+          this.store.remove('desktopDevice', device.id);
       this.store.remove('desktopGrant', grant.id);
       const accessToken = randomBytes(32).toString('base64url');
       const device = this.store.put<DesktopDevice>('desktopDevice', {
@@ -115,6 +136,7 @@ export class DesktopIdentity {
         tokenHash: digest(accessToken),
         expiresAt: new Date(Date.now() + 7 * 86400_000).toISOString(),
         revoked: false,
+        owner,
       });
       return { accessToken, ...this.publicDevice(device) };
     });
@@ -131,7 +153,7 @@ export class DesktopIdentity {
     return device;
   }
   publicDevice(device: DesktopDevice) {
-    return { owner: this.owner, deviceId: device.id, expiresAt: device.expiresAt };
+    return { owner: device.owner || legacyOwner, deviceId: device.id, expiresAt: device.expiresAt };
   }
   revoke(device: DesktopDevice) {
     this.store.put('desktopDevice', { ...device, revoked: true });

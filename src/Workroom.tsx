@@ -453,7 +453,7 @@ export default function Workroom({
                       <div className="event-meta">
                         <strong>
                           {member?.name ||
-                            (event.message && event.type === 'message' ? 'You' : 'RELAY')}
+                            (event.message && event.type === 'message' ? 'You' : 'Kivuno')}
                         </strong>
                         <span className={`event-type ${event.type}`}>{event.type}</span>
                         <time

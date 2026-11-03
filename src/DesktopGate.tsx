@@ -55,15 +55,10 @@ export default function DesktopGate() {
   return (
     <main className="desktop-welcome">
       <div className="portal-brand">
-        <img src="/relay.svg" alt="" />
-        relay<span>.</span>
+        <img src="/kivuno.svg" alt="Kivuno" />
       </div>
       <div className="desktop-welcome-body">
-        <h1>
-          Đội của bạn.
-          <br />
-          Máy của bạn.
-        </h1>
+        <h1>Kivuno</h1>
         {status?.signedIn ? (
           <p className="portal-status" role="status">
             <Loader2 className="spin" size={18} />
@@ -105,11 +100,14 @@ export default function DesktopGate() {
         )}
         {status?.runtime === 'stopped' && (
           <p className="portal-muted">
-            <RefreshCw size={14} /> Runtime đã dừng. Đóng RELAY rồi mở lại để khôi phục.
+            <RefreshCw size={14} /> Runtime đã dừng. Đóng Kivuno rồi mở lại để khôi phục.
           </p>
         )}
       </div>
-      <footer>RELAY {window.relayDesktop?.version} · Windows</footer>
+      <footer>
+        Kivuno {window.relayDesktop?.version} ·{' '}
+        {window.relayDesktop?.platform === 'linux' ? 'Linux' : 'Windows'}
+      </footer>
     </main>
   );
 }

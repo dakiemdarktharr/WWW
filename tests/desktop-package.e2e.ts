@@ -46,7 +46,7 @@ const git = await execute(
 assert.equal(git.stdout.trim(), 'git version 2.56.0.windows.4');
 const gitProbe = await mkdtemp(path.join(os.tmpdir(), 'relay-packaged-git-'));
 try {
-  await writeFile(path.join(gitProbe, 'smoke.txt'), 'Bundled RELAY Git smoke test.\n');
+  await writeFile(path.join(gitProbe, 'smoke.txt'), 'Bundled Kivuno Git smoke test.\n');
   await writeFile(path.join(gitProbe, 'empty.gitconfig'), '');
   const commit = await execute(
     path.join(runtime, 'node.exe'),
@@ -57,7 +57,7 @@ try {
     const run = (...args) => execFileSync('git', args, { encoding: 'utf8', windowsHide: true });
     run('init', '--initial-branch=smoke');
     run('add', 'smoke.txt');
-    run('-c', 'user.name=RELAY smoke test', '-c', 'user.email=relay-smoke@example.invalid', 'commit', '-m', 'Verify bundled Git');
+    run('-c', 'user.name=Kivuno smoke test', '-c', 'user.email=relay-smoke@example.invalid', 'commit', '-m', 'Verify bundled Git');
     process.stdout.write(run('rev-parse', 'HEAD'));
   `,
     ],
@@ -89,7 +89,7 @@ assert.match(codex.stdout, /codex-cli\s+0\.166\.0/);
 let desktop;
 try {
   desktop = await electron.launch({
-    executablePath: path.join(root, 'RELAY.exe'),
+    executablePath: path.join(root, 'Kivuno.exe'),
     env,
     timeout: 60000,
   });
@@ -98,7 +98,7 @@ try {
     version: app.getVersion(),
     packaged: app.isPackaged,
   }));
-  assert.deepEqual(metadata, { name: 'RELAY', version: '0.3.0', packaged: true });
+  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.4.0', packaged: true });
   const page = await desktop.firstWindow();
   await page.waitForFunction(() => Boolean((window as any).relayDesktop), { timeout: 30000 });
   const status = await page.evaluate(() => (window as any).relayDesktop.getStatus());

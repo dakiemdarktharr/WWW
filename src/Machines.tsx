@@ -234,7 +234,8 @@ export default function Machines({
           <details>
             <summary>Connect the other machine</summary>
             <p>
-              In RELAY on that computer, choose Join as machine and open this private configuration.
+              In Kivuno on that computer, choose Join as machine and open this private
+              configuration.
             </p>
             <p>
               For a headless SSH machine, enter an absolute private data directory above, then run:

@@ -1,9 +1,9 @@
 {
   "name": "relay-desktop",
-  "productName": "RELAY",
-  "version": "0.3.0",
+  "productName": "Kivuno",
+  "version": "0.4.0",
   "private": true,
-  "description": "RELAY desktop workspace for real Codex teams",
+  "description": "Kivuno desktop workspace for real Codex teams",
   "author": "NoSleepClub",
   "license": "MIT",
   "main": "main.cjs",

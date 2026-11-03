@@ -10,7 +10,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { CloudAccess } from './cloud-auth.ts';
 import { readModels } from './codex.ts';
 import { createHackathonProject } from './hackathons.ts';
-import { DesktopIdentity } from './desktop-auth.ts';
+import { DesktopIdentity, type DesktopOwner } from './desktop-auth.ts';
 import { registerDesktopRoutes } from './desktop-routes.ts';
 import { registerAegisRoutes } from './aegis-routes.ts';
 
@@ -40,7 +40,7 @@ const taskInput = z
     status: z.enum(['ready', 'backlog']).default('ready'),
   })
   .strict();
-type Session = { token: string; expires: number };
+type Session = { token: string; expires: number; ownerId?: string };
 export async function buildApp(
   workspace: Workspace,
   options: {
@@ -59,6 +59,7 @@ export async function buildApp(
   });
   const eventConnections = new Set<() => void>();
   const sessions = new Map<string, Session>();
+  const browserOwners = new WeakMap<FastifyRequest, DesktopOwner>();
   const mutations = new WeakSet<FastifyRequest>();
   let activeMutations = 0;
   let upgradeDrain: Promise<void> | null = null;
@@ -78,7 +79,9 @@ export async function buildApp(
       .map((v) => v.trim())
       .find((v) => v.startsWith('relay_session='))
       ?.slice(14);
-    return value ? sessions.get(value) : undefined;
+    const session = value ? sessions.get(value) : undefined;
+    if (options.cloud && session?.ownerId !== browserOwners.get(request)?.id) return undefined;
+    return session;
   };
   app.addHook('onRequest', async (request, reply) => {
     reply
@@ -128,10 +131,17 @@ export async function buildApp(
         workspace.runners.authenticate(request.headers.authorization);
         return;
       }
-      if (!(await cloud.auth.authorized(request.headers)))
+      const desktopBrowserRoute = [
+        '/api/session',
+        '/api/desktop/request',
+        '/api/desktop/approve',
+      ].includes(pathname);
+      const user = await cloud.auth.currentUser(request.headers);
+      if (!user || (!desktopBrowserRoute && user.id !== 'workspace-owner'))
         return reply
           .code(401)
           .send({ error: 'Sign in to your cloud workspace.', code: 'CLOUD_SIGN_IN_REQUIRED' });
+      browserOwners.set(request, { id: user.id, name: user.name });
     }
     if (!cloud && (!host || !allowed.has(`http://${host}`)))
       return reply.code(403).send({ error: 'RELAY only accepts requests to its local address.' });
@@ -185,7 +195,12 @@ export async function buildApp(
   app.addHook('onResponse', async (request) => {
     if (mutations.delete(request)) activeMutations--;
   });
-  if (desktopIdentity) registerDesktopRoutes(app, desktopIdentity);
+  if (desktopIdentity)
+    registerDesktopRoutes(app, desktopIdentity, (request) => {
+      const owner = browserOwners.get(request);
+      if (!owner) throw new DomainError('Sign in before approving a desktop.', 401);
+      return owner;
+    });
   registerAegisRoutes(app, workspace.aegis);
   app.get('/api/desktop/release', async () => {
     try {
@@ -194,7 +209,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.3.0', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.4.0', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -285,7 +300,11 @@ export async function buildApp(
       for (const [key, value] of sessions) if (value.expires < Date.now()) sessions.delete(key);
       if (sessions.size > 200) sessions.delete(sessions.keys().next().value!);
       const key = secret();
-      session = { token: secret(), expires: Date.now() + 24 * 60 * 60 * 1000 };
+      session = {
+        token: secret(),
+        expires: Date.now() + 24 * 60 * 60 * 1000,
+        ...(options.cloud ? { ownerId: browserOwners.get(request)!.id } : {}),
+      };
       sessions.set(key, session);
       reply.header(
         'Set-Cookie',
