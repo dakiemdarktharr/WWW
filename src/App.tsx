@@ -1061,9 +1061,15 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       <dd>{state?.runtime.platform || '—'}</dd>
                     </div>
                     <div className="runtime-path">
-                      <dt>Local data</dt>
+                      <dt>{cloud ? 'Cloud data' : 'Local data'}</dt>
                       <dd className="mono">{state?.runtime.dataDir || '—'}</dd>
                     </div>
+                    {cloud && state?.runtime.expiresAt && (
+                      <div>
+                        <dt>Cloud run ends</dt>
+                        <dd>{new Date(state.runtime.expiresAt).toLocaleString()}</dd>
+                      </div>
+                    )}
                   </dl>
                   {!state?.runtime.codexAvailable && (
                     <div className="install-hint">

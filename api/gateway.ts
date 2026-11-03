@@ -9,6 +9,11 @@ export default async function handler(
   response.setHeader('X-Content-Type-Options', 'nosniff');
   try {
     const url = new URL(request.url || '/', 'https://workspace.invalid');
+    const route = url.searchParams.get('relay_path');
+    if (route !== null) {
+      url.pathname = `/api/${route}`;
+      url.searchParams.delete('relay_path');
+    }
     if (!/^\/api\/[a-zA-Z0-9/-]+$/.test(url.pathname) || url.pathname.includes('//')) {
       response.writeHead(400).end(JSON.stringify({ error: 'Invalid workspace route.' }));
       return;
