@@ -148,7 +148,10 @@ export function connectBridge(portNumber: string) {
     500,
   );
   const closed = window.setInterval(() => {
-    if (popup.closed) disconnectBridge('Cửa sổ runner đã đóng. Kết nối lại để tiếp tục.');
+    if (popup.closed)
+      disconnectBridge(
+        'Cửa sổ runner đã đóng. Nếu trình duyệt trong ứng dụng không giữ được popup, mở web bằng Chrome hoặc Edge rồi kết nối lại.',
+      );
   }, 1000);
   const timeout = window.setTimeout(
     () =>

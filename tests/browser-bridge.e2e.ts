@@ -1,7 +1,7 @@
 // Production assets at a controlled HTTPS origin + real loopback HTTP/SQLite.
 // No Codex process, account login, model turn or production data is used.
 import assert from 'node:assert/strict';
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
@@ -169,10 +169,11 @@ try {
   await page.getByLabel('Message the project team', { exact: true }).fill('Browser bridge message');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByText('Browser bridge message', { exact: true }).waitFor();
-  assert.equal(
-    workspace.snapshot().messages.some((message) => message.content === 'Browser bridge message'),
-    true,
-  );
+  await expect
+    .poll(() =>
+      workspace.snapshot().messages.some((message) => message.content === 'Browser bridge message'),
+    )
+    .toBe(true);
   assert.equal(store.sessions().length, 0);
   if (process.env.BRIDGE_SCREENSHOT_DIR) {
     await mkdir(process.env.BRIDGE_SCREENSHOT_DIR, { recursive: true });

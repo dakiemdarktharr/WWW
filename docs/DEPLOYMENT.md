@@ -31,6 +31,8 @@ Reloading the hosted tab requires approval again. An unrelated tab, preview doma
 
 If the popup reports connection refused, start the runner on this computer and check its port. An unavailable/outdated runner produces an error after 12 seconds; approval has a 90-second timeout. Opening the web app on a phone does not make a computer's localhost reachable. **Hướng dẫn** works without private GitHub docs. **Private repository** requires source access.
 
+Use Chrome or Edge with popups allowed if an in-app browser immediately closes the connection window. The Codex in-app browser was observed closing this popup during live verification; MESH/Sessions navigation itself worked on the deployed URL. Do not bypass browser security warnings or weaken runner Host/Origin protection to work around a browser that cannot keep the window relationship.
+
 ## Browser transport
 
 Only the explicit Connect action opens `GET /#connect` on loopback. The existing narrow top-level document-navigation exception still applies; cross-site HTTP APIs remain denied. No CORS wildcard, public runner port, tunnel, credential upload or cloud API proxy is introduced.
