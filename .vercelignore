@@ -1,0 +1,15 @@
+.git
+.relay
+.local
+.agents
+.codex
+.aws
+node_modules
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+auth.json
+test-results
+playwright-report
