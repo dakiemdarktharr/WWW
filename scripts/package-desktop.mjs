@@ -3,7 +3,11 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { build, Platform, Arch } from 'electron-builder';
+import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
+import { getWineToolset } from 'app-builder-lib/out/toolsets/wine.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -11,6 +15,25 @@ const manifest = JSON.parse(await readFile(path.join(staged, 'manifest.json'), '
 const rootPackage = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const output = path.join(root, 'release');
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
+const toolsets = process.platform === 'linux' ? { nsis: '1.2.1', wine: '1.0.1' } : undefined;
+if (toolsets) {
+  // Minimal Linux builders lack a generated locale and a system Wine install.
+  // Use checksum-pinned portable toolsets and verify them before compression.
+  process.env.LANG = 'C.UTF-8';
+  process.env.LC_ALL = 'C.UTF-8';
+  const execute = promisify(execFile);
+  const nsis = await getMakeNsisPath(toolsets.nsis);
+  const wine = await getWineToolset(toolsets.wine);
+  await execute(nsis.path, ['-VERSION'], {
+    env: { ...process.env, ...nsis.env },
+    timeout: 30000,
+  });
+  await execute(wine.execPath, ['--version'], {
+    env: { ...process.env, ...wine.env },
+    timeout: 30000,
+  });
+  console.log('Portable Linux NSIS and Wine preflight passed.');
+}
 const artifactName = `RELAY-${manifest.version}-Setup.exe`;
 console.log('Packaging the Windows desktop installer…');
 await build({
@@ -20,6 +43,7 @@ await build({
   config: {
     appId: 'club.nosleep.relay',
     productName: 'RELAY',
+    toolsets,
     electronVersion: rootPackage.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
     extraMetadata: { version: manifest.version },
