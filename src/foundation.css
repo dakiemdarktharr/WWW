@@ -1095,3 +1095,9 @@
     flex-basis: auto;
   }
 }
+@media (max-width: 380px) {
+  .sessions-layout > .page-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

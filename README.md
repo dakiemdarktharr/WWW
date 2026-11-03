@@ -8,6 +8,8 @@ RELAY là workspace chạy trên máy cá nhân để nhiều tài khoản Codex
 
 Phiên bản **0.2** bổ sung **MESH**, session Codex tương tác chạy bằng CLI/App Server thật, nhiều session trên một account, quota chung, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn nền tảng](docs/FOUNDATION.md) mô tả các quy tắc và phạm vi đã triển khai.
 
+Mở [NoSleepClub RELAY](https://nosleepclub-relay.vercel.app). Nút **Hướng dẫn** trong web có popup tiếng Việt, minh họa và tour trỏ vào từng thao tác; có thể bỏ qua hoặc xem lại. [Chi tiết hướng dẫn trong web](docs/ONBOARDING.md).
+
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
 ![MESH trước khi kết nối dự án](docs/images/mesh.png)

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ArrowUpRight, Check, Copy, Code2, Terminal } from 'lucide-react';
 import './hosted.css';
+import UsageGuide from './UsageGuide';
 
 const repository = 'https://github.com/dakiemdarktharr/WWW';
 const commands = `git clone ${repository}.git\ncd WWW\nnpm ci\nnpm run build\nnpm start`;
@@ -32,9 +33,12 @@ export default function HostedWorkspace() {
           <strong>WWW</strong>
           <span>RELAY + MESH</span>
         </a>
-        <a href={repository} target="_blank" rel="noopener noreferrer" className="hosted-link">
-          <Code2 size={16} /> Private repository <ArrowUpRight size={14} />
-        </a>
+        <div className="hosted-header-actions">
+          <UsageGuide stage="hosted" />
+          <a href={repository} target="_blank" rel="noopener noreferrer" className="hosted-link">
+            <Code2 size={16} /> Private repository <ArrowUpRight size={14} />
+          </a>
+        </div>
       </header>
       <main className="hosted-main">
         <div className="hosted-title">
@@ -50,7 +54,7 @@ export default function HostedWorkspace() {
             <h2 id="runner-heading">Local runner</h2>
             <span className="hosted-label">Node 24.22.1+ · Git · Codex CLI</span>
           </div>
-          <div className="hosted-command">
+          <div className="hosted-command" data-usage="setup">
             <pre>
               <code>{commands}</code>
             </pre>
@@ -72,6 +76,7 @@ export default function HostedWorkspace() {
               Port
               <input
                 id="runner-port"
+                data-usage="port"
                 inputMode="numeric"
                 pattern="[0-9]*"
                 value={port}
@@ -82,6 +87,7 @@ export default function HostedWorkspace() {
             </label>
             <a
               className="button primary"
+              data-usage="open-mesh"
               href={valid ? `http://127.0.0.1:${number}/#mesh` : undefined}
               aria-disabled={!valid}
               tabIndex={valid ? 0 : -1}
@@ -90,6 +96,7 @@ export default function HostedWorkspace() {
             </a>
             <a
               className="button"
+              data-usage="open-sessions"
               href={valid ? `http://127.0.0.1:${number}/#sessions` : undefined}
               aria-disabled={!valid}
               tabIndex={valid ? 0 : -1}

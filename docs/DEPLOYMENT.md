@@ -2,7 +2,11 @@
 
 Source: private repository [dakiemdarktharr/WWW](https://github.com/dakiemdarktharr/WWW).
 
+Production entry: [nosleepclub-relay.vercel.app](https://nosleepclub-relay.vercel.app). The project domain tracks production deployments from `main`. The page title includes NoSleepClub RELAY to make it easier to find in browser history. Existing team deployment protection remains enabled.
+
 Vercel builds the Vite frontend from `main` using `npm run build` and serves `dist`. On the hosted origin the application presents a launch/setup page with links to the local MESH and session workspace. On localhost it renders the full existing app.
+
+The **Hướng dẫn** button opens an illustrated Vietnamese introduction and an on-screen tour. See [onboarding behavior](ONBOARDING.md).
 
 The current coordinator requires a local Codex binary, long-lived processes, SQLite, account homes and Git worktrees. The static Vercel deployment does not run those workers or host their state. Start the local runner on the computer where the browser opens the workspace. A fully remote multi-user deployment would require a separate persistent runner and an authenticated relay protocol; it is outside this deployment.
 

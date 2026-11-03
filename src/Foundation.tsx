@@ -224,7 +224,7 @@ export function MeshPage({
   }
   return (
     <div className={`mesh-layout ${panel ? 'has-context' : ''}`}>
-      <aside className="mesh-groups" aria-label="Project groups">
+      <aside className="mesh-groups" aria-label="Project groups" data-usage="groups">
         <div className="mesh-groups-heading">
           <strong>MESH</strong>
           <button className="icon-button" onClick={addProject} aria-label="Connect a project group">
@@ -277,6 +277,7 @@ export function MeshPage({
               className={`icon-button ${panel === 'usage' ? 'selected' : ''}`}
               onClick={() => setPanel(panel === 'usage' ? null : 'usage')}
               aria-label="Account usage"
+              data-usage="mesh-usage"
               title="Usage"
             >
               <Circle size={16} />
@@ -286,6 +287,7 @@ export function MeshPage({
               onClick={() => setPanel(panel === 'needs' ? null : 'needs')}
               aria-label={`Needs you${requests.length ? ` (${requests.length})` : ''}`}
               title="Needs you"
+              data-usage="mesh-needs"
             >
               <Bell size={16} />
               {requests.length > 0 && <span className="mini-count">{requests.length}</span>}
@@ -294,6 +296,7 @@ export function MeshPage({
               className={`icon-button ${panel === 'handoffs' ? 'selected' : ''}`}
               onClick={() => setPanel(panel === 'handoffs' ? null : 'handoffs')}
               aria-label="Project handoffs"
+              data-usage="mesh-handoff"
               title="Handoffs"
             >
               <GitBranch size={16} />
@@ -461,6 +464,7 @@ export function MeshPage({
           </label>
           <textarea
             id="mesh-composer"
+            data-usage="mesh-input"
             rows={3}
             maxLength={10000}
             value={content}
@@ -1146,6 +1150,7 @@ export function SessionsPage({
           <button
             className="button"
             onClick={() => (demo ? openDemo() : setDemoEdit(true))}
+            data-usage="demo"
             disabled={!focusedProject}
           >
             <ExternalLink size={14} />
@@ -1164,6 +1169,7 @@ export function SessionsPage({
               className="button primary"
               disabled={!project || busy || !state.members.length}
               onClick={() => setCreating(true)}
+              data-usage="new-session"
             >
               <Plus size={14} />
               New session
@@ -1217,7 +1223,7 @@ export function SessionsPage({
         </div>
       )}
       {sessions.length ? (
-        <div className="session-grid">
+        <div className="session-grid" data-usage="session-grid">
           {sessions.map((session) => (
             <SessionConsole
               key={session.id}
@@ -1577,6 +1583,7 @@ function SessionConsole({
         </label>
         <textarea
           id={`session-input-${session.id}`}
+          data-usage="session-input"
           rows={2}
           value={prompt}
           maxLength={16000}

@@ -38,6 +38,11 @@
 .hosted-link:hover {
   color: var(--text);
 }
+.hosted-header-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
 .hosted-main {
   width: min(700px, calc(100% - 40px));
   margin: 90px auto 30px;
@@ -155,6 +160,12 @@
   }
   .hosted-header .hosted-link {
     font-size: 11px;
+  }
+  .hosted-header-actions {
+    gap: 9px;
+  }
+  .hosted-header .hosted-link {
+    display: none;
   }
   .hosted-main {
     margin-top: 50px;

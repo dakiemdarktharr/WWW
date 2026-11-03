@@ -153,6 +153,7 @@ export default function Workroom({
           </label>
           <textarea
             id="team-prompt"
+            data-usage="team-prompt"
             rows={2}
             value={prompt}
             maxLength={16000}
@@ -296,7 +297,7 @@ export default function Workroom({
         </ol>
       )}
 
-      <section className="panel hierarchy-panel">
+      <section className="panel hierarchy-panel" data-usage="workflow-team">
         <div className="panel-heading">
           <h2>
             <Users size={15} />

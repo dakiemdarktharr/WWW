@@ -52,6 +52,7 @@ import type {
 } from '../shared/types';
 import { api } from './api';
 import Workroom from './Workroom';
+import UsageGuide from './UsageGuide';
 import {
   AccountSettings,
   MeshPage,
@@ -178,6 +179,7 @@ function Button({
   primary = false,
   className = '',
   type = 'button',
+  guide,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -185,6 +187,7 @@ function Button({
   primary?: boolean;
   className?: string;
   type?: 'button' | 'submit';
+  guide?: string;
 }) {
   return (
     <button
@@ -192,6 +195,7 @@ function Button({
       disabled={disabled}
       onClick={onClick}
       className={`button ${primary ? 'primary' : ''} ${className}`}
+      data-usage={guide}
     >
       {children}
     </button>
@@ -622,6 +626,7 @@ export default function App() {
             <strong>{pageTitle}</strong>
           </div>
           <div className="topbar-actions">
+            {state && !focusedSessionId && <UsageGuide stage={view} enabled={!modal} />}
             <span className={`connection-label ${connected ? 'online' : ''}`}>
               <span />
               {connected ? 'Live' : state ? 'Reconnecting' : 'Connecting'}
@@ -640,7 +645,10 @@ export default function App() {
           </div>
         </header>
 
-        <main className={`main-content view-${view}`}>
+        <main
+          className={`main-content view-${view}`}
+          data-usage={view === 'reviews' ? 'review-content' : undefined}
+        >
           {loadError && (
             <div className="error-banner">
               <AlertTriangle size={17} />
@@ -721,7 +729,7 @@ export default function App() {
                 <div>
                   <h1>Team</h1>
                 </div>
-                <Button primary onClick={() => setModal({ type: 'member' })}>
+                <Button primary guide="add-account" onClick={() => setModal({ type: 'member' })}>
                   <Plus size={16} /> Add account
                 </Button>
               </section>
@@ -763,7 +771,7 @@ export default function App() {
                       openTask={openDetail}
                       setup={() => void openSetup(member)}
                     />
-                    <div className="account-control-panel panel">
+                    <div className="account-control-panel panel" data-usage="account-controls">
                       <QuotaCard
                         member={member}
                         project={project}
@@ -795,7 +803,7 @@ export default function App() {
                 <div>
                   <h1>Tasks</h1>
                 </div>
-                <div className="heading-actions">
+                <div className="heading-actions" data-usage="task-actions">
                   <Button onClick={dispatch} disabled={!project || pending}>
                     <Zap size={15} /> Dispatch
                   </Button>
@@ -967,7 +975,7 @@ export default function App() {
                 </div>
               </section>
               <div className="settings-grid">
-                <section className="panel settings-panel">
+                <section className="panel settings-panel" data-usage="project-settings">
                   <div className="panel-heading">
                     <h2>
                       <FolderGit2 size={17} /> Projects
@@ -1785,7 +1793,7 @@ function MemberCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <section className="panel member-card">
+    <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
         <Avatar member={member} size="large" />
         <Badge status={member.status} />
