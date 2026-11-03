@@ -1,7 +1,7 @@
 // Smoke-test the distributable executable, not the development Electron runtime.
 // No identity login, Codex authentication or model turn is started by this test.
 import assert from 'node:assert/strict';
-import { _electron as electron } from '@playwright/test';
+import { _electron as electron, expect } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -87,6 +87,8 @@ const codex = await execute(
 );
 assert.match(codex.stdout, /codex-cli\s+0\.166\.0/);
 let desktop;
+const pageErrors: string[] = [];
+const rendererDiagnostics: string[] = [];
 try {
   desktop = await electron.launch({
     executablePath: path.join(root, 'Kivuno.exe'),
@@ -100,10 +102,51 @@ try {
   }));
   assert.deepEqual(metadata, { name: 'Kivuno', version: '0.4.0', packaged: true });
   const page = await desktop.firstWindow();
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const resourceName = (value: string) => {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return 'invalid-url';
+    }
+  };
+  page.on('requestfailed', (request) =>
+    rendererDiagnostics.push(
+      `failed ${resourceName(request.url())}: ${request.failure()?.errorText}`,
+    ),
+  );
+  page.on('response', (response) => {
+    if (response.status() >= 400)
+      rendererDiagnostics.push(`${response.status()} ${resourceName(response.url())}`);
+  });
+  page.on('console', (message) => {
+    if (message.type() === 'error') rendererDiagnostics.push(`console: ${message.text()}`);
+  });
+  // firstWindow can precede Electron's initial loadURL; do not reload about:blank.
+  await page.waitForURL((url) => url.protocol === 'http:' && url.hostname === '127.0.0.1', {
+    timeout: 30000,
+    waitUntil: 'domcontentloaded',
+  });
   await page.waitForFunction(() => Boolean((window as any).relayDesktop), { timeout: 30000 });
   const status = await page.evaluate(() => (window as any).relayDesktop.getStatus());
+  assert.equal(await page.evaluate(() => (window as any).relayDesktop.version), metadata.version);
   assert.equal(status.runtime, 'ready');
   assert.equal(status.cloudOrigin, 'https://nosleepclub-relay.vercel.app');
+  if (status.signedIn) {
+    await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({
+      timeout: 30000,
+    });
+  } else {
+    await expect(page.getByRole('heading', { name: 'Kivuno', exact: true })).toBeVisible({
+      timeout: 30000,
+    });
+    const signIn = page.getByRole('button', { name: 'Đăng nhập trên web', exact: true });
+    await expect(signIn).toBeVisible();
+    await expect(signIn).toBeEnabled();
+    await expect(page.locator('footer')).toContainText(`Kivuno ${metadata.version} · Windows`);
+  }
+  assert.deepEqual(pageErrors, [], 'The packaged renderer must load without page errors.');
+  assert.deepEqual(rendererDiagnostics, [], 'The packaged renderer must load all UI resources.');
   assert.equal(await page.evaluate(() => typeof (window as any).require), 'undefined');
   assert.equal(
     await page.evaluate(() => typeof (window as any).relayDesktop.joinMachine),
@@ -140,11 +183,25 @@ try {
       runtime: status.runtime,
       rendererIsolated: true,
       localApiProtected: true,
+      renderedUi: status.signedIn ? 'workspace-navigation' : 'Kivuno-sign-in',
+      rendererPageErrors: pageErrors.length,
       installerBytes: release.size,
       sha256: release.sha256,
       modelTurns: 0,
     }),
   );
+} catch (error) {
+  if (desktop) {
+    await mkdir('.local', { recursive: true });
+    const page = await desktop.firstWindow();
+    await page
+      .screenshot({ path: '.local/kivuno-packaged-failure.png', timeout: 5000 })
+      .catch(() => {});
+  }
+  if (pageErrors.length) console.error('Packaged renderer errors:', pageErrors);
+  if (rendererDiagnostics.length)
+    console.error('Packaged renderer diagnostics:', rendererDiagnostics);
+  throw error;
 } finally {
   if (desktop) await desktop.close();
 }

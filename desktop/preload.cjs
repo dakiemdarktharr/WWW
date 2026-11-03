@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld(
   'relayDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.3.0',
+    version: '0.4.0',
     getStatus: () => ipcRenderer.invoke('relay:status'),
     beginSignIn: () => ipcRenderer.invoke('relay:sign-in'),
     signOut: () => ipcRenderer.invoke('relay:sign-out'),
