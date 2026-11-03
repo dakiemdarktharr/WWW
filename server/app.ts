@@ -76,7 +76,15 @@ export async function buildApp(
       return reply.code(403).send({ error: 'RELAY only accepts requests to its local address.' });
     if (origin && !allowed.has(origin))
       return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
-    if (request.headers['sec-fetch-site'] === 'cross-site')
+    // A user following the hosted launcher must be able to open the local SPA.
+    // This exception never applies to API calls, subresources, frames or mutations.
+    const userDocumentNavigation =
+      request.method === 'GET' &&
+      request.url.split('?')[0] === '/' &&
+      request.headers['sec-fetch-mode'] === 'navigate' &&
+      request.headers['sec-fetch-dest'] === 'document' &&
+      request.headers['sec-fetch-user'] === '?1';
+    if (request.headers['sec-fetch-site'] === 'cross-site' && !userDocumentNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
     if (request.url.startsWith('/api/') && request.url.split('?')[0] !== '/api/session') {
       const session = sessionFor(request);

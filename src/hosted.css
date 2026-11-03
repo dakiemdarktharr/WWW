@@ -146,6 +146,11 @@
   font-size: 12px;
   line-height: 1.7;
 }
+.hosted-footer button.hosted-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
 .hosted-note {
   margin: -10px 20px 20px;
   color: var(--muted);

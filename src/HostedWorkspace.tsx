@@ -91,6 +91,8 @@ export default function HostedWorkspace() {
               href={valid ? `http://127.0.0.1:${number}/#mesh` : undefined}
               aria-disabled={!valid}
               tabIndex={valid ? 0 : -1}
+              target="_blank"
+              rel="noopener noreferrer"
             >
               Open MESH <ArrowUpRight size={15} />
             </a>
@@ -100,21 +102,21 @@ export default function HostedWorkspace() {
               href={valid ? `http://127.0.0.1:${number}/#sessions` : undefined}
               aria-disabled={!valid}
               tabIndex={valid ? 0 : -1}
+              target="_blank"
+              rel="noopener noreferrer"
             >
               Sessions <ArrowUpRight size={15} />
             </a>
           </div>
         </section>
         <div className="hosted-footer">
-          <span>First run: sign in to each Codex account in Team.</span>
-          <a
+          <span>Không mở được? Chạy npm start trên chính máy này và kiểm tra cổng.</span>
+          <button
             className="hosted-link"
-            href={`${repository}/blob/main/docs/FOUNDATION.md`}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={() => window.dispatchEvent(new Event('relay-open-guide'))}
           >
             Setup guide <ArrowUpRight size={14} />
-          </a>
+          </button>
         </div>
       </main>
     </div>

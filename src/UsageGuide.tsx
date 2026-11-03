@@ -264,6 +264,15 @@ export default function UsageGuide({ stage, enabled = true }: { stage: Stage; en
     };
   }, [intro, enabled]);
 
+  useEffect(() => {
+    const open = () => {
+      finish();
+      setIntro(true);
+    };
+    window.addEventListener('relay-open-guide', open);
+    return () => window.removeEventListener('relay-open-guide', open);
+  }, [finish]);
+
   function dismiss(skip = false) {
     remember(`${mode}:intro`);
     remember(`stage:${stage}`);

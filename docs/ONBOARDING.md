@@ -11,6 +11,7 @@ Tham khảo cách tổ chức hướng dẫn của [NoSleepClub Support Desk](ht
 - Mũi tên đỏ và khung chỉ đúng thành phần thật. **Tiếp theo**, **Bước trước**, **Hoàn tất** và **Bỏ qua** điều khiển tour; bước không có trên giao diện được bỏ qua.
 - Trong workspace local, Team, MESH, Sessions, Workroom, Tasks, Reviews và Settings có các bước riêng. Chuyển màn hình lần đầu trong tab sẽ mở tour tương ứng.
 - Bấm **Hướng dẫn** trên thanh đầu để mở lại popup và tour màn hình hiện tại. Trên điện thoại, nút dùng biểu tượng sách với nhãn truy cập Hướng dẫn sử dụng.
+- **Setup guide** ở cuối trang hosted cũng mở cùng popup, không chuyển sang tài liệu GitHub private.
 - Tour không tự click nút sản phẩm, gửi prompt, đăng nhập, cấp quyền quota, push Git hoặc thực hiện ACK. Người dùng tự quyết định các thao tác đó.
 
 Trạng thái đã xem dùng `sessionStorage` với prefix `relay-guide-v1:`. Refresh không lặp hướng dẫn đã bắt đầu; tab mới bắt đầu lại, tùy hành vi khôi phục tab của trình duyệt. Khi storage bị chặn, bộ nhớ trang tránh lặp trong lúc điều hướng nhưng không bảo đảm giữ qua refresh.

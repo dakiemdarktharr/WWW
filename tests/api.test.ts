@@ -55,6 +55,78 @@ async function fixture() {
     },
   };
 }
+
+test('hosted launcher can open the local document without granting cross-site API access', async () => {
+  const f = await fixture();
+  try {
+    const navigation = {
+      host: '127.0.0.1:4317',
+      'sec-fetch-site': 'cross-site',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-user': '?1',
+    };
+    // This fixture has no dist handler, so an accepted document reaches the router (404).
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: '/', headers: navigation })).statusCode,
+      404,
+    );
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: '/?source=launcher', headers: navigation }))
+        .statusCode,
+      404,
+    );
+    for (const url of [
+      '/api/session',
+      '/api/state',
+      '/api/sessions',
+      '/api/events',
+      '/assets/app.js',
+    ])
+      assert.equal(
+        (await f.app.inject({ method: 'GET', url, headers: navigation })).statusCode,
+        403,
+        url,
+      );
+    for (const change of [
+      { 'sec-fetch-user': '' },
+      { 'sec-fetch-mode': 'cors' },
+      { 'sec-fetch-dest': 'iframe' },
+    ])
+      assert.equal(
+        (await f.app.inject({ method: 'GET', url: '/', headers: { ...navigation, ...change } }))
+          .statusCode,
+        403,
+      );
+    assert.equal(
+      (await f.app.inject({ method: 'POST', url: '/', headers: navigation, payload: {} }))
+        .statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'GET',
+          url: '/',
+          headers: { ...navigation, host: 'attacker.example' },
+        })
+      ).statusCode,
+      403,
+    );
+    assert.equal(
+      (
+        await f.app.inject({
+          method: 'GET',
+          url: '/',
+          headers: { ...navigation, origin: 'https://attacker.example' },
+        })
+      ).statusCode,
+      403,
+    );
+  } finally {
+    await f.close();
+  }
+});
 test('local API requires an authenticated browser session for reads', async () => {
   const f = await fixture();
   try {

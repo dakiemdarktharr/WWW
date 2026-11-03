@@ -6,6 +6,7 @@ RELAY trusts its local operator and the accounts they connect. It is a loopback 
 
 - The coordinator binds only to `127.0.0.1`. HTTP Host, Origin and Fetch Metadata checks reject remote-origin and DNS-rebinding requests. No permissive CORS headers are emitted.
 - A local HttpOnly, SameSite=Strict session cookie gates API reads. Mutations also require a session-bound CSRF token and JSON content type. Session tokens are memory-only; the UI obtains them from the same-origin bootstrap endpoint.
+- The hosted launcher may open the local `GET /` document only through a user-initiated top-level navigation. Host and Origin validation remain active. Cross-site API/bootstrap access, embedded frames, subresources and mutations remain denied; document navigation is not an API permission grant.
 - Each member runs a separately spawned `codex app-server` over private stdio, with its own `CODEX_HOME`. It never attaches to the desktop app's logged-in daemon. Inherited provider keys, WIF settings, Codex tokens and unrelated environment secrets are excluded.
 - Codex owns browser/device authentication and stores credentials in its profile. RELAY never reads or exposes `auth.json`, never handles passwords and never substitutes a shared API key. Profile directories use mode 0700 on Unix and restricted inherited ACLs on Windows.
 - OAuth starts are serialized. Returned identity and limits come from the actual provider; a disconnected account has no fabricated balance.
