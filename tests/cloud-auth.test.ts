@@ -48,6 +48,37 @@ test('cloud gateway requires owner login, blocks signup/foreign origins and pres
       .filter(Boolean)
       .join('; ');
   try {
+    const machine = workspace.runners.add('Machine auth test', 'computer');
+    const machineBody = {
+      epoch: workspace.runners.epoch,
+      ready: true,
+      busy: false,
+      version: 'test',
+      events: [],
+    };
+    assert.equal((await request('POST', '/api/runner/exchange', machineBody)).statusCode, 401);
+    assert.equal(
+      (
+        await request('POST', '/api/runner/exchange', machineBody, {
+          authorization: `Bearer ${machine.token}`,
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal(
+      (await request('GET', '/api/state', undefined, { authorization: `Bearer ${machine.token}` }))
+        .statusCode,
+      401,
+    );
+    assert.equal(
+      (
+        await request('POST', '/api/runner/exchange', machineBody, {
+          authorization: `Bearer ${machine.token}`,
+          origin: 'https://foreign.example',
+        })
+      ).statusCode,
+      403,
+    );
     assert.equal(
       (await request('GET', '/api/state', undefined, { 'x-relay-gateway': '' })).statusCode,
       403,

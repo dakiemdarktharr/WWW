@@ -55,6 +55,12 @@ const string = { type: 'string', maxLength: 10000 };
 export const sessionTools: readonly DynamicTool[] = [
   ...relayDynamicTools,
   tool(
+    'mesh_create_conversation',
+    'Create a bounded conversation in your current project and account. Its model/reasoning are selected automatically. Optional prompt queues work subject to capacity, quota and scope leases; read-only sessions cannot create writing work.',
+    { title: { type: 'string', maxLength: 200 }, prompt: string, readOnly: { type: 'boolean' } },
+    ['title'],
+  ),
+  tool(
     'mesh_create_project',
     'Create a new isolated hackathon project owned by your Codex profile. Writing sessions only. This does not create a GitHub remote or spend money.',
     {
@@ -121,7 +127,9 @@ export class SessionManager {
   private cancelling = new Set<string>();
   private processSlots = new Map<string, Promise<void>>();
   createClient = (session: CodexSession, cwd: string) =>
-    new CodexClient({ home: this.host.home(session.memberId), cwd });
+    this.host.store.get<Member>('member', session.memberId).runnerId
+      ? this.host.runners.create(session.memberId, session.taskId)
+      : new CodexClient({ home: this.host.home(session.memberId), cwd });
   constructor(private host: Workspace) {
     for (const session of this.all())
       if (['running', 'starting'].includes(session.status))
@@ -233,6 +241,7 @@ export class SessionManager {
     prompt?: string;
     model?: string | null;
     reasoningEffort?: string | null;
+    modelPolicy?: 'auto' | 'manual';
   }): Promise<CodexSession> {
     if (this.host.closing) throw new DomainError('The coordinator is shutting down.');
     this.host.store.get<Member>('member', options.memberId);
@@ -277,6 +286,9 @@ export class SessionManager {
       status: 'idle',
       model: options.model || null,
       reasoningEffort: options.reasoningEffort || null,
+      modelPolicy:
+        options.modelPolicy ||
+        (this.host.store.get<Member>('member', options.memberId).managed ? 'auto' : 'manual'),
     });
     this.event(
       session.id,
@@ -305,7 +317,14 @@ export class SessionManager {
     if (!lease || lease.sessionId !== session.id || lease.token !== token || lease.orphaned)
       throw new DomainError('This session no longer owns the task.');
   }
-  async configure(id: string, settings: { model: string | null; reasoningEffort: string | null }) {
+  async configure(
+    id: string,
+    settings: {
+      model: string | null;
+      reasoningEffort: string | null;
+      modelPolicy?: 'auto' | 'manual';
+    },
+  ) {
     const session = this.get(id);
     if (this.busy.has(id) || !['idle', 'paused', 'review'].includes(session.status))
       throw new DomainError('Pause the conversation before changing its model.');
@@ -317,7 +336,7 @@ export class SessionManager {
       });
       if (this.host.closing || this.get(id).status !== session.status)
         throw new DomainError('Conversation changed; try again.');
-      return this.update(id, settings);
+      return this.update(id, { ...settings, modelPolicy: settings.modelPolicy || 'manual' });
     } finally {
       this.busy.delete(id);
     }
@@ -425,12 +444,13 @@ export class SessionManager {
       throw new DomainError('Recover or complete handoff before continuing.');
     if (this.host.mergeBusy.has(initial.projectId))
       throw new DomainError('Wait for integration before changing this worktree.');
+    const releaseSlot = this.host.autonomy.reserve(id, initial.memberId);
     this.busy.add(id);
     try {
       await this.budget(initial);
       if (this.cancelling.has(id))
         throw new DomainError('Session start was cancelled by pause or stop.');
-      const session = this.get(id);
+      let session = this.get(id);
       if (
         this.host.store
           .all<any>('handoff')
@@ -457,6 +477,13 @@ export class SessionManager {
         });
         this.event(id, 'user', prompt);
         return this.get(id);
+      }
+      if (session.modelPolicy === 'auto') {
+        await this.host.autonomy.shareSkills(session.memberId);
+        const selection = await this.host.autonomy.model(session.memberId, originalTask);
+        if (this.cancelling.has(id) || this.host.closing)
+          throw new DomainError('Session was stopped during model selection.');
+        session = this.update(id, selection);
       }
       let task = this.host.store.get<Task>('task', session.taskId);
       if (task.status === 'done' && !session.readOnly)
@@ -605,6 +632,7 @@ export class SessionManager {
       }
     } finally {
       this.busy.delete(id);
+      releaseSlot();
     }
   }
   async resume(id: string) {
@@ -818,6 +846,17 @@ export class SessionManager {
             replyTo: args.replyTo,
             mentions: args.mentions,
           });
+        } else if (params.tool === 'mesh_create_conversation') {
+          if (
+            typeof args.title !== 'string' ||
+            !args.title.trim() ||
+            args.title.length > 200 ||
+            (args.prompt !== undefined &&
+              (typeof args.prompt !== 'string' || args.prompt.length > 10000)) ||
+            (args.readOnly !== undefined && typeof args.readOnly !== 'boolean')
+          )
+            throw new DomainError('Invalid conversation request.');
+          result = await this.host.autonomy.conversation(id, args);
         } else if (params.tool === 'mesh_create_project') {
           if (session.readOnly)
             throw new DomainError('Creating a project requires a writing session.');
@@ -1035,6 +1074,7 @@ export class SessionManager {
   }
   async recover(id: string, options: { confirmedStopped: boolean }) {
     const session = this.get(id);
+    this.host.runners.assertRecovered(session.memberId);
     if (!options.confirmedStopped)
       throw new DomainError('Confirm the old Codex process stopped before recovery.');
     if (!['interrupted', 'error', 'paused'].includes(session.status))

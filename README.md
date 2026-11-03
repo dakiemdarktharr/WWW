@@ -18,6 +18,8 @@ Mở [NoSleepClub RELAY](https://nosleepclub-relay.vercel.app). Nút **Hướng 
 
 ## Chạy local tùy chọn
 
+**Team → Machine → Add account** tự đặt tên và thêm tài khoản vào group sau đăng nhập. Conversation có lựa chọn model/reasoning tự động từ catalog thật. Cloud điều phối được cả máy cá nhân và SSH lattice qua kết nối đi ra, với giới hạn riêng cho máy đang train. Xem [cài máy, chia sẻ capabilities và recovery](docs/HYBRID.md).
+
 Yêu cầu: **Node.js 24.22.1 trở lên**, Git và Codex CLI. RELAY đã được kiểm tra với `codex-cli 0.166.0-alpha.5.1`; App Server có các phần experimental nên phiên bản khác cần được xác minh. Ứng dụng tìm CLI trên PATH; trên Windows còn nhận diện bản Codex đi kèm desktop app ở thư mục cài đặt mặc định.
 
 ```sh

@@ -36,8 +36,17 @@ async function healthy(origin: string, secret: string) {
   }
 }
 
-export async function cloudRunner() {
+export async function cloudRunner(wake = true) {
   if (cached && Date.now() - cached.checked < 5000) return cached;
+  if (!wake) {
+    const config = configuration();
+    const sandbox = await Sandbox.get({ name, resume: false });
+    if (sandbox.status !== 'running') return null;
+    const origin = sandbox.domain(4317);
+    if (!(await healthy(origin, config.gatewaySecret))) return null;
+    cached = { origin, secret: config.gatewaySecret, checked: Date.now() };
+    return cached;
+  }
   if (!boot)
     boot = start().finally(() => {
       boot = null;

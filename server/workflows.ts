@@ -4,6 +4,7 @@ import type { DynamicTool } from './codex.ts';
 import { relayDynamicTools } from './codex.ts';
 import { Store, DomainError } from './store.ts';
 import { redact, scopesOverlap } from './security.ts';
+import { CapacityError } from './autonomy.ts';
 import {
   allocatePlan,
   parseProposal,
@@ -464,6 +465,7 @@ export class Workflows {
         try {
           await this.host.run(task.id, task.assignedTo!);
         } catch (error) {
+          if (error instanceof CapacityError) return;
           const current = this.store.get<Workflow>('workflow', id);
           if (!terminal(current) && !['paused', 'cancelling'].includes(current.status))
             this.store.updateWorkflow(id, {

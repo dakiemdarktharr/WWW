@@ -15,6 +15,11 @@ const data = path.join(directory, 'state');
 await mkdir(data);
 const store = new Store(path.join(data, 'workspace.db'));
 const workspace = new Workspace(store, data, directory);
+workspace.login = async () => ({
+  type: 'chatgptDeviceCode',
+  verificationUrl: 'https://auth.openai.com/codex/device',
+  userCode: 'TEST-ONLY',
+});
 workspace.client = async () => {
   throw new Error('Sign in to this Codex account to read its available models.');
 };
@@ -119,13 +124,13 @@ try {
       .getByRole('button', { name, exact: true });
   await nav('Team').click();
   await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
-  await page.getByLabel('Agent name', { exact: true }).fill('Cloud test');
-  await page.getByRole('button', { name: 'Create profile', exact: true }).click();
-  await page.getByRole('heading', { name: 'Cloud test', exact: true }).waitFor();
+  await page.getByText('TEST-ONLY', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.getByRole('heading', { name: 'Atlas', exact: true }).waitFor();
   await page.getByRole('button', { name: 'New project', exact: true }).click();
   const project = page.getByRole('dialog', { name: 'New project', exact: true });
   await project.getByLabel('Project name', { exact: true }).fill('Cloud project');
-  await project.getByLabel('Codex owner', { exact: true }).selectOption({ label: 'Cloud test' });
+  await project.getByLabel('Codex owner', { exact: true }).selectOption({ label: 'Atlas' });
   await project.getByLabel('Competition', { exact: true }).fill('Browser challenge');
   await project
     .getByLabel('Competition URL', { exact: true })

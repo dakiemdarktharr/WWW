@@ -14,6 +14,7 @@ interface DispatchRecord {
 interface Host {
   store: Store;
   closing: boolean;
+  canStart?(memberId?: string): boolean;
   quota: {
     refresh(memberId: string): Promise<unknown>;
     assertCanRun(memberId: string, projectId: string): void;
@@ -115,6 +116,7 @@ export class InboxDispatcher {
     );
     for (const member of candidates) {
       if (this.closed || this.host.closing) return;
+      if (this.host.canStart && !this.host.canStart(member.id)) continue;
       if (
         this.host.store.leases().filter((lease) => lease.memberId === member.id).length >=
         (member.maxSessions || 2)

@@ -35,6 +35,8 @@ export default async function handler(
       return;
     }
     const chunks: Buffer[] = [];
+    const machine = url.pathname === '/api/runner/exchange';
+    const bodyLimit = machine ? 4 * 1024 * 1024 : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
       if (request.body !== undefined) {
@@ -49,20 +51,26 @@ export default async function handler(
         for await (const chunk of request) {
           const value = Buffer.from(chunk);
           length += value.length;
-          if (length > 128 * 1024) break;
+          if (length > bodyLimit) break;
           chunks.push(value);
         }
-      if (length > 128 * 1024) {
+      if (length > bodyLimit) {
         response.writeHead(413).end();
         return;
       }
     }
-    const runner = await cloudRunner();
+    const runner = await cloudRunner(!machine);
+    if (!runner) {
+      response.writeHead(204).end();
+      return;
+    }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
     for (const key of ['cookie', 'content-type', 'x-relay-token', 'origin']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
+    if (machine && typeof request.headers.authorization === 'string')
+      headers.set('authorization', request.headers.authorization);
     // No automatic retry: a failed mutation may already have reached the runner.
     const upstream = await fetch(`${runner.origin}${url.pathname}${url.search}`, {
       method,

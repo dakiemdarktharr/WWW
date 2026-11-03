@@ -1366,3 +1366,27 @@
     scroll-behavior: auto !important;
   }
 }
+
+.machine-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.machine-panel label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.machine-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.machine-pair code {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}

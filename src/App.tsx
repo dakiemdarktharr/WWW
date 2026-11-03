@@ -52,6 +52,7 @@ import type {
 } from '../shared/types';
 import { api } from './api';
 import Workroom from './Workroom';
+import Machines from './Machines';
 import UsageGuide from './UsageGuide';
 import {
   AccountSettings,
@@ -292,6 +293,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
   const [selectedProject, setSelectedProject] = useState('');
+  const [selectedMachine, setSelectedMachine] = useState('');
   const [loadError, setLoadError] = useState('');
   const [connected, setConnected] = useState(false);
   const [modal, setModal] = useState<ModalState>(null);
@@ -457,6 +459,17 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       method,
     });
     if (result) setModal({ type: 'login', memberId: member.id, result });
+  }
+  async function connectAccount() {
+    const result = await perform<{ member: Member; login: LoginResult }>(
+      'connect-account',
+      '/accounts/connect',
+      selectedMachine ? { runnerId: selectedMachine } : {},
+    );
+    if (result) {
+      navigate('team');
+      setModal({ type: 'login', memberId: result.member.id, result: result.login });
+    }
   }
   async function openSetup(member: Member) {
     try {
@@ -718,7 +731,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               busy={pending}
               openTask={openDetail}
               addProject={() => setModal({ type: 'project' })}
-              addMember={() => setModal({ type: 'member' })}
+              addMember={() => void connectAccount()}
               manageTeam={() => navigate('team')}
               review={() => navigate('reviews')}
               start={async (prompt) =>
@@ -743,13 +756,20 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 <div>
                   <h1>Team</h1>
                 </div>
-                <Button primary guide="add-account" onClick={() => setModal({ type: 'member' })}>
+                <Button
+                  primary
+                  guide="add-account"
+                  disabled={pending}
+                  onClick={() => void connectAccount()}
+                >
                   <Plus size={16} /> Add account
                 </Button>
               </section>
+              <Machines selected={selectedMachine} onSelect={setSelectedMachine} />
               <div className="team-grid">
                 {members.map((member) => (
                   <div className="account-card-group" key={member.id}>
+                    <span className="muted">{member.runnerName}</span>
                     <MemberCard
                       member={member}
                       task={tasks.find(
@@ -801,7 +821,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <div className="panel compact-empty">
                     <Users size={22} />
                     <span>No accounts</span>
-                    <Button onClick={() => setModal({ type: 'member' })}>
+                    <Button disabled={pending} onClick={() => void connectAccount()}>
                       <Plus size={14} />
                       Add account
                     </Button>

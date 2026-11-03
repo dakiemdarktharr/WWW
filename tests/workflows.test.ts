@@ -125,6 +125,7 @@ async function fixture(t: TestContext) {
   const members = roles.map((role, index) => store.addMember({ name: `Agent ${index + 1}`, role }));
   const clients = new Map(members.map((member) => [member.id, new PlanningCodex(root, member.id)]));
   function connect(target: Workspace) {
+    Object.defineProperty(target.autonomy, 'capacity', { get: () => 4, configurable: true });
     for (const [id, client] of clients) target.clients.set(id, client);
     target.client = async (id) => {
       const client = clients.get(id)!;

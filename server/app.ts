@@ -87,6 +87,10 @@ export async function buildApp(
         return reply.code(403).send({ error: 'A verified workspace origin is required.' });
       const pathname = request.url.split('?')[0];
       if (pathname.startsWith('/api/auth/') || pathname === '/api/cloud/health') return;
+      if (pathname === '/api/runner/exchange') {
+        workspace.runners.authenticate(request.headers.authorization);
+        return;
+      }
       if (!(await cloud.auth.authorized(request.headers)))
         return reply
           .code(401)
@@ -210,6 +214,66 @@ export async function buildApp(
     reply.raw.on('close', cleanup);
   });
   const params = (request: FastifyRequest) => z.object({ id }).parse(request.params).id;
+  app.get('/api/runners', async () => workspace.runners.list());
+  app.post('/api/runners', async (request) => {
+    const input = z
+      .object({ name: text, kind: z.enum(['computer', 'ssh']) })
+      .strict()
+      .parse(request.body);
+    return workspace.runners.add(input.name, input.kind);
+  });
+  app.post('/api/runner/exchange', { bodyLimit: 4 * 1024 * 1024 }, async (request) => {
+    if (!options.cloud)
+      throw new DomainError('Machine exchange requires the authenticated cloud gateway.', 403);
+    const node = workspace.runners.authenticate(request.headers.authorization);
+    const body = z
+      .object({
+        epoch: z.string().max(100).optional(),
+        ready: z.boolean(),
+        busy: z.boolean(),
+        version: z.string().max(180),
+        events: z
+          .array(
+            z
+              .object({
+                id: z.string().uuid(),
+                clientId: z.string().uuid(),
+                type: z.enum(['result', 'notification', 'request', 'exit', 'error']),
+                commandId: z.string().uuid().optional(),
+                method: z.string().max(200).optional(),
+                params: z.any().optional(),
+                result: z.any().optional(),
+                error: z.string().max(10000).optional(),
+                files: z.array(z.any()).max(2000).optional(),
+              })
+              .strict(),
+          )
+          .max(40),
+      })
+      .strict()
+      .parse(request.body);
+    return workspace.runners.exchange(node.id, body);
+  });
+  app.post('/api/accounts/connect', async (request) => {
+    const input = z.object({ runnerId: id.optional() }).strict().parse(request.body);
+    if (input.runnerId) workspace.runners.assertReady(input.runnerId);
+    if (workspace.loginOwner) throw new DomainError('Finish the pending Codex sign-in first.');
+    let member =
+      workspace.store
+        .members()
+        .find(
+          (member) =>
+            member.managed &&
+            member.runnerId === input.runnerId &&
+            !member.connectedAt &&
+            !member.account &&
+            !workspace.sessions.hasLive(member.id),
+        ) || workspace.autonomy.addAccount();
+    if (input.runnerId)
+      member = workspace.store.updateMember(member.id, { runnerId: input.runnerId });
+    const login = await workspace.login(member.id, 'device');
+    return { member, login };
+  });
   app.post('/api/members', async (request) => {
     const input = z
       .object({
@@ -286,6 +350,7 @@ export async function buildApp(
           prompt: z.string().max(16000).optional(),
           model: z.string().min(1).max(200).nullable().optional(),
           reasoningEffort: z.string().min(1).max(40).nullable().optional(),
+          modelPolicy: z.enum(['auto', 'manual']).optional(),
         })
         .strict()
         .parse(request.body),
@@ -294,6 +359,12 @@ export async function buildApp(
   app.get('/api/sessions/:id/events', async (request) =>
     workspace.sessions.events(params(request)),
   );
+  app.get('/api/sessions/:id/remote-output', async (request, reply) => {
+    const session = workspace.sessions.get(params(request));
+    const packet = workspace.store.get('remoteRecovery', session.taskId);
+    reply.header('Content-Disposition', 'attachment; filename="remote-recovery.json"');
+    return packet;
+  });
   app.patch('/api/sessions/:id/config', async (request) =>
     workspace.sessions.configure(
       params(request),
@@ -301,6 +372,7 @@ export async function buildApp(
         .object({
           model: z.string().min(1).max(200).nullable(),
           reasoningEffort: z.string().min(1).max(40).nullable(),
+          modelPolicy: z.enum(['auto', 'manual']).optional(),
         })
         .strict()
         .parse(request.body),

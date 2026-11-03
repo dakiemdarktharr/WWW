@@ -21,6 +21,8 @@ import { QuotaManager } from './quota.ts';
 import { Mesh } from './mesh.ts';
 import { Handoffs } from './handoffs.ts';
 import { InboxDispatcher } from './inbox.ts';
+import { Autonomy } from './autonomy.ts';
+import { Runners } from './runners.ts';
 
 interface Running {
   taskId: string;
@@ -64,6 +66,8 @@ export class Workspace {
   mesh: Mesh;
   handoffs: Handoffs;
   inbox: InboxDispatcher;
+  autonomy: Autonomy;
+  runners: Runners;
   constructor(
     public store: Store,
     public dataDir: string,
@@ -77,17 +81,52 @@ export class Workspace {
     this.mesh = new Mesh(this);
     this.handoffs = new Handoffs(this);
     this.inbox = new InboxDispatcher(this);
+    this.autonomy = new Autonomy(this);
+    this.runners = new Runners(this);
   }
   async initialize() {
     const p = await probeCodex();
     this.runtime.codexAvailable = p.available;
     this.runtime.codexVersion = p.version;
     this.quota.start();
+    this.autonomy.start();
+    this.runners.start();
+    void this.restoreAccounts().catch(() => {});
+  }
+  async restoreAccounts(runnerId?: string) {
+    for (const member of this.store
+      .members()
+      .filter((member) => member.connectedAt && member.runnerId === runnerId)) {
+      if (this.closing) return;
+      try {
+        const updated = await this.refresh(member.id);
+        if (updated.account) await this.autonomy.ready(member.id);
+      } catch (error) {
+        if (!this.closing)
+          this.log(`Account restore needs attention: ${redact(error)}`, null, member.id, 'system');
+      }
+    }
+  }
+  canStart(memberId?: string) {
+    try {
+      this.autonomy.reserve('admission-probe', memberId)();
+      return true;
+    } catch {
+      return false;
+    }
   }
   snapshot(): WorkspaceState {
     return {
       projects: this.store.projects(),
-      members: this.store.members(),
+      members: this.store.members().map((member) => ({
+        ...member,
+        runnerName: member.runnerId
+          ? this.runners.list().find((node) => node.id === member.runnerId)?.name ||
+            'Disconnected machine'
+          : this.runtime.deployment === 'cloud'
+            ? 'Cloud'
+            : 'This computer',
+      })),
       tasks: this.store.tasks(),
       workflows: this.store.workflows(),
       sessions: this.store.all('session'),
@@ -128,7 +167,9 @@ export class Workspace {
       const home = this.home(id);
       await privateDirectory(home);
       if (this.closing) throw new DomainError('The coordinator is shutting down.');
-      const client = new CodexClient({ home, cwd: this.defaultCwd });
+      const client = this.store.get<Member>('member', id).runnerId
+        ? this.runners.create(id)
+        : new CodexClient({ home, cwd: this.defaultCwd });
       client.on('notification', (method: string, params: any) => {
         void this.notification(id, method, params).catch((error) =>
           this.log(redact(error), null, id, 'error'),
@@ -187,8 +228,14 @@ export class Workspace {
       }
     const cwd = this.store.projects()[0]?.path || this.defaultCwd;
     const caps = await readCapabilities(client, cwd);
-    return this.store.updateMember(id, {
+    const updated = this.store.updateMember(id, {
       account,
+      ...(account
+        ? {
+            connectedAt:
+              this.store.get<Member>('member', id).connectedAt || new Date().toISOString(),
+          }
+        : {}),
       status:
         this.running.has(id) ||
         this.sessions
@@ -207,6 +254,8 @@ export class Workspace {
       rateLimits,
       error,
     });
+    if (account) this.autonomy.join(id);
+    return updated;
   }
   async login(id: string, method: 'browser' | 'device') {
     if (this.running.has(id) || this.sessions.hasLive(id))
@@ -249,9 +298,16 @@ export class Workspace {
       createdAt: new Date().toISOString(),
     } satisfies Project);
     this.log(`Connected ${project.name}.`, null, null, 'project', project.id);
+    this.autonomy.join(undefined, project.id);
     return project;
   }
   async importSkills(id: string) {
+    if (this.store.get<Member>('member', id).runnerId) {
+      if (this.sessions.hasLive(id) || this.running.has(id))
+        throw new DomainError('Pause this account before importing skills.');
+      await (await this.client(id)).request('relay/skills/import', {});
+      return this.refresh(id);
+    }
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Wait until this teammate is idle before importing skills.');
     const destination = path.join(this.home(id), 'skills');
@@ -323,9 +379,24 @@ export class Workspace {
     await this.refresh(memberId);
     await this.quota.refresh(memberId);
     this.quota.assertCanRun(memberId, this.store.get<Task>('task', taskId).projectId);
+    const automatic = this.store.get<Member>('member', memberId).managed;
+    if (automatic) await this.autonomy.shareSkills(memberId);
+    const selection = automatic
+      ? await this.autonomy.model(memberId, this.store.get<Task>('task', taskId))
+      : undefined;
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
-    const { task, lease } = this.store.claim(taskId, memberId);
+    const releaseSlot = this.autonomy.reserve(taskId, memberId);
+    let claim;
+    try {
+      claim = this.store.claim(taskId, memberId);
+    } catch (error) {
+      releaseSlot();
+      throw error;
+    }
+    const { task, lease } = claim;
     this.sessions.mirrorLegacy(task, memberId);
+    releaseSlot(); // The persisted starting session now reserves capacity synchronously.
+    if (selection) this.sessions.update(taskId, { ...selection, modelPolicy: 'auto' });
     const heartbeat = setInterval(() => this.store.heartbeat(taskId, lease.token), 10000);
     heartbeat.unref();
     const run: Running = {
@@ -375,6 +446,9 @@ export class Workspace {
           : `Started ${task.title}. Reserved: ${task.scope.join(', ')}.`,
       });
       const ids = await startTask(await this.client(memberId), {
+        ...(selection
+          ? { model: selection.model, reasoningEffort: selection.reasoningEffort }
+          : {}),
         cwd: readOnly ? project.path : current.worktree!,
         prompt,
         readOnly,
@@ -462,8 +536,10 @@ export class Workspace {
   async notification(memberId: string, method: string, params: any) {
     if (method === 'account/login/completed') {
       if (this.loginOwner === memberId) this.loginOwner = null;
-      if (params.success) await this.refresh(memberId);
-      else
+      if (params.success) {
+        await this.refresh(memberId);
+        await this.autonomy.ready(memberId);
+      } else
         this.store.updateMember(memberId, {
           status: 'offline',
           error: redact(params.error || 'Sign-in was cancelled.'),
@@ -819,6 +895,7 @@ export class Workspace {
   }
   async recover() {
     for (const lease of this.store.leases().filter((l) => !!l.orphaned)) {
+      this.runners.assertRecovered(lease.memberId);
       if (
         lease.sessionId &&
         this.store.sessions().some((session) => session.id === lease.sessionId)
@@ -847,6 +924,7 @@ export class Workspace {
     if (this.closing) return;
     this.closing = true;
     await Promise.allSettled([...this.connecting.values()]);
+    await this.autonomy.close();
     await this.inbox.close();
     await this.quota.close();
     await this.workflows.idle();
@@ -876,5 +954,6 @@ export class Workspace {
       if (!failed.has(run.memberId))
         this.finish(run, false, 'Coordinator stopped. Worktree preserved.');
     this.clients.clear();
+    this.runners.close();
   }
 }

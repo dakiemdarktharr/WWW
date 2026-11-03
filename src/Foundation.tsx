@@ -1305,6 +1305,7 @@ function CreateSession({
   const [memberId, setMemberId] = useState(project.ownerMemberId || '');
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
+  const [automatic, setAutomatic] = useState(true);
   return (
     <FoundationDialog title="New Codex session" close={close}>
       <form
@@ -1320,6 +1321,7 @@ function CreateSession({
             prompt: data.get('prompt'),
             model: model || null,
             reasoningEffort: effort || null,
+            modelPolicy: automatic ? 'auto' : 'manual',
             ...(taskId
               ? { taskId }
               : {
@@ -1353,15 +1355,25 @@ function CreateSession({
             ))}
           </select>
         </label>
-        <ModelFields
-          memberId={memberId}
-          model={model}
-          effort={effort}
-          change={(m, e) => {
-            setModel(m);
-            setEffort(e);
-          }}
-        />
+        <label className="foundation-checkbox">
+          <input
+            type="checkbox"
+            checked={automatic}
+            onChange={(event) => setAutomatic(event.target.checked)}
+          />
+          Automatic model and reasoning
+        </label>
+        {!automatic && (
+          <ModelFields
+            memberId={memberId}
+            model={model}
+            effort={effort}
+            change={(m, e) => {
+              setModel(m);
+              setEffort(e);
+            }}
+          />
+        )}
         <label>
           Session title
           <input
@@ -1523,6 +1535,7 @@ function SessionSettings({
 }) {
   const [model, setModel] = useState(session.model || '');
   const [effort, setEffort] = useState(session.reasoningEffort || '');
+  const [automatic, setAutomatic] = useState(session.modelPolicy === 'auto');
   const [saving, setSaving] = useState(false);
   return (
     <FoundationDialog title="Conversation settings" close={close}>
@@ -1535,7 +1548,11 @@ function SessionSettings({
             if (
               await request(
                 `/sessions/${session.id}/config`,
-                { model: model || null, reasoningEffort: effort || null },
+                {
+                  model: automatic ? null : model || null,
+                  reasoningEffort: automatic ? null : effort || null,
+                  modelPolicy: automatic ? 'auto' : 'manual',
+                },
                 'PATCH',
               )
             )
@@ -1545,15 +1562,25 @@ function SessionSettings({
           }
         }}
       >
-        <ModelFields
-          memberId={session.memberId}
-          model={model}
-          effort={effort}
-          change={(m, e) => {
-            setModel(m);
-            setEffort(e);
-          }}
-        />
+        <label className="foundation-checkbox">
+          <input
+            type="checkbox"
+            checked={automatic}
+            onChange={(event) => setAutomatic(event.target.checked)}
+          />
+          Automatic model and reasoning
+        </label>
+        {!automatic && (
+          <ModelFields
+            memberId={session.memberId}
+            model={model}
+            effort={effort}
+            change={(m, e) => {
+              setModel(m);
+              setEffort(e);
+            }}
+          />
+        )}
         <button className="button primary" disabled={saving}>
           Save settings
         </button>
@@ -1655,6 +1682,12 @@ function SessionConsole({
             <ChevronDown size={11} />
           </summary>
           <dl>
+            {session.selectionReason && (
+              <>
+                <dt>Model choice</dt>
+                <dd>{session.selectionReason}</dd>
+              </>
+            )}
             <dt>Thread</dt>
             <dd>{session.threadId || 'Not started'}</dd>
             <dt>Task</dt>

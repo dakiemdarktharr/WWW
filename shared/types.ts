@@ -16,6 +16,10 @@ export interface Member {
   createdAt: string;
   owner?: { login: string; name: string; email: string };
   maxSessions?: number;
+  managed?: boolean;
+  connectedAt?: string;
+  runnerId?: string;
+  runnerName?: string;
 }
 export interface Project {
   id: string;
@@ -155,6 +159,8 @@ export interface CodexSession {
   updatedAt: string;
   model?: string | null;
   reasoningEffort?: string | null;
+  modelPolicy?: 'auto' | 'manual';
+  selectionReason?: string;
 }
 export interface SessionEvent {
   id: string;

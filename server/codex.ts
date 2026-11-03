@@ -75,6 +75,13 @@ export function codexEnvironment(
   env.CODEX_HOME = path.resolve(home);
   env.NO_COLOR = '1';
   env.RUST_LOG = 'error';
+  if (source.RELAY_RUNNER_NO_GPU === '1') {
+    env.CUDA_VISIBLE_DEVICES = '-1';
+    env.ROCR_VISIBLE_DEVICES = '-1';
+    env.HIP_VISIBLE_DEVICES = '-1';
+    env.OMP_NUM_THREADS = '1';
+    env.MKL_NUM_THREADS = '1';
+  }
   return env;
 }
 

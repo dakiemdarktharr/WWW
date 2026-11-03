@@ -45,7 +45,7 @@ const definitions: Record<Stage, Step[]> = {
     {
       target: 'groups',
       title: '1. Chọn nhóm dự án',
-      text: 'Mỗi project có group MESH riêng. Chưa có project thì chọn Connect project, nhập đường dẫn tuyệt đối tới Git repository đã có commit đầu tiên.',
+      text: 'Mỗi project có group MESH riêng. Chọn New project để tạo repo dự án trên cloud. Các account đã đăng nhập tự gia nhập nhóm.',
     },
     {
       target: 'mesh-input',
@@ -87,19 +87,19 @@ const definitions: Record<Stage, Step[]> = {
     {
       target: 'demo',
       title: '4. Mở demo',
-      text: 'Nhập URL localhost của ứng dụng dự án rồi mở cửa sổ demo. Bạn cần chạy ứng dụng dự án trước; nút này không tự deploy hoặc mua hosting.',
+      text: 'Nhập URL HTTPS đã deploy của ứng dụng dự án để xem demo. Nút này không tự deploy hoặc mua hosting.',
     },
   ],
   team: [
     {
       target: 'add-account',
       title: '1. Thêm account',
-      text: 'Tạo hồ sơ với tên và vai trò. Trong thẻ account, chọn Sign in with ChatGPT hoặc device code, đăng nhập lần lượt và kiểm tra đúng email.',
+      text: 'Chọn Machine rồi Add account. Đăng nhập từng tài khoản bằng device code; app tự đặt tên và thêm vào các group dự án. Cloud dùng được ngay; máy cá nhân/lattice cần kết nối một lần.',
     },
     {
       target: 'account-card',
       title: '2. Kết nối capabilities',
-      text: 'Refresh đọc trạng thái và capabilities thật. Import local skills là thao tác chủ động; plugins/MCP cần cấu hình trong CODEX_HOME riêng, không sao chép credentials giữa tài khoản.',
+      text: 'Sau đăng nhập, app chia sẻ skills đã kiểm tra và plugins có trong catalog của tài khoản nhận. Credentials và quyền truy cập dịch vụ vẫn riêng từng account. Model/reasoning tự chọn từ catalog thật theo task.',
     },
     {
       target: 'account-controls',
