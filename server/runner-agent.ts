@@ -23,6 +23,8 @@ export interface RunnerConfig {
   slots: number;
   maxLoad: number;
   minFreeMB: number;
+  exchangeUrl?: string;
+  bridgeKey?: string;
 }
 interface Peer {
   client: CodexClient;
@@ -273,6 +275,21 @@ export async function runMachine(config: RunnerConfig) {
   const origin = new URL(config.origin);
   if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/')
     throw new Error('Machine requires an HTTPS workspace origin.');
+  const exchange = new URL(config.exchangeUrl || `${origin.origin}/api/runner/exchange`);
+  if (
+    exchange.origin !== origin.origin ||
+    exchange.username ||
+    exchange.password ||
+    exchange.hash ||
+    !['/api/runner/exchange', '/api/desktop/bridge/exchange'].includes(exchange.pathname)
+  )
+    throw new Error('Machine exchange must use the configured HTTPS workspace.');
+  if (
+    exchange.pathname === '/api/desktop/bridge/exchange' &&
+    (!uuid.test(exchange.searchParams.get('host') || '') ||
+      !/^[A-Za-z0-9_-]{43,128}$/.test(config.bridgeKey || ''))
+  )
+    throw new Error('Desktop machine connection requires its private bridge key.');
   if (!path.isAbsolute(config.dataDir) || config.token.length < 40 || !uuid.test(config.id))
     throw new Error('Invalid machine configuration.');
   config.slots = Math.max(1, Math.min(4, config.slots || 1));
@@ -310,16 +327,27 @@ export async function runMachine(config: RunnerConfig) {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  if (process.send)
+    process.on('message', (message) => {
+      if (
+        message &&
+        typeof message === 'object' &&
+        'type' in message &&
+        message.type === 'relay:shutdown'
+      )
+        stop();
+    });
   try {
     while (!stopping) {
       let delay = 1500;
       try {
-        const response = await fetch(`${origin.origin}/api/runner/exchange`, {
+        const response = await fetch(exchange, {
           method: 'POST',
           headers: {
             Origin: origin.origin,
             Authorization: `Bearer ${config.token}`,
             'Content-Type': 'application/json',
+            ...(config.bridgeKey ? { 'X-Relay-Bridge-Key': config.bridgeKey } : {}),
           },
           body: JSON.stringify({
             epoch: agent.epoch,
@@ -328,7 +356,8 @@ export async function runMachine(config: RunnerConfig) {
             version: probe.version,
             events: agent.batch(),
           }),
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.timeout(28_000),
+          redirect: 'error',
         });
         if (response.status === 204) {
           await agent.reset('');

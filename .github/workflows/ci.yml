@@ -1,8 +1,8 @@
 name: Verify RELAY
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # Verification runs locally for this free-only alpha. Hosted runners are
+  # opt-in so a private repository cannot silently consume paid Actions minutes.
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -27,4 +27,6 @@ jobs:
         run: npx playwright install --with-deps chromium
       - if: runner.os == 'Linux'
         run: npm run test:cloud
+      - if: runner.os == 'Linux'
+        run: npm run test:portal
       - run: npm audit --omit=dev --audit-level=high

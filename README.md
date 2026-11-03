@@ -4,13 +4,13 @@
   <p><strong>Room for Execution, Local Agents & Yield</strong></p>
 </div>
 
-RELAY là workspace cloud và local để nhiều tài khoản Codex cùng làm một dự án. Nhập một prompt: cả team đề xuất, lead tổng hợp workflow, hệ thống chia việc theo khối lượng ước lượng và tự chạy các task đủ điều kiện. Mỗi tài khoản có hồ sơ riêng; mỗi task thực thi có Git worktree và hàng đợi review.
+RELAY **0.3** là app desktop Windows để nhiều tài khoản Codex thật cùng làm một dự án. Website dành cho giới thiệu, đăng nhập và tải app; MESH, Sessions, Team, project, review và AEGIS nằm trong desktop. Mỗi tài khoản có hồ sơ riêng; task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
-Phiên bản **0.2** bổ sung **MESH**, session Codex tương tác chạy bằng CLI/App Server thật, nhiều session trên một account, quota chung, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn nền tảng](docs/FOUNDATION.md) mô tả các quy tắc và phạm vi đã triển khai.
+Phiên bản này giữ nền MESH, nhiều conversation, quota thật, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [phạm vi bản phát hành](docs/RELEASE-0.3.md) mô tả cách cài, kết nối máy và các giới hạn đã kiểm chứng.
 
-Mở [NoSleepClub RELAY](https://nosleepclub-relay.vercel.app). Nút **Hướng dẫn** trong web có popup tiếng Việt, minh họa và tour trỏ vào từng thao tác; có thể bỏ qua hoặc xem lại. [Chi tiết hướng dẫn trong web](docs/ONBOARDING.md).
+Mở [NoSleepClub RELAY](https://nosleepclub-relay.vercel.app) để tải bộ cài Windows x64. App mở trang đăng nhập trên trình duyệt; kiểm tra và xác nhận mã hiển thị rồi quay lại app. Không gửi token đăng nhập qua URL. Nút **Hướng dẫn** trong desktop có hướng dẫn tiếng Việt theo từng khu vực.
 
-[MESH](https://nosleepclub-relay.vercel.app/#mesh) và [Sessions](https://nosleepclub-relay.vercel.app/#sessions) dùng trực tiếp trên web từ nhiều thiết bị. Đăng nhập bằng mật khẩu chủ workspace, rồi tự đăng nhập Codex trong Team bằng device code. Backend miễn phí chạy Codex App Server thật trong Vercel Sandbox; không cần localhost hay giữ popup. Mỗi dự án có group, Git repository và nhiều cuộc trò chuyện với model/reasoning riêng. Cloud chạy tối đa 40 phút mỗi đợt, lưu snapshot khi ngủ và yêu cầu recovery rõ ràng khi công việc gián đoạn. [Giới hạn, triển khai và hướng dẫn cloud](docs/DEPLOYMENT.md).
+Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có thể thêm máy khác qua cấu hình ghép nối riêng; cloud chuyển tiếp kết nối đi ra, không mở cổng vào máy. Cloud miễn phí có thể ngủ/hết hạn mức: công việc remote cần kết nối còn sống, và gián đoạn phải recovery rõ ràng. Localhost chỉ là kênh nội bộ có khóa của desktop, không phải đường dẫn người dùng phải mở hoặc giữ popup.
 
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
@@ -43,9 +43,9 @@ npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
 
 Để dùng nền tảng mới:
 
-1. Trên cloud, tạo hồ sơ trong Team rồi New project: chọn Codex phụ trách, tên/link cuộc thi và deadline. Dự án có Git repository trên server; remote GitHub chưa được tự tạo. Trên local, thêm đường dẫn repository trong Settings.
+1. Trong desktop, tạo hồ sơ trong Team rồi New project: chọn Codex phụ trách, tên/link cuộc thi và deadline. Dự án có Git repository trên máy của Codex phụ trách; remote GitHub chưa được tự tạo. Có thể mở repository có sẵn bằng trình chọn thư mục.
 2. Mở **MESH** để trò chuyện theo project. Tin người dùng được nhận việc một lần và chuyển tới session chỉ đọc khi có account/quota phù hợp; agent không tự mở vòng trả lời nhau. `!!` chỉ đánh dấu lệnh từ người dùng thật.
-3. Trong **Sessions**, mở nhiều conversation theo account/project; chọn model/reasoning từ catalog thật, read-only hoặc scope ghi file. Bỏ trống prompt để lưu trước. Mỗi cửa sổ có output/tool events thật, follow-up/steering và Pause/Stop. Cloud demo dùng HTTPS URL đã deploy. Đây là giao diện của runtime Codex thật, không phải cửa sổ native Codex Desktop hay ChatGPT Projects.
+3. Trong **Sessions**, mở nhiều conversation theo account/project; chọn model/reasoning từ catalog thật, read-only hoặc scope ghi file. Bỏ trống prompt để lưu trước. Mỗi cửa sổ có output/tool events thật, follow-up/steering và Pause/Stop. Demo có thể dùng HTTPS hoặc địa chỉ loopback của máy đang chạy desktop. Đây là giao diện của runtime Codex thật, không phải cửa sổ native Codex Desktop hay ChatGPT Projects.
 4. Trong panel Usage, refresh quota. Còn ≤50% ở một cửa sổ áp dụng sẽ ngừng giao việc và pause các session của account. Nếu cần dùng phần dự trữ, người dùng cấp quyền theo account/project, mức sàn và thời hạn. Quota chưa biết/quá cũ không được coi là còn đầy.
 5. Trước code handoff, cấu hình owner GitHub/name/email trong Team và origin của project. Handoff dừng source, commit progress với author đã cấu hình, push và xác nhận remote SHA. Người nhận đọc/ACK, rồi tiếp tục từ session được chuyển quyền. Push lỗi giữ khóa và hiện Needs you.
 6. Sau gián đoạn, kiểm tra PID cũ, xác nhận worker đã dừng rồi Recover; Resume là bước riêng. Database migration giữ hồ sơ, task và lịch sử cũ.

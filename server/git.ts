@@ -97,7 +97,10 @@ export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<T
 }
 export interface IntegrationOptions {
   baseCommit?: string;
-  validateDiff?: (diff: TaskDiff) => void | Promise<void>;
+  validateDiff?: (
+    diff: TaskDiff,
+    context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
+  ) => void | Promise<void>;
 }
 export async function integrate(
   repo: string,
@@ -131,7 +134,11 @@ export async function integrate(
     ]);
   // Hooks are intentionally honored. Revalidate their changes before the project
   // is touched instead of assuming the earlier UI review still describes them.
-  if (options.validateDiff) await options.validateDiff(await taskDiff(worktree, baseCommit));
+  if (options.validateDiff)
+    await options.validateDiff(await taskDiff(worktree, baseCommit), {
+      root: worktree,
+      phase: 'worker',
+    });
   const workerHead = await git(worktree, ['rev-parse', 'HEAD']);
   if (
     (await git(repo, ['rev-parse', 'HEAD'])) !== startingHead ||
@@ -153,7 +160,11 @@ export async function integrate(
       '--',
       workerHead,
     ]);
-    if (options.validateDiff) await options.validateDiff(await taskDiff(repo, startingHead));
+    if (options.validateDiff)
+      await options.validateDiff(await taskDiff(repo, startingHead), {
+        root: repo,
+        phase: 'staged',
+      });
     if (await git(repo, ['diff', '--cached', '--name-only']))
       await git(repo, [
         '-c',
@@ -164,7 +175,11 @@ export async function integrate(
         '-m',
         `RELAY: ${title}`,
       ]);
-    if (options.validateDiff) await options.validateDiff(await taskDiff(repo, startingHead));
+    if (options.validateDiff)
+      await options.validateDiff(await taskDiff(repo, startingHead), {
+        root: repo,
+        phase: 'committed',
+      });
   } catch (error) {
     // --squash does not create MERGE_HEAD, so merge --abort cannot clean up its
     // conflicts. --merge restores the initial index/tree without a hard reset.

@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 export default async function handler(
   request: IncomingMessage & { body?: unknown },
@@ -19,11 +21,41 @@ export default async function handler(
       return;
     }
     const method = request.method || 'GET';
+    if (url.pathname === '/api/cloud/prepare-upgrade') {
+      response.writeHead(403).end(JSON.stringify({ error: 'This maintenance route is private.' }));
+      return;
+    }
+    if (url.pathname === '/api/desktop/release' && method === 'GET') {
+      let release = { version: '0.3.0', available: false, platform: 'win32-x64', signed: false };
+      try {
+        release = JSON.parse(
+          await readFile(path.join(process.cwd(), '.cloud', 'release.json'), 'utf8'),
+        );
+      } catch {}
+      response
+        .writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=60',
+        })
+        .end(JSON.stringify(release));
+      return;
+    }
     if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(method)) {
       response.writeHead(405).end();
       return;
     }
     const publicOrigin = process.env.RELAY_PUBLIC_ORIGIN;
+    // Only the active production alias may wake or upgrade the shared identity
+    // sandbox. Preview/immutable deployment URLs must never replace it with an
+    // older revision. Do not trust a caller-supplied forwarded-host header.
+    if (!publicOrigin || request.headers.host !== new URL(publicOrigin).host) {
+      response.writeHead(403).end(
+        JSON.stringify({
+          error: 'Use the canonical RELAY website for sign-in and machine connections.',
+        }),
+      );
+      return;
+    }
     const incomingOrigin = request.headers.origin;
     if (
       (incomingOrigin && incomingOrigin !== publicOrigin) ||
@@ -35,7 +67,9 @@ export default async function handler(
       return;
     }
     const chunks: Buffer[] = [];
-    const machine = url.pathname === '/api/runner/exchange';
+    const machine =
+      url.pathname === '/api/runner/exchange' || url.pathname.startsWith('/api/desktop/bridge/');
+    const desktop = url.pathname.startsWith('/api/desktop/');
     const bodyLimit = machine ? 4 * 1024 * 1024 : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
@@ -65,11 +99,11 @@ export default async function handler(
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
-    for (const key of ['cookie', 'content-type', 'x-relay-token', 'origin']) {
+    for (const key of ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
-    if (machine && typeof request.headers.authorization === 'string')
+    if ((machine || desktop) && typeof request.headers.authorization === 'string')
       headers.set('authorization', request.headers.authorization);
     // No automatic retry: a failed mutation may already have reached the runner.
     const upstream = await fetch(`${runner.origin}${url.pathname}${url.search}`, {

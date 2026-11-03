@@ -1,0 +1,160 @@
+// Actual Electron + bundled workspace server + installed Codex probe.
+// The local identity fixture authorizes the test app only; it never creates a Codex login or model turn.
+import assert from 'node:assert/strict';
+import { _electron as electron, expect } from '@playwright/test';
+import { createServer } from 'node:http';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+
+const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
+const accessToken = 'desktop-test-session-' + '0'.repeat(64);
+let challenge = '';
+let approved = false;
+let tokenRequests = 0;
+let revoked = false;
+let bridgePolls = 0;
+let bridgeRejectedInvalidMachine = false;
+const expiresAt = new Date(Date.now() + 600000).toISOString();
+const fixture = createServer(async (request, response) => {
+  let input = '';
+  for await (const chunk of request) input += chunk;
+  const payload = input ? JSON.parse(input) : {};
+  response.setHeader('Content-Type', 'application/json');
+  const identity = {
+    accessToken,
+    expiresAt,
+    owner: { id: 'desktop-test-owner', name: 'Desktop test owner' },
+    deviceId: '1c62a82e-a094-43ce-b1c3-bf5df6c1387b',
+  };
+  if (request.url === '/api/desktop/authorize') {
+    challenge = payload.challenge;
+    response.end(
+      JSON.stringify({
+        deviceCode: 'd'.repeat(64),
+        userCode: 'TEST-CODE',
+        verificationUri: `${fixtureOrigin}/activate?code=TEST-CODE`,
+        expiresAt,
+      }),
+    );
+  } else if (request.url === '/api/desktop/token') {
+    tokenRequests++;
+    assert.equal(createHash('sha256').update(payload.verifier).digest('base64url'), challenge);
+    response.statusCode = approved ? 200 : 202;
+    response.end(JSON.stringify(approved ? identity : { error: 'authorization_pending' }));
+  } else if (request.url === '/api/desktop/me') {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    response.end(JSON.stringify(identity));
+  } else if (request.url === '/api/desktop/bridge/poll') {
+    bridgePolls++;
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    assert.match(payload.bridgeKey, /^[a-f0-9]{64}$/);
+    response.end(
+      JSON.stringify({
+        requests:
+          bridgePolls === 1
+            ? [
+                {
+                  id: '71bd203f-83de-45c6-86e0-40b20d62e4ed',
+                  authorization: `Bearer ${'x'.repeat(43)}`,
+                  body: { epoch: '', ready: true, busy: false, version: 'bridge-test', events: [] },
+                },
+              ]
+            : [],
+        ack: payload.responses.map((item: { id: string }) => item.id),
+      }),
+    );
+    if (payload.responses.some((item: { status: number }) => item.status === 401))
+      bridgeRejectedInvalidMachine = true;
+  } else if (request.url === '/api/desktop/revoke') {
+    revoked = true;
+    response.end('{}');
+  } else {
+    response.statusCode = 404;
+    response.end('{}');
+  }
+});
+await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve));
+const fixturePort = (fixture.address() as { port: number }).port;
+const fixtureOrigin = `http://127.0.0.1:${fixturePort}`;
+const env = { ...process.env } as Record<string, string>;
+delete env.ELECTRON_RUN_AS_NODE;
+Object.assign(env, {
+  RELAY_DESKTOP_TESTING: '1',
+  RELAY_DESKTOP_DATA_DIR: directory,
+  RELAY_NODE_BINARY: process.execPath,
+  RELAY_CLOUD_ORIGIN: fixtureOrigin,
+});
+let desktop;
+try {
+  desktop = await electron.launch({ args: [path.resolve('desktop')], env, timeout: 60000 });
+  const page = await desktop.firstWindow();
+  await page.waitForFunction(() => Boolean((window as any).relayDesktop), { timeout: 30000 });
+  const before = await page.evaluate(() => (window as any).relayDesktop.getStatus());
+  assert.equal(before.signedIn, false);
+  assert.equal(before.runtime, 'ready');
+  assert.equal(await page.evaluate(() => typeof (window as any).require), 'undefined');
+  const localOrigin = new URL(page.url()).origin;
+  const unauthorized = await fetch(localOrigin + '/api/session');
+  assert.equal(
+    unauthorized.status,
+    403,
+    'ordinary processes cannot bootstrap a desktop browser session',
+  );
+
+  const pending = await page.evaluate(() => (window as any).relayDesktop.beginSignIn());
+  assert.equal(pending.pending.userCode, 'TEST-CODE');
+  assert.equal(pending.signedIn, false);
+  approved = true;
+  await expect
+    .poll(
+      async () => (await page.evaluate(() => (window as any).relayDesktop.getStatus())).signedIn,
+      { timeout: 20000 },
+    )
+    .toBe(true);
+  assert.ok(tokenRequests > 0);
+  const state = await page.evaluate(async () => {
+    const session = await (await fetch('/api/session')).json();
+    const response = await fetch('/api/state', { headers: { 'X-Relay-Token': session.token } });
+    return response.json();
+  });
+  assert.equal(state.members.length, 0);
+  assert.equal(state.runtime.codexAvailable, true, 'real bundled Codex must pass --version');
+  const publicStatus = await page.evaluate(() => (window as any).relayDesktop.getStatus());
+  assert.equal(publicStatus.owner.id, 'desktop-test-owner');
+  assert.equal(JSON.stringify(publicStatus).includes(accessToken), false);
+  const encrypted = await readFile(path.join(directory, 'desktop-session.bin'));
+  assert.equal(encrypted.includes(Buffer.from(accessToken)), false);
+  await expect.poll(() => bridgePolls, { timeout: 15000 }).toBeGreaterThan(1);
+  assert.equal(
+    bridgeRejectedInvalidMachine,
+    true,
+    'the cloud bridge must forward to the authenticated local runner boundary',
+  );
+
+  await page.evaluate(() => {
+    void (window as any).relayDesktop.signOut();
+  });
+  await page.waitForURL((url) => url.origin !== localOrigin, { timeout: 30000 });
+  await page.waitForFunction(() => Boolean((window as any).relayDesktop));
+  await expect
+    .poll(
+      async () => (await page.evaluate(() => (window as any).relayDesktop.getStatus())).signedIn,
+      { timeout: 15000 },
+    )
+    .toBe(false);
+  await expect.poll(() => revoked).toBe(true);
+  console.log(
+    'Desktop E2E passed: real Electron/runtime/Codex probe, browser activation, protected local API, DPAPI session and sign-out.',
+  );
+} finally {
+  if (desktop) await desktop.close();
+  await new Promise<void>((resolve) => fixture.close(() => resolve()));
+  // Only this test-created absolute temporary directory is removed.
+  if (
+    path.dirname(directory) === os.tmpdir() &&
+    path.basename(directory).startsWith('relay-desktop-e2e-')
+  )
+    await rm(directory, { recursive: true, force: true });
+}

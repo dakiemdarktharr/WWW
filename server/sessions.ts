@@ -342,6 +342,8 @@ export class SessionManager {
     }
   }
   private async budget(session: CodexSession) {
+    const member = this.host.store.get<Member>('member', session.memberId);
+    await this.host.aegis.assertCanRun(session.projectId, member.runnerId || 'local');
     await this.host.refresh(session.memberId);
     await this.host.quota.refresh(session.memberId);
     this.host.quota.assertCanRun(session.memberId, session.projectId);

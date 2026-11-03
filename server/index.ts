@@ -78,6 +78,7 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535)
 const app = await buildApp(workspace, {
   port,
   cloud,
+  desktopSecret: process.env.RELAY_DESKTOP_SECRET || undefined,
   development: process.env.NODE_ENV !== 'production',
   distDir: existsSync(path.join(projectRoot, 'dist', 'index.html'))
     ? path.join(projectRoot, 'dist')
@@ -96,6 +97,16 @@ const shutdown = async () => {
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+if (process.send)
+  process.on('message', (message) => {
+    if (
+      message &&
+      typeof message === 'object' &&
+      'type' in message &&
+      message.type === 'relay:shutdown'
+    )
+      void shutdown();
+  });
 try {
   await app.listen({ host: cloud ? '0.0.0.0' : '127.0.0.1', port });
   console.log(

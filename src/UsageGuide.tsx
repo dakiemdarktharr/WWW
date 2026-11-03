@@ -5,7 +5,7 @@ import './guide.css';
 
 type Step = { target: string; title: string; text: string };
 type Stage =
-  'hosted' | 'mesh' | 'sessions' | 'team' | 'workroom' | 'tasks' | 'reviews' | 'settings';
+  'hosted' | 'mesh' | 'sessions' | 'team' | 'workroom' | 'tasks' | 'reviews' | 'settings' | 'aegis';
 const memory = new Set<string>();
 const prefix = 'relay-guide-v2:';
 const seen = (key: string) => {
@@ -24,28 +24,45 @@ const remember = (key: string) => {
   }
 };
 const definitions: Record<Stage, Step[]> = {
+  aegis: [
+    {
+      target: 'aegis-setup',
+      title: '1. Kết nối Fuji',
+      text: 'Tạo khóa testnet, lấy test AVAX miễn phí và triển khai registry. Trạng thái chưa triển khai nghĩa là chưa có bảo vệ trên chain.',
+    },
+    {
+      target: 'aegis-policy',
+      title: '2. Cấp quyền',
+      text: 'Bật chính sách cho project rồi cấp quyền có thời hạn cho từng máy. Máy chưa có quyền không được chạy task thuộc project đã bảo vệ.',
+    },
+    {
+      target: 'aegis-receipts',
+      title: '3. Kiểm tra bàn giao',
+      text: 'Tải biên nhận và kiểm tra chữ ký, nội dung và giao dịch trên Fuji. Bằng chứng không thay thế kiểm thử code.',
+    },
+  ],
   hosted: [
     {
       target: 'setup',
-      title: '1. Khởi động runner',
-      text: 'Máy này cần Node 24.22.1+, Git và Codex CLI. Sao chép các lệnh, chạy trong terminal và giữ npm start đang hoạt động. Repo private yêu cầu quyền GitHub của bạn.',
+      title: '1. Cài RELAY',
+      text: 'Tải bản Windows trên web và cài app. App chứa runtime riêng; bạn không cần giữ terminal để làm việc.',
     },
     {
       target: 'port',
-      title: '2. Chọn cổng',
-      text: 'Giữ 4317 nếu dùng cấu hình mặc định. Nếu runner dùng RELAY_PORT khác, nhập đúng cổng đó. Runner cần chạy trên cùng máy đang dùng trình duyệt.',
+      title: '2. Đăng nhập',
+      text: 'Mở RELAY và chọn Đăng nhập trên web. So sánh mã trên hai màn hình rồi xác nhận kết nối desktop.',
     },
     {
       target: 'runner-connect',
-      title: '3. Kết nối runner',
-      text: 'Bấm Kết nối runner, cho phép popup rồi chọn Cho phép kết nối trong cửa sổ local. Giữ cửa sổ đó mở. MESH và Sessions hoạt động ngay trong tab Vercel; tài khoản và worker nằm trên máy.',
+      title: '3. Bắt đầu làm việc',
+      text: 'Quay lại app. MESH, Sessions và Team ở trong desktop; tab đăng nhập có thể đóng.',
     },
   ],
   mesh: [
     {
       target: 'groups',
       title: '1. Chọn nhóm dự án',
-      text: 'Mỗi project có group MESH riêng. Chọn New project để tạo repo dự án trên cloud. Các account đã đăng nhập tự gia nhập nhóm.',
+      text: 'Mỗi project có group MESH riêng. Kết nối repository có sẵn hoặc tạo project hackathon. Các account đã đăng nhập tự gia nhập nhóm.',
     },
     {
       target: 'mesh-input',
@@ -77,7 +94,7 @@ const definitions: Record<Stage, Step[]> = {
     {
       target: 'session-grid',
       title: '2. Xem phiên Codex thật',
-      text: 'Mỗi cửa sổ hiển thị output, lệnh, file và trạng thái. Details có PID/thread/worktree; biểu tượng mở rộng tách cửa sổ riêng. Chưa có session thì tạo sau khi đăng nhập trong Team.',
+      text: 'Mỗi ô hiển thị output, lệnh, file và trạng thái. Details có PID/thread/worktree; biểu tượng mở rộng tập trung một session trong app. Chưa có session thì tạo sau khi đăng nhập trong Team.',
     },
     {
       target: 'session-input',
@@ -87,14 +104,14 @@ const definitions: Record<Stage, Step[]> = {
     {
       target: 'demo',
       title: '4. Mở demo',
-      text: 'Nhập URL HTTPS đã deploy của ứng dụng dự án để xem demo. Nút này không tự deploy hoặc mua hosting.',
+      text: 'Nhập URL HTTPS đã deploy hoặc địa chỉ demo đang chạy trên máy ở cổng riêng. Preview nằm ngay trong Sessions. Nút này không tự deploy hoặc mua hosting.',
     },
   ],
   team: [
     {
       target: 'add-account',
       title: '1. Thêm account',
-      text: 'Chọn Machine rồi Add account. Đăng nhập từng tài khoản bằng device code; app tự đặt tên và thêm vào các group dự án. Cloud dùng được ngay; máy cá nhân/lattice cần kết nối một lần.',
+      text: 'Chọn Machine rồi Add account. Mặc định là máy này. Đăng nhập từng tài khoản bằng device code; app tự đặt tên và thêm vào các group dự án. Máy khác cần kết nối trước.',
     },
     {
       target: 'account-card',
@@ -439,17 +456,15 @@ export default function UsageGuide({
             >
               <Illustration />
               <section>
-                <h3>{cloud ? '1. Workspace trên cloud' : '1. Mở runner trên máy'}</h3>
+                <h3>{cloud ? '1. Workspace trên cloud' : '1. Workspace trên desktop'}</h3>
                 <p>
                   {cloud ? (
                     'MESH, Sessions và Team chạy trên cloud. Đăng nhập workspace trên các thiết bị bạn sử dụng; không cần localhost hoặc giữ cửa sổ kết nối. Sandbox miễn phí có giới hạn thời gian, lưu lại dữ liệu khi tạm ngủ và cần khôi phục công việc bị gián đoạn trước khi chạy tiếp.'
                   ) : (
                     <>
-                      Clone repo WWW, cài dependencies và chạy <code>npm start</code> trên cùng máy
-                      đang mở trình duyệt. Trên web, bấm <strong>Kết nối runner</strong> rồi xác
-                      nhận trong cửa sổ vừa mở. Giữ terminal và cửa sổ kết nối mở. MESH và Sessions
-                      vẫn nằm trên URL Vercel. Khi dùng giao diện local trực tiếp, không cần bước
-                      kết nối.
+                      Đăng nhập RELAY qua web, so sánh mã rồi xác nhận desktop. Quay lại app để làm
+                      việc; tab web có thể đóng. Mặc định Codex chạy trên máy này. Máy ngủ hoặc tắt
+                      thì công việc trên máy dừng; hãy bàn giao sang máy đang bật nếu cần tiếp tục.
                     </>
                   )}
                 </p>
@@ -461,8 +476,8 @@ export default function UsageGuide({
                     'Tạo hồ sơ trong Team, sau đó New project: chọn Codex phụ trách, tên/link cuộc thi và hạn nộp.'
                   ) : (
                     <>
-                      Trong <strong>Settings → Add project</strong>, chọn Git repository đã có
-                      commit.
+                      Chọn <strong>Connect project</strong> để mở Git repository có sẵn hoặc tạo
+                      project hackathon mới. Chọn thư mục bằng nút Choose folder.
                     </>
                   )}
                   Trong <strong>Team → Add account</strong>, tự đăng nhập từng tài khoản và kiểm tra
@@ -482,7 +497,7 @@ export default function UsageGuide({
                   <strong>Stop</strong> giải phóng khóa sau khi dừng an toàn. <strong>Demo</strong>{' '}
                   {cloud
                     ? 'mở HTTPS URL của bản demo đã deploy. Model settings đổi model/reasoning khi hội thoại đã dừng.'
-                    : 'mở URL localhost của dự án đã chạy.'}
+                    : 'hiển thị bản demo ngay trong app. Dùng HTTPS hoặc máy chủ phát triển ở cổng riêng.'}
                 </p>
               </section>
               <section>

@@ -10,6 +10,7 @@ import { Store } from '../server/store.ts';
 import { Mesh } from '../server/mesh.ts';
 import { QuotaManager } from '../server/quota.ts';
 import { Handoffs } from '../server/handoffs.ts';
+import { Aegis } from '../server/aegis.ts';
 import { createWorktree, git } from '../server/git.ts';
 
 const identity = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test'];
@@ -112,6 +113,7 @@ async function fixture(t: TestContext) {
     store,
     quota,
     mesh,
+    aegis: new Aegis(store, data),
     log: () => {},
     sessions: {
       interrupt: async (id: string) => {
@@ -124,6 +126,7 @@ async function fixture(t: TestContext) {
   const handoffs = new Handoffs(host);
   t.after(async () => {
     await quota.close();
+    host.aegis.close();
     store.close();
     const actual = await realpath(root),
       temp = await realpath(os.tmpdir());

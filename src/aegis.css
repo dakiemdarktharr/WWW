@@ -1,0 +1,268 @@
+.aegis-page {
+  display: grid;
+  gap: 20px;
+}
+.aegis-page .page-heading {
+  margin-bottom: 4px;
+}
+.aegis-page .page-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.aegis-network {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aegis-network::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e85c5c;
+}
+.aegis-loading,
+.aegis-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px;
+}
+.aegis-notice {
+  padding: 0;
+  color: var(--lime);
+}
+.aegis-network-panel > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.aegis-network-panel > header > h2 {
+  flex: 1;
+}
+.aegis-state {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.aegis-state.positive {
+  color: var(--lime);
+}
+.aegis-section-body {
+  padding: 20px;
+  display: grid;
+  gap: 18px;
+}
+.aegis-section-body > p,
+.aegis-section-body details p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.aegis-section-body > .button {
+  justify-self: start;
+}
+.aegis-section-body details {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.aegis-section-body details summary {
+  cursor: pointer;
+}
+.aegis-section-body details p {
+  margin: 12px 0;
+  max-width: 720px;
+}
+.aegis-wallets {
+  display: grid;
+  gap: 14px;
+}
+.aegis-wallets > div {
+  display: grid;
+  grid-template-columns: 70px 1fr auto 120px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.aegis-wallets > div > span {
+  color: var(--muted);
+}
+.aegis-wallets code {
+  overflow-wrap: anywhere;
+}
+.aegis-wallets strong {
+  text-align: right;
+  font-size: 11px;
+  font-weight: 400;
+}
+.aegis-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.aegis-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px;
+}
+.aegis-grant-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.aegis-grant-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.aegis-grant-form select {
+  color: var(--text);
+  font-size: 12px;
+}
+.aegis-grant-form label:first-child {
+  flex: 1;
+  min-width: 150px;
+}
+.aegis-records {
+  display: grid;
+  gap: 0;
+}
+.aegis-record {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.aegis-record > div:first-child {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+.aegis-record strong {
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.aegis-record span,
+.aegis-record code {
+  color: var(--muted);
+  font-size: 11px;
+}
+.aegis-transaction {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 10px var(--mono);
+}
+.aegis-transaction:hover {
+  color: var(--lime);
+}
+.aegis-empty {
+  font-size: 12px;
+}
+.aegis-upload {
+  position: relative;
+  border: 1px dashed var(--line);
+  padding: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.aegis-upload input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.aegis-upload:focus-within {
+  outline: 2px solid var(--lime);
+  outline-offset: 3px;
+}
+.aegis-verification {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+.aegis-verification > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.aegis-verification .valid {
+  color: var(--lime);
+}
+.aegis-verification .invalid {
+  color: #e6a095;
+}
+.aegis-footnote {
+  font-size: 11px;
+}
+.aegis-merge-preview {
+  display: grid;
+  gap: 15px;
+  padding: 20px;
+}
+.aegis-merge-preview > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.aegis-merge-preview > code {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  color: var(--muted);
+}
+.aegis-diff {
+  max-height: 45vh;
+  overflow: auto;
+  background: var(--bg);
+  padding: 15px;
+  font-size: 11px;
+}
+@media (max-width: 800px) {
+  .aegis-wallets > div {
+    grid-template-columns: 1fr auto;
+  }
+  .aegis-wallets code {
+    grid-row: 2;
+    grid-column: 1;
+    font-size: 10px;
+  }
+  .aegis-wallets button {
+    grid-row: 2;
+    grid-column: 2;
+  }
+  .aegis-wallets strong {
+    grid-row: 1;
+    grid-column: 2;
+  }
+  .aegis-record {
+    flex-wrap: wrap;
+  }
+  .aegis-record > div:first-child {
+    flex-basis: 100%;
+  }
+  .aegis-network-panel > header {
+    flex-wrap: wrap;
+  }
+}

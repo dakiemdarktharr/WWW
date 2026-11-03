@@ -1,0 +1,11 @@
+{
+  "name": "relay-desktop",
+  "productName": "RELAY",
+  "version": "0.3.0",
+  "private": true,
+  "description": "RELAY desktop workspace for real Codex teams",
+  "author": "NoSleepClub",
+  "license": "MIT",
+  "main": "main.cjs",
+  "dependencies": {}
+}

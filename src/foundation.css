@@ -703,6 +703,37 @@
   gap: 16px;
   align-items: start;
 }
+.session-preview {
+  overflow: hidden;
+}
+.session-preview > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.session-preview > header > span {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  flex: 1;
+}
+.session-preview iframe {
+  display: block;
+  width: 100%;
+  height: 480px;
+  border: 0;
+  background: white;
+}
+.session-preview footer {
+  padding: 8px 14px;
+  font-size: 11px;
+  color: var(--subtle);
+  border-top: 1px solid var(--line-soft);
+}
 .session-console {
   min-width: 0;
   overflow: hidden;
@@ -1100,4 +1131,23 @@
     flex-wrap: wrap;
     gap: 12px;
   }
+}
+.joined-machines {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+.joined-machine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.joined-machine > :first-child {
+  font-weight: 600;
+}
+.joined-machine .error-text {
+  flex-basis: 100%;
 }

@@ -5,11 +5,13 @@ import { redact } from './security.ts';
 import { checkpointProgress } from './checkpoint.ts';
 import type { QuotaManager } from './quota.ts';
 import type { Mesh } from './mesh.ts';
+import type { Aegis } from './aegis.ts';
 
 interface Host {
   store: Store;
   quota: QuotaManager;
   mesh: Mesh;
+  aegis: Pick<Aegis, 'recordHandoff' | 'assertHandoff' | 'assertCanRun'>;
   sessions: {
     interrupt(id: string, reason?: string): Promise<CodexSession>;
     resume(id: string): Promise<CodexSession>;
@@ -158,6 +160,7 @@ export class Handoffs {
         updatedAt: new Date().toISOString(),
       });
       this.host.store.updateSession(session.id, { status: 'handoff' });
+      await this.host.aegis.recordHandoff(handoff);
       this.host.mesh.post({
         projectId: handoff.projectId,
         taskId: task.id,
@@ -196,6 +199,11 @@ export class Handoffs {
         throw new DomainError('This handoff is not ready for acknowledgement.');
       await this.host.quota.refresh(handoff.toMemberId);
       this.host.quota.assertCanRun(handoff.toMemberId, handoff.projectId);
+      await this.host.aegis.assertHandoff(handoff);
+      await this.host.aegis.assertCanRun(
+        handoff.projectId,
+        this.host.store.get<Member>('member', handoff.toMemberId).runnerId || 'local',
+      );
       return this.host.store.transaction(() => {
         const current = this.host.store.get<Handoff>('handoff', id);
         if (current.status !== 'awaiting_ack') throw new DomainError('Handoff already changed.');

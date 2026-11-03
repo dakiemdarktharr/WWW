@@ -10,6 +10,9 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { CloudAccess } from './cloud-auth.ts';
 import { readModels } from './codex.ts';
 import { createHackathonProject } from './hackathons.ts';
+import { DesktopIdentity } from './desktop-auth.ts';
+import { registerDesktopRoutes } from './desktop-routes.ts';
+import { registerAegisRoutes } from './aegis-routes.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -40,7 +43,13 @@ const taskInput = z
 type Session = { token: string; expires: number };
 export async function buildApp(
   workspace: Workspace,
-  options: { port?: number; development?: boolean; distDir?: string; cloud?: CloudAccess } = {},
+  options: {
+    port?: number;
+    development?: boolean;
+    distDir?: string;
+    cloud?: CloudAccess;
+    desktopSecret?: string;
+  } = {},
 ) {
   const app = Fastify({
     logger: false,
@@ -50,6 +59,13 @@ export async function buildApp(
   });
   const eventConnections = new Set<() => void>();
   const sessions = new Map<string, Session>();
+  const mutations = new WeakSet<FastifyRequest>();
+  let activeMutations = 0;
+  let upgradeDrain: Promise<void> | null = null;
+  const desktopIdentity = options.cloud
+    ? new DesktopIdentity(workspace.store, options.cloud.origin)
+    : undefined;
+  let bridgeConnection: { origin: string; exchangeUrl: string; bridgeKey: string } | undefined;
   const port = options.port || 4317;
   const allowed = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
   if (options.development) {
@@ -72,11 +88,17 @@ export async function buildApp(
       .header('Cache-Control', 'no-store');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https: http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     );
     const host = request.headers.host,
       origin = request.headers.origin;
     const cloud = options.cloud;
+    const pathname = request.url.split('?')[0];
+    if (
+      options.desktopSecret &&
+      !safeEqual(String(request.headers['x-relay-desktop'] || ''), options.desktopSecret)
+    )
+      return reply.code(403).send({ error: 'Open this workspace in RELAY Desktop.' });
     if (cloud) {
       const gateway = request.headers['x-relay-gateway'];
       if (typeof gateway !== 'string' || !safeEqual(gateway, cloud.gatewaySecret))
@@ -85,8 +107,23 @@ export async function buildApp(
         return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
       if (!['GET', 'HEAD'].includes(request.method) && origin !== cloud.origin)
         return reply.code(403).send({ error: 'A verified workspace origin is required.' });
-      const pathname = request.url.split('?')[0];
       if (pathname.startsWith('/api/auth/') || pathname === '/api/cloud/health') return;
+      if (pathname === '/api/cloud/prepare-upgrade') return;
+      if (
+        [
+          '/api/desktop/authorize',
+          '/api/desktop/token',
+          '/api/desktop/bridge/exchange',
+          '/api/desktop/release',
+        ].includes(pathname)
+      )
+        return;
+      if (
+        ['/api/desktop/me', '/api/desktop/revoke', '/api/desktop/bridge/poll'].includes(pathname)
+      ) {
+        desktopIdentity!.authenticate(request.headers.authorization);
+        return;
+      }
       if (pathname === '/api/runner/exchange') {
         workspace.runners.authenticate(request.headers.authorization);
         return;
@@ -110,6 +147,17 @@ export async function buildApp(
       request.headers['sec-fetch-user'] === '?1';
     if (!cloud && request.headers['sec-fetch-site'] === 'cross-site' && !userDocumentNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
+    if (!cloud && options.desktopSecret && pathname === '/api/desktop/bridge-config') {
+      if (!safeEqual(String(request.headers['x-relay-control'] || ''), options.desktopSecret))
+        return reply
+          .code(403)
+          .send({ error: 'Only the desktop host can configure its connection.' });
+      return;
+    }
+    if (!cloud && options.desktopSecret && pathname === '/api/runner/exchange') {
+      workspace.runners.authenticate(request.headers.authorization);
+      return;
+    }
     if (request.url.startsWith('/api/') && request.url.split('?')[0] !== '/api/session') {
       const session = sessionFor(request);
       if (!session || session.expires < Date.now())
@@ -123,6 +171,53 @@ export async function buildApp(
       }
     }
   });
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.url.split('?')[0] === '/api/cloud/prepare-upgrade') return;
+    if (upgradeDrain && request.url.startsWith('/api/'))
+      return reply
+        .code(503)
+        .send({ error: 'RELAY is finishing a safe update. Retry after it restarts.' });
+    if (!['GET', 'HEAD'].includes(request.method) && request.url.startsWith('/api/')) {
+      mutations.add(request);
+      activeMutations++;
+    }
+  });
+  app.addHook('onResponse', async (request) => {
+    if (mutations.delete(request)) activeMutations--;
+  });
+  if (desktopIdentity) registerDesktopRoutes(app, desktopIdentity);
+  registerAegisRoutes(app, workspace.aegis);
+  app.get('/api/desktop/release', async () => {
+    try {
+      const manifest = JSON.parse(
+        await readFile(path.join(options.distDir || 'dist', 'downloads', 'release.json'), 'utf8'),
+      );
+      return manifest;
+    } catch {
+      return { version: '0.3.0', available: false, platform: 'win32-x64', signed: false };
+    }
+  });
+  if (options.desktopSecret)
+    app.post('/api/desktop/bridge-config', async (request) => {
+      const input = z
+        .object({ url: z.string().url().max(500), key: z.string().min(43).max(128) })
+        .strict()
+        .parse(request.body);
+      const url = new URL(input.url);
+      const allowedProtocol =
+        url.protocol === 'https:' ||
+        (options.development && url.protocol === 'http:' && url.hostname === '127.0.0.1');
+      if (
+        !allowedProtocol ||
+        url.username ||
+        url.password ||
+        url.pathname !== '/api/desktop/bridge/exchange' ||
+        !z.string().uuid().safeParse(url.searchParams.get('host')).success
+      )
+        throw new DomainError('Use a verified RELAY desktop connection.', 400);
+      bridgeConnection = { origin: url.origin, exchangeUrl: url.href, bridgeKey: input.key };
+      return { configured: true };
+    });
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof z.ZodError)
       return reply
@@ -134,6 +229,26 @@ export async function buildApp(
   });
   if (options.cloud) {
     const cloud = options.cloud;
+    app.post('/api/cloud/prepare-upgrade', async (request) => {
+      z.object({}).strict().parse(request.body);
+      if (!upgradeDrain) {
+        const busy =
+          workspace.store.tasks().some((task) => task.status === 'running') ||
+          workspace.store
+            .sessions()
+            .some((session) =>
+              ['starting', 'running', 'awaiting_approval'].includes(session.status),
+            ) ||
+          workspace.store
+            .all<{ status: string }>('handoff')
+            .some((handoff) => handoff.status === 'checkpointing');
+        if (activeMutations || workspace.mergeBusy.size || busy)
+          throw new DomainError('Finish or pause active work before updating RELAY.', 409);
+        upgradeDrain = workspace.close();
+      }
+      await upgradeDrain;
+      return { ready: true };
+    });
     app.route({
       method: ['GET', 'POST'],
       url: '/api/auth/*',
@@ -159,6 +274,7 @@ export async function buildApp(
     app.get('/api/cloud/health', async () => ({
       ready: true,
       version: workspace.runtime.version,
+      revision: process.env.RELAY_REVISION || null,
       expiresAt: cloud.expiresAt || null,
     }));
     app.addHook('onClose', async () => cloud.auth.close());
@@ -220,10 +336,18 @@ export async function buildApp(
       .object({ name: text, kind: z.enum(['computer', 'ssh']) })
       .strict()
       .parse(request.body);
-    return workspace.runners.add(input.name, input.kind);
+    if (options.desktopSecret && !bridgeConnection)
+      throw new DomainError(
+        'Sign in on the web and wait for the desktop connection before pairing a machine.',
+        409,
+      );
+    return {
+      ...workspace.runners.add(input.name, input.kind),
+      ...(bridgeConnection ? { connection: bridgeConnection } : {}),
+    };
   });
   app.post('/api/runner/exchange', { bodyLimit: 4 * 1024 * 1024 }, async (request) => {
-    if (!options.cloud)
+    if (!options.cloud && !options.desktopSecret)
       throw new DomainError('Machine exchange requires the authenticated cloud gateway.', 403);
     const node = workspace.runners.authenticate(request.headers.authorization);
     const body = z

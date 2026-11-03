@@ -13,6 +13,11 @@ test-results/
 .playwright-mcp/
 coverage/
 *.tsbuildinfo
+.desktop-build/
+release/
+dist/downloads/
+*.private.json
+!tests/fixtures/*.private.json
 auth.json
 *.db
 *.db-shm

@@ -54,6 +54,7 @@ import { api } from './api';
 import Workroom from './Workroom';
 import Machines from './Machines';
 import UsageGuide from './UsageGuide';
+import Aegis from './Aegis';
 import {
   AccountSettings,
   MeshPage,
@@ -62,7 +63,7 @@ import {
   type FoundationRequest,
 } from './Foundation';
 
-type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings';
+type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings' | 'aegis';
 type ModalState =
   | { type: 'member' | 'project' | 'task' | 'search' }
   | { type: 'detail'; taskId: string }
@@ -76,6 +77,7 @@ const nav = [
   { id: 'team', label: 'Team', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'reviews', label: 'Reviews', icon: GitMerge },
+  { id: 'aegis', label: 'AEGIS', icon: ShieldCheck },
 ] as const;
 const roleIcons = {
   engineer: Code2,
@@ -285,7 +287,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [view, setView] = useState<View>(
     initialView.startsWith('session=')
       ? 'sessions'
-      : ['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings'].includes(
+      : ['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings', 'aegis'].includes(
             initialView,
           )
         ? (initialView as View)
@@ -307,6 +309,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [diffError, setDiffError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [quickSearch, setQuickSearch] = useState('');
+  const [repositoryPath, setRepositoryPath] = useState('');
+  const [projectMode, setProjectMode] = useState<'existing' | 'hackathon'>(
+    cloud ? 'hackathon' : 'existing',
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -358,7 +364,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         return;
       }
       setFocusedSessionId('');
-      if (['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings'].includes(next))
+      if (
+        ['mesh', 'sessions', 'workroom', 'tasks', 'team', 'reviews', 'settings', 'aegis'].includes(
+          next,
+        )
+      )
         setView(next as View);
     };
     window.addEventListener('hashchange', updateView);
@@ -619,7 +629,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           </button>
           <span className="local-status">
             <LockKeyhole size={13} />
-            {cloud ? 'Cloud workspace' : 'Local workspace'}
+            {cloud
+              ? 'Cloud workspace'
+              : window.relayDesktop
+                ? 'Desktop workspace'
+                : 'Local workspace'}
           </span>
         </div>
       </aside>
@@ -657,7 +671,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <Search size={15} />
               <kbd>Ctrl K</kbd>
             </button>
-            {cloud && (
+            {(cloud || window.relayDesktop) && (
               <button
                 className="icon-button"
                 aria-label="Sign out of workspace"
@@ -713,6 +727,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               openSessions={() => navigate('sessions')}
             />
           )}
+          {view === 'aegis' && state && <Aegis state={state} project={project} />}
           {view === 'sessions' && state && (
             <SessionsPage
               state={state}
@@ -765,7 +780,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <Plus size={16} /> Add account
                 </Button>
               </section>
-              <Machines selected={selectedMachine} onSelect={setSelectedMachine} />
+              <Machines selected={selectedMachine} onSelect={setSelectedMachine} cloud={cloud} />
               <div className="team-grid">
                 {members.map((member) => (
                   <div className="account-card-group" key={member.id}>
@@ -1224,8 +1239,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               const data = new FormData(e.currentTarget);
               const result = await perform<Project>(
                 'create-project',
-                cloud ? '/hackathons' : '/projects',
-                cloud
+                projectMode === 'hackathon' ? '/hackathons' : '/projects',
+                projectMode === 'hackathon'
                   ? {
                       name: data.get('name'),
                       memberId: data.get('memberId'),
@@ -1245,11 +1260,26 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               }
             }}
           >
+            {!cloud && (
+              <label>
+                Project type
+                <select
+                  aria-label="Project type"
+                  value={projectMode}
+                  onChange={(event) =>
+                    setProjectMode(event.target.value as 'existing' | 'hackathon')
+                  }
+                >
+                  <option value="existing">Existing repository</option>
+                  <option value="hackathon">New hackathon project</option>
+                </select>
+              </label>
+            )}
             <label>
               Project name
               <input name="name" required maxLength={80} placeholder="Project name" />
             </label>
-            {cloud ? (
+            {projectMode === 'hackathon' ? (
               <>
                 <label>
                   Codex owner
@@ -1280,10 +1310,28 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 Repository path
                 <input
                   name="path"
+                  value={repositoryPath}
+                  onChange={(event) => setRepositoryPath(event.target.value)}
                   required
                   placeholder="D:\projects\your-project"
                   className="mono"
                 />
+                {window.relayDesktop && (
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() =>
+                      void window
+                        .relayDesktop!.chooseDirectory()
+                        .then((value) => {
+                          if (value) setRepositoryPath(value);
+                        })
+                        .catch((error) => setToast({ text: error.message, error: true }))
+                    }
+                  >
+                    Choose folder
+                  </button>
+                )}
               </label>
             )}
             <label>
@@ -1299,7 +1347,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <div className="modal-footer">
               <Button onClick={closeModal}>Cancel</Button>
               <Button primary type="submit" disabled={pending}>
-                <FolderGit2 size={15} /> {cloud ? 'Create project' : 'Connect project'}
+                <FolderGit2 size={15} />{' '}
+                {projectMode === 'hackathon' ? 'Create project' : 'Connect project'}
               </Button>
             </div>
           </form>

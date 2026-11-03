@@ -1,4 +1,5 @@
-// Production UI, real Fastify/SQLite/owner auth. No Codex login or model turns.
+// Production desktop UI with a preload fixture, real Fastify/SQLite/web owner auth.
+// The hosted portal never renders a workspace. No Codex login or model turns.
 import assert from 'node:assert/strict';
 import { chromium, expect, type BrowserContext } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
@@ -108,10 +109,46 @@ async function device() {
 }
 async function login(context: BrowserContext) {
   const page = await context.newPage();
-  await page.goto(`${origin}/#mesh`);
+  await page.goto(`${origin}/?login`);
   await page.getByLabel('Mật khẩu chủ workspace').fill(password);
-  await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
+  await page.getByRole('dialog').getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+  await page.getByLabel('Mã từ app desktop', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('navigation', { name: 'Main navigation' }).count(), 0);
+  // Only this test installs the native capability; production web has no preload.
+  // Actual Electron and PKCE consent are covered separately by desktop/portal E2E.
+  await context.addInitScript(`
+    window.relayDesktop = {
+      platform: 'win32',
+      version: '0.3.0',
+      getStatus: async () => ({
+        signedIn: true,
+        runtime: 'ready',
+        cloudOrigin: location.origin,
+        owner: { id: 'workspace-owner', name: 'Workspace owner' },
+        machines: [],
+      }),
+      chooseDirectory: async () => null,
+      openExternal: async () => {},
+      openPreview: async () => {},
+      signOut: async () => {},
+      joinMachine: async () => null,
+      stopMachine: async () => {},
+    };
+  `);
+  await page.goto(`${origin}/#mesh`);
+  try {
+    await page.getByRole('navigation', { name: 'Main navigation' }).waitFor();
+  } catch (cause) {
+    console.error(
+      'Desktop fixture failed:',
+      await page.evaluate(() => ({
+        native: !!window.relayDesktop,
+        text: document.body.innerText.slice(0, 1000),
+      })),
+      errors,
+    );
+    throw cause;
+  }
   return page;
 }
 try {
@@ -127,8 +164,9 @@ try {
   await page.getByText('TEST-ONLY', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.getByRole('heading', { name: 'Atlas', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'New project', exact: true }).click();
-  const project = page.getByRole('dialog', { name: 'New project', exact: true });
+  await page.getByRole('button', { name: 'Connect project', exact: true }).click();
+  const project = page.getByRole('dialog', { name: 'Connect project', exact: true });
+  await project.getByLabel('Project type', { exact: true }).selectOption('hackathon');
   await project.getByLabel('Project name', { exact: true }).fill('Cloud project');
   await project.getByLabel('Codex owner', { exact: true }).selectOption({ label: 'Atlas' });
   await project.getByLabel('Competition', { exact: true }).fill('Browser challenge');
@@ -162,6 +200,12 @@ try {
     .getByRole('button', { name: 'Sessions', exact: true })
     .click();
   await other.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
+  await nav('AEGIS').click();
+  await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Refresh AEGIS', exact: true }).click();
+  await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
+  assert.equal(await page.getByText('Not deployed', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('Not configured', { exact: true }).count(), 1);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
@@ -171,6 +215,9 @@ try {
   console.log(
     JSON.stringify({
       ownerLogin: true,
+      hostedPortalOnly: true,
+      desktopPreloadFixture: true,
+      aegisUnconfiguredState: true,
       projectGit: true,
       meshAcrossDevices: true,
       savedConversation: true,

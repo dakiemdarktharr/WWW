@@ -36,6 +36,7 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
+import { openExternal, openPreview } from './desktop';
 
 export type FoundationRequest = <T = unknown>(
   path: string,
@@ -59,12 +60,9 @@ const localInputTime = (value: number) => {
   const date = new Date(value);
   return new Date(value - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
-const popupSession = (id: string) =>
-  window.open(
-    `${window.location.pathname}#session=${encodeURIComponent(id)}`,
-    `relay-session-${id}`,
-    'popup,width=1050,height=780',
-  );
+const popupSession = (id: string) => {
+  window.location.hash = `session=${encodeURIComponent(id)}`;
+};
 
 function Face({ member }: { member?: Member }) {
   return (
@@ -81,10 +79,12 @@ export function FoundationDialog({
   title,
   close,
   children,
+  wide = false,
 }: {
   title: string;
   close: () => void;
   children: ReactNode;
+  wide?: boolean;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const onClose = useRef(close);
@@ -132,7 +132,7 @@ export function FoundationDialog({
       }}
     >
       <div
-        className="modal foundation-dialog"
+        className={`modal foundation-dialog ${wide ? 'wide' : ''}`}
         ref={dialog}
         role="dialog"
         aria-modal="true"
@@ -1103,6 +1103,7 @@ export function SessionsPage({
   const [demo, setDemo] = useState('');
   const [demoEdit, setDemoEdit] = useState(false);
   const [demoError, setDemoError] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
   const sessions = state.sessions.filter((session) =>
     focusedId
       ? session.id === focusedId
@@ -1112,6 +1113,7 @@ export function SessionsPage({
     ? state.projects.find((item) => item.id === sessions[0]?.projectId)
     : project;
   useEffect(() => {
+    setPreviewUrl('');
     try {
       setDemo(localStorage.getItem(`relay-demo-${focusedProject?.id}`) || '');
     } catch {
@@ -1121,30 +1123,20 @@ export function SessionsPage({
   const openDemo = () => {
     try {
       const url = new URL(demo);
+      const local = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+      const allowed =
+        url.protocol === 'https:' ||
+        (state.runtime.deployment !== 'cloud' && local && url.protocol === 'http:' && !!url.port);
       if (
-        state.runtime.deployment === 'cloud'
-          ? url.protocol !== 'https:' ||
-            !!url.username ||
-            !!url.password ||
-            ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-          : url.protocol !== 'http:' ||
-            !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
-            url.username ||
-            url.password ||
-            !url.port ||
-            [4317, 4321, 5173].includes(Number(url.port))
+        !allowed ||
+        url.username ||
+        url.password ||
+        url.origin === location.origin ||
+        (local && [Number(location.port), 4317, 4321, 5173].includes(Number(url.port)))
       )
-        throw new Error(
-          state.runtime.deployment === 'cloud'
-            ? 'Use the HTTPS URL of your deployed demo.'
-            : 'Use an HTTP localhost demo URL on a separate port.',
-        );
+        throw new Error('Use an HTTPS demo or a local development server on a separate port.');
       if (focusedProject) localStorage.setItem(`relay-demo-${focusedProject.id}`, url.href);
-      window.open(
-        url.href,
-        `relay-demo-${focusedProject?.id || 'project'}`,
-        'popup,width=1200,height=850,noopener',
-      );
+      setPreviewUrl(url.href);
       setDemoError('');
       setDemoEdit(false);
     } catch (error) {
@@ -1157,6 +1149,16 @@ export function SessionsPage({
       <div className="page-heading">
         <h1>{focusedId ? sessions[0]?.title || 'Session' : 'Sessions'}</h1>
         <div className="heading-actions">
+          {focusedId && (
+            <button
+              className="button"
+              onClick={() => {
+                location.hash = 'sessions';
+              }}
+            >
+              All sessions
+            </button>
+          )}
           <button
             className="button"
             onClick={() => (demo ? openDemo() : setDemoEdit(true))}
@@ -1195,9 +1197,7 @@ export function SessionsPage({
             openDemo();
           }}
         >
-          <label htmlFor="local-demo-url">
-            {state.runtime.deployment === 'cloud' ? 'Demo URL' : 'Local demo URL'}
-          </label>
+          <label htmlFor="local-demo-url">Demo URL</label>
           <input
             id="local-demo-url"
             type="url"
@@ -1216,6 +1216,48 @@ export function SessionsPage({
             </span>
           )}
         </form>
+      )}
+      {previewUrl && (
+        <section className="panel session-preview" aria-label="Project demo">
+          <header>
+            <strong>Preview</strong>
+            <span>{previewUrl}</span>
+            <button
+              className="icon-button"
+              aria-label="Reload preview"
+              onClick={() => {
+                const url = previewUrl;
+                setPreviewUrl('');
+                setTimeout(() => setPreviewUrl(url), 0);
+              }}
+            >
+              <RefreshCw size={14} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Open demo in browser"
+              onClick={() =>
+                void openPreview(previewUrl).catch((error) => setDemoError(error.message))
+              }
+            >
+              <ExternalLink size={14} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Close preview"
+              onClick={() => setPreviewUrl('')}
+            >
+              <X size={14} />
+            </button>
+          </header>
+          <iframe
+            title="Project preview"
+            src={previewUrl}
+            sandbox="allow-scripts allow-forms allow-same-origin"
+            referrerPolicy="no-referrer"
+          />
+          <footer>Site refusing to display? Open it in your browser using the arrow above.</footer>
+        </section>
       )}
       {!focusedId && (
         <div className="session-filter">
@@ -1654,8 +1696,8 @@ function SessionConsole({
         {!focused && (
           <button
             className="icon-button"
-            aria-label={`Pop out ${session.title}`}
-            title="Open session window"
+            aria-label={`Focus ${session.title}`}
+            title="Focus session"
             onClick={() => popupSession(session.id)}
           >
             <Maximize2 size={13} />

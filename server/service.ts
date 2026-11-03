@@ -23,6 +23,7 @@ import { Handoffs } from './handoffs.ts';
 import { InboxDispatcher } from './inbox.ts';
 import { Autonomy } from './autonomy.ts';
 import { Runners } from './runners.ts';
+import { Aegis } from './aegis.ts';
 
 interface Running {
   taskId: string;
@@ -52,7 +53,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.2.0',
+    version: '0.3.0',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -68,6 +69,7 @@ export class Workspace {
   inbox: InboxDispatcher;
   autonomy: Autonomy;
   runners: Runners;
+  aegis: Aegis;
   constructor(
     public store: Store,
     public dataDir: string,
@@ -83,8 +85,10 @@ export class Workspace {
     this.inbox = new InboxDispatcher(this);
     this.autonomy = new Autonomy(this);
     this.runners = new Runners(this);
+    this.aegis = new Aegis(store, dataDir);
   }
   async initialize() {
+    await this.aegis.initialize();
     const p = await probeCodex();
     this.runtime.codexAvailable = p.available;
     this.runtime.codexVersion = p.version;
@@ -379,6 +383,10 @@ export class Workspace {
     await this.refresh(memberId);
     await this.quota.refresh(memberId);
     this.quota.assertCanRun(memberId, this.store.get<Task>('task', taskId).projectId);
+    await this.aegis.assertCanRun(
+      this.store.get<Task>('task', taskId).projectId,
+      this.store.get<Member>('member', memberId).runnerId || 'local',
+    );
     const automatic = this.store.get<Member>('member', memberId).managed;
     if (automatic) await this.autonomy.shareSkills(memberId);
     const selection = automatic
@@ -854,8 +862,13 @@ export class Workspace {
       throw new DomainError('Another integration is in progress.');
     this.mergeBusy.add(task.projectId);
     try {
+      const verifyApprovedSource = await this.aegis.consumeMerge(taskId);
       const project = this.store.get<Project>('project', task.projectId);
-      const validateDiff = (diff: Awaited<ReturnType<typeof taskDiff>>) => {
+      const validateDiff = async (
+        diff: Awaited<ReturnType<typeof taskDiff>>,
+        context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
+      ) => {
+        await verifyApprovedSource(diff, context || { root: task.worktree!, phase: 'preview' });
         const outside = diff.files.filter(
           (file) =>
             !task.scope.some(
@@ -878,7 +891,7 @@ export class Workspace {
             'Potential private files are present. Remove them before integration.',
           );
       };
-      validateDiff(await taskDiff(task.worktree, task.baseCommit || 'HEAD'));
+      await validateDiff(await taskDiff(task.worktree, task.baseCommit || 'HEAD'));
       await integrate(project.path, task.worktree, task.branch, task.title, {
         baseCommit: task.baseCommit || undefined,
         validateDiff,
@@ -955,5 +968,6 @@ export class Workspace {
         this.finish(run, false, 'Coordinator stopped. Worktree preserved.');
     this.clients.clear();
     this.runners.close();
+    this.aegis.close();
   }
 }

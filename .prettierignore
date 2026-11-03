@@ -5,3 +5,5 @@ dist
 .playwright-mcp
 package-lock.json
 .cloud
+.desktop-build
+release
