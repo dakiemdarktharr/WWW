@@ -2,6 +2,7 @@ node_modules/
 dist/
 .local/
 .vercel/
+.cloud/
 .relay/
 .env
 .env.*

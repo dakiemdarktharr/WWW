@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import type {
   CodexSession,
+  CodexModel,
   Handoff,
   Member,
   Project,
@@ -35,7 +36,6 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
-import { registerSessionWindow } from './bridge';
 
 export type FoundationRequest = <T = unknown>(
   path: string,
@@ -60,12 +60,10 @@ const localInputTime = (value: number) => {
   return new Date(value - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 };
 const popupSession = (id: string) =>
-  registerSessionWindow(
-    window.open(
-      `${window.location.pathname}#session=${encodeURIComponent(id)}`,
-      `relay-session-${id}`,
-      'popup,width=1050,height=780',
-    ),
+  window.open(
+    `${window.location.pathname}#session=${encodeURIComponent(id)}`,
+    `relay-session-${id}`,
+    'popup,width=1050,height=780',
   );
 
 function Face({ member }: { member?: Member }) {
@@ -1124,14 +1122,23 @@ export function SessionsPage({
     try {
       const url = new URL(demo);
       if (
-        url.protocol !== 'http:' ||
-        !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
-        url.username ||
-        url.password ||
-        !url.port ||
-        [4317, 4321, 5173].includes(Number(url.port))
+        state.runtime.deployment === 'cloud'
+          ? url.protocol !== 'https:' ||
+            !!url.username ||
+            !!url.password ||
+            ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+          : url.protocol !== 'http:' ||
+            !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ||
+            url.username ||
+            url.password ||
+            !url.port ||
+            [4317, 4321, 5173].includes(Number(url.port))
       )
-        throw new Error('Use an HTTP localhost demo URL on a separate port.');
+        throw new Error(
+          state.runtime.deployment === 'cloud'
+            ? 'Use the HTTPS URL of your deployed demo.'
+            : 'Use an HTTP localhost demo URL on a separate port.',
+        );
       if (focusedProject) localStorage.setItem(`relay-demo-${focusedProject.id}`, url.href);
       window.open(
         url.href,
@@ -1188,7 +1195,9 @@ export function SessionsPage({
             openDemo();
           }}
         >
-          <label htmlFor="local-demo-url">Local demo URL</label>
+          <label htmlFor="local-demo-url">
+            {state.runtime.deployment === 'cloud' ? 'Demo URL' : 'Local demo URL'}
+          </label>
           <input
             id="local-demo-url"
             type="url"
@@ -1293,6 +1302,9 @@ function CreateSession({
 }) {
   const [readOnly, setReadOnly] = useState(true);
   const [taskId, setTaskId] = useState('');
+  const [memberId, setMemberId] = useState(project.ownerMemberId || '');
+  const [model, setModel] = useState('');
+  const [effort, setEffort] = useState('');
   return (
     <FoundationDialog title="New Codex session" close={close}>
       <form
@@ -1306,6 +1318,8 @@ function CreateSession({
             title: data.get('title'),
             readOnly,
             prompt: data.get('prompt'),
+            model: model || null,
+            reasoningEffort: effort || null,
             ...(taskId
               ? { taskId }
               : {
@@ -1320,7 +1334,16 @@ function CreateSession({
       >
         <label>
           Account
-          <select name="memberId" required defaultValue="">
+          <select
+            name="memberId"
+            required
+            value={memberId}
+            onChange={(event) => {
+              setMemberId(event.target.value);
+              setModel('');
+              setEffort('');
+            }}
+          >
             <option value="">Choose Codex account</option>
             {state.members.map((member) => (
               <option key={member.id} value={member.id}>
@@ -1330,6 +1353,15 @@ function CreateSession({
             ))}
           </select>
         </label>
+        <ModelFields
+          memberId={memberId}
+          model={model}
+          effort={effort}
+          change={(m, e) => {
+            setModel(m);
+            setEffort(e);
+          }}
+        />
         <label>
           Session title
           <input
@@ -1379,7 +1411,12 @@ function CreateSession({
         )}
         <label>
           Prompt
-          <textarea name="prompt" maxLength={16000} rows={5} required />
+          <textarea
+            name="prompt"
+            maxLength={16000}
+            rows={5}
+            placeholder="Optional — send a prompt when ready"
+          />
         </label>
         <div className="foundation-notice">
           <Terminal size={14} />
@@ -1387,7 +1424,138 @@ function CreateSession({
         </div>
         <button className="button primary" disabled={busy}>
           <Play size={14} />
-          Start session
+          Create session
+        </button>
+      </form>
+    </FoundationDialog>
+  );
+}
+
+function ModelFields({
+  memberId,
+  model,
+  effort,
+  change,
+}: {
+  memberId: string;
+  model: string;
+  effort: string;
+  change: (model: string, effort: string) => void;
+}) {
+  const [models, setModels] = useState<CodexModel[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setModels([]);
+    setError('');
+    if (!memberId) return;
+    setLoading(true);
+    api<CodexModel[]>(`/members/${memberId}/models`)
+      .then((data) => {
+        if (!cancelled) setModels(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [memberId]);
+  const selected =
+    models.find((item) => item.model === model) || models.find((item) => item.isDefault);
+  return (
+    <>
+      <label>
+        Model
+        <select
+          value={model}
+          disabled={loading || !models.length}
+          onChange={(event) => change(event.target.value, '')}
+        >
+          <option value="">Account default</option>
+          {model && !models.some((item) => item.model === model) && (
+            <option value={model}>{model}</option>
+          )}
+          {models.map((item) => (
+            <option key={item.id} value={item.model}>
+              {item.displayName}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Reasoning
+        <select
+          value={effort}
+          disabled={loading || !selected}
+          onChange={(event) => change(model, event.target.value)}
+        >
+          <option value="">Model default</option>
+          {selected?.supportedReasoningEfforts.map((item) => (
+            <option key={item.reasoningEffort} value={item.reasoningEffort}>
+              {item.reasoningEffort}
+            </option>
+          ))}
+        </select>
+      </label>
+      {loading && <p role="status">Loading account models…</p>}
+      {error && (
+        <p className="error-text" role="status">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+function SessionSettings({
+  session,
+  request,
+  close,
+}: {
+  session: CodexSession;
+  request: FoundationRequest;
+  close: () => void;
+}) {
+  const [model, setModel] = useState(session.model || '');
+  const [effort, setEffort] = useState(session.reasoningEffort || '');
+  const [saving, setSaving] = useState(false);
+  return (
+    <FoundationDialog title="Conversation settings" close={close}>
+      <form
+        className="form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          try {
+            if (
+              await request(
+                `/sessions/${session.id}/config`,
+                { model: model || null, reasoningEffort: effort || null },
+                'PATCH',
+              )
+            )
+              close();
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <ModelFields
+          memberId={session.memberId}
+          model={model}
+          effort={effort}
+          change={(m, e) => {
+            setModel(m);
+            setEffort(e);
+          }}
+        />
+        <button className="button primary" disabled={saving}>
+          Save settings
         </button>
       </form>
     </FoundationDialog>
@@ -1413,6 +1581,7 @@ function SessionConsole({
   const [eventError, setEventError] = useState('');
   const [prompt, setPrompt] = useState('');
   const [confirmedStopped, setConfirmedStopped] = useState(false);
+  const [settings, setSettings] = useState(false);
   const output = useRef<HTMLDivElement>(null);
   const member = state.members.find((item) => item.id === session.memberId);
   const task = state.tasks.find((item) => item.id === session.taskId);
@@ -1470,6 +1639,15 @@ function SessionConsole({
         <Face member={member} />
         <strong>{member?.name || 'Account'}</strong>
         <span>{session.readOnly ? 'Read only' : 'Workspace write'}</span>
+        <span>
+          {session.model || 'Account default'}
+          {session.reasoningEffort ? ` · ${session.reasoningEffort}` : ''}
+        </span>
+        {['idle', 'paused', 'review'].includes(session.status) && (
+          <button className="text-button" onClick={() => setSettings(true)}>
+            Model settings
+          </button>
+        )}
         {session.pid && <span>PID {session.pid}</span>}
         <details>
           <summary>
@@ -1488,6 +1666,9 @@ function SessionConsole({
           </dl>
         </details>
       </div>
+      {settings && (
+        <SessionSettings session={session} request={request} close={() => setSettings(false)} />
+      )}
       <div
         className="session-output"
         ref={output}

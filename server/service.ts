@@ -47,7 +47,7 @@ export class Workspace {
   connecting = new Map<string, Promise<CodexClient>>();
   running = new Map<string, Running>();
   approvals = new Map<string, PendingApproval>();
-  runtime = {
+  runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
     version: '0.2.0',
@@ -119,6 +119,7 @@ export class Workspace {
     return this.store.activity({ text: redact(text), taskId, memberId, type, projectId });
   }
   async client(id: string): Promise<CodexClient> {
+    if (this.closing) throw new DomainError('The coordinator is shutting down.');
     const existing = this.clients.get(id);
     if (existing) return existing;
     const pending = this.connecting.get(id);
@@ -126,6 +127,7 @@ export class Workspace {
     const connect = (async () => {
       const home = this.home(id);
       await privateDirectory(home);
+      if (this.closing) throw new DomainError('The coordinator is shutting down.');
       const client = new CodexClient({ home, cwd: this.defaultCwd });
       client.on('notification', (method: string, params: any) => {
         void this.notification(id, method, params).catch((error) =>
@@ -156,6 +158,7 @@ export class Workspace {
       this.store.updateMember(id, { status: 'connecting', error: null });
       try {
         await client.start();
+        if (this.closing) throw new DomainError('The coordinator is shutting down.');
         this.clients.set(id, client);
         return client;
       } catch (error) {
@@ -843,6 +846,7 @@ export class Workspace {
   async close() {
     if (this.closing) return;
     this.closing = true;
+    await Promise.allSettled([...this.connecting.values()]);
     await this.inbox.close();
     await this.quota.close();
     await this.workflows.idle();

@@ -213,8 +213,16 @@ function Illustration() {
   );
 }
 
-export default function UsageGuide({ stage, enabled = true }: { stage: Stage; enabled?: boolean }) {
-  const mode = stage === 'hosted' ? 'hosted' : 'local';
+export default function UsageGuide({
+  stage,
+  enabled = true,
+  cloud = false,
+}: {
+  stage: Stage;
+  enabled?: boolean;
+  cloud?: boolean;
+}) {
+  const mode = cloud ? 'cloud' : stage === 'hosted' ? 'hosted' : 'local';
   const [intro, setIntro] = useState(() => !seen(`${mode}:intro`));
   const [index, setIndex] = useState<number | null>(null);
   const [position, setPosition] = useState<DOMRect | null>(null);
@@ -227,7 +235,18 @@ export default function UsageGuide({ stage, enabled = true }: { stage: Stage; en
   const trigger = useRef<HTMLButtonElement>(null);
   const targetKey = useRef('');
   const activeStage = useRef(stage);
-  const step = index === null ? null : definitions[stage][index];
+  const baseStep = index === null ? null : definitions[stage][index];
+  const cloudText: Record<string, string> = {
+    groups:
+      'Mỗi dự án có group MESH riêng. Chọn New project, Codex phụ trách, tên/link cuộc thi và hạn nộp. Hệ thống tạo Git repository trên cloud; chưa tự tạo remote GitHub.',
+    'new-session':
+      'Chọn account, model và reasoning từ catalog thật. Mỗi dự án có nhiều cuộc trò chuyện; bỏ trống prompt để lưu trước. Read-only dùng cho research; viết code cần scope riêng.',
+    demo: 'Nhập HTTPS URL của bản demo đã deploy. Demo có thể mở riêng; MESH và Sessions luôn dùng trực tiếp trong web.',
+  };
+  const step =
+    baseStep && cloud && cloudText[baseStep.target]
+      ? { ...baseStep, text: cloudText[baseStep.target] }
+      : baseStep;
   const finish = useCallback(() => {
     setIndex(null);
     setPosition(null);
@@ -420,18 +439,32 @@ export default function UsageGuide({ stage, enabled = true }: { stage: Stage; en
             >
               <Illustration />
               <section>
-                <h3>1. Mở runner trên máy</h3>
+                <h3>{cloud ? '1. Workspace trên cloud' : '1. Mở runner trên máy'}</h3>
                 <p>
-                  Clone repo WWW, cài dependencies và chạy <code>npm start</code> trên cùng máy đang
-                  mở trình duyệt. Trên web, bấm <strong>Kết nối runner</strong> rồi xác nhận trong
-                  cửa sổ vừa mở. Giữ terminal và cửa sổ kết nối mở. MESH và Sessions vẫn nằm trên
-                  URL Vercel. Khi dùng giao diện local trực tiếp, không cần bước kết nối.
+                  {cloud ? (
+                    'MESH, Sessions và Team chạy trên cloud. Đăng nhập workspace trên các thiết bị bạn sử dụng; không cần localhost hoặc giữ cửa sổ kết nối. Sandbox miễn phí có giới hạn thời gian, lưu lại dữ liệu khi tạm ngủ và cần khôi phục công việc bị gián đoạn trước khi chạy tiếp.'
+                  ) : (
+                    <>
+                      Clone repo WWW, cài dependencies và chạy <code>npm start</code> trên cùng máy
+                      đang mở trình duyệt. Trên web, bấm <strong>Kết nối runner</strong> rồi xác
+                      nhận trong cửa sổ vừa mở. Giữ terminal và cửa sổ kết nối mở. MESH và Sessions
+                      vẫn nằm trên URL Vercel. Khi dùng giao diện local trực tiếp, không cần bước
+                      kết nối.
+                    </>
+                  )}
                 </p>
               </section>
               <section>
                 <h3>2. Kết nối project và Team</h3>
                 <p>
-                  Trong <strong>Settings → Add project</strong>, chọn Git repository đã có commit.
+                  {cloud ? (
+                    'Tạo hồ sơ trong Team, sau đó New project: chọn Codex phụ trách, tên/link cuộc thi và hạn nộp.'
+                  ) : (
+                    <>
+                      Trong <strong>Settings → Add project</strong>, chọn Git repository đã có
+                      commit.
+                    </>
+                  )}
                   Trong <strong>Team → Add account</strong>, tự đăng nhập từng tài khoản và kiểm tra
                   email. <strong>Refresh usage</strong> để đọc quota thật.
                 </p>
@@ -447,7 +480,9 @@ export default function UsageGuide({ stage, enabled = true }: { stage: Stage; en
                   Output, command và file events nằm trong cửa sổ session. <strong>Steer</strong> bổ
                   sung prompt đang chạy; <strong>Pause</strong> dừng worker và giữ khóa,{' '}
                   <strong>Stop</strong> giải phóng khóa sau khi dừng an toàn. <strong>Demo</strong>{' '}
-                  mở URL localhost của dự án đã chạy.
+                  {cloud
+                    ? 'mở HTTPS URL của bản demo đã deploy. Model settings đổi model/reasoning khi hội thoại đã dừng.'
+                    : 'mở URL localhost của dự án đã chạy.'}
                 </p>
               </section>
               <section>

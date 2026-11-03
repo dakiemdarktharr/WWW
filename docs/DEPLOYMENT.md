@@ -1,48 +1,37 @@
-# WWW on Vercel
+# Cloud deployment
 
-Source: private repository [dakiemdarktharr/WWW](https://github.com/dakiemdarktharr/WWW).
+Production: https://nosleepclub-relay.vercel.app. Source: private `dakiemdarktharr/WWW`.
 
-Production: [nosleepclub-relay.vercel.app](https://nosleepclub-relay.vercel.app). The domain tracks production deployments from `main`. Existing team deployment protection remains enabled.
+The Vite frontend calls same-origin Vercel Node Functions at `/api/*`. The gateway resumes the named persistent Vercel Sandbox `relay-cloud-workspace`. That Linux VM runs Fastify, SQLite and the official `@openai/codex@0.166.0` App Server over stdio. Browser clients need neither localhost nor a connection popup. Optional conversation popouts are ordinary authenticated views.
 
-Vercel builds the Vite frontend with `npm run build` and serves `dist`. The full UI now runs on the hosted origin: [MESH](https://nosleepclub-relay.vercel.app/#mesh), [Sessions](https://nosleepclub-relay.vercel.app/#sessions), Team, Workroom, Tasks, Reviews and Settings stay on that URL. Disconnected views show runner setup rather than fabricated project data. The direct local UI remains available.
+## Sign in
 
-The coordinator requires a local Codex binary, long-lived processes, SQLite, account homes and Git worktrees. Vercel serves the frontend; it does not run those workers or host their state. The hosted UI connects through an explicitly approved browser window on the same computer. This does not connect from another device or implement a remote multi-user SaaS.
+The owner password is generated randomly during provisioning and delivered separately in `.local/cloud/WORKSPACE-ACCESS.txt`, never in Git or public assets. Enter it on the web, including on another device. Public signup is disabled. The owner can change the password through Better Auth's authenticated `/api/auth/change-password` endpoint; bootstrap never resets an existing owner's password.
 
-## Connect
+In Team, add profiles and sign in to each OpenAI account yourself using device codes. The server forces device authentication, avoiding a localhost OAuth callback. Separate `CODEX_HOME` directories hold each profile's real ChatGPT subscription credentials. Skills/plugins are server installations; those on your desktop are not automatically copied or synchronized by OpenAI sign-in.
 
-1. Update/build the local checkout and start the runner on the same computer as the browser:
+Choose New project, owner, competition name/link, deadline and goal. RELAY creates a real Git repository and MESH group. The proposed remote name is `NoSleepClub_[competition]_[project]`. It does not create a remote GitHub repository before GitHub credentials are connected. Projects group RELAY conversations; they are not native Codex Desktop or ChatGPT Projects.
 
-   ```sh
-   git clone https://github.com/dakiemdarktharr/WWW.git
-   cd WWW
-   npm ci
-   npm run build
-   npm start
-   ```
+Sessions lets each account open multiple conversations with model/reasoning from its real `model/list` catalog. Empty prompts save conversations without consuming a model turn. Sending starts a real App Server thread; Pause/Resume retains that thread ID. Selected model/reasoning and human-approval sandbox policies are checked before a turn starts. A deployed HTTPS URL can be opened as the project demo.
 
-   An existing checkout needs the latest source, `npm ci` and `npm run build` before restarting. Requires Node.js 24.22.1+, Git and Codex CLI.
+## Free limits and recovery
 
-2. Open the canonical Vercel URL and select **Kết nối runner**. Use port 4317 unless `RELAY_PORT` is different. Allow the connection popup.
-3. In the local popup, verify `https://nosleepclub-relay.vercel.app` and choose **Cho phép kết nối**. Approval gives that web tab operator access to workspace data, prompts, file operations and Git through this runner. Approval alone does not start a model turn.
-4. Keep the popup and runner open. Return to the Vercel tab; navigation, MESH messages and session interaction happen there. Session popouts inherit the approved connection from the tab that explicitly opens them. Sign in to each Codex account yourself in Team.
-5. Choose **Ngắt kết nối** in the popup or hosted Settings, or close the popup, to revoke further browser requests. Already accepted operations and running Codex tasks continue; use Pause/Stop first if needed.
+This installation uses Hobby only: 1 vCPU, 2 GB RAM, a 40-minute configured runtime (the Hobby maximum is 45 minutes). Current Sandbox allowances are 5 active CPU hours/month, 420 GB-hours memory/month and 15 GB retained snapshot/drive storage. See [official pricing and limits](https://vercel.com/docs/sandbox/pricing). These limits are shared with other usage in the Vercel team. It is not an always-on service. Four busy Codex accounts may exceed the small VM's resources.
 
-Reloading the hosted tab requires approval again. An unrelated tab, preview domain, old alias or different device does not inherit permission. Use the canonical domain to connect. An old launcher-only local build cannot complete this handshake.
+The named Sandbox snapshots its filesystem on stop and restores it on resume. Its configuration keeps the latest automatic snapshot without expiration. Database, account homes, repositories and worktrees live outside the replaceable application directory. If the named workspace or snapshot is missing, the gateway fails closed; it never creates a blank replacement. Snapshot retention is not an independent backup: deleting the Sandbox or losing its snapshot can lose the workspace.
 
-If the popup reports connection refused, start the runner on this computer and check its port. An unavailable/outdated runner produces an error after 12 seconds; approval has a 90-second timeout. Opening the web app on a phone does not make a computer's localhost reachable. **Hướng dẫn** works without private GitHub docs. **Private repository** requires source access.
+Opening the web wakes the VM. A cold start can take a while. Interrupted sessions retain their leases; confirm the old process stopped, Recover, then explicitly Resume. Active team workflows pause after restart. The gateway never retries ambiguous mutations. Closing a browser does not stop an active Codex turn. There is no automatic paid upgrade or purchase.
 
-Use Chrome or Edge with popups allowed if an in-app browser immediately closes the connection window. The Codex in-app browser was observed closing this popup during live verification; MESH/Sessions navigation itself worked on the deployed URL. Do not bypass browser security warnings or weaken runner Host/Origin protection to work around a browser that cannot keep the window relationship.
+## Deployment and maintenance
 
-## Browser transport
+`npm run build` creates the UI and a private allowlisted `.cloud/runner.tar.gz`. Only the API Function includes that archive; it is not in `dist`. No local account homes, databases, `.env`, Git credentials or `.local` files are packaged.
 
-Only the explicit Connect action opens `GET /#connect` on loopback. The existing narrow top-level document-navigation exception still applies; cross-site HTTP APIs remain denied. No CORS wildcard, public runner port, tunnel, credential upload or cloud API proxy is introduced.
+Production Vercel secrets: `RELAY_PUBLIC_ORIGIN`, `RELAY_GATEWAY_SECRET`, `RELAY_AUTH_SECRET`, `RELAY_OWNER_PASSWORD`. Sandbox access uses Vercel OIDC. Preview environments have no production secrets and cannot open the production runner. Existing Vercel deployment protection is retained.
 
-The popup checks the exact HTTPS origin, opener Window and invitation nonce before presenting consent. After approval it transfers a memory-only MessagePort to that opener with an exact `targetOrigin`. All HTTP/API/SSE traffic remains same-origin inside the popup, retaining the existing HttpOnly cookie, JSON and CSRF checks. The hosted tab receives workspace responses/events through the browser channel, never the cookie or CSRF token. Pending requests are bounded; timeouts and heartbeats detect failure. Mutations are not replayed after an ambiguous transport failure. See [security boundaries](SECURITY.md).
+An already healthy runner keeps its existing code until its next stop/resume; deployments do not kill active Codex work. For an immediate coordinated update, first pause all work and stop the named Sandbox in Vercel. The next request loads the current private Function payload. Never delete/recreate the Sandbox as an update mechanism. Rotate gateway/auth secrets during that same controlled stop; do not reset identity storage.
 
-The hosted CSP retains `connect-src 'self'`; it does not fetch localhost directly. `Cross-Origin-Opener-Policy: same-origin-allow-popups` preserves the explicit popup relationship. The transport follows the origin/source validation required by [browser messaging](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage).
+For local development, `npm ci`, `npm run build`, `npm start` still serves loopback port 4317. Cloud-only routes are protected by the owner and gateway; local mode preserves Host/Origin, cookie and CSRF protections.
 
-Repository privacy and Vercel deployment protection are separate. No runtime account files, `.relay`, database or environment secrets belong in the deployment.
+`npm run check` runs formatting, backend tests and build. `npm run test:cloud` runs production browser assets against real isolated Fastify/SQLite/owner authentication, tests two independent browser contexts, project Git creation, MESH synchronization and saved conversations without model usage. CI runs the backend on Windows and Linux and the browser test on Linux. Real cloud authentication/snapshot-resume checks are separate provisioning checks and never use an OpenAI account.
 
-## Regression check
-
-After `npm run build`, run `npm run test:bridge` (install Chromium with `npx playwright install chromium` if necessary). The test serves production assets at a controlled HTTPS origin with the deployment headers and uses a real isolated HTTP coordinator/SQLite. It checks consent, profile/project/message persistence, session popout transport using an inert paused fixture, revocation/reconnection, popup blocking/closure, invalid ports and foreign-origin rejection. It uses no real account/model turn or production data. Ubuntu CI runs it after the normal Windows/Ubuntu unit suite/build. This controlled-origin check does not claim browser authentication against the protected live Vercel deployment.
+Install the Vercel CLI with `npm i -g vercel` for `vercel env pull`, `vercel deploy` and `vercel logs` during future maintenance.

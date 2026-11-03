@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -58,8 +51,6 @@ import type {
   Workflow,
 } from '../shared/types';
 import { api } from './api';
-import { bridgeSnapshot, hosted, subscribeBridge, subscribeChanges } from './bridge';
-import RunnerConnection from './HostedWorkspace';
 import Workroom from './Workroom';
 import UsageGuide from './UsageGuide';
 import {
@@ -285,8 +276,7 @@ function Modal({
   );
 }
 
-export default function App() {
-  const bridge = useSyncExternalStore(subscribeBridge, bridgeSnapshot);
+export default function App({ cloud = false }: { cloud?: boolean }) {
   const initialView = window.location.hash.slice(1);
   const [focusedSessionId, setFocusedSessionId] = useState(
     initialView.startsWith('session=') ? initialView.slice(8) : '',
@@ -317,11 +307,8 @@ export default function App() {
   const [quickSearch, setQuickSearch] = useState('');
 
   const refresh = useCallback(async () => {
-    const source = bridgeSnapshot();
-    if (hosted && source.status !== 'connected') return;
     try {
       const data = await api<WorkspaceState>('/state');
-      if (hosted && bridgeSnapshot() !== source) return;
       setState({
         ...data,
         sessions: data.sessions || [],
@@ -332,13 +319,10 @@ export default function App() {
         handoffs: data.handoffs || [],
       });
       setLoadError('');
-      if (hosted) setConnected(true);
     } catch (err) {
-      if (hosted && bridgeSnapshot() !== source) return;
       setLoadError((err as Error).message);
-      if (hosted) setConnected(false);
     }
-  }, [bridge.status]);
+  }, []);
   const closeModal = useCallback(() => {
     setModal(null);
     setDiff(null);
@@ -357,24 +341,12 @@ export default function App() {
   }, [refresh]);
   useEffect(() => {
     if (!state) return;
-    if (hosted) {
-      setConnected(bridge.status === 'connected');
-      return subscribeChanges(() => void refresh());
-    }
     const events = new EventSource('/api/events', { withCredentials: true });
     events.onopen = () => setConnected(true);
     events.onerror = () => setConnected(false);
     events.addEventListener('change', refresh);
     return () => events.close();
-  }, [!!state, refresh, bridge.status]);
-  useEffect(() => {
-    if (hosted && bridge.status !== 'connected') {
-      setState(null);
-      setConnected(false);
-      setLoadError('');
-      closeModal();
-    }
-  }, [bridge.status, closeModal]);
+  }, [!!state, refresh]);
   useEffect(() => {
     const updateView = () => {
       const next = window.location.hash.slice(1);
@@ -400,7 +372,6 @@ export default function App() {
     const listener = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
         event.preventDefault();
-        if (hosted && bridgeSnapshot().status !== 'connected') return;
         setModal({ type: 'search' });
         setQuickSearch('');
       }
@@ -622,11 +593,8 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <button
-          className="sidebar-invite"
-          onClick={() => (hosted && !state ? navigate('settings') : setModal({ type: 'project' }))}
-        >
-          <Plus size={14} /> Connect project
+        <button className="sidebar-invite" onClick={() => setModal({ type: 'project' })}>
+          <Plus size={14} /> {cloud ? 'New project' : 'Connect project'}
         </button>
         <div className="sidebar-bottom">
           <button
@@ -638,7 +606,7 @@ export default function App() {
           </button>
           <span className="local-status">
             <LockKeyhole size={13} />
-            {hosted ? 'Web workspace' : 'Local workspace'}
+            {cloud ? 'Cloud workspace' : 'Local workspace'}
           </span>
         </div>
       </aside>
@@ -658,24 +626,15 @@ export default function App() {
             <strong>{pageTitle}</strong>
           </div>
           <div className="topbar-actions">
-            {(state || hosted) && !focusedSessionId && (
-              <UsageGuide stage={hosted && !state ? 'hosted' : view} enabled={!modal} />
+            {state && !focusedSessionId && (
+              <UsageGuide stage={view} enabled={!modal} cloud={cloud} />
             )}
             <span className={`connection-label ${connected ? 'online' : ''}`}>
               <span />
-              {connected
-                ? 'Live'
-                : hosted && bridge.status !== 'connected'
-                  ? bridge.status === 'connecting'
-                    ? 'Awaiting approval'
-                    : 'Disconnected'
-                  : state
-                    ? 'Reconnecting'
-                    : 'Connecting'}
+              {connected ? 'Live' : state ? 'Reconnecting' : 'Connecting'}
             </span>
             <button
               className="search-trigger"
-              disabled={hosted && !state}
               onClick={() => {
                 setQuickSearch('');
                 setModal({ type: 'search' });
@@ -685,6 +644,16 @@ export default function App() {
               <Search size={15} />
               <kbd>Ctrl K</kbd>
             </button>
+            {cloud && (
+              <button
+                className="icon-button"
+                aria-label="Sign out of workspace"
+                title="Sign out of workspace"
+                onClick={() => window.dispatchEvent(new Event('relay-sign-out'))}
+              >
+                <LogOut size={16} />
+              </button>
+            )}
           </div>
         </header>
 
@@ -699,19 +668,11 @@ export default function App() {
               <button onClick={() => void refresh()}>Retry</button>
             </div>
           )}
-          {!hosted && !state && !loadError && (
+          {!state && !loadError && (
             <div className="initial-loading">
               <Loader2 className="spin" size={24} />
               <p>Opening your workspace…</p>
             </div>
-          )}
-          {hosted && !state && (
-            <section className="page-heading">
-              <h1>{pageTitle}</h1>
-            </section>
-          )}
-          {hosted && (!state || view === 'settings') && (
-            <RunnerConnection status={bridge.status} message={bridge.message} />
           )}
           {state?.runtime.recoveryRequired && (
             <div className="warning-banner">
@@ -749,7 +710,7 @@ export default function App() {
               focusedId={focusedSessionId || undefined}
             />
           )}
-          {view === 'workroom' && (!hosted || state) && (
+          {view === 'workroom' && (
             <Workroom
               key={project?.id || 'empty'}
               state={state}
@@ -776,7 +737,7 @@ export default function App() {
             />
           )}
 
-          {view === 'team' && (!hosted || state) && (
+          {view === 'team' && (
             <>
               <section className="page-heading">
                 <div>
@@ -850,7 +811,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'tasks' && (!hosted || state) && (
+          {view === 'tasks' && (
             <>
               <section className="page-heading">
                 <div>
@@ -942,7 +903,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'reviews' && (!hosted || state) && (
+          {view === 'reviews' && (
             <>
               <section className="page-heading">
                 <div>
@@ -1020,7 +981,7 @@ export default function App() {
             </>
           )}
 
-          {view === 'settings' && (!hosted || state) && (
+          {view === 'settings' && (
             <>
               <section className="page-heading">
                 <div>
@@ -1070,7 +1031,7 @@ export default function App() {
                 <section className="panel settings-panel">
                   <div className="panel-heading">
                     <h2>
-                      <Terminal size={17} /> Local runtime
+                      <Terminal size={17} /> {cloud ? 'Cloud runtime' : 'Local runtime'}
                     </h2>
                     <span
                       className={`presence ${state?.runtime.codexAvailable ? 'ready' : 'error'}`}
@@ -1229,7 +1190,7 @@ export default function App() {
       )}
 
       {modal?.type === 'project' && (
-        <Modal title="Connect project" close={closeModal}>
+        <Modal title={cloud ? 'New project' : 'Connect project'} close={closeModal}>
           <form
             className="form"
             onSubmit={async (e) => {
@@ -1237,8 +1198,19 @@ export default function App() {
               const data = new FormData(e.currentTarget);
               const result = await perform<Project>(
                 'create-project',
-                '/projects',
-                { name: data.get('name'), path: data.get('path'), goal: data.get('goal') },
+                cloud ? '/hackathons' : '/projects',
+                cloud
+                  ? {
+                      name: data.get('name'),
+                      memberId: data.get('memberId'),
+                      competitionName: data.get('competitionName'),
+                      competitionUrl: data.get('competitionUrl'),
+                      deadline: data.get('deadline')
+                        ? new Date(String(data.get('deadline'))).toISOString()
+                        : null,
+                      goal: data.get('goal'),
+                    }
+                  : { name: data.get('name'), path: data.get('path'), goal: data.get('goal') },
                 'Project connected. Your room is ready.',
               );
               if (result) {
@@ -1251,10 +1223,43 @@ export default function App() {
               Project name
               <input name="name" required maxLength={80} placeholder="Project name" />
             </label>
-            <label>
-              Repository path
-              <input name="path" required placeholder="D:\projects\your-project" className="mono" />
-            </label>
+            {cloud ? (
+              <>
+                <label>
+                  Codex owner
+                  <select aria-label="Codex owner" name="memberId" required defaultValue="">
+                    <option value="">Choose profile</option>
+                    {state?.members.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Competition
+                  <input name="competitionName" required maxLength={100} />
+                </label>
+                <label>
+                  Competition URL
+                  <input name="competitionUrl" type="url" required placeholder="https://…" />
+                </label>
+                <label>
+                  Deadline
+                  <input name="deadline" type="datetime-local" />
+                </label>
+              </>
+            ) : (
+              <label>
+                Repository path
+                <input
+                  name="path"
+                  required
+                  placeholder="D:\projects\your-project"
+                  className="mono"
+                />
+              </label>
+            )}
             <label>
               Shared goal
               <textarea
@@ -1268,7 +1273,7 @@ export default function App() {
             <div className="modal-footer">
               <Button onClick={closeModal}>Cancel</Button>
               <Button primary type="submit" disabled={pending}>
-                <FolderGit2 size={15} /> Connect project
+                <FolderGit2 size={15} /> {cloud ? 'Create project' : 'Connect project'}
               </Button>
             </div>
           </form>

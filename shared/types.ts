@@ -23,6 +23,17 @@ export interface Project {
   path: string;
   goal: string;
   createdAt: string;
+  ownerMemberId?: string;
+  repositoryName?: string;
+  competition?: { name: string; url: string; deadline: string | null };
+}
+export interface CodexModel {
+  id: string;
+  model: string;
+  displayName: string;
+  isDefault: boolean;
+  defaultReasoningEffort: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 }
 export interface Task {
   id: string;
@@ -142,6 +153,8 @@ export interface CodexSession {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  model?: string | null;
+  reasoningEffort?: string | null;
 }
 export interface SessionEvent {
   id: string;
@@ -253,6 +266,8 @@ export interface WorkspaceState {
     platform: string;
     dataDir: string;
     recoveryRequired: boolean;
+    deployment?: 'local' | 'cloud';
+    expiresAt?: string | null;
   };
 }
 export interface LoginResult {

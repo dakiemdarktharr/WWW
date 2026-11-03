@@ -4,7 +4,7 @@ import { access, mkdir, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { LoginResult, Member } from '../shared/types.ts';
+import type { CodexModel, LoginResult, Member } from '../shared/types.ts';
 
 const execFileAsync = promisify(execFile);
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -560,6 +560,60 @@ export async function readRateLimits(client: CodexClient): Promise<unknown> {
   };
 }
 
+export async function readModels(client: CodexClient): Promise<CodexModel[]> {
+  await client.start();
+  if (!(await readAccount(client)))
+    throw new Error('Sign in to this Codex account to read its available models.');
+  const models: CodexModel[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const result = await client.request('model/list', {
+      includeHidden: false,
+      ...(cursor ? { cursor } : {}),
+    });
+    for (const item of result.data ?? []) {
+      if (item.hidden || typeof item.model !== 'string' || typeof item.id !== 'string') continue;
+      models.push({
+        id: item.id,
+        model: item.model,
+        displayName: String(item.displayName || item.model),
+        isDefault: !!item.isDefault,
+        defaultReasoningEffort: String(item.defaultReasoningEffort || ''),
+        supportedReasoningEfforts: (item.supportedReasoningEfforts || [])
+          .filter((option: any) => typeof option.reasoningEffort === 'string')
+          .map((option: any) => ({
+            reasoningEffort: option.reasoningEffort,
+            description: String(option.description || ''),
+          })),
+      });
+    }
+    if (!result.nextCursor) return models;
+    if (result.nextCursor === cursor)
+      throw new Error('Codex model catalog returned a repeated cursor.');
+    cursor = result.nextCursor;
+  }
+  throw new Error('Codex model catalog exceeded its page limit.');
+}
+
+export async function verifyModelSettings(
+  client: CodexClient,
+  options: { model?: string | null; reasoningEffort?: string | null },
+) {
+  if (!options.model && !options.reasoningEffort) return;
+  const models = await readModels(client);
+  const model = options.model
+    ? models.find((model) => model.model === options.model)
+    : models.find((model) => model.isDefault);
+  if (!model) throw new Error('This model is not available to the selected Codex account.');
+  if (
+    options.reasoningEffort &&
+    !model.supportedReasoningEfforts.some(
+      (option) => option.reasoningEffort === options.reasoningEffort,
+    )
+  )
+    throw new Error('This model does not support the selected reasoning level.');
+}
+
 export async function startTask(
   client: CodexClient,
   options: {
@@ -567,19 +621,24 @@ export async function startTask(
     prompt: string;
     developerInstructions?: string;
     model?: string;
+    reasoningEffort?: string;
     readOnly?: boolean;
     dynamicTools?: readonly DynamicTool[];
     resumeThreadId?: string;
     onThread?: (threadId: string) => void;
   },
-): Promise<{ threadId: string; turnId: string }> {
+): Promise<{ threadId: string; turnId: string; model?: string; reasoningEffort?: string }> {
   await client.start();
   if (!(await readAccount(client)))
     throw new Error("Sign in to this member's ChatGPT account before running a task.");
+  await verifyModelSettings(client, options);
   const result = await client.request(options.resumeThreadId ? 'thread/resume' : 'thread/start', {
     ...(options.resumeThreadId ? { threadId: options.resumeThreadId } : {}),
     cwd: options.cwd,
     ...(options.model ? { model: options.model } : {}),
+    ...(options.reasoningEffort
+      ? { config: { model_reasoning_effort: options.reasoningEffort } }
+      : {}),
     approvalPolicy: 'on-request',
     approvalsReviewer: 'user',
     sandbox: options.readOnly ? 'read-only' : 'workspace-write',
@@ -597,14 +656,27 @@ export async function startTask(
     );
   }
   const threadId = result.thread?.id;
+  if (options.model && result.model !== options.model)
+    throw new Error('Codex did not honor the selected model. No turn was started.');
+  if (options.reasoningEffort && result.reasoningEffort !== options.reasoningEffort)
+    throw new Error('Codex did not honor the selected reasoning level. No turn was started.');
   if (typeof threadId !== 'string') throw new Error('Codex did not return a thread ID.');
   // Bind ownership before turn/start can emit notifications, including an immediate completion.
   options.onThread?.(threadId);
   const turn = await client.request('turn/start', {
     threadId,
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
     input: [{ type: 'text', text: options.prompt, text_elements: [] }],
   });
   const turnId = turn.turn?.id;
   if (typeof turnId !== 'string') throw new Error('Codex did not return a turn ID.');
-  return { threadId, turnId };
+  return {
+    threadId,
+    turnId,
+    ...(typeof result.model === 'string' ? { model: result.model } : {}),
+    ...(typeof result.reasoningEffort === 'string'
+      ? { reasoningEffort: result.reasoningEffort }
+      : {}),
+  };
 }

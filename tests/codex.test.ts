@@ -10,6 +10,7 @@ import {
   readAccount,
   readCapabilities,
   readRateLimits,
+  readModels,
   startTask,
   dynamicToolResult,
   relayDynamicTools,
@@ -59,6 +60,55 @@ async function clientFor(t: TestContext, source = fixture): Promise<CodexClient>
   });
   return client;
 }
+
+test('conversation model catalog and reasoning are validated before any model turn', async (t) => {
+  const source = fixture
+    .replace(
+      "case 'echo':",
+      `case 'model/list': result={data:[{id:'fixture',model:'fixture-model',displayName:'Fixture',isDefault:true,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium',description:'Standard'},{reasoningEffort:'high',description:'High'}]}],nextCursor:null}; break; case 'echo':`,
+    )
+    .replace(
+      "thread:{id:'thread-fixture'},sandbox",
+      "thread:{id:'thread-fixture'},model:p.model||'fixture-model',reasoningEffort:p.config?.model_reasoning_effort||'medium',sandbox",
+    );
+  const client = await clientFor(t, source);
+  assert.equal((await readModels(client))[0].model, 'fixture-model');
+  let turns = 0;
+  client.on('notification', (method) => {
+    if (method === 'turn/completed') turns++;
+  });
+  await assert.rejects(
+    startTask(client, { cwd: process.cwd(), prompt: 'test', model: 'unavailable' }),
+    /not available/,
+  );
+  await assert.rejects(
+    startTask(client, {
+      cwd: process.cwd(),
+      prompt: 'test',
+      model: 'fixture-model',
+      reasoningEffort: 'unsupported',
+    }),
+    /does not support/,
+  );
+  assert.equal(turns, 0);
+  const result = await startTask(client, {
+    cwd: process.cwd(),
+    prompt: 'test',
+    model: 'fixture-model',
+    reasoningEffort: 'high',
+  });
+  assert.equal(result.model, 'fixture-model');
+  assert.equal(result.reasoningEffort, 'high');
+  assert.equal(turns, 1);
+  const ignored = await clientFor(
+    t,
+    source.replace("model:p.model||'fixture-model'", "model:'different-model'"),
+  );
+  await assert.rejects(
+    startTask(ignored, { cwd: process.cwd(), prompt: 'test', model: 'fixture-model' }),
+    /did not honor/,
+  );
+});
 
 test('profile environment excludes inherited provider keys, WIF and unrelated application secrets', () => {
   const environment = codexEnvironment(path.resolve('profile'), {

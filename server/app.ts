@@ -6,6 +6,10 @@ import type { Activity, Member, Project, Task, Workflow } from '../shared/types.
 import { DomainError } from './store.ts';
 import { Workspace } from './service.ts';
 import { inside, normalizeScope, redact, safeEqual, secret } from './security.ts';
+import { fromNodeHeaders } from 'better-auth/node';
+import type { CloudAccess } from './cloud-auth.ts';
+import { readModels } from './codex.ts';
+import { createHackathonProject } from './hackathons.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -36,7 +40,7 @@ const taskInput = z
 type Session = { token: string; expires: number };
 export async function buildApp(
   workspace: Workspace,
-  options: { port?: number; development?: boolean; distDir?: string } = {},
+  options: { port?: number; development?: boolean; distDir?: string; cloud?: CloudAccess } = {},
 ) {
   const app = Fastify({
     logger: false,
@@ -72,9 +76,25 @@ export async function buildApp(
     );
     const host = request.headers.host,
       origin = request.headers.origin;
-    if (!host || !allowed.has(`http://${host}`))
+    const cloud = options.cloud;
+    if (cloud) {
+      const gateway = request.headers['x-relay-gateway'];
+      if (typeof gateway !== 'string' || !safeEqual(gateway, cloud.gatewaySecret))
+        return reply.code(403).send({ error: 'Use the authenticated workspace gateway.' });
+      if (origin && origin !== cloud.origin)
+        return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
+      if (!['GET', 'HEAD'].includes(request.method) && origin !== cloud.origin)
+        return reply.code(403).send({ error: 'A verified workspace origin is required.' });
+      const pathname = request.url.split('?')[0];
+      if (pathname.startsWith('/api/auth/') || pathname === '/api/cloud/health') return;
+      if (!(await cloud.auth.authorized(request.headers)))
+        return reply
+          .code(401)
+          .send({ error: 'Sign in to your cloud workspace.', code: 'CLOUD_SIGN_IN_REQUIRED' });
+    }
+    if (!cloud && (!host || !allowed.has(`http://${host}`)))
       return reply.code(403).send({ error: 'RELAY only accepts requests to its local address.' });
-    if (origin && !allowed.has(origin))
+    if (!cloud && origin && !allowed.has(origin))
       return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
     // A user following the hosted launcher must be able to open the local SPA.
     // This exception never applies to API calls, subresources, frames or mutations.
@@ -84,7 +104,7 @@ export async function buildApp(
       request.headers['sec-fetch-mode'] === 'navigate' &&
       request.headers['sec-fetch-dest'] === 'document' &&
       request.headers['sec-fetch-user'] === '?1';
-    if (request.headers['sec-fetch-site'] === 'cross-site' && !userDocumentNavigation)
+    if (!cloud && request.headers['sec-fetch-site'] === 'cross-site' && !userDocumentNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
     if (request.url.startsWith('/api/') && request.url.split('?')[0] !== '/api/session') {
       const session = sessionFor(request);
@@ -108,6 +128,37 @@ export async function buildApp(
     const status = error instanceof DomainError ? error.status : e.statusCode || 500;
     reply.code(status).send({ error: redact(e.message || 'The request could not be completed.') });
   });
+  if (options.cloud) {
+    const cloud = options.cloud;
+    app.route({
+      method: ['GET', 'POST'],
+      url: '/api/auth/*',
+      async handler(request, reply) {
+        const response = await cloud.auth.handler(
+          new Request(new URL(request.url, cloud.origin), {
+            method: request.method,
+            headers: fromNodeHeaders(request.headers),
+            ...(!['GET', 'HEAD'].includes(request.method)
+              ? { body: JSON.stringify(request.body ?? {}) }
+              : {}),
+          }),
+        );
+        reply.code(response.status);
+        response.headers.forEach((value, key) => {
+          if (key !== 'set-cookie') reply.header(key, value);
+        });
+        const cookies = response.headers.getSetCookie();
+        if (cookies.length) reply.header('Set-Cookie', cookies);
+        return reply.send(await response.text());
+      },
+    });
+    app.get('/api/cloud/health', async () => ({
+      ready: true,
+      version: workspace.runtime.version,
+      expiresAt: cloud.expiresAt || null,
+    }));
+    app.addHook('onClose', async () => cloud.auth.close());
+  }
   app.get('/api/session', async (request, reply) => {
     let session = sessionFor(request);
     if (!session || session.expires < Date.now()) {
@@ -118,7 +169,7 @@ export async function buildApp(
       sessions.set(key, session);
       reply.header(
         'Set-Cookie',
-        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400`,
+        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${options.cloud ? '; Secure' : ''}`,
       );
     }
     return { token: session.token };
@@ -233,6 +284,8 @@ export async function buildApp(
           scope: z.array(scopePath).max(50).optional(),
           readOnly: z.boolean().default(true),
           prompt: z.string().max(16000).optional(),
+          model: z.string().min(1).max(200).nullable().optional(),
+          reasoningEffort: z.string().min(1).max(40).nullable().optional(),
         })
         .strict()
         .parse(request.body),
@@ -241,6 +294,22 @@ export async function buildApp(
   app.get('/api/sessions/:id/events', async (request) =>
     workspace.sessions.events(params(request)),
   );
+  app.patch('/api/sessions/:id/config', async (request) =>
+    workspace.sessions.configure(
+      params(request),
+      z
+        .object({
+          model: z.string().min(1).max(200).nullable(),
+          reasoningEffort: z.string().min(1).max(40).nullable(),
+        })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.get('/api/members/:id/models', async (request) =>
+    readModels(await workspace.client(params(request))),
+  );
+  app.post('/api/hackathons', async (request) => createHackathonProject(workspace, request.body));
   app.post('/api/sessions/:id/send', async (request) =>
     workspace.sessions.send(
       params(request),
@@ -342,13 +411,13 @@ export async function buildApp(
   app.post('/api/handoffs/:id/cancel', async (request) =>
     workspace.handoffs.cancel(params(request)),
   );
-  app.post('/api/members/:id/login', async (request) =>
-    workspace.login(
-      params(request),
-      z.object({ method: z.enum(['browser', 'device']).default('browser') }).parse(request.body)
-        .method,
-    ),
-  );
+  app.post('/api/members/:id/login', async (request) => {
+    const { method } = z
+      .object({ method: z.enum(['browser', 'device']).default('browser') })
+      .strict()
+      .parse(request.body);
+    return workspace.login(params(request), options.cloud ? 'device' : method);
+  });
   app.post('/api/members/:id/login/cancel', async (request) => {
     const memberId = params(request);
     if (workspace.loginOwner !== memberId)
@@ -376,8 +445,10 @@ export async function buildApp(
     instructions:
       'Use this CODEX_HOME for skills, plugins, and MCP configuration. Restart this profile after editing config. Never copy auth.json between profiles.',
   }));
-  app.post('/api/projects', async (request) =>
-    workspace.addProject(
+  app.post('/api/projects', async (request) => {
+    if (options.cloud)
+      throw new DomainError('Create a cloud project from a competition link.', 400);
+    return workspace.addProject(
       z
         .object({
           name: text,
@@ -386,8 +457,8 @@ export async function buildApp(
         })
         .strict()
         .parse(request.body),
-    ),
-  );
+    );
+  });
   app.patch('/api/projects/:id', async (request) => {
     const project = workspace.store.get<Project>('project', params(request));
     return workspace.store.put('project', {

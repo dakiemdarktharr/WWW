@@ -26,5 +26,5 @@ jobs:
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
       - if: runner.os == 'Linux'
-        run: npm run test:bridge
+        run: npm run test:cloud
       - run: npm audit --omit=dev --audit-level=high

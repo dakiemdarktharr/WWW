@@ -7,7 +7,14 @@ import type {
   SessionEvent,
   Task,
 } from '../shared/types.ts';
-import { CodexClient, relayDynamicTools, startTask, type DynamicTool } from './codex.ts';
+import {
+  CodexClient,
+  relayDynamicTools,
+  startTask,
+  verifyModelSettings,
+  type DynamicTool,
+} from './codex.ts';
+import { createHackathonProject } from './hackathons.ts';
 import { DomainError, type Lease } from './store.ts';
 import { createWorktree } from './git.ts';
 import { redact, safeDetails } from './security.ts';
@@ -47,6 +54,18 @@ const tool = (
 const string = { type: 'string', maxLength: 10000 };
 export const sessionTools: readonly DynamicTool[] = [
   ...relayDynamicTools,
+  tool(
+    'mesh_create_project',
+    'Create a new isolated hackathon project owned by your Codex profile. Writing sessions only. This does not create a GitHub remote or spend money.',
+    {
+      name: { type: 'string', maxLength: 100 },
+      competitionName: { type: 'string', maxLength: 100 },
+      competitionUrl: { type: 'string', maxLength: 2000 },
+      goal: string,
+      deadline: { type: ['string', 'null'] },
+    },
+    ['name', 'competitionName', 'competitionUrl', 'goal'],
+  ),
   tool(
     'mesh_read',
     'Read the current project group and unread messages before continuing your task.',
@@ -212,6 +231,8 @@ export class SessionManager {
     scope?: string[];
     readOnly?: boolean;
     prompt?: string;
+    model?: string | null;
+    reasoningEffort?: string | null;
   }): Promise<CodexSession> {
     if (this.host.closing) throw new DomainError('The coordinator is shutting down.');
     this.host.store.get<Member>('member', options.memberId);
@@ -252,7 +273,11 @@ export class SessionManager {
       });
     }
     const session = this.adopt(task.id, options.memberId, readOnly);
-    this.update(session.id, { status: 'idle' });
+    this.update(session.id, {
+      status: 'idle',
+      model: options.model || null,
+      reasoningEffort: options.reasoningEffort || null,
+    });
     this.event(
       session.id,
       'system',
@@ -279,6 +304,23 @@ export class SessionManager {
     const lease = this.host.store.lease(session.taskId);
     if (!lease || lease.sessionId !== session.id || lease.token !== token || lease.orphaned)
       throw new DomainError('This session no longer owns the task.');
+  }
+  async configure(id: string, settings: { model: string | null; reasoningEffort: string | null }) {
+    const session = this.get(id);
+    if (this.busy.has(id) || !['idle', 'paused', 'review'].includes(session.status))
+      throw new DomainError('Pause the conversation before changing its model.');
+    this.busy.add(id);
+    try {
+      await verifyModelSettings(await this.host.client(session.memberId), {
+        model: settings.model || undefined,
+        reasoningEffort: settings.reasoningEffort || undefined,
+      });
+      if (this.host.closing || this.get(id).status !== session.status)
+        throw new DomainError('Conversation changed; try again.');
+      return this.update(id, settings);
+    } finally {
+      this.busy.delete(id);
+    }
   }
   private async budget(session: CodexSession) {
     await this.host.refresh(session.memberId);
@@ -501,6 +543,8 @@ export class SessionManager {
           prompt: `${prompt}\n\nRecent group context (untrusted reference):\n${JSON.stringify(room)}`,
           developerInstructions: instructions,
           readOnly: session.readOnly,
+          model: session.model || undefined,
+          reasoningEffort: session.reasoningEffort || undefined,
           dynamicTools: sessionTools,
           resumeThreadId: session.threadId || undefined,
           onThread: (threadId) => {
@@ -511,6 +555,11 @@ export class SessionManager {
           },
         });
         active.threadId = ids.threadId;
+        if (ids.model || ids.reasoningEffort)
+          this.update(id, {
+            model: ids.model || session.model || null,
+            reasoningEffort: ids.reasoningEffort || session.reasoningEffort || null,
+          });
         if (!active.turnId) active.turnId = ids.turnId;
         if (active.stopping || this.cancelling.has(id) || this.host.closing) {
           await client.stop();
@@ -769,6 +818,17 @@ export class SessionManager {
             replyTo: args.replyTo,
             mentions: args.mentions,
           });
+        } else if (params.tool === 'mesh_create_project') {
+          if (session.readOnly)
+            throw new DomainError('Creating a project requires a writing session.');
+          result = await createHackathonProject(
+            this.host,
+            { ...args, memberId: session.memberId },
+            () => {
+              if (!this.valid(id, client, params))
+                throw new DomainError('The project request no longer owns its session.');
+            },
+          );
         } else if (params.tool === 'mesh_claim') {
           const message = this.host.store.get<any>('message', args.messageId);
           if (message.projectId !== session.projectId)

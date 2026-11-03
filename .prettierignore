@@ -4,3 +4,4 @@ dist
 .relay
 .playwright-mcp
 package-lock.json
+.cloud

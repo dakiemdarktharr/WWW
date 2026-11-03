@@ -1,16 +1,22 @@
-import { bridgeApi, hosted } from './bridge';
-
 let sessionToken = '';
 let sessionPromise: Promise<void> | null = null;
+export function resetApiSession() {
+  sessionToken = '';
+}
+function expired(data: { code?: string }) {
+  if (data.code === 'CLOUD_SIGN_IN_REQUIRED') window.dispatchEvent(new Event('relay-auth-expired'));
+}
 
 async function session() {
   if (sessionToken) return;
   if (!sessionPromise)
     sessionPromise = fetch('/api/session', { credentials: 'same-origin' })
       .then(async (response) => {
-        if (!response.ok)
-          throw new Error('The local service is unavailable. Start RELAY and try again.');
         const data = await response.json();
+        if (!response.ok) {
+          expired(data);
+          throw new Error(data.error || 'Workspace unavailable. Try again.');
+        }
         sessionToken = data.token;
       })
       .finally(() => {
@@ -20,7 +26,6 @@ async function session() {
 }
 
 export async function api<T>(path: string, body?: unknown, method = 'POST'): Promise<T> {
-  if (hosted) return bridgeApi<T>(path, body, method);
   await session();
   const tokenUsed = sessionToken;
   const send = () =>
@@ -40,6 +45,7 @@ export async function api<T>(path: string, body?: unknown, method = 'POST'): Pro
     response = await send();
   }
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401) expired(data);
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data as T;
 }
