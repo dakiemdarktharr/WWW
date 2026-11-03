@@ -89,6 +89,8 @@ async function fixture(t: TestContext) {
   ]);
   const store = new Store(path.join(data, 'workspace.sqlite'));
   const workspace = new Workspace(store, data, repo);
+  // Scope ownership is tested with spare machine slots on every CI runner.
+  Object.defineProperty(workspace.autonomy, 'capacity', { get: () => 4 });
   const project = store.put('project', {
     id: randomUUID(),
     name: 'Sessions',
