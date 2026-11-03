@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { build, Platform, Arch } from 'electron-builder';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
-import { getWineToolset } from 'app-builder-lib/out/toolsets/wine.js';
+import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -15,24 +15,21 @@ const manifest = JSON.parse(await readFile(path.join(staged, 'manifest.json'), '
 const rootPackage = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const output = path.join(root, 'release');
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
-const toolsets = process.platform === 'linux' ? { nsis: '1.2.1', wine: '1.0.1' } : undefined;
+const toolsets = process.platform === 'linux' ? { nsis: '1.2.1' } : undefined;
 if (toolsets) {
-  // Minimal Linux builders lack a generated locale and a system Wine install.
-  // Use checksum-pinned portable toolsets and verify them before compression.
+  // Minimal Linux builders lack a generated locale. Use the checksum-pinned
+  // portable NSIS compiler; the target hook extracts its uninstaller without Wine.
+  if (process.env.ELECTRON_BUILDER_NSIS_DIR || process.env.ELECTRON_BUILDER_NSIS_RESOURCES_DIR)
+    throw new Error('Linux packaging requires the pinned NSIS toolset, without overrides.');
   process.env.LANG = 'C.UTF-8';
   process.env.LC_ALL = 'C.UTF-8';
   const execute = promisify(execFile);
   const nsis = await getMakeNsisPath(toolsets.nsis);
-  const wine = await getWineToolset(toolsets.wine);
   await execute(nsis.path, ['-VERSION'], {
     env: { ...process.env, ...nsis.env },
     timeout: 30000,
   });
-  await execute(wine.execPath, ['--version'], {
-    env: { ...process.env, ...wine.env },
-    timeout: 30000,
-  });
-  console.log('Portable Linux NSIS and Wine preflight passed.');
+  console.log('Portable Linux NSIS preflight passed; Wine is not required.');
 }
 const artifactName = `RELAY-${manifest.version}-Setup.exe`;
 console.log('Packaging the Windows desktop installer…');
@@ -65,7 +62,9 @@ await build({
       { from: path.join(staged, 'workspace', 'node_modules'), to: 'workspace/node_modules' },
       { from: path.join(staged, 'runtime'), to: 'runtime' },
     ],
-    async afterPack({ appOutDir }) {
+    async afterPack(context) {
+      const { appOutDir } = context;
+      configureLinuxNsisExtraction(context);
       // Fail the build before producing a downloadable installer with missing deps.
       for (const required of [
         'runtime/node.exe',
