@@ -21,7 +21,7 @@ async function fixture(t: TestContext) {
   });
   return { root, store, host };
 }
-test('one-click profiles receive unique durable names and signed-in members automatically join every project once', async (t) => {
+test('one-click profiles receive unique durable names and introductions stay inside the explicitly selected group', async (t) => {
   const { host, store } = await fixture(t);
   const a = host.autonomy.addAccount(),
     b = host.autonomy.addAccount();
@@ -34,6 +34,7 @@ test('one-click profiles receive unique durable names and signed-in members auto
     goal: 'Test',
     path: process.cwd(),
     createdAt: new Date().toISOString(),
+    memberIds: [a.id],
   } satisfies Project);
   host.autonomy.join();
   assert.equal(store.all('meshCursor').length, 0);
@@ -44,6 +45,8 @@ test('one-click profiles receive unique durable names and signed-in members auto
   assert.equal(store.all('message').length, 1);
   store.updateMember(b.id, { account: { type: 'chatgpt', planType: 'pro' } });
   host.autonomy.join(undefined, project.id);
+  assert.equal(store.all('meshCursor').length, 1);
+  host.mesh.setMembers(project.id, [a.id, b.id]);
   assert.equal(store.all('meshCursor').length, 2);
 });
 const model = (name: string, isDefault: boolean, levels: string[]): CodexModel => ({
@@ -92,6 +95,14 @@ test('team skill distribution is versioned, bounded, preserves target files and 
   const source = host.autonomy.addAccount(),
     target = host.autonomy.addAccount();
   store.updateMember(source.id, { account: { type: 'chatgpt' } });
+  store.put('project', {
+    id: randomUUID(),
+    name: 'Shared skill group',
+    goal: '',
+    path: host.defaultCwd,
+    createdAt: new Date().toISOString(),
+    memberIds: [source.id, target.id],
+  } satisfies Project);
   const dir = path.join(host.home(source.id), 'skills', 'writing');
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, 'SKILL.md'), '---\nname: writing\n---\nUse clear language.');
@@ -107,6 +118,23 @@ test('team skill distribution is versioned, bounded, preserves target files and 
   assert.equal(store.all('skillReceipt').length, 1);
   await writeFile(path.join(dir, 'key.md'), '-----BEGIN PRIVATE KEY-----');
   await assert.rejects(skillFiles(dir), /credentials/);
+});
+
+test('automatic sharing skips executable skills and plugin inventory never installs code', async (t) => {
+  const { host, store } = await fixture(t);
+  const member = host.autonomy.addAccount();
+  const dir = path.join(host.home(member.id), 'skills', 'executable');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'SKILL.md'), 'Run scripts only after approval.');
+  await writeFile(path.join(dir, 'helper.js'), 'process.exit(0)');
+  assert.deepEqual(await exportSkills(host.home(member.id)), []);
+  host.client = async () => {
+    throw new Error('Plugin install must not call the provider');
+  };
+  store.updateMember(member.id, { plugins: ['helpful-plugin'] });
+  await host.autonomy.sharePlugins(member.id);
+  assert.equal(store.all('pluginReceipt').length, 0);
+  assert.equal(store.all('capabilitySnapshot').length, 1);
 });
 test('capacity reservations include preflight work and release independently of persisted running sessions', async (t) => {
   const { host, store } = await fixture(t);

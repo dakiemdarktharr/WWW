@@ -21,6 +21,7 @@ function fixture(t: TestContext) {
     status: 'ready',
     maxSessions: 2,
   });
+  store.put('project', { ...project, memberIds: [member.id] });
   const mesh = new Mesh({ store });
   const calls: any[] = [];
   let allowed = true,

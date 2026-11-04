@@ -107,6 +107,7 @@ async function fixture(t: TestContext) {
         primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 2_000_000_000 },
       },
     });
+  store.put('project', { ...project, memberIds: [sender.id, recipient.id] });
   const mesh = new Mesh({ store });
   let interruptions = 0;
   const host = {

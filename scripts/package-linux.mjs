@@ -191,6 +191,7 @@ await build({
       'main.cjs',
       'preload.cjs',
       'security.cjs',
+      'browser.cjs',
       'package.json',
       'icon.png',
       'icon.ico',

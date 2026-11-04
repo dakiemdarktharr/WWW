@@ -23,6 +23,8 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
+  Moon,
+  Sun,
   MessageSquare,
   Plus,
   RefreshCw,
@@ -72,11 +74,13 @@ type ModalState =
   | null;
 const nav = [
   { id: 'mesh', label: 'Neralu', icon: MessageSquare },
+  { id: 'team', label: 'Team', icon: Users },
+  { id: 'reviews', label: 'Reviews', icon: GitMerge },
+] as const;
+const advancedNav = [
   { id: 'sessions', label: 'Sessions', icon: Terminal },
   { id: 'workroom', label: 'Workroom', icon: LayoutGrid },
-  { id: 'team', label: 'Team', icon: Users },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
-  { id: 'reviews', label: 'Reviews', icon: GitMerge },
   { id: 'aegis', label: 'AEGIS', icon: ShieldCheck },
 ] as const;
 const roleIcons = {
@@ -300,6 +304,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [busy, setBusy] = useState('');
   const [sidebar, setSidebar] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return localStorage.getItem('kivuno-theme') === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.workspaceTheme = theme;
+    try {
+      localStorage.setItem('kivuno-theme', theme);
+    } catch {
+      /* Optional preference. */
+    }
+    return () => {
+      delete document.documentElement.dataset.workspaceTheme;
+    };
+  }, [theme]);
   const [taskFilter, setTaskFilter] = useState('all');
   const [taskSearch, setTaskSearch] = useState('');
   const [detailMember, setDetailMember] = useState('');
@@ -342,16 +364,31 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   }, []);
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(refresh, 12000);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 30000);
     return () => window.clearInterval(timer);
   }, [refresh]);
   useEffect(() => {
     if (!state) return;
     const events = new EventSource('/api/events', { withCredentials: true });
+    let scheduled = 0;
+    const scheduleRefresh = () => {
+      if (document.hidden || scheduled) return;
+      scheduled = window.setTimeout(() => {
+        scheduled = 0;
+        void refresh();
+      }, 400);
+    };
     events.onopen = () => setConnected(true);
     events.onerror = () => setConnected(false);
-    events.addEventListener('change', refresh);
-    return () => events.close();
+    events.addEventListener('change', scheduleRefresh);
+    document.addEventListener('visibilitychange', scheduleRefresh);
+    return () => {
+      events.close();
+      window.clearTimeout(scheduled);
+      document.removeEventListener('visibilitychange', scheduleRefresh);
+    };
   }, [!!state, refresh]);
   useEffect(() => {
     const updateView = () => {
@@ -613,6 +650,23 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               )}
             </button>
           ))}
+          <details
+            className="advanced-nav"
+            open={advancedNav.some((item) => item.id === view) || undefined}
+          >
+            <summary>Advanced</summary>
+            {advancedNav.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item ${view === item.id ? 'active' : ''}`}
+                onClick={() => navigate(item.id)}
+                aria-current={view === item.id ? 'page' : undefined}
+              >
+                <item.icon size={16} />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </details>
         </nav>
         <button className="sidebar-invite" onClick={() => setModal({ type: 'project' })}>
           <Plus size={14} /> {cloud ? 'New project' : 'Connect project'}
@@ -654,10 +708,19 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             {state && !focusedSessionId && (
               <UsageGuide stage={view} enabled={!modal} cloud={cloud} />
             )}
-            <span className={`connection-label ${connected ? 'online' : ''}`}>
-              <span />
-              {connected ? 'Live' : state ? 'Reconnecting' : 'Connecting'}
-            </span>
+            {!connected && (
+              <span className="connection-label" role="status">
+                {state ? 'Reconnecting' : 'Connecting'}
+              </span>
+            )}
+            <button
+              className="icon-button"
+              aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+              title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
             <button
               className="search-trigger"
               onClick={() => {
@@ -1927,7 +1990,10 @@ function MemberCard({
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
         <Avatar member={member} size="large" />
-        <Badge status={member.status} />
+        <span className={`member-presence ${member.presence || 'offline'}`}>
+          <i />
+          {member.presence || 'offline'}
+        </span>
       </div>
       <h2>{member.name}</h2>
       <span className="role-label">{member.role}</span>

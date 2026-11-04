@@ -15,6 +15,33 @@ export interface DesktopStatus {
   machines?: JoinedMachine[];
 }
 
+export interface DesktopWindowState {
+  maximized: boolean;
+  fullscreen: boolean;
+}
+export interface BrowserState {
+  active: boolean;
+  projectId: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  error: string;
+}
+export interface BrowserPage {
+  projectId: string;
+  url: string;
+  title: string;
+  text: string;
+}
+export interface BrowserBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 declare global {
   interface Window {
     relayDesktop?: {
@@ -28,6 +55,25 @@ declare global {
       chooseDirectory(): Promise<string | null>;
       joinMachine(): Promise<JoinedMachine | null>;
       stopMachine(id: string): Promise<void>;
+      getWindowState(): Promise<DesktopWindowState>;
+      controlWindow(
+        action: 'minimize' | 'maximize' | 'fullscreen' | 'close',
+      ): Promise<DesktopWindowState>;
+      onWindowState(callback: (state: DesktopWindowState) => void): () => void;
+      browser: {
+        state(): Promise<BrowserState>;
+        open(input: {
+          projectId: string;
+          url: string;
+          bounds: BrowserBounds;
+        }): Promise<BrowserState>;
+        bounds(input: BrowserBounds): Promise<void>;
+        navigate(action: 'back' | 'forward' | 'reload'): Promise<BrowserState>;
+        snapshot(): Promise<BrowserPage>;
+        review(hidden: boolean): Promise<void>;
+        close(): Promise<BrowserState>;
+        onState(callback: (state: BrowserState) => void): () => void;
+      };
     };
   }
 }

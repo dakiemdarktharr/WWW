@@ -90,6 +90,7 @@ export async function createHackathonProject(
       goal: input.goal,
       createdAt: new Date().toISOString(),
       ownerMemberId: member.id,
+      memberIds: [member.id],
       repositoryName,
       competition: {
         name: input.competitionName,

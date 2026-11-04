@@ -1,7 +1,7 @@
 // Production desktop UI with a preload fixture, real Fastify/SQLite/web owner auth.
 // The hosted portal never renders a workspace. No Codex login or model turns.
 import assert from 'node:assert/strict';
-import { chromium, expect, type BrowserContext } from '@playwright/test';
+import { chromium, expect, type BrowserContext, type Page } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -12,6 +12,9 @@ import { buildApp } from '../server/app.ts';
 import { createCloudIdentity } from '../server/cloud-auth.ts';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-cloud-browser-'));
+const screenshots = path.join(os.tmpdir(), 'kivuno-ui-review');
+await mkdir(screenshots, { recursive: true });
+let reviewPage: Page | undefined;
 const data = path.join(directory, 'state');
 await mkdir(data);
 const store = new Store(path.join(data, 'workspace.db'));
@@ -52,6 +55,7 @@ async function device() {
   context.setDefaultTimeout(12000);
   await context.addInitScript(() => {
     try {
+      sessionStorage.setItem('kivuno-guide-v3', 'seen');
       for (const key of [
         'local:intro',
         'cloud:intro',
@@ -120,7 +124,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.4.0',
+      version: '0.5.0',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -134,6 +138,9 @@ async function login(context: BrowserContext) {
       signOut: async () => {},
       joinMachine: async () => null,
       stopMachine: async () => {},
+      getWindowState: async () => ({ maximized: false, fullscreen: false }),
+      controlWindow: async () => ({ maximized: false, fullscreen: false }),
+      onWindowState: () => () => {},
     };
   `);
   await page.goto(`${origin}/#mesh`);
@@ -156,10 +163,17 @@ try {
   const first = await device(),
     second = await device();
   const page = await login(first);
+  reviewPage = page;
   const nav = (name: string) =>
     page
       .getByRole('navigation', { name: 'Main navigation' })
       .getByRole('button', { name, exact: true });
+  async function advanced(name: string) {
+    const details = page.locator('.advanced-nav');
+    if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open)))
+      await details.locator('summary').click();
+    await nav(name).click();
+  }
   await nav('Team').click();
   await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
   await page.getByText('TEST-ONLY', { exact: true }).waitFor();
@@ -184,24 +198,85 @@ try {
   await page.getByLabel('Message the project team').fill('Shared across devices');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByText('Shared across devices', { exact: true }).waitFor();
+  const message = page
+    .locator('.chat-message')
+    .filter({ has: page.getByText('Shared across devices', { exact: true }) });
+  await message.getByRole('button', { name: 'Add reaction', exact: true }).click();
+  await message.getByRole('button', { name: 'Understood', exact: true }).click();
+  await expect(message.getByRole('button', { name: 'Understood', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  assert.equal(
+    workspace.snapshot().messages.find((item) => item.content === 'Shared across devices')
+      ?.reactions?.[0]?.meaning,
+    'understood',
+  );
+  await page.screenshot({ path: path.join(screenshots, 'chat-dark.png'), animations: 'disabled' });
+  await page.getByRole('button', { name: 'Use light mode', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
+  await expect(page.locator('.project-chat')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(message.locator('.chat-bubble')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(message.locator('.chat-bubble')).toHaveCSS('border-top-color', 'rgb(23, 27, 29)');
+  await expect(page.locator('.nav-item.active')).toHaveCSS('color', 'rgb(23, 52, 46)');
+  await page.screenshot({ path: path.join(screenshots, 'chat-light.png'), animations: 'disabled' });
+  await page.getByRole('button', { name: 'Use dark mode', exact: true }).click();
+  await page.getByLabel('Message the project team').fill('/g');
+  await page.getByRole('option', { name: '/goal Set the project goal', exact: true }).click();
+  await expect(page.getByLabel('Message the project team')).toHaveValue('/goal ');
+  await page.getByLabel('Message the project team').fill('');
+  await page.getByRole('button', { name: 'Group team', exact: true }).click();
+  await page.getByRole('button', { name: /Edit group members/ }).click();
+  await expect(
+    page.getByRole('dialog', { name: 'Choose group members' }).getByRole('checkbox'),
+  ).toBeChecked();
+  await page.getByRole('button', { name: 'Save members', exact: true }).click();
+  await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
+  await page.getByLabel('Message the project team').fill('Plan our next iteration');
+  await page.getByRole('button', { name: 'Plan project', exact: true }).click();
+  await expect(page.getByLabel('Team prompt', { exact: true })).toHaveValue(
+    'Plan our next iteration',
+  );
+  await nav('Neralu').click();
   const other = await login(second);
   await other.getByText('Shared across devices', { exact: true }).waitFor();
-  await nav('Sessions').click();
+  await advanced('Sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).first().click();
   const session = page.getByRole('dialog', { name: 'New Codex session' });
   await session.getByLabel('Session title').fill('Saved conversation');
   await session.getByRole('button', { name: 'Create session', exact: true }).click();
   await session.waitFor({ state: 'hidden' });
   await page.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'New session', exact: true }).first().click();
+  await session.getByLabel('Session title').fill('Research conversation');
+  await session.getByRole('button', { name: 'Create session', exact: true }).click();
+  await session.waitFor({ state: 'hidden' });
   assert.equal(store.sessions()[0].threadId, null);
   assert.equal(first.pages().length, 1); // All work happens inline, no runner popup.
   await other.reload();
+  await other.locator('.advanced-nav > summary').click();
   await other
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Sessions', exact: true })
     .click();
   await other.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
-  await nav('AEGIS').click();
+  await nav('Neralu').click();
+  await page.getByRole('button', { name: 'Session view', exact: true }).click();
+  await expect(page.locator('.session-node')).toHaveCount(2);
+  const researchNode = page.getByRole('button', {
+    name: 'Research conversation, Atlas, idle',
+    exact: true,
+  });
+  await researchNode.focus();
+  await researchNode.press('Enter');
+  await expect(researchNode).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Saved conversation, Atlas, idle', exact: true }).click();
+  await page.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(screenshots, 'session-map.png') });
+  await page.getByRole('button', { name: 'Browser', exact: true }).click();
+  await expect(page.getByText('Mở trong Kivuno desktop', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
+  await advanced('AEGIS');
   await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Refresh AEGIS', exact: true }).click();
   await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
@@ -222,12 +297,24 @@ try {
       projectGit: true,
       meshAcrossDevices: true,
       savedConversation: true,
+      sessionGraph: true,
+      groupRoster: true,
+      reactionFeedback: true,
+      chatCommands: true,
+      lightDarkChat: true,
+      planDraft: true,
+      sessionMapKeyboard: true,
+      browserCapabilityBoundary: true,
+      screenshots,
       noLocalhost: true,
       noPopup: true,
       noModelUsage: true,
       pageErrors: 0,
     }),
   );
+} catch (error) {
+  await reviewPage?.screenshot({ path: path.join(screenshots, 'failure.png') }).catch(() => {});
+  throw error;
 } finally {
   await browser.close();
   await app.close();

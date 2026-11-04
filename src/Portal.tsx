@@ -20,6 +20,10 @@ import {
   Laptop,
   LogIn,
   MessageCircle,
+  Network,
+  Heart,
+  ThumbsUp,
+  ThumbsDown,
   Monitor,
   Pause,
   Play,
@@ -91,7 +95,7 @@ const scenarios = {
     {
       who: 'Bạn',
       color: 'human',
-      text: '!! Xây một trợ lý nghiên cứu cho UniHack.',
+      text: '/goal Xây một trợ lý nghiên cứu cho UniHack.',
       tag: 'Mục tiêu',
     },
     {
@@ -172,6 +176,9 @@ function MessagingDemo() {
   const [scenario, setScenario] = useState<Scenario>('plan');
   const [visible, setVisible] = useState(5);
   const [playing, setPlaying] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [selectedSession, setSelectedSession] = useState(0);
+  const [feedback, setFeedback] = useState<Record<string, string>>({});
   const reduced = useReducedMotion();
   const messages = scenarios[scenario];
   useEffect(() => {
@@ -191,15 +198,15 @@ function MessagingDemo() {
   return (
     <section className="kp-chat-section" id="neralu" aria-labelledby="neralu-title">
       <div className="kp-section-heading">
-        <h2 id="neralu-title">Neralu</h2>
+        <h2 id="neralu-title">Neralu · Chat dự án</h2>
         <span className="kp-demo-badge">Demo tương tác</span>
       </div>
       <div className="kp-chat-layout">
         <div className="kp-chat-intro">
           <h3>
-            Các Codex
+            Nói ý tưởng.
             <br />
-            có chuyện để nói.
+            Cùng hiện thực hóa.
           </h3>
           <div className="kp-scenario-controls" role="group" aria-label="Kịch bản demo">
             {(
@@ -241,49 +248,149 @@ function MessagingDemo() {
             <span className="kp-chat-mark">
               <MessageCircle size={19} /> UniHack / Aurora
             </span>
-            <div className="kp-avatars" aria-label="Ba Codex và một bot">
-              <i>A</i>
-              <i>N</i>
-              <i>S</i>
-              <i>⌘</i>
-            </div>
+            <button
+              className="kp-session-toggle"
+              aria-pressed={sessionsOpen}
+              onClick={() => setSessionsOpen(!sessionsOpen)}
+            >
+              <Network size={16} /> Sessions
+            </button>
           </div>
-          <div className="kp-messages" aria-label="Tin nhắn minh họa, không phải hoạt động thật">
-            <AnimatePresence mode="popLayout" initial={false}>
-              {messages.slice(0, visible).map((message, i) => (
-                <motion.article
-                  layout
-                  key={`${scenario}-${i}`}
-                  className={`kp-message ${message.color}`}
-                  initial={{ opacity: 0, y: reduced ? 0 : 18, scale: reduced ? 1 : 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={spring}
-                >
-                  <span className="kp-avatar">
-                    {message.who === 'BOT' ? <ShieldCheck size={18} /> : message.who.slice(0, 1)}
-                  </span>
-                  <div>
-                    <div className="kp-message-who">
-                      <strong>{message.who}</strong>
-                      <span>{message.tag}</span>
+          <div className={`kp-conversation-body ${sessionsOpen ? 'with-sessions' : ''}`}>
+            <div className="kp-messages" aria-label="Tin nhắn minh họa, không phải hoạt động thật">
+              <AnimatePresence mode="popLayout" initial={false}>
+                {messages.slice(0, visible).map((message, i) => (
+                  <motion.article
+                    layout
+                    key={`${scenario}-${i}`}
+                    className={`kp-message ${message.color}`}
+                    initial={{ opacity: 0, y: reduced ? 0 : 18, scale: reduced ? 1 : 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={spring}
+                  >
+                    <span className="kp-avatar">
+                      {message.who === 'BOT' ? <ShieldCheck size={18} /> : message.who.slice(0, 1)}
+                    </span>
+                    <div>
+                      <div className="kp-message-who">
+                        <strong>{message.who}</strong>
+                        <span>{message.tag}</span>
+                        <time
+                          dateTime={`2026-11-04T09:${String(30 + i).padStart(2, '0')}:00+07:00`}
+                        >
+                          09:{30 + i}
+                        </time>
+                      </div>
+                      <p>
+                        {message.text
+                          .split(/(@\w+)/)
+                          .map((part, j) =>
+                            part.startsWith('@') ? <mark key={j}>{part}</mark> : part,
+                          )}
+                      </p>
+                      {message.color !== 'human' && (
+                        <div
+                          className="kp-reactions"
+                          role="group"
+                          aria-label={`Phản hồi demo cho ${message.who}`}
+                        >
+                          {(
+                            [
+                              { key: 'heart', label: 'Đã hiểu', Icon: Heart },
+                              { key: 'up', label: 'Đồng ý', Icon: ThumbsUp },
+                              { key: 'down', label: 'Không đồng ý', Icon: ThumbsDown },
+                            ] as const
+                          ).map(({ key, label, Icon }) => (
+                            <button
+                              key={key}
+                              title={label}
+                              aria-label={label}
+                              aria-pressed={feedback[`${scenario}-${i}`] === key}
+                              onClick={() =>
+                                setFeedback((current) => ({
+                                  ...current,
+                                  [`${scenario}-${i}`]:
+                                    current[`${scenario}-${i}`] === key ? '' : key,
+                                }))
+                              }
+                            >
+                              <Icon size={13} />
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <p>
-                      {message.text
-                        .split(/(@\w+)/)
-                        .map((part, j) =>
-                          part.startsWith('@') ? <mark key={j}>{part}</mark> : part,
-                        )}
-                    </p>
-                  </div>
-                </motion.article>
-              ))}
-            </AnimatePresence>
+                  </motion.article>
+                ))}
+              </AnimatePresence>
+            </div>
+            {sessionsOpen && (
+              <aside className="kp-session-preview" aria-label="Graph session minh họa">
+                <div className="kp-session-preview-title">
+                  <strong>4 sessions</strong>
+                  <span>3 Codex</span>
+                </div>
+                <svg
+                  viewBox="0 0 240 260"
+                  role="img"
+                  aria-label="Bốn session nối với cùng dự án; Ari có hai session"
+                >
+                  <g className="kp-session-edges">
+                    <path d="M120 125L55 48M120 125L186 62M120 125L56 206M120 125L183 210" />
+                  </g>
+                  <circle cx="120" cy="125" r="25" className="kp-session-hub" />
+                  <text x="120" y="129" textAnchor="middle">
+                    Aurora
+                  </text>
+                  {[
+                    { x: 55, y: 48, name: 'API', owner: 'Ari' },
+                    { x: 186, y: 62, name: 'Tests', owner: 'Ari' },
+                    { x: 56, y: 206, name: 'UI', owner: 'Nova' },
+                    { x: 183, y: 210, name: 'Research', owner: 'Sol' },
+                  ].map((node, i) => (
+                    <g
+                      key={node.name}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Session ${node.name} của ${node.owner}`}
+                      aria-pressed={selectedSession === i}
+                      onClick={() => setSelectedSession(i)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedSession(i);
+                        }
+                      }}
+                      className={selectedSession === i ? 'is-selected' : ''}
+                    >
+                      <circle cx={node.x} cy={node.y} r="17" />
+                      <text x={node.x} y={node.y + 4} textAnchor="middle">
+                        {node.owner[0]}
+                      </text>
+                      <text x={node.x} y={node.y + 34} textAnchor="middle">
+                        {node.name}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+                <div className="kp-session-selected">
+                  <strong>
+                    {['API · Ari', 'Tests · Ari', 'UI · Nova', 'Research · Sol'][selectedSession]}
+                  </strong>
+                  <span>
+                    {['Đang làm', 'Đang kiểm tra', 'Chờ API', 'Hoàn tất'][selectedSession]}
+                  </span>
+                </div>
+              </aside>
+            )}
           </div>
           <div className="kp-chat-bottom">
             <span>
               <span className="kp-status-dot" />
-              Một nhiệm vụ, một người nhận.
+              {Object.values(feedback).some(Boolean)
+                ? 'Đã ghi nhận phản hồi trong demo.'
+                : '3 Codex online · Bạn dẫn đội'}
             </span>
             <CheckCheck size={17} />
           </div>
@@ -299,19 +406,19 @@ function WorkspaceDemo() {
     {
       label: 'Thêm Codex',
       title: 'Cả đội ở đây.',
-      content: 'Đăng nhập từng tài khoản trong Team. Mỗi Codex có hồ sơ, owner và usage riêng.',
+      content: 'Đăng nhập các Codex trong Team. Chọn những thành viên bạn muốn đưa vào từng nhóm.',
     },
     {
       label: 'Tạo dự án',
       title: 'Một mục tiêu chung.',
       content:
-        'Mở repository, thêm thành viên và đưa yêu cầu vào Neralu. Cả đội chia scope trước khi bắt đầu.',
+        'Tạo nhóm, chọn thư mục và viết mục tiêu vào chat. Thành viên làm quen, chia sẻ năng lực và nhận việc.',
     },
     {
       label: 'Dẫn đội',
       title: 'Bạn quyết định.',
       content:
-        'Theo dõi conversations, xem diff, chạy test và duyệt kết quả. Agent hỏi bạn khi cần quyền hoặc quyết định.',
+        'Mở graph Sessions để theo dõi từng cuộc hội thoại. React để phản hồi; vào Reviews khi cần duyệt thay đổi.',
     },
   ];
   return (
@@ -362,7 +469,7 @@ function WorkspaceDemo() {
                 <div key={name}>
                   <span className={`kp-avatar ${i === 1 ? 'blue' : ''}`}>{name[0]}</span>
                   <strong>{name}</strong>
-                  <span>Codex</span>
+                  <span>{i === 2 ? 'Offline' : 'Online'}</span>
                   <Check size={16} />
                 </div>
               ))}
@@ -414,6 +521,7 @@ export default function Portal() {
   const [docked, setDocked] = useState(false);
   const [curtain, setCurtain] = useState<'cover' | 'reveal' | null>(null);
   const [scramble, setScramble] = useState(0);
+  const [footerArtReady, setFooterArtReady] = useState(false);
   const reduced = useReducedMotion();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const downloadDialog = useRef<HTMLDivElement>(null);
@@ -428,6 +536,23 @@ export default function Portal() {
   const footerOpacity = useTransform(footerProgress, [0, 0.75], [0.15, 1]);
   useMotionValueEvent(scrollY, 'change', (value) => setDocked(value > window.innerHeight * 0.48));
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    const element = footer.current;
+    if (!element) return;
+    // Observe the footer's flow box: native lazy loading misses its clipped,
+    // fixed-position reveal image in Chromium.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setFooterArtReady(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '700px 0px' },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/desktop/release', { signal: controller.signal })
@@ -710,8 +835,8 @@ export default function Portal() {
                   <div className="kp-feature-copy">
                     <h2>Quyền do bạn giữ.</h2>
                     <p>
-                      AEGIS trên Avalanche Fuji kiểm tra quyền của máy, ràng buộc phê duyệt với diff
-                      và lưu bằng chứng bàn giao.
+                      AEGIS ràng buộc quyền của máy và phê duyệt với đúng diff. Tích hợp Avalanche
+                      Fuji là chế độ testnet tùy chọn, cần triển khai contract trước khi dùng.
                     </p>
                   </div>
                   <div className="kp-aegis-proof glass">
@@ -747,6 +872,16 @@ export default function Portal() {
               className="kp-footer-inner"
               style={reduced ? {} : { opacity: footerOpacity }}
             >
+              {footerArtReady && (
+                <img
+                  className="kp-hivemind-art"
+                  src="/art/kivuno-hivemind.png"
+                  alt="Tranh biểu hiện trừu tượng: những nét mint và trắng ngà vừa kết nối vừa tách rời quanh một khoảng trống, gợi nhiều cá thể cùng suy nghĩ."
+                  decoding="async"
+                  width="1536"
+                  height="1024"
+                />
+              )}
               <div className="kp-footer-top">
                 <h2>
                   Đến lượt bạn
@@ -763,12 +898,9 @@ export default function Portal() {
                   <ArrowRight size={22} />
                 </motion.button>
               </div>
-              <div className="kp-footer-name" aria-hidden="true">
-                Kivuno
-              </div>
               <div className="kp-footer-bottom">
-                <span>NoSleepClub</span>
-                <span>{release?.version || '0.4.0'}</span>
+                <span>Kivuno · NoSleepClub</span>
+                <span>{release?.version || '0.5.0'}</span>
                 <button onClick={() => setDownloadsOpen(true)}>Bản cài & checksum</button>
                 <button onClick={home}>Về đầu trang</button>
               </div>

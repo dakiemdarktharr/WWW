@@ -5,6 +5,7 @@ import { relayDynamicTools } from './codex.ts';
 import { Store, DomainError } from './store.ts';
 import { redact, scopesOverlap } from './security.ts';
 import { CapacityError } from './autonomy.ts';
+import { groupMembers } from './groups.ts';
 import {
   allocatePlan,
   parseProposal,
@@ -60,7 +61,7 @@ export class Workflows {
     try {
       if (!prompt.trim() || prompt.length > 16000)
         throw new DomainError('Enter a prompt of up to 16,000 characters.');
-      const profiles = this.store.members();
+      const profiles = groupMembers(this.store, projectId);
       // Reads account metadata only. No model turns or login flows occur during preflight.
       const checks = await Promise.allSettled(
         profiles.map((member) => this.host.refresh(member.id)),
@@ -71,7 +72,7 @@ export class Workflows {
         throw new DomainError(
           `Cannot check ${profiles[failed].name}. Refresh this profile in Team and try again.`,
         );
-      const members = this.store.members().filter((member) => !!member.account);
+      const members = groupMembers(this.store, projectId).filter((member) => !!member.account);
       if (!members.length) throw new DomainError('Sign in to at least one Codex profile in Team.');
       const now = new Date().toISOString();
       const workflow = this.store.transaction(() => {

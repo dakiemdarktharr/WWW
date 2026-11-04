@@ -3,9 +3,9 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.4** là app desktop để nhiều tài khoản Codex thật cùng làm một dự án. Website dành cho giới thiệu, đăng nhập và tải app; Neralu, Sessions, Team, project, review và AEGIS nằm trong desktop. Mỗi tài khoản có hồ sơ riêng; task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno **0.5** là app desktop để nhiều tài khoản Codex thật cùng làm một dự án. Website dành cho giới thiệu, đăng nhập và tải app. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
-Phiên bản này đổi tên RELAY thành Kivuno và MESH thành Neralu, giữ nhiều conversation, quota thật, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md), [nhận diện](docs/BRAND.md) và [nền tảng bản 0.3](docs/RELEASE-0.3.md) mô tả cách cài, kết nối máy và các giới hạn đã kiểm chứng. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
+Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.5 giữ nhiều conversation, quota thật, checkpoint Git trước handoff và recovery có giữ khóa. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md), [nhận diện](docs/BRAND.md) và [bản 0.5](docs/RELEASE-0.5.md) mô tả cách cài, kết nối máy và các giới hạn đã kiểm chứng. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
 
 Mở [NoSleepClub Kivuno](https://nosleepclub-relay.vercel.app) để tải bản Windows hoặc Linux x64. App mở trang đăng nhập trên trình duyệt; kiểm tra và xác nhận mã hiển thị rồi quay lại app. Không gửi token đăng nhập qua URL. Nút **Hướng dẫn** trong desktop có hướng dẫn tiếng Việt theo từng khu vực. Xem [bản 0.4](docs/RELEASE-0.4.md) và [nghiên cứu coin gas riêng](docs/CUSTOM-L1.md); coin hiện chưa được triển khai.
 
@@ -13,11 +13,18 @@ Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có th�
 
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
-![Neralu trước khi kết nối dự án](docs/images/mesh.png)
-
 ## Chạy local tùy chọn
 
-**Team → Machine → Add account** tự đặt tên và thêm tài khoản vào group sau đăng nhập. Conversation có lựa chọn model/reasoning tự động từ catalog thật. Cloud điều phối được cả máy cá nhân và SSH lattice qua kết nối đi ra, với giới hạn riêng cho máy đang train. Xem [cài máy, chia sẻ capabilities và recovery](docs/HYBRID.md).
+**Team → Machine → Add account** tự đặt tên tài khoản; trong từng nhóm, dùng **Members** để chọn ai tham gia. Thành viên mới giới thiệu owner, gói, skills/plugins và nguyên tắc chung. Conversation có lựa chọn model/reasoning từ catalog thật. Cloud điều phối được cả máy cá nhân và SSH lattice qua kết nối đi ra, với giới hạn riêng cho máy đang train. Xem [cài máy, chia sẻ capabilities và recovery](docs/HYBRID.md).
+
+## Bắt đầu trong bốn bước
+
+1. **Team:** đăng nhập các Codex của bạn.
+2. **Neralu:** tạo dự án và chọn thành viên nhóm; bạn không cần đưa toàn bộ Team vào mỗi nhóm.
+3. **Chat:** nhập yêu cầu nghiên cứu/trao đổi, hoặc dùng **Plan project** để lập kế hoạch triển khai và duyệt workflow. Chat thường tạo session read-only. `/goal`, `/model`, `/reasoning`, `/skills` và `/tên-skill` cấu hình yêu cầu; lệnh không hợp lệ được báo lỗi.
+4. **Sessions / Reviews:** graph hiển thị từng conversation, kể cả nhiều conversation của cùng một Codex. Chọn node để xem tiến độ, react để phản hồi và vào Reviews để duyệt thay đổi.
+
+♥ = đã hiểu, 👍 = đồng ý, 👎 = không đồng ý. Reaction gửi feedback cho tác giả; **không cấp quyền** chạy lệnh, chi tiền, merge hay deploy. Browser trong nhóm cho bạn mở trang/đăng nhập và chủ động chia sẻ nội dung đã kiểm tra với session. [Browser và giới hạn](docs/BROWSER-DESKTOP.md), [nghiên cứu Gemini/Claude/Antigravity](docs/PROVIDERS.md), [thiết kế hivemind](docs/HIVEMIND-ART.md).
 
 Yêu cầu: **Node.js 24.22.1 trở lên**, Git và Codex CLI. Kivuno đã được kiểm tra với `codex-cli 0.166.0-alpha.5.1`; App Server có các phần experimental nên phiên bản khác cần được xác minh. Ứng dụng tìm CLI trên PATH; trên Windows còn nhận diện bản Codex đi kèm desktop app ở thư mục cài đặt mặc định.
 
@@ -56,7 +63,7 @@ Luồng team workflow từ bản trước vẫn dùng được; các đường d
 3. Đăng nhập lần lượt bằng **Sign in with ChatGPT** hoặc device code. Nếu trình duyệt đang giữ tài khoản trước, hãy chọn đúng tài khoản trên trang OpenAI. Kiểm tra email hiện trong từng thẻ. Không đăng nhập đồng thời vì callback OAuth dùng cổng cục bộ.
 4. Dùng **Refresh** để đọc lại trạng thái, hạn mức và capabilities. **Import local skills** sao chép các standalone skills từ `~/.codex/skills` và `~/.agents/skills`, bỏ qua symlink, cấu hình xác thực và các file có tên nhạy cảm. Đây là thao tác bạn chủ động chọn.
 5. Trong phần setup của mỗi hồ sơ, xem `CODEX_HOME` riêng để cài plugins hoặc cấu hình MCP. Plugins và quyền truy cập không được giả định tự đồng bộ qua tài khoản ChatGPT. Không chép `auth.json` hoặc credentials từ hồ sơ khác. Khởi động lại Kivuno sau khi sửa cấu hình plugin/MCP.
-6. Trong **Workroom**, nhập yêu cầu rồi chọn **Run team**. Toàn bộ hồ sơ đã đăng nhập sẽ tham gia; các thành viên cần hoàn tất task/review đang giữ trước khi bắt đầu. Mỗi thành viên đọc repository và gửi đề xuất trong sandbox chỉ đọc. Lead tổng hợp thành kế hoạch có stages, dependencies, scope, acceptance và effort; không có task mẫu dựng sẵn.
+6. Từ chat chọn **Plan project** để vào Workroom, nhập yêu cầu rồi chọn **Run team**. Chỉ thành viên thuộc nhóm dự án được tham gia; các thành viên cần hoàn tất task/review đang giữ trước khi bắt đầu. Mỗi thành viên đọc repository và gửi đề xuất trong sandbox chỉ đọc. Lead tổng hợp thành kế hoạch có stages, dependencies, scope, acceptance và effort; không có task mẫu dựng sẵn.
 7. Bộ điều phối kiểm tra DAG, loại kế hoạch trùng tên nhiệm vụ đang mở và phân công theo tổng effort. Vai trò chuyên môn được ưu tiên khi tải bằng nhau. Các task độc lập tự chạy song song; một thành viên chỉ giữ một task. Phạm vi `.` giữ toàn repository nên các task khác phải chờ.
 8. Theo dõi hierarchy, nhiệm vụ và trao đổi giữa các agent ở **Workroom**. Feed có bộ lọc thành viên/loại hoạt động. **Pause** ngừng giao việc mới, cho lượt đã nhận tiếp tục; **Resume** tiếp tục hoặc thử lại task bị chặn. **Cancel** dừng các lượt đang chạy, giữ lại worktree và kết quả đang review.
 9. Kiểm tra diff, handoff và bằng chứng test trong **Reviews**. **Accept & integrate** tạo squash commit trên nhánh đang checkout của dự án, rồi tự mở các task phụ thuộc. **Request revision** gửi phản hồi và tự chạy lại nếu workflow còn hoạt động. Agent tự báo hoàn thành chưa mở khóa dependency. Sau khi khởi động lại ứng dụng, workflow luôn tạm dừng đến khi bạn chọn Resume.

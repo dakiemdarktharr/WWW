@@ -4,6 +4,7 @@ import { lstat, readdir, readFile } from 'node:fs/promises';
 import type { CodexModel, Member, Task } from '../shared/types.ts';
 import type { Workspace } from './service.ts';
 import { readModels, readCapabilities } from './codex.ts';
+import { groupMembers } from './groups.ts';
 import { DomainError } from './store.ts';
 import { redact } from './security.ts';
 import { availableParallelism } from 'node:os';
@@ -139,10 +140,12 @@ export class Autonomy {
       for (const workflow of this.host.store.workflows())
         if (['planning', 'running', 'review'].includes(workflow.status))
           this.host.workflows.wakeProject(workflow.projectId);
-      for (const project of this.host.store.projects())
+      for (const project of this.host.store.projects()) {
+        this.host.notifyMesh(project.id);
         void this.host.inbox
           .dispatch(project.id)
           .catch((error) => this.host.log(redact(error), null, null, 'error'));
+      }
     }, 5000);
     this.timer.unref();
   }
@@ -270,7 +273,9 @@ export class Autonomy {
     for (const project of this.host.store
       .projects()
       .filter((project) => !projectId || project.id === projectId))
-      for (const member of members) this.host.mesh.ensureMember(project.id, member.id);
+      for (const member of members)
+        if (groupMembers(this.host.store, project.id).some((entry) => entry.id === member.id))
+          this.host.mesh.ensureMember(project.id, member.id);
   }
   async model(memberId: string, task: Task) {
     await this.plugins(memberId);
@@ -304,17 +309,6 @@ export class Autonomy {
     const member = this.host.store.get<Member>('member', memberId);
     if (!member.account) return;
     this.join(memberId);
-    if (
-      member.managed &&
-      !this.host.store.all<{ id: string }>('onboarded').some((record) => record.id === memberId)
-    ) {
-      try {
-        await this.host.importSkills(memberId);
-      } catch (error) {
-        this.host.log(`Machine skills: ${redact(error)}`, null, memberId, 'system');
-      }
-      this.host.store.put('onboarded', { id: memberId, at: new Date().toISOString() });
-    }
     // Await on the next turn too; login does not start model work.
     await this.shareSkills(memberId);
     await this.plugins(memberId);
@@ -342,111 +336,22 @@ export class Autonomy {
       plugins: member.plugins,
       at: new Date().toISOString(),
     });
-    for (const project of this.host.store.projects())
+    for (const project of this.host.store
+      .projects()
+      .filter((project) =>
+        groupMembers(this.host.store, project.id).some((member) => member.id === memberId),
+      ))
       this.host.mesh.post({
         projectId: project.id,
         authorId: memberId,
         kind: 'system',
-        content: `Shared capabilities: skills [${member.skills.slice(0, 40).join(', ') || 'none'}]; plugins [${member.plugins.slice(0, 40).join(', ') || 'none'}]. Teammates receive eligible skills and plugins when idle. Plugin service authorization remains personal.`,
+        content: `Shared capabilities: skills [${member.skills.slice(0, 40).join(', ') || 'none'}]; plugins [${member.plugins.slice(0, 40).join(', ') || 'none'}]. Teammates can learn from these capability inventories. Executable plugins require a human install; service authorization remains personal.`,
       });
   }
   async sharePlugins(memberId: string) {
-    if (
-      this.host.sessions
-        .all()
-        .some((s) => s.memberId === memberId && ['starting', 'running'].includes(s.status)) ||
-      this.host.running.has(memberId)
-    )
-      return;
-    const target = await this.host.client(memberId);
-    const catalog = await target.request('plugin/list', { cwds: [] });
-    let attempts = 0;
-    for (const source of this.host.store
-      .members()
-      .filter((member) => member.id !== memberId && member.account)) {
-      const available = await (
-        await this.host.client(source.id)
-      ).request('plugin/list', { cwds: [] });
-      for (const market of available.marketplaces || [])
-        for (const plugin of market.plugins || []) {
-          if (
-            !plugin.installed ||
-            !plugin.enabled ||
-            plugin.disabledReason ||
-            plugin.source?.type !== 'remote' ||
-            typeof market.name !== 'string'
-          )
-            continue;
-          const match = catalog.marketplaces
-            ?.find((candidate: any) => candidate.name === market.name)
-            ?.plugins?.find(
-              (candidate: any) =>
-                candidate.name === plugin.name &&
-                candidate.id === plugin.id &&
-                candidate.source?.type === 'remote',
-            );
-          if (
-            !match ||
-            match.installed ||
-            match.disabledReason ||
-            match.availability === 'DISABLED_BY_ADMIN'
-          )
-            continue;
-          const key = createHash('sha256')
-            .update(JSON.stringify([memberId, market.name, plugin.id, plugin.version]))
-            .digest('hex');
-          if (
-            this.host.store.all<{ id: string }>('pluginReceipt').some((record) => record.id === key)
-          )
-            continue;
-          if (attempts++ >= 8) return;
-          // Persist before sending: an uncertain install is never blindly repeated.
-          this.host.store.put('pluginReceipt', {
-            id: key,
-            memberId,
-            sourceMemberId: source.id,
-            name: plugin.name,
-            status: 'installing',
-          });
-          try {
-            const installed = await target.request('plugin/install', {
-              pluginName: plugin.name,
-              remoteMarketplaceName: market.name,
-              installAttemptId: key,
-            });
-            this.host.store.put('pluginReceipt', {
-              id: key,
-              memberId,
-              sourceMemberId: source.id,
-              name: plugin.name,
-              status: 'installed',
-            });
-            if (installed.appsNeedingAuth?.length)
-              for (const project of this.host.store.projects())
-                this.host.mesh.ask(
-                  project.id,
-                  memberId,
-                  `Connect ${plugin.name}`,
-                  `Plugin installed; its services require this account's own authorization: ${installed.appsNeedingAuth.map((app: any) => app.name).join(', ')}. No credentials or subscriptions were copied.`,
-                );
-          } catch (error) {
-            this.host.store.put('pluginReceipt', {
-              id: key,
-              memberId,
-              name: plugin.name,
-              status: 'needs_attention',
-              error: redact(error),
-            });
-            for (const project of this.host.store.projects())
-              this.host.mesh.ask(
-                project.id,
-                memberId,
-                `Plugin ${plugin.name} needs attention`,
-                redact(error),
-              );
-          }
-        }
-    }
+    // Capability inventories are shared automatically; executable plugins and service
+    // authorization always remain personal and require an explicit human install.
+    this.publish(memberId);
   }
   shareSkills(memberId: string): Promise<void> {
     const existing = this.syncing.get(memberId);
@@ -470,9 +375,15 @@ export class Autonomy {
       return;
     let copied = 0;
     const member = this.host.store.get<Member>('member', memberId);
-    for (const source of this.host.store
-      .members()
-      .filter((source) => source.id !== memberId && source.account)) {
+    for (const source of this.host.store.members().filter(
+      (source) =>
+        source.id !== memberId &&
+        source.account &&
+        this.host.store.projects().some((project) => {
+          const ids = groupMembers(this.host.store, project.id).map((member) => member.id);
+          return ids.includes(source.id) && ids.includes(memberId);
+        }),
+    )) {
       try {
         const skills = source.runnerId
           ? await (await this.host.client(source.id)).request('relay/skills/export', {})
@@ -500,7 +411,11 @@ export class Autonomy {
       }
     }
     if (copied)
-      for (const project of this.host.store.projects())
+      for (const project of this.host.store
+        .projects()
+        .filter((project) =>
+          groupMembers(this.host.store, project.id).some((member) => member.id === memberId),
+        ))
         this.host.mesh.post({
           projectId: project.id,
           authorId: memberId,

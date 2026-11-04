@@ -26,6 +26,9 @@ export async function exportSkills(home: string): Promise<SharedSkill[]> {
         data: file.content.toString('base64'),
         hash: createHash('sha256').update(file.content).digest('hex'),
       }));
+      // Share complete prose-only skills. A skill requiring scripts remains an inventory
+      // recommendation, rather than installing executable code as part of onboarding.
+      if (files.some((file) => !/\.(?:md|txt)$/i.test(file.path))) continue;
       const size = files.reduce((sum, file) => sum + Buffer.byteLength(file.data), 0);
       if (bytes + size > 2_800_000 || result.length >= 32) break;
       result.push({ name: entry.name, files });
@@ -49,6 +52,8 @@ export async function installSkills(home: string, raw: unknown, machineImport = 
     const files = validateRunnerFiles(skill.files);
     if (!files.some((file) => file.path === 'SKILL.md')) throw new Error('Missing SKILL.md.');
     for (const file of files) {
+      if (!machineImport && !/\.(?:md|txt)$/i.test(file.path))
+        throw new Error('Executable skill content requires an explicit human import.');
       if (
         file.path
           .split('/')

@@ -1,0 +1,143 @@
+.project-browser {
+  height: 100%;
+  min-height: 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.project-browser-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  gap: 10px;
+}
+.project-browser-heading strong,
+.project-browser-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.project-browser-navigation {
+  margin: 0 10px 10px;
+  padding: 4px;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg);
+}
+.project-browser-navigation button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  width: 28px;
+  height: 30px;
+  flex: 0 0 28px;
+}
+.project-browser-navigation button:hover {
+  background: var(--line-soft);
+}
+.project-browser-navigation input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  font-size: 12px;
+}
+.project-browser-request {
+  padding: 10px 12px;
+  margin: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--lime) 9%, transparent);
+  border-radius: 12px;
+}
+.project-browser-viewport {
+  flex: 1;
+  min-height: 220px;
+  overflow: hidden;
+  position: relative;
+}
+.project-browser-empty {
+  min-height: 220px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.project-browser-empty svg {
+  color: var(--lime);
+}
+.project-browser-empty p {
+  max-width: 32ch;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+  margin: 0;
+}
+.project-browser-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.project-browser-footer span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.project-browser-footer button {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.project-browser-error {
+  font-size: 12px;
+  color: #ef8d99;
+  padding: 0 12px;
+  margin: 0 0 8px;
+}
+.project-browser-review {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+.project-browser-review > span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.project-browser-review textarea {
+  min-height: 130px;
+  flex: 1;
+  resize: none;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.project-browser-review > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}

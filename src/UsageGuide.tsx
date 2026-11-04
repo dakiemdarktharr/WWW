@@ -1,235 +1,21 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowRight, BookOpen, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, MessageSquare, Network, Users, X } from 'lucide-react';
 import './guide.css';
 
-type Step = { target: string; title: string; text: string };
 type Stage =
   'hosted' | 'mesh' | 'sessions' | 'team' | 'workroom' | 'tasks' | 'reviews' | 'settings' | 'aegis';
-const memory = new Set<string>();
-const prefix = 'relay-guide-v2:';
-const seen = (key: string) => {
-  try {
-    return memory.has(key) || sessionStorage.getItem(prefix + key) === 'seen';
-  } catch {
-    return memory.has(key);
-  }
+const guideKey = 'kivuno-guide-v3';
+const tips: Partial<Record<Stage, string>> = {
+  sessions:
+    'Mỗi chấm là một cuộc trò chuyện. Một Codex có thể có nhiều session, model và mức reasoning riêng.',
+  team: 'Team là tất cả tài khoản của bạn. Trong mỗi nhóm, bạn chọn những thành viên cần tham gia.',
+  reviews:
+    'Đọc kết quả, kiểm thử và thay đổi trước khi tích hợp. React đồng ý không thay thế quyền duyệt code.',
+  aegis: 'AEGIS ghi bằng chứng bàn giao trên Avalanche Fuji. Chỉ sử dụng test AVAX miễn phí.',
+  settings:
+    'Máy tắt thì Codex trên máy đó offline. Khôi phục phiên bị gián đoạn trước khi tiếp tục.',
 };
-const remember = (key: string) => {
-  memory.add(key);
-  try {
-    sessionStorage.setItem(prefix + key, 'seen');
-  } catch {
-    /* Tab memory still works. */
-  }
-};
-const definitions: Record<Stage, Step[]> = {
-  aegis: [
-    {
-      target: 'aegis-setup',
-      title: '1. Kết nối Fuji',
-      text: 'Tạo khóa testnet, lấy test AVAX miễn phí và triển khai registry. Trạng thái chưa triển khai nghĩa là chưa có bảo vệ trên chain.',
-    },
-    {
-      target: 'aegis-policy',
-      title: '2. Cấp quyền',
-      text: 'Bật chính sách cho project rồi cấp quyền có thời hạn cho từng máy. Máy chưa có quyền không được chạy task thuộc project đã bảo vệ.',
-    },
-    {
-      target: 'aegis-receipts',
-      title: '3. Kiểm tra bàn giao',
-      text: 'Tải biên nhận và kiểm tra chữ ký, nội dung và giao dịch trên Fuji. Bằng chứng không thay thế kiểm thử code.',
-    },
-  ],
-  hosted: [
-    {
-      target: 'setup',
-      title: '1. Cài Kivuno',
-      text: 'Tải bản phù hợp với máy của bạn trên web và mở app. App chứa runtime riêng; bạn không cần giữ terminal để làm việc.',
-    },
-    {
-      target: 'port',
-      title: '2. Đăng nhập',
-      text: 'Mở Kivuno và chọn Đăng nhập trên web. So sánh mã trên hai màn hình rồi xác nhận kết nối desktop.',
-    },
-    {
-      target: 'runner-connect',
-      title: '3. Bắt đầu làm việc',
-      text: 'Quay lại app. Neralu, Sessions và Team ở trong desktop; tab đăng nhập có thể đóng.',
-    },
-  ],
-  mesh: [
-    {
-      target: 'groups',
-      title: '1. Chọn nhóm dự án',
-      text: 'Mỗi project có group Neralu riêng. Kết nối repository có sẵn hoặc tạo project hackathon. Các account đã đăng nhập tự gia nhập nhóm.',
-    },
-    {
-      target: 'mesh-input',
-      title: '2. Nhắn cho team',
-      text: 'Nhập yêu cầu ở đây. Tin người dùng được nhận một lần và mở session chỉ đọc khi có account/quota phù hợp. Dùng !! cho lệnh ưu tiên; muốn sửa code, hãy tạo session ghi file với scope rõ ràng.',
-    },
-    {
-      target: 'mesh-usage',
-      title: '3. Theo dõi usage',
-      text: 'Bấm vòng tròn Usage để xem hạn mức thật của từng account. Các session dùng chung quota; còn ≤50% thì pause. Unknown nghĩa là chưa đọc được hạn mức, không phải còn đầy.',
-    },
-    {
-      target: 'mesh-needs',
-      title: '4. Xử lý Needs you',
-      text: 'Chuông tập hợp câu hỏi, blocker và yêu cầu cấp quyền. Đọc nội dung trước khi quyết định; hướng dẫn này không tự trả lời hay cấp quyền.',
-    },
-    {
-      target: 'mesh-handoff',
-      title: '5. Bàn giao có xác nhận',
-      text: 'Handoffs hiện checkpoint, remote commit và người nhận. Chỉ ACK sau khi đọc summary, test evidence và next steps; nguồn giữ khóa nếu push hoặc dừng worker thất bại.',
-    },
-  ],
-  sessions: [
-    {
-      target: 'new-session',
-      title: '1. Mở session',
-      text: 'Chọn New session, account và project. Read-only dùng cho hỏi đáp/research. Workspace write cần scope file/thư mục; mỗi session có task và quyền giữ scope riêng.',
-    },
-    {
-      target: 'session-grid',
-      title: '2. Xem phiên Codex thật',
-      text: 'Mỗi ô hiển thị output, lệnh, file và trạng thái. Details có PID/thread/worktree; biểu tượng mở rộng tập trung một session trong app. Chưa có session thì tạo sau khi đăng nhập trong Team.',
-    },
-    {
-      target: 'session-input',
-      title: '3. Gửi prompt hoặc steer',
-      text: 'Nhập prompt để tiếp tục; khi turn đang chạy, Steer bổ sung chỉ dẫn vào turn đó. Một lượt thật dùng usage của account được chọn.',
-    },
-    {
-      target: 'demo',
-      title: '4. Mở demo',
-      text: 'Nhập URL HTTPS đã deploy hoặc địa chỉ demo đang chạy trên máy ở cổng riêng. Preview nằm ngay trong Sessions. Nút này không tự deploy hoặc mua hosting.',
-    },
-  ],
-  team: [
-    {
-      target: 'add-account',
-      title: '1. Thêm account',
-      text: 'Chọn Machine rồi Add account. Mặc định là máy này. Đăng nhập từng tài khoản bằng device code; app tự đặt tên và thêm vào các group dự án. Máy khác cần kết nối trước.',
-    },
-    {
-      target: 'account-card',
-      title: '2. Kết nối capabilities',
-      text: 'Sau đăng nhập, app chia sẻ skills đã kiểm tra và plugins có trong catalog của tài khoản nhận. Credentials và quyền truy cập dịch vụ vẫn riêng từng account. Model/reasoning tự chọn từ catalog thật theo task.',
-    },
-    {
-      target: 'account-controls',
-      title: '3. Quota và owner GitHub',
-      text: 'Refresh usage trước khi chạy. Owner name/email dùng làm author cho checkpoint; đây là ánh xạ bạn cấu hình, không phải chữ ký GitHub Verified. Quyền dùng dự trữ cần account, project, mức sàn và thời hạn.',
-    },
-  ],
-  workroom: [
-    {
-      target: 'team-prompt',
-      title: '1. Giao yêu cầu cho team',
-      text: 'Run team dùng các account đã đăng nhập để đề xuất, tổng hợp workflow và chia task theo effort/dependency. Lượt model thật bắt đầu khi bạn chủ động bấm chạy.',
-    },
-    {
-      target: 'workflow-team',
-      title: '2. Theo dõi phân công',
-      text: 'Hierarchy hiển thị lead, thành viên và tải công việc. Activity ghi progress/blocker; task chỉ chạy khi dependency và scope cho phép.',
-    },
-  ],
-  tasks: [
-    {
-      target: 'task-actions',
-      title: 'Nhiệm vụ có scope rõ ràng',
-      text: 'New task cần nội dung, acceptance và phạm vi file. Dispatch chỉ giao task thủ công đủ điều kiện; các task workflow do coordinator quản lý.',
-    },
-  ],
-  reviews: [
-    {
-      target: 'review-content',
-      title: 'Review trước khi tích hợp',
-      text: 'Mở task để xem diff, handoff và test evidence. Accept & integrate ghi vào nhánh project sau kiểm tra; Request revision gửi phản hồi. Hướng dẫn không tự duyệt command hoặc tích hợp code.',
-    },
-  ],
-  settings: [
-    {
-      target: 'project-settings',
-      title: 'Kết nối repository',
-      text: 'Add project yêu cầu đường dẫn Git repo trên máy, đã có commit đầu tiên. Giữ nhánh chính sạch trước tích hợp. Nếu có interrupted work, xác nhận worker cũ đã dừng rồi mới Recover.',
-    },
-  ],
-};
-
-function Illustration() {
-  const id = useId().replaceAll(':', '');
-  return (
-    <figure className="usage-illustration">
-      <svg
-        viewBox="0 0 600 205"
-        role="img"
-        aria-label="Minh họa: chọn project, nhắn Neralu rồi theo dõi session Codex"
-      >
-        <defs>
-          <marker
-            id={id}
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto"
-          >
-            <path d="M0 0 L10 5 L0 10Z" fill="#dc2626" />
-          </marker>
-        </defs>
-        <rect x="1" y="1" width="598" height="203" rx="16" fill="#f5faef" stroke="#d7e5cb" />
-        <rect x="17" y="18" width="122" height="168" rx="9" fill="white" stroke="#dce1d6" />
-        <text x="31" y="44" fontSize="12" fontWeight="700" fill="#202a1c">
-          Kivuno + Neralu
-        </text>
-        {['Project', 'Neralu', 'Sessions', 'Team'].map((text, i) => (
-          <g key={text}>
-            <rect
-              x="27"
-              y={57 + i * 28}
-              width="102"
-              height="23"
-              rx="5"
-              fill={i === 1 ? '#e6f4d9' : '#f4f5f2'}
-            />
-            <text x="37" y={73 + i * 28} fontSize="12" fill="#30382d">
-              {text}
-            </text>
-          </g>
-        ))}
-        <rect x="153" y="18" width="428" height="168" rx="9" fill="white" stroke="#dce1d6" />
-        <text x="170" y="43" fontSize="13" fontWeight="700" fill="#202a1c">
-          Nhóm dự án
-        </text>
-        <rect x="169" y="56" width="394" height="46" rx="6" fill="#f4f5f2" />
-        <text x="181" y="83" fontSize="12" fill="#30382d">
-          Prompt → claim → Codex session → handoff
-        </text>
-        <rect x="169" y="115" width="290" height="49" rx="6" fill="white" stroke="#dce1d6" />
-        <text x="181" y="144" fontSize="12" fill="#586052">
-          Nhập yêu cầu cho team…
-        </text>
-        <rect x="471" y="125" width="74" height="31" rx="6" fill="#b8ee86" />
-        <text x="508" y="145" textAnchor="middle" fontSize="12" fontWeight="700" fill="#21331a">
-          Send
-        </text>
-        <path
-          d="M480 74 Q550 80 518 118"
-          stroke="#dc2626"
-          fill="none"
-          strokeWidth="3"
-          markerEnd={`url(#${id})`}
-        />
-      </svg>
-      <figcaption>Minh họa thao tác · không phải phiên Codex đang chạy</figcaption>
-    </figure>
-  );
-}
-
 export default function UsageGuide({
   stage,
   enabled = true,
@@ -239,400 +25,141 @@ export default function UsageGuide({
   enabled?: boolean;
   cloud?: boolean;
 }) {
-  const mode = cloud ? 'cloud' : stage === 'hosted' ? 'hosted' : 'local';
-  const [intro, setIntro] = useState(() => !seen(`${mode}:intro`));
-  const [index, setIndex] = useState<number | null>(null);
-  const [position, setPosition] = useState<DOMRect | null>(null);
-  const [viewport, setViewport] = useState({
-    width: window.innerWidth,
-    height: window.innerHeight,
+  const [open, setOpen] = useState(() => {
+    try {
+      return sessionStorage.getItem(guideKey) !== 'seen';
+    } catch {
+      return false;
+    }
   });
   const dialog = useRef<HTMLDialogElement>(null);
-  const tip = useRef<HTMLElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const targetKey = useRef('');
-  const activeStage = useRef(stage);
-  const baseStep = index === null ? null : definitions[stage][index];
-  const cloudText: Record<string, string> = {
-    groups:
-      'Mỗi dự án có group Neralu riêng. Chọn New project, Codex phụ trách, tên/link cuộc thi và hạn nộp. Hệ thống tạo Git repository trên cloud; chưa tự tạo remote GitHub.',
-    'new-session':
-      'Chọn account, model và reasoning từ catalog thật. Mỗi dự án có nhiều cuộc trò chuyện; bỏ trống prompt để lưu trước. Read-only dùng cho research; viết code cần scope riêng.',
-    demo: 'Nhập HTTPS URL của bản demo đã deploy. Demo có thể mở riêng; Neralu và Sessions luôn dùng trực tiếp trong web.',
+  const close = () => {
+    try {
+      sessionStorage.setItem(guideKey, 'seen');
+    } catch {
+      /* Optional memory. */
+    }
+    setOpen(false);
+    trigger.current?.focus();
   };
-  const step =
-    baseStep && cloud && cloudText[baseStep.target]
-      ? { ...baseStep, text: cloudText[baseStep.target] }
-      : baseStep;
-  const finish = useCallback(() => {
-    setIndex(null);
-    setPosition(null);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener('relay-open-guide', show);
+    return () => window.removeEventListener('relay-open-guide', show);
   }, []);
-  const begin = useCallback(() => {
-    remember(`stage:${stage}`);
-    targetKey.current = '';
-    setPosition(null);
-    setIndex(0);
-  }, [stage]);
-
   useEffect(() => {
-    if (activeStage.current !== stage || !enabled) finish();
-    activeStage.current = stage;
-    if (enabled && !intro && !seen(`stage:${stage}`)) begin();
-  }, [stage, enabled, begin, finish]);
-
-  useEffect(() => {
-    if (!intro || !enabled) return;
-    const modal = dialog.current;
-    const previous = document.activeElement as HTMLElement;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    modal?.showModal();
-    return () => {
-      modal?.close();
-      document.body.style.overflow = overflow;
-      if (previous?.isConnected) previous.focus();
-    };
-  }, [intro, enabled]);
-
-  useEffect(() => {
-    const open = () => {
-      finish();
-      setIntro(true);
-    };
-    window.addEventListener('relay-open-guide', open);
-    return () => window.removeEventListener('relay-open-guide', open);
-  }, [finish]);
-
-  function dismiss(skip = false) {
-    remember(`${mode}:intro`);
-    remember(`stage:${stage}`);
-    setIntro(false);
-    if (skip) finish();
-    else begin();
-  }
-
-  useEffect(() => {
-    if (!enabled || intro || index === null) return;
-    let frame = 0;
-    const measure = () => {
-      const steps = definitions[stage];
-      let current = index;
-      let target: HTMLElement | null = null;
-      while (current < steps.length) {
-        target = document.querySelector<HTMLElement>(`[data-usage="${steps[current].target}"]`);
-        if (
-          target &&
-          target.getClientRects().length &&
-          getComputedStyle(target).visibility !== 'hidden'
-        )
-          break;
-        current++;
-      }
-      if (!target || current >= steps.length) {
-        finish();
-        return;
-      }
-      if (current !== index) {
-        setIndex(current);
-        return;
-      }
-      const identity = `${stage}:${current}`;
-      if (targetKey.current !== identity) {
-        targetKey.current = identity;
-        target.scrollIntoView({ block: 'center', behavior: 'instant' });
-      }
-      const rect = target.getBoundingClientRect();
-      setPosition((previous) =>
-        previous &&
-        ['x', 'y', 'width', 'height'].every(
-          (key) => previous[key as keyof DOMRect] === rect[key as keyof DOMRect],
-        )
-          ? previous
-          : rect,
-      );
-      setViewport((previous) =>
-        previous.width === innerWidth && previous.height === innerHeight
-          ? previous
-          : { width: innerWidth, height: innerHeight },
-      );
-    };
-    const schedule = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(measure);
-    };
-    const keyboard = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        finish();
-        trigger.current?.focus();
-      }
-    };
-    const mutation = new MutationObserver(schedule);
-    mutation.observe(document.getElementById('root')!, { childList: true, subtree: true });
-    const resize = new ResizeObserver(schedule);
-    resize.observe(document.body);
-    const target = document.querySelector(`[data-usage="${definitions[stage][index].target}"]`);
-    if (target) resize.observe(target);
-    window.addEventListener('resize', schedule);
-    window.addEventListener('scroll', schedule, true);
-    document.addEventListener('keydown', keyboard);
-    schedule();
-    return () => {
-      cancelAnimationFrame(frame);
-      mutation.disconnect();
-      resize.disconnect();
-      window.removeEventListener('resize', schedule);
-      window.removeEventListener('scroll', schedule, true);
-      document.removeEventListener('keydown', keyboard);
-    };
-  }, [enabled, intro, index, stage, finish]);
-
-  const narrow = viewport.width <= 760;
-  const above = !!position && position.top + position.height / 2 > viewport.height / 2;
-  const left = position ? Math.max(12, Math.min(position.left, viewport.width - 356)) : 12;
-  const tipHeight = tip.current?.offsetHeight || 220;
-  const targetX = position
-    ? Math.max(10, Math.min(viewport.width - 10, position.left + position.width / 2))
-    : 0;
-  const targetY = position
-    ? Math.max(6, Math.min(viewport.height - 6, above ? position.top : position.bottom))
-    : 0;
-
+    if (open && enabled) dialog.current?.showModal();
+    else dialog.current?.close();
+  }, [open, enabled]);
   return (
     <>
       <button
         ref={trigger}
         className="usage-guide-trigger"
-        onClick={() => {
-          finish();
-          setIntro(true);
-        }}
         aria-label="Hướng dẫn sử dụng"
         title="Hướng dẫn sử dụng"
+        onClick={() => setOpen(true)}
       >
         <BookOpen size={16} />
         <span>Hướng dẫn</span>
       </button>
       {createPortal(
-        <>
-          <dialog
-            ref={dialog}
-            className="usage-modal"
-            aria-labelledby="usage-title"
-            onCancel={(event) => {
-              event.preventDefault();
-              dismiss(true);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Tab') return;
-              const controls = [
-                ...event.currentTarget.querySelectorAll<HTMLElement>('button,[tabindex="0"]'),
-              ];
-              const first = controls[0],
-                last = controls.at(-1);
-              if (event.shiftKey && document.activeElement === first) {
-                event.preventDefault();
-                last?.focus();
-              } else if (!event.shiftKey && document.activeElement === last) {
-                event.preventDefault();
-                first?.focus();
-              }
-            }}
-          >
-            <header>
-              <div>
-                <span>Kivuno + Neralu</span>
-                <h2 id="usage-title">Bắt đầu cùng workspace</h2>
-              </div>
-              <button onClick={() => dismiss(true)} aria-label="Đóng hướng dẫn">
-                <X size={19} />
-              </button>
-            </header>
-            <div
-              className="usage-modal-scroll"
-              tabIndex={0}
-              aria-label="Nội dung hướng dẫn sử dụng"
-            >
-              <Illustration />
-              <section>
-                <h3>{cloud ? '1. Workspace trên cloud' : '1. Workspace trên desktop'}</h3>
-                <p>
-                  {cloud ? (
-                    'Neralu, Sessions và Team chạy trên cloud. Đăng nhập workspace trên các thiết bị bạn sử dụng; không cần localhost hoặc giữ cửa sổ kết nối. Sandbox miễn phí có giới hạn thời gian, lưu lại dữ liệu khi tạm ngủ và cần khôi phục công việc bị gián đoạn trước khi chạy tiếp.'
-                  ) : (
-                    <>
-                      Đăng nhập Kivuno qua web, so sánh mã rồi xác nhận desktop. Quay lại app để làm
-                      việc; tab web có thể đóng. Mặc định Codex chạy trên máy này. Máy ngủ hoặc tắt
-                      thì công việc trên máy dừng; hãy bàn giao sang máy đang bật nếu cần tiếp tục.
-                    </>
-                  )}
-                </p>
-              </section>
-              <section>
-                <h3>2. Kết nối project và Team</h3>
-                <p>
-                  {cloud ? (
-                    'Tạo hồ sơ trong Team, sau đó New project: chọn Codex phụ trách, tên/link cuộc thi và hạn nộp.'
-                  ) : (
-                    <>
-                      Chọn <strong>Connect project</strong> để mở Git repository có sẵn hoặc tạo
-                      project hackathon mới. Chọn thư mục bằng nút Choose folder.
-                    </>
-                  )}
-                  Trong <strong>Team → Add account</strong>, tự đăng nhập từng tài khoản và kiểm tra
-                  email. <strong>Refresh usage</strong> để đọc quota thật.
-                </p>
-              </section>
-              <section>
-                <h3>3. Neralu và Sessions</h3>
-                <p>
-                  Chọn group dự án và nhắn yêu cầu trong <strong>Neralu</strong>. Hệ thống ghi nhận
-                  một người nhận việc; tin chat mở hội thoại chỉ đọc. Muốn sửa code, mở{' '}
-                  <strong>Sessions → New session</strong>, chọn account, chế độ ghi và scope.
-                </p>
-                <p>
-                  Output, command và file events nằm trong cửa sổ session. <strong>Steer</strong> bổ
-                  sung prompt đang chạy; <strong>Pause</strong> dừng worker và giữ khóa,{' '}
-                  <strong>Stop</strong> giải phóng khóa sau khi dừng an toàn. <strong>Demo</strong>{' '}
-                  {cloud
-                    ? 'mở HTTPS URL của bản demo đã deploy. Model settings đổi model/reasoning khi hội thoại đã dừng.'
-                    : 'hiển thị bản demo ngay trong app. Dùng HTTPS hoặc máy chủ phát triển ở cổng riêng.'}
-                </p>
-              </section>
-              <section>
-                <h3>4. Quota, handoff và recovery</h3>
-                <p>
-                  Quota dùng chung cho mọi session của account. Khi còn ≤50%, hệ thống pause;{' '}
-                  <strong>Needs you</strong> hiện câu hỏi hoặc quyền dùng dự trữ cần bạn quyết định.
-                </p>
-                <p>
-                  Trước code handoff, cấu hình owner GitHub trong Team và origin của repo. Kiểm tra
-                  remote SHA, test evidence và next steps trước khi <strong>ACK</strong>. Nếu
-                  interrupted, xác nhận PID cũ đã dừng rồi <strong>Recover</strong>;{' '}
-                  <strong>Resume</strong> là thao tác riêng.
-                </p>
-              </section>
-              <section className="usage-boundary">
-                <h3>Mũi tên chỉ chỗ thao tác</h3>
-                <p>
-                  Tour giữ các nút thật hoạt động để bạn tự chọn. Nó không gửi prompt, dùng usage,
-                  đăng nhập, cấp quyền hay thực hiện handoff. Mỗi màn hình chỉ tự hướng dẫn lần đầu
-                  trong tab; bấm Hướng dẫn để xem lại.
-                </p>
-              </section>
+        <dialog
+          ref={dialog}
+          className="usage-modal"
+          aria-labelledby="usage-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            close();
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              const box = event.currentTarget.getBoundingClientRect();
+              if (
+                event.clientX < box.left ||
+                event.clientX > box.right ||
+                event.clientY < box.top ||
+                event.clientY > box.bottom
+              )
+                close();
+            }
+          }}
+        >
+          <header>
+            <div className="guide-brand">
+              <img src="/kivuno.svg" alt="" />
+              <h2 id="usage-title">Bắt đầu với Kivuno</h2>
             </div>
-            <footer>
-              <button className="usage-skip" onClick={() => dismiss(true)}>
-                Bỏ qua hướng dẫn
-              </button>
-              <button className="usage-primary" onClick={() => dismiss(false)}>
-                Đã hiểu <ArrowRight size={15} />
-              </button>
-            </footer>
-          </dialog>
-          {enabled && !intro && step && position && (
-            <div className="usage-tour">
-              <div
-                className="usage-target"
-                style={{
-                  left: Math.max(2, position.left - 4),
-                  top: Math.max(2, position.top - 4),
-                  width: Math.min(viewport.width - 4, position.width + 8),
-                  height: position.height + 8,
-                }}
-              />
-              {
-                <svg
-                  className="usage-arrow"
-                  width={viewport.width}
-                  height={viewport.height}
-                  aria-hidden="true"
-                >
-                  <defs>
-                    <marker
-                      id="usage-arrow-head"
-                      viewBox="0 0 10 10"
-                      refX="9"
-                      refY="5"
-                      markerWidth="6"
-                      markerHeight="6"
-                      orient="auto"
-                    >
-                      <path d="M0 0 L10 5 L0 10Z" fill="#dc2626" />
-                    </marker>
-                  </defs>
-                  <path
-                    d={`M ${narrow ? viewport.width / 2 : left + 170} ${above ? (narrow ? 68 : 80) + tipHeight : viewport.height - 16 - tipHeight} Q ${targetX + 36} ${targetY + (above ? -45 : 45)} ${targetX} ${targetY}`}
-                    stroke="#dc2626"
-                    strokeWidth="3"
-                    fill="none"
-                    markerEnd="url(#usage-arrow-head)"
-                  />
-                </svg>
-              }
-              <aside
-                ref={tip}
-                className="usage-tip"
-                role="region"
-                aria-label="Hướng dẫn thao tác"
-                style={{
-                  left: narrow ? 12 : left,
-                  ...(above ? { top: narrow ? 68 : 80 } : { bottom: 16 }),
-                }}
-              >
-                <div className="usage-tip-top">
-                  <span>
-                    {(index || 0) + 1}/{definitions[stage].length}
-                  </span>
-                  <button aria-label="Đóng tour" onClick={finish}>
-                    <X size={16} />
-                  </button>
+            <button className="icon-button" aria-label="Đóng hướng dẫn" onClick={close}>
+              <X size={18} />
+            </button>
+          </header>
+          <div className="usage-modal-scroll">
+            <p className="guide-definition">
+              <strong>Neralu</strong> là khu trò chuyện theo dự án của Kivuno.
+            </p>
+            <ol className="guide-steps">
+              <li>
+                <span className="guide-step-icon">
+                  <Users size={19} />
+                </span>
+                <div>
+                  <h3>1. Chọn nhóm</h3>
+                  <p>Thêm tài khoản trong Team. Tạo dự án, rồi chọn Codex sẽ tham gia nhóm.</p>
                 </div>
-                <div aria-live="polite">
-                  <h3>{step.title}</h3>
-                  <p>{step.text}</p>
+              </li>
+              <li>
+                <span className="guide-step-icon">
+                  <MessageSquare size={19} />
+                </span>
+                <div>
+                  <h3>2. Gửi điều bạn muốn làm</h3>
+                  <p>
+                    Chat để hỏi và nghiên cứu. Chọn <strong>Plan project</strong> để lên kế hoạch và
+                    xây dựng. Gõ <code>/</code> để chọn model, reasoning hoặc skill.
+                  </p>
                 </div>
-                <div className="usage-tip-actions">
-                  <button
-                    aria-label="Bước trước"
-                    disabled={index === 0}
-                    onClick={() => {
-                      targetKey.current = '';
-                      setPosition(null);
-                      let previous = Math.max(0, (index || 0) - 1);
-                      while (
-                        previous > 0 &&
-                        !document
-                          .querySelector(`[data-usage="${definitions[stage][previous].target}"]`)
-                          ?.getClientRects().length
-                      )
-                        previous--;
-                      setIndex(previous);
-                    }}
-                  >
-                    <ArrowLeft size={15} />
-                  </button>
-                  <button
-                    className="usage-primary"
-                    onClick={() => {
-                      targetKey.current = '';
-                      setPosition(null);
-                      if ((index || 0) + 1 >= definitions[stage].length) finish();
-                      else setIndex((index || 0) + 1);
-                    }}
-                  >
-                    {(index || 0) + 1 === definitions[stage].length ? 'Hoàn tất' : 'Tiếp theo'}{' '}
-                    <ArrowRight size={14} />
-                  </button>
-                  <button className="usage-skip" onClick={finish}>
-                    Bỏ qua
-                  </button>
+              </li>
+              <li>
+                <span className="guide-step-icon">
+                  <Network size={19} />
+                </span>
+                <div>
+                  <h3>3. Theo dõi và phản hồi</h3>
+                  <p>
+                    Mở Sessions trong nhóm để xem từng cuộc trò chuyện. Đọc kết quả, phản hồi và
+                    duyệt trong Reviews.
+                  </p>
                 </div>
-              </aside>
+              </li>
+            </ol>
+            <div className="guide-reactions">
+              <span>♡ Đã hiểu</span>
+              <span>👍 Đồng ý</span>
+              <span>👎 Không đồng ý</span>
             </div>
-          )}
-        </>,
+            {tips[stage] && (
+              <p className="guide-context">
+                <Check size={14} />
+                {tips[stage]}
+              </p>
+            )}
+            {stage === 'hosted' && (
+              <p className="guide-context">
+                Đăng nhập trên web, xác nhận kết nối rồi quay lại app để làm việc.
+              </p>
+            )}
+          </div>
+          <footer>
+            <button className="usage-skip" onClick={close}>
+              Bỏ qua hướng dẫn
+            </button>
+            <button className="usage-primary" onClick={close}>
+              Bắt đầu <ArrowRight size={15} />
+            </button>
+          </footer>
+        </dialog>,
         document.body,
       )}
     </>

@@ -1,7 +1,35 @@
 export type Role = 'engineer' | 'researcher' | 'designer' | 'reviewer';
 export type TaskStatus = 'backlog' | 'ready' | 'running' | 'review' | 'done' | 'blocked';
 export type TaskKind = 'code' | 'research' | 'design' | 'review';
+export interface ChatConfig {
+  model?: string;
+  reasoningEffort?: string;
+  skills?: string[];
+}
+export interface MessageReaction {
+  emoji: 'heart' | 'up' | 'down';
+  actorId: 'human';
+  meaning: 'understood' | 'agree' | 'disagree';
+  createdAt: string;
+}
+export interface GroupIntroduction {
+  id: string;
+  projectId: string;
+  memberId: string;
+  status: 'ready';
+  skills: string[];
+  plugins: string[];
+  agreement: string;
+  createdAt: string;
+}
+export interface HumanPresence {
+  projectId: string;
+  status: 'online' | 'offline';
+  lastSeen: string;
+}
 export interface Member {
+  presence?: 'online' | 'offline' | 'busy';
+  activeSessions?: number;
   id: string;
   name: string;
   role: Role;
@@ -22,6 +50,9 @@ export interface Member {
   runnerName?: string;
 }
 export interface Project {
+  /** Explicit group roster. Undefined exists only in pre-roster databases. */
+  memberIds?: string[];
+  chatConfig?: ChatConfig;
   id: string;
   name: string;
   path: string;
@@ -119,6 +150,9 @@ export interface Workflow {
   updatedAt: string;
 }
 export interface RoomMessage {
+  reactions?: MessageReaction[];
+  effectiveConfig?: ChatConfig;
+  command?: string;
   id: string;
   projectId: string;
   taskId: string | null;
@@ -135,6 +169,7 @@ export interface RoomMessage {
   claimedBy?: string | null;
 }
 export interface CodexSession {
+  skills?: string[];
   id: string;
   memberId: string;
   projectId: string;
@@ -252,6 +287,8 @@ export interface Activity {
   createdAt: string;
 }
 export interface WorkspaceState {
+  groupIntroductions?: GroupIntroduction[];
+  humanPresence?: HumanPresence[];
   projects: Project[];
   members: Member[];
   tasks: Task[];

@@ -6,8 +6,9 @@ import { checkpointProgress } from './checkpoint.ts';
 import type { QuotaManager } from './quota.ts';
 import type { Mesh } from './mesh.ts';
 import type { Aegis } from './aegis.ts';
+import { assertGroupMember, groupMembers, memberPresence, type PresenceHost } from './groups.ts';
 
-interface Host {
+interface Host extends PresenceHost {
   store: Store;
   quota: QuotaManager;
   mesh: Mesh;
@@ -75,6 +76,8 @@ export class Handoffs {
         'Planning ownership belongs to the team workflow. Resume that workflow instead.',
       );
     this.host.store.get<Member>('member', input.toMemberId);
+    assertGroupMember(this.host.store, source.projectId, source.memberId);
+    assertGroupMember(this.host.store, source.projectId, input.toMemberId);
     if (source.memberId === input.toMemberId)
       throw new DomainError('Choose a different account for handoff.');
     if (
@@ -197,6 +200,7 @@ export class Handoffs {
       const handoff = this.host.store.get<Handoff>('handoff', id);
       if (handoff.status !== 'awaiting_ack')
         throw new DomainError('This handoff is not ready for acknowledgement.');
+      assertGroupMember(this.host.store, handoff.projectId, handoff.toMemberId);
       await this.host.quota.refresh(handoff.toMemberId);
       this.host.quota.assertCanRun(handoff.toMemberId, handoff.projectId);
       await this.host.aegis.assertHandoff(handoff);
@@ -301,18 +305,26 @@ export class Handoffs {
         )
     )
       return;
-    const member = this.host.store.members().find((candidate) => {
-      if (candidate.id === source.memberId || !candidate.account) return false;
-      try {
-        this.host.quota.assertCanRun(candidate.id, source.projectId);
-        return (
-          this.host.store.leases().filter((lease) => lease.memberId === candidate.id).length <
-          (candidate.maxSessions || 2)
-        );
-      } catch {
-        return false;
-      }
-    });
+    const member = groupMembers(this.host.store, source.projectId)
+      .map((member) => ({ ...member, ...memberPresence(this.host, member) }))
+      .sort(
+        (a, b) =>
+          Number(a.presence === 'busy') - Number(b.presence === 'busy') ||
+          (a.activeSessions || 0) - (b.activeSessions || 0),
+      )
+      .find((candidate) => {
+        if (candidate.id === source.memberId || !candidate.account) return false;
+        if (candidate.presence === 'offline') return false;
+        try {
+          this.host.quota.assertCanRun(candidate.id, source.projectId);
+          return (
+            this.host.store.leases().filter((lease) => lease.memberId === candidate.id).length <
+            (candidate.maxSessions || 2)
+          );
+        } catch {
+          return false;
+        }
+      });
     if (!member) {
       this.host.mesh.ask(
         source.projectId,

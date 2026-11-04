@@ -1,7 +1,7 @@
 // Actual Electron + bundled workspace server + installed Codex probe.
 // The local identity fixture authorizes the test app only; it never creates a Codex login or model turn.
 import assert from 'node:assert/strict';
-import { _electron as electron, expect } from '@playwright/test';
+import { _electron as electron, expect, type ElectronApplication } from '@playwright/test';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -28,7 +28,12 @@ const fixture = createServer(async (request, response) => {
     owner: { id: 'desktop-test-owner', name: 'Desktop test owner' },
     deviceId: '1c62a82e-a094-43ce-b1c3-bf5df6c1387b',
   };
-  if (request.url === '/api/desktop/authorize') {
+  if (request.url?.startsWith('/browser-fixture')) {
+    response.setHeader('Content-Type', 'text/html');
+    response.end(
+      '<!doctype html><title>Project page</title><h1>Ready to review</h1><p>Public project summary</p><input type="password" value="never-share-password"><textarea>never-share-textarea</textarea><div contenteditable>never-share-editable</div><span hidden>never-share-hidden</span><div style="opacity:0"><span>never-share-transparent</span></div><script>window.secret="never-share-script"</script>',
+    );
+  } else if (request.url === '/api/desktop/authorize') {
     challenge = payload.challenge;
     response.end(
       JSON.stringify({
@@ -86,7 +91,7 @@ Object.assign(env, {
   RELAY_NODE_BINARY: process.execPath,
   RELAY_CLOUD_ORIGIN: fixtureOrigin,
 });
-let desktop;
+let desktop: ElectronApplication | undefined;
 try {
   desktop = await electron.launch({ args: [path.resolve('desktop')], env, timeout: 60000 });
   const page = await desktop.firstWindow();
@@ -133,6 +138,196 @@ try {
     'the cloud bridge must forward to the authenticated local runner boundary',
   );
 
+  const memory = async () =>
+    desktop!.evaluate(({ app }) =>
+      app.getAppMetrics().reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
+    );
+  const rendererCount = async () =>
+    desktop!.evaluate(({ webContents }) => webContents.getAllWebContents().length);
+  const baselineRenderers = await rendererCount();
+  const beforeBrowserKb = await memory();
+  const bounds = { x: 200, y: 100, width: 700, height: 500 };
+  await page.evaluate(
+    async ({ url, bounds }) =>
+      (window as any).relayDesktop.browser.open({ projectId: 'browser-project-a', url, bounds }),
+    { url: fixtureOrigin + '/browser-fixture?secret=query-token', bounds },
+  );
+  await expect
+    .poll(
+      async () => (await page.evaluate(() => (window as any).relayDesktop.browser.state())).loading,
+    )
+    .toBe(false);
+  assert.equal(await rendererCount(), baselineRenderers + 1, 'only one on-demand browser renderer');
+  const browserCapabilities = await desktop.evaluate(async ({ webContents }) => {
+    const browser = webContents
+      .getAllWebContents()
+      .find((contents) => contents.getURL().includes('/browser-fixture'))!;
+    return browser.executeJavaScript(
+      '({bridge:typeof window.relayDesktop,node:typeof require,inputs:document.querySelector("input").value})',
+    );
+  });
+  assert.deepEqual(browserCapabilities, {
+    bridge: 'undefined',
+    node: 'undefined',
+    inputs: 'never-share-password',
+  });
+  const snapshot = await page.evaluate(() => (window as any).relayDesktop.browser.snapshot());
+  assert.match(snapshot.text, /Public project summary/);
+  assert.equal(snapshot.text.includes('never-share'), false);
+  assert.equal(snapshot.url, fixtureOrigin + '/browser-fixture');
+  const withBrowserKb = await memory();
+  await desktop.evaluate(async ({ webContents }) => {
+    const browser = webContents
+      .getAllWebContents()
+      .find((contents) => contents.getURL().includes('/browser-fixture'))!;
+    await browser.executeJavaScript('document.cookie="project_cookie=project_a"');
+  });
+  await page.evaluate(
+    async ({ url, bounds }) =>
+      (window as any).relayDesktop.browser.open({ projectId: 'browser-project-b', url, bounds }),
+    { url: fixtureOrigin + '/browser-fixture', bounds },
+  );
+  await expect
+    .poll(
+      async () => (await page.evaluate(() => (window as any).relayDesktop.browser.state())).loading,
+    )
+    .toBe(false);
+  const isolatedCookie = await desktop.evaluate(async ({ webContents }) => {
+    const browser = webContents
+      .getAllWebContents()
+      .find((contents) => contents.getURL().includes('/browser-fixture'))!;
+    return browser.executeJavaScript('document.cookie');
+  });
+  assert.equal(isolatedCookie, '', 'project browser cookies are partitioned by owner and project');
+  await assert.rejects(
+    page.evaluate(
+      async ({ url, bounds }) =>
+        (window as any).relayDesktop.browser.open({ projectId: 'browser-project-b', url, bounds }),
+      { url: localOrigin, bounds },
+    ),
+    /cannot open/,
+  );
+  await page.evaluate(() => (window as any).relayDesktop.browser.close());
+  await expect.poll(rendererCount).toBe(baselineRenderers);
+  const afterBrowserKb = await memory();
+  console.log(
+    `Desktop memory (Electron working-set KB, no model workers): idle=${beforeBrowserKb}, browser=${withBrowserKb}, released=${afterBrowserKb}; browser renderer removed on close.`,
+  );
+  const guide = page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true });
+  if (await guide.isVisible()) await guide.click();
+  await page.getByRole('button', { name: 'Toàn màn hình', exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).fullscreen,
+    )
+    .toBe(true);
+  await page.getByRole('button', { name: 'Thoát toàn màn hình', exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).fullscreen,
+    )
+    .toBe(false);
+
+  // Real React panel + native view, with deterministic HTTPS content served only
+  // inside this test owner's project partition. No external account or model turn.
+  const post = (route: string, body: unknown) =>
+    page.evaluate(
+      async ({ route, body }) => {
+        const { token } = await (await fetch('/api/session')).json();
+        const result = await fetch(`/api${route}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Relay-Token': token },
+          body: JSON.stringify(body),
+        });
+        const data = await result.json();
+        if (!result.ok) throw new Error(data.error);
+        return data;
+      },
+      { route, body },
+    );
+  const member = await post('/members', { name: 'Browser fixture', role: 'researcher' });
+  const project = await post('/hackathons', {
+    memberId: member.id,
+    name: 'Browser test project',
+    competitionName: 'Browser fixture',
+    competitionUrl: 'https://example.org/challenge',
+    goal: 'Verify desktop browser controls without starting a model.',
+  });
+  const session = await post('/sessions', {
+    memberId: member.id,
+    projectId: project.id,
+    title: 'Browser review',
+    readOnly: true,
+  });
+  await page.evaluate(() => sessionStorage.setItem('kivuno-guide-v3', 'seen'));
+  const uiFixture = { projectId: project.id, sessionId: session.id };
+  const partition =
+    'persist:kivuno-browser-' +
+    createHash('sha256')
+      .update('desktop-test-owner\0' + uiFixture.projectId)
+      .digest('hex');
+  await desktop.evaluate(({ session }, partition) => {
+    session
+      .fromPartition(partition)
+      .protocol.handle(
+        'https',
+        () =>
+          new Response(
+            '<!doctype html><title>Reviewed page</title><h1>Browser integration</h1><p>Human reviewed project details.</p><input type="password" value="never-share-login">',
+            { headers: { 'Content-Type': 'text/html' } },
+          ),
+      );
+  }, partition);
+  await page.reload();
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Neralu', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Session view', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Browser review, Browser fixture, idle', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Browser', exact: true }).click();
+  await page
+    .getByLabel('Địa chỉ website')
+    .fill('https://browser.kivuno.test/project?token=private');
+  await page.getByRole('button', { name: 'Mở website', exact: true }).click();
+  await expect
+    .poll(
+      async () => (await page.evaluate(() => (window as any).relayDesktop.browser.state())).title,
+    )
+    .toBe('Reviewed page');
+  await page.getByRole('button', { name: 'Chia sẻ trang', exact: true }).click();
+  const reviewed = page.getByLabel('Xem lại nội dung chia sẻ');
+  await expect(reviewed).toHaveValue(/Human reviewed project details\./);
+  assert.equal((await reviewed.inputValue()).includes('never-share-login'), false);
+  await expect
+    .poll(() =>
+      desktop!.evaluate(
+        ({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].contentView.children.filter((view) => !view.getVisible())
+            .length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await reviewed.fill('Reviewed and edited by the human.');
+  await page.getByRole('button', { name: /Chia sẻ & tiếp tục|Gửi cho Codex/ }).click();
+  await expect(reviewed).toHaveCount(0);
+  const sharedPage = await page.evaluate(async ({ projectId, sessionId }) => {
+    const { token } = await (await fetch('/api/session')).json();
+    return (
+      await fetch(`/api/projects/${projectId}/browser?sessionId=${sessionId}`, {
+        headers: { 'X-Relay-Token': token },
+      })
+    ).json();
+  }, uiFixture);
+  assert.equal(sharedPage.snapshot.text, 'Reviewed and edited by the human.');
+  assert.equal(sharedPage.snapshot.url, 'https://browser.kivuno.test/project');
+  await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
+  await expect.poll(rendererCount).toBe(baselineRenderers);
+
   await page.evaluate(() => {
     void (window as any).relayDesktop.signOut();
   });
@@ -146,7 +341,7 @@ try {
     .toBe(false);
   await expect.poll(() => revoked).toBe(true);
   console.log(
-    'Desktop E2E passed: real Electron/runtime/Codex probe, browser activation, protected local API, DPAPI session and sign-out.',
+    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
   );
 } finally {
   if (desktop) await desktop.close();

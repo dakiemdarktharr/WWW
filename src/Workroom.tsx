@@ -63,12 +63,20 @@ export default function Workroom({
   control: (workflow: Workflow, action: 'pause' | 'resume' | 'cancel') => Promise<unknown>;
   send: (content: string) => Promise<unknown>;
 }) {
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(() => {
+    try {
+      return sessionStorage.getItem(`kivuno-plan-draft-${project?.id}`) || '';
+    } catch {
+      return '';
+    }
+  });
   const [message, setMessage] = useState('');
   const [workflowId, setWorkflowId] = useState('');
   const [agentFilter, setAgentFilter] = useState('all');
   const [eventFilter, setEventFilter] = useState('all');
-  const members = state?.members || [];
+  const members = (state?.members || []).filter((member) =>
+    project?.memberIds?.includes(member.id),
+  );
   const workflows = (state?.workflows || []).filter((w) => w.projectId === project?.id);
   const workflow = workflows.find((w) => w.id === workflowId) || workflows.at(-1);
   const currentWorkflow = workflows.find((w) => !['completed', 'cancelled'].includes(w.status));
@@ -135,6 +143,11 @@ export default function Workroom({
     const result = await start(prompt.trim());
     if (result) {
       setPrompt('');
+      try {
+        sessionStorage.removeItem(`kivuno-plan-draft-${project?.id}`);
+      } catch {
+        /* Optional draft. */
+      }
       setWorkflowId(result.id);
     }
   }
@@ -337,9 +350,9 @@ export default function Workroom({
                       </span>
                     )}
                     <span
-                      className={`presence ${member.status}`}
-                      aria-label={member.status}
-                      title={member.status}
+                      className={`presence ${member.presence || 'offline'}`}
+                      aria-label={member.presence || 'offline'}
+                      title={member.presence || 'offline'}
                     />
                   </div>
                   <div className="hierarchy-role">
@@ -427,7 +440,7 @@ export default function Workroom({
           </div>
           <div className="activity-timeline" role="log" aria-label="Agent activity" aria-live="off">
             {events.length ? (
-              events.map((event) => {
+              events.slice(-160).map((event) => {
                 const member = members.find((m) => m.id === event.memberId);
                 const task = tasks.find((t) => t.id === event.taskId);
                 const long = event.text.length > 440 || event.text.split('\n').length > 5;

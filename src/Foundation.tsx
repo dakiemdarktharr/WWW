@@ -43,7 +43,7 @@ export type FoundationRequest = <T = unknown>(
   body: unknown,
   method?: string,
 ) => Promise<T | undefined>;
-interface FoundationProps {
+export interface FoundationProps {
   state: WorkspaceState;
   project?: Project;
   busy: boolean;
@@ -150,530 +150,7 @@ export function FoundationDialog({
   );
 }
 
-export function MeshPage({
-  state,
-  project,
-  busy,
-  request,
-  selectProject,
-  addProject,
-  openSessions,
-}: FoundationProps) {
-  const [search, setSearch] = useState('');
-  const [panel, setPanel] = useState<'team' | 'usage' | 'needs' | 'handoffs' | null>(null);
-  const [content, setContent] = useState('');
-  const [replyTo, setReplyTo] = useState<string | null>(null);
-  const [thread, setThread] = useState<string | null>(null);
-  const [mentions, setMentions] = useState<string[]>([]);
-  const [claimMember, setClaimMember] = useState('');
-  const [handoffForm, setHandoffForm] = useState(false);
-  const members = state.members;
-  const messages = state.messages
-    .filter((message) => message.projectId === project?.id)
-    .sort(
-      (a, b) => (a.sequence || 0) - (b.sequence || 0) || a.createdAt.localeCompare(b.createdAt),
-    );
-  const requests = state.humanRequests.filter(
-    (item) => item.projectId === project?.id && item.status === 'open',
-  );
-  const handoffs = state.handoffs.filter((item) => item.projectId === project?.id);
-  const projectSessions = state.sessions.filter((session) => session.projectId === project?.id);
-  const replyMessage = messages.find((message) => message.id === replyTo);
-  const belongsToThread = (message: RoomMessage) => {
-    if (!thread) return true;
-    const visited = new Set<string>();
-    let current: RoomMessage | undefined = message;
-    while (current && !visited.has(current.id)) {
-      if (current.id === thread) return true;
-      visited.add(current.id);
-      current = messages.find((item) => item.id === current?.replyTo);
-    }
-    return false;
-  };
-  const displayed = messages.filter(
-    (message) =>
-      belongsToThread(message) &&
-      (!search ||
-        `${message.content} ${members.find((member) => member.id === message.authorId)?.name || 'You'}`
-          .toLowerCase()
-          .includes(search.toLowerCase())),
-  );
-  const scroll = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    scroll.current?.scrollTo({ top: scroll.current.scrollHeight });
-  }, [messages.length, thread]);
-  useEffect(() => {
-    setThread(null);
-    setReplyTo(null);
-    setContent('');
-    setMentions([]);
-  }, [project?.id]);
-  async function send(event: FormEvent) {
-    event.preventDefault();
-    if (!content.trim() || !project) return;
-    const result = await request<RoomMessage>('/mesh/messages', {
-      projectId: project.id,
-      content: content.trim(),
-      ...(replyTo ? { replyTo } : {}),
-      mentions,
-    });
-    if (result) {
-      setContent('');
-      setReplyTo(null);
-      setMentions([]);
-    }
-  }
-  return (
-    <div className={`mesh-layout ${panel ? 'has-context' : ''}`}>
-      <aside className="mesh-groups" aria-label="Project groups" data-usage="groups">
-        <div className="mesh-groups-heading">
-          <strong>Neralu</strong>
-          <button className="icon-button" onClick={addProject} aria-label="Connect a project group">
-            <Plus size={16} />
-          </button>
-        </div>
-        {state.projects.map((item) => (
-          <button
-            key={item.id}
-            className={`mesh-group ${item.id === project?.id ? 'active' : ''}`}
-            onClick={() => selectProject(item.id)}
-          >
-            <Hash size={15} />
-            <span>{item.name}</span>
-            {state.humanRequests.some(
-              (entry) => entry.projectId === item.id && entry.status === 'open',
-            ) && <span className="group-attention" aria-label="Needs your attention" />}
-          </button>
-        ))}
-        {!state.projects.length && (
-          <button className="text-button" onClick={addProject}>
-            <Plus size={14} />
-            Connect project
-          </button>
-        )}
-      </aside>
-      <section className="mesh-chat panel">
-        <header className="mesh-heading">
-          <div>
-            <Hash size={18} />
-            <h1>{project?.name || 'Neralu'}</h1>
-            {thread && (
-              <button className="text-button" onClick={() => setThread(null)}>
-                Group
-                <ArrowRight size={13} />
-                Thread
-              </button>
-            )}
-          </div>
-          <div className="mesh-heading-actions">
-            <button
-              className={`icon-button ${panel === 'team' ? 'selected' : ''}`}
-              onClick={() => setPanel(panel === 'team' ? null : 'team')}
-              aria-label="Group team"
-              title="Team"
-            >
-              <Users size={16} />
-            </button>
-            <button
-              className={`icon-button ${panel === 'usage' ? 'selected' : ''}`}
-              onClick={() => setPanel(panel === 'usage' ? null : 'usage')}
-              aria-label="Account usage"
-              data-usage="mesh-usage"
-              title="Usage"
-            >
-              <Circle size={16} />
-            </button>
-            <button
-              className={`icon-button ${panel === 'needs' ? 'selected' : ''}`}
-              onClick={() => setPanel(panel === 'needs' ? null : 'needs')}
-              aria-label={`Needs you${requests.length ? ` (${requests.length})` : ''}`}
-              title="Needs you"
-              data-usage="mesh-needs"
-            >
-              <Bell size={16} />
-              {requests.length > 0 && <span className="mini-count">{requests.length}</span>}
-            </button>
-            <button
-              className={`icon-button ${panel === 'handoffs' ? 'selected' : ''}`}
-              onClick={() => setPanel(panel === 'handoffs' ? null : 'handoffs')}
-              aria-label="Project handoffs"
-              data-usage="mesh-handoff"
-              title="Handoffs"
-            >
-              <GitBranch size={16} />
-            </button>
-          </div>
-        </header>
-        <div className="mesh-search">
-          <Search size={14} />
-          <input
-            aria-label="Search group messages"
-            placeholder="Search messages"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {thread && (
-            <button className="text-button" onClick={() => setThread(null)}>
-              All messages
-              <X size={12} />
-            </button>
-          )}
-        </div>
-        <div
-          className="mesh-messages"
-          ref={scroll}
-          role="log"
-          aria-label="Project messages"
-          aria-live="polite"
-        >
-          {displayed.length ? (
-            displayed.map((message) => {
-              const member = members.find((item) => item.id === message.authorId);
-              const parent = messages.find((item) => item.id === message.replyTo);
-              const replies = messages.filter((item) => item.replyTo === message.id).length;
-              return (
-                <article
-                  key={message.id}
-                  className={`mesh-message message-${message.kind} ${message.humanCommand && message.authorId === null ? 'human-command' : ''}`}
-                >
-                  <Face member={member} />
-                  <div className="mesh-message-body">
-                    <div className="mesh-message-meta">
-                      <strong>
-                        {member?.name || (message.authorId === null ? 'You' : 'Agent')}
-                      </strong>
-                      {message.authorId === null && (
-                        <span className="human-label">
-                          <ShieldCheck size={10} />
-                          Human
-                        </span>
-                      )}
-                      {message.humanCommand && message.authorId === null && (
-                        <span className="command-label">!!</span>
-                      )}
-                      <span className="message-kind">{message.kind}</span>
-                      <time dateTime={message.createdAt} title={dateTime(message.createdAt)}>
-                        {clock(message.createdAt)}
-                      </time>
-                    </div>
-                    {parent && (
-                      <button
-                        className="message-reply-context"
-                        onClick={() => setThread(parent.id)}
-                      >
-                        <Reply size={12} />
-                        {parent.content.slice(0, 120)}
-                      </button>
-                    )}
-                    <p>{message.content}</p>
-                    {message.mentions?.length ? (
-                      <div className="message-mentions">
-                        {message.mentions.map((id) => (
-                          <span key={id}>
-                            @{members.find((item) => item.id === id)?.name || 'agent'}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="mesh-message-tools">
-                      <button
-                        className="text-button"
-                        onClick={() => {
-                          setReplyTo(message.id);
-                          document.getElementById('mesh-composer')?.focus();
-                        }}
-                      >
-                        <Reply size={12} />
-                        Reply
-                      </button>
-                      {replies > 0 && (
-                        <button className="text-button" onClick={() => setThread(message.id)}>
-                          <MessageSquare size={12} />
-                          {replies} {replies === 1 ? 'reply' : 'replies'}
-                        </button>
-                      )}
-                      {message.requestStatus === 'claimed' && (
-                        <span className="claimed-label">
-                          <Check size={11} />
-                          {members.find((item) => item.id === message.claimedBy)?.name ||
-                            'Agent'}{' '}
-                          claimed
-                        </span>
-                      )}
-                      {message.requestStatus === 'done' && (
-                        <span className="claimed-label">
-                          <Check size={11} />
-                          Done
-                        </span>
-                      )}
-                      {message.requestStatus === 'open' && (
-                        <div className="claim-control">
-                          <select
-                            aria-label={`Assign request ${message.sequence || message.id}`}
-                            value={claimMember}
-                            onChange={(event) => setClaimMember(event.target.value)}
-                          >
-                            <option value="">Assign account</option>
-                            {members.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.name}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            className="text-button accent"
-                            disabled={busy || !claimMember}
-                            onClick={() =>
-                              void request(`/mesh/messages/${message.id}/claim`, {
-                                memberId: claimMember,
-                              })
-                            }
-                          >
-                            Claim
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </article>
-              );
-            })
-          ) : (
-            <div className="foundation-empty">
-              <MessageSquare size={24} />
-              <span>{search ? 'No matching messages' : 'No messages'}</span>
-            </div>
-          )}
-        </div>
-        <form className="mesh-composer" onSubmit={send}>
-          {replyMessage && (
-            <div className="composer-reply">
-              <Reply size={13} />
-              <span>{replyMessage.content.slice(0, 100)}</span>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setReplyTo(null)}
-                aria-label="Cancel reply"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
-          <label className="sr-only" htmlFor="mesh-composer">
-            Message the project team
-          </label>
-          <textarea
-            id="mesh-composer"
-            data-usage="mesh-input"
-            rows={3}
-            maxLength={10000}
-            value={content}
-            onChange={(event) => setContent(event.target.value)}
-            placeholder={
-              project ? `Message #${project.name}` : 'Connect a project to message the team'
-            }
-            disabled={!project}
-            onKeyDown={(event) => {
-              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter')
-                event.currentTarget.form?.requestSubmit();
-            }}
-          />
-          <div className="mesh-composer-actions">
-            <div className="composer-mentions">
-              <select
-                aria-label="Mention a teammate"
-                value=""
-                disabled={!project || !members.length}
-                onChange={(event) => {
-                  if (event.target.value && !mentions.includes(event.target.value))
-                    setMentions([...mentions, event.target.value]);
-                }}
-              >
-                <option value="">@ Mention</option>
-                {members.map((member) => (
-                  <option key={member.id} value={member.id}>
-                    {member.name}
-                  </option>
-                ))}
-              </select>
-              {mentions.map((id) => (
-                <button
-                  type="button"
-                  key={id}
-                  className="mention-chip"
-                  onClick={() => setMentions(mentions.filter((item) => item !== id))}
-                >
-                  @{members.find((item) => item.id === id)?.name}
-                  <X size={10} />
-                </button>
-              ))}
-            </div>
-            <button
-              className="button primary"
-              disabled={!project || !content.trim() || busy}
-              type="submit"
-            >
-              <Send size={14} />
-              Send
-            </button>
-          </div>
-        </form>
-      </section>
-      {panel && (
-        <aside className="mesh-context panel">
-          <div className="mesh-context-heading">
-            <h2>
-              {panel === 'needs'
-                ? 'Needs you'
-                : panel === 'usage'
-                  ? 'Account usage'
-                  : panel === 'handoffs'
-                    ? 'Handoffs'
-                    : 'Team'}
-            </h2>
-            <button
-              className="icon-button"
-              onClick={() => setPanel(null)}
-              aria-label="Close context panel"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          {panel === 'team' && (
-            <div className="mesh-context-content">
-              {members.length ? (
-                members.map((member) => {
-                  const cursor = state.meshCursors.find(
-                    (entry) => entry.memberId === member.id && entry.projectId === project?.id,
-                  );
-                  const unread = messages.filter(
-                    (message) => (message.sequence || 0) > (cursor?.readThrough || 0),
-                  ).length;
-                  const active = projectSessions.filter(
-                    (session) =>
-                      session.memberId === member.id &&
-                      ['running', 'starting'].includes(session.status),
-                  );
-                  return (
-                    <section className="mesh-member" key={member.id}>
-                      <div className="mesh-member-heading">
-                        <Face member={member} />
-                        <strong>{member.name}</strong>
-                        <span className={`presence ${member.status}`} title={member.status} />
-                      </div>
-                      <div className="mesh-member-meta">
-                        <span>{member.role}</span>
-                        <span>{member.account?.planType || 'Plan unknown'}</span>
-                      </div>
-                      {member.owner && (
-                        <span className="mesh-owner">Owner: {member.owner.login}</span>
-                      )}
-                      <div className="mesh-member-meta">
-                        <span>{active.length} active sessions</span>
-                        <span>{unread} unread</span>
-                      </div>
-                      <div className="mesh-read-cursor">
-                        <span>Read {cursor?.readThrough || 0}</span>
-                        <span>Acknowledged {cursor?.acknowledgedThrough || 0}</span>
-                      </div>
-                    </section>
-                  );
-                })
-              ) : (
-                <div className="foundation-empty">No accounts</div>
-              )}
-              <button className="button" onClick={openSessions}>
-                <Terminal size={14} />
-                Open sessions
-              </button>
-            </div>
-          )}
-          {panel === 'usage' && (
-            <div className="mesh-context-content">
-              {members.map((member) => (
-                <QuotaCard
-                  key={member.id}
-                  member={member}
-                  project={project}
-                  state={state}
-                  busy={busy}
-                  request={request}
-                />
-              ))}
-            </div>
-          )}
-          {panel === 'needs' && (
-            <div className="mesh-context-content">
-              {requests.length ? (
-                requests.map((item) => (
-                  <section className="human-request" key={item.id}>
-                    <span className="event-type">{item.kind}</span>
-                    <h3>{item.title}</h3>
-                    <p>{item.content}</p>
-                    <time>{dateTime(item.createdAt)}</time>
-                    <button
-                      className="button compact"
-                      disabled={busy}
-                      onClick={() => void request(`/requests/${item.id}/resolve`, {})}
-                    >
-                      <Check size={12} />
-                      Resolve
-                    </button>
-                  </section>
-                ))
-              ) : (
-                <div className="foundation-empty">
-                  <Check size={22} />
-                  <span>No open requests</span>
-                </div>
-              )}
-            </div>
-          )}
-          {panel === 'handoffs' && (
-            <div className="mesh-context-content">
-              <button
-                className="button"
-                onClick={() => setHandoffForm(true)}
-                disabled={!project || !projectSessions.length}
-              >
-                <Plus size={14} />
-                Prepare handoff
-              </button>
-              {handoffs.length ? (
-                [...handoffs]
-                  .reverse()
-                  .map((item) => (
-                    <HandoffCard
-                      key={item.id}
-                      item={item}
-                      state={state}
-                      busy={busy}
-                      request={request}
-                    />
-                  ))
-              ) : (
-                <div className="foundation-empty">
-                  <GitBranch size={22} />
-                  <span>No handoffs</span>
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
-      )}
-      {handoffForm && project && (
-        <HandoffForm
-          state={state}
-          project={project}
-          busy={busy}
-          request={request}
-          close={() => setHandoffForm(false)}
-        />
-      )}
-    </div>
-  );
-}
+export { default as MeshPage } from './ProjectChat';
 
 export function QuotaCard({
   member,
@@ -796,7 +273,7 @@ export function QuotaCard({
   );
 }
 
-function HandoffCard({
+export function HandoffCard({
   item,
   state,
   busy,
@@ -1098,6 +575,7 @@ export function SessionsPage({
   focusedId,
 }: Omit<FoundationProps, 'selectProject' | 'openSessions'> & { focusedId?: string }) {
   const [creating, setCreating] = useState(false);
+  const [sessionPage, setSessionPage] = useState(0);
   const [filter, setFilter] = useState('all');
   const [handoffSession, setHandoffSession] = useState<string | null>(null);
   const [demo, setDemo] = useState('');
@@ -1278,17 +756,26 @@ export function SessionsPage({
       )}
       {sessions.length ? (
         <div className="session-grid" data-usage="session-grid">
-          {sessions.map((session) => (
-            <SessionConsole
-              key={session.id}
-              session={session}
-              state={state}
-              busy={busy}
-              request={request}
-              focused={!!focusedId}
-              handoff={() => setHandoffSession(session.id)}
-            />
-          ))}
+          {sessions
+            .slice(
+              focusedId
+                ? 0
+                : Math.min(sessionPage, Math.max(0, Math.ceil(sessions.length / 6) - 1)) * 6,
+              focusedId
+                ? 1
+                : (Math.min(sessionPage, Math.max(0, Math.ceil(sessions.length / 6) - 1)) + 1) * 6,
+            )
+            .map((session) => (
+              <SessionConsole
+                key={session.id}
+                session={session}
+                state={state}
+                busy={busy}
+                request={request}
+                focused={!!focusedId}
+                handoff={() => setHandoffSession(session.id)}
+              />
+            ))}
         </div>
       ) : (
         <section className="panel foundation-empty session-empty">
@@ -1305,6 +792,29 @@ export function SessionsPage({
             </button>
           )}
         </section>
+      )}
+      {!focusedId && sessions.length > 6 && (
+        <div className="graph-pagination">
+          <span>{sessions.length} sessions · 6 per page</span>
+          <button
+            className="button compact"
+            disabled={sessionPage === 0}
+            onClick={() => setSessionPage(Math.max(0, sessionPage - 1))}
+          >
+            Previous
+          </button>
+          <span>
+            {Math.min(sessionPage + 1, Math.ceil(sessions.length / 6))} /{' '}
+            {Math.ceil(sessions.length / 6)}
+          </span>
+          <button
+            className="button compact"
+            disabled={sessionPage >= Math.ceil(sessions.length / 6) - 1}
+            onClick={() => setSessionPage(sessionPage + 1)}
+          >
+            Next
+          </button>
+        </div>
       )}
       {creating && project && (
         <CreateSession
@@ -1329,7 +839,7 @@ export function SessionsPage({
   );
 }
 
-function CreateSession({
+export function CreateSession({
   state,
   project,
   busy,
@@ -1344,7 +854,9 @@ function CreateSession({
 }) {
   const [readOnly, setReadOnly] = useState(true);
   const [taskId, setTaskId] = useState('');
-  const [memberId, setMemberId] = useState(project.ownerMemberId || '');
+  const [memberId, setMemberId] = useState(
+    project.memberIds?.includes(project.ownerMemberId || '') ? project.ownerMemberId || '' : '',
+  );
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [automatic, setAutomatic] = useState(true);
@@ -1389,12 +901,14 @@ function CreateSession({
             }}
           >
             <option value="">Choose Codex account</option>
-            {state.members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.name}
-                {member.account ? '' : ' · reconnect required'}
-              </option>
-            ))}
+            {state.members
+              .filter((member) => project.memberIds?.includes(member.id))
+              .map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
+                  {member.account ? '' : ' · reconnect required'}
+                </option>
+              ))}
           </select>
         </label>
         <label className="foundation-checkbox">
@@ -1631,7 +1145,7 @@ function SessionSettings({
   );
 }
 
-function SessionConsole({
+export function SessionConsole({
   session,
   state,
   busy,
@@ -1647,6 +1161,7 @@ function SessionConsole({
   handoff: () => void;
 }) {
   const [events, setEvents] = useState<SessionEvent[]>([]);
+  const [eventPage, setEventPage] = useState(0);
   const [eventError, setEventError] = useState('');
   const [prompt, setPrompt] = useState('');
   const [confirmedStopped, setConfirmedStopped] = useState(false);
@@ -1670,7 +1185,13 @@ function SessionConsole({
       try {
         const data = await api<SessionEvent[]>(`/sessions/${session.id}/events`);
         if (!cancelled) {
-          setEvents(data);
+          setEvents((previous) =>
+            previous.length === data.length &&
+            previous.at(-1)?.id === data.at(-1)?.id &&
+            previous.at(-1)?.text === data.at(-1)?.text
+              ? previous
+              : data,
+          );
           setEventError('');
         }
       } catch (error) {
@@ -1678,12 +1199,17 @@ function SessionConsole({
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 2500);
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    const timer = window.setInterval(onVisible, running ? 4000 : 20000);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [session.id]);
+  }, [session.id, session.status, running]);
   useEffect(() => {
     output.current?.scrollTo({ top: output.current.scrollHeight });
   }, [events.length, events.at(-1)?.text]);
@@ -1752,27 +1278,51 @@ function SessionConsole({
         aria-live="off"
       >
         {events.length ? (
-          events.map((event) => (
-            <article className={`session-event output-${event.kind}`} key={event.id}>
-              <div>
-                <span>
-                  {event.kind === 'user'
-                    ? 'You'
-                    : event.kind === 'agent'
-                      ? member?.name || 'Codex'
-                      : event.kind}
-                </span>
-                <time title={dateTime(event.createdAt)}>{clock(event.createdAt)}</time>
-              </div>
-              <pre>{event.text}</pre>
-            </article>
-          ))
+          events
+            .slice(
+              Math.max(0, events.length - (eventPage + 1) * 100),
+              Math.max(0, events.length - eventPage * 100),
+            )
+            .map((event) => (
+              <article className={`session-event output-${event.kind}`} key={event.id}>
+                <div>
+                  <span>
+                    {event.kind === 'user'
+                      ? 'You'
+                      : event.kind === 'agent'
+                        ? member?.name || 'Codex'
+                        : event.kind}
+                  </span>
+                  <time title={dateTime(event.createdAt)}>{clock(event.createdAt)}</time>
+                </div>
+                <pre>{event.text}</pre>
+              </article>
+            ))
         ) : (
           <div className="session-output-empty">
             {running ? 'Waiting for Codex events…' : 'No recorded output'}
           </div>
         )}
       </div>
+      {events.length > 100 && (
+        <div className="graph-pagination">
+          <button
+            className="button compact"
+            disabled={(eventPage + 1) * 100 >= events.length}
+            onClick={() => setEventPage(eventPage + 1)}
+          >
+            Older output
+          </button>
+          <span>{events.length} events</span>
+          <button
+            className="button compact"
+            disabled={!eventPage}
+            onClick={() => setEventPage(Math.max(0, eventPage - 1))}
+          >
+            Newer output
+          </button>
+        </div>
+      )}
       {(session.error || eventError) && (
         <div className="session-error" role="alert">
           {session.error || eventError}

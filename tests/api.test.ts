@@ -9,6 +9,7 @@ import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
 import { redact, safeDetails } from '../server/security.ts';
+import type { CodexSession } from '../shared/types.ts';
 
 async function fixture() {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'relay-api-'));
@@ -55,6 +56,127 @@ async function fixture() {
     },
   };
 }
+
+test('group mutation endpoints bind human identity and browser sharing continues only the same session once', async () => {
+  const f = await fixture();
+  try {
+    const member = f.store.addMember({ name: 'Atlas', role: 'engineer' });
+    const outside = f.store.addMember({ name: 'Vega', role: 'reviewer' });
+    const project = f.store.put('project', {
+      id: randomUUID(),
+      name: 'Group',
+      path: f.dir,
+      goal: '',
+      memberIds: [],
+      createdAt: new Date().toISOString(),
+    });
+    const roster = await f.request('PATCH', `/api/projects/${project.id}/members`, {
+      memberIds: [member.id],
+    });
+    assert.equal(roster.statusCode, 200);
+    assert.deepEqual(roster.json().memberIds, [member.id]);
+    assert.equal(
+      (
+        await f.request('PATCH', `/api/projects/${project.id}/members`, {
+          memberIds: [member.id],
+          ownerId: outside.id,
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (await f.request('POST', `/api/mesh/${project.id}/heartbeat`, {})).statusCode,
+      200,
+    );
+    assert.equal(
+      (await f.request('POST', `/api/mesh/${project.id}/heartbeat`, { memberId: outside.id }))
+        .statusCode,
+      400,
+    );
+    const message = f.workspace.mesh.post({
+      projectId: project.id,
+      authorId: member.id,
+      kind: 'progress',
+      content: 'Review ready',
+    });
+    assert.equal(
+      (
+        await f.request('POST', `/api/mesh/messages/${message.id}/reactions`, {
+          emoji: 'up',
+          actorId: outside.id,
+        })
+      ).statusCode,
+      400,
+    );
+    const reaction = await f.request('POST', `/api/mesh/messages/${message.id}/reactions`, {
+      emoji: 'up',
+    });
+    assert.equal(reaction.json().reactions[0].actorId, 'human');
+    const session = f.store.put('session', {
+      id: randomUUID(),
+      projectId: project.id,
+      memberId: member.id,
+      taskId: randomUUID(),
+      title: 'Browser',
+      readOnly: true,
+      status: 'idle',
+      threadId: null,
+      turnId: null,
+      pid: null,
+      error: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies CodexSession);
+    const calls: string[] = [];
+    f.workspace.sessions.send = async (id) => {
+      calls.push(id);
+      return session;
+    };
+    const body = {
+      sessionId: session.id,
+      url: 'https://example.com/account?token=private',
+      title: 'Reviewed page',
+      text: 'Visible information',
+      reviewed: true,
+    };
+    assert.equal(
+      (
+        await f.request('POST', `/api/projects/${project.id}/browser/share`, {
+          ...body,
+          reviewed: false,
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (await f.request('POST', `/api/projects/${randomUUID()}/browser/share`, body)).statusCode,
+      403,
+    );
+    const shared = await f.request('POST', `/api/projects/${project.id}/browser/share`, body);
+    assert.equal(shared.statusCode, 200);
+    assert.equal(shared.json().continuation, 'sent');
+    assert.equal(shared.json().url, 'https://example.com/account');
+    assert.equal(
+      (await f.request('POST', `/api/projects/${project.id}/browser/share`, body)).json()
+        .continuation,
+      'sent',
+    );
+    assert.deepEqual(calls, [session.id]);
+    assert.equal(f.store.all('meshDispatch').length, 0);
+    f.store.updateSession(session.id, { status: 'interrupted' });
+    const paused = await f.request('POST', `/api/projects/${project.id}/browser/share`, {
+      ...body,
+      text: 'Updated content',
+    });
+    assert.equal(paused.json().continuation, 'paused');
+    assert.equal(calls.length, 1, 'sharing cannot bypass explicit recovery');
+    const state = (await f.request('GET', '/api/state')).json();
+    assert.equal(state.groupIntroductions.length, 1);
+    assert.equal(state.humanPresence[0].status, 'online');
+  } finally {
+    await f.close();
+  }
+});
 
 test('hosted launcher can open the local document without granting cross-site API access', async () => {
   const f = await fixture();

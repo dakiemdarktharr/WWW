@@ -61,6 +61,15 @@ export class Store extends EventEmitter {
       }[]
     ).map((r) => JSON.parse(r.data));
   }
+  recent<T>(kind: string, limit: number): T[] {
+    return (
+      this.db
+        .prepare('SELECT data FROM records WHERE kind=? ORDER BY rowid DESC LIMIT ?')
+        .all(kind, Math.max(1, Math.min(1000, limit))) as { data: string }[]
+    )
+      .reverse()
+      .map((row) => JSON.parse(row.data));
+  }
   get<T>(kind: string, id: string): T {
     const row = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id) as
       { data: string } | undefined;
@@ -190,7 +199,12 @@ export class Store extends EventEmitter {
       this.get<Workflow>('workflow', input.workflowId).projectId !== input.projectId
     )
       throw new DomainError('The workflow belongs to another project.');
-    if (input.assignedTo) this.get<Member>('member', input.assignedTo);
+    if (input.assignedTo) {
+      this.get<Member>('member', input.assignedTo);
+      const project = this.get<Project>('project', input.projectId);
+      if (project.memberIds && !project.memberIds.includes(input.assignedTo))
+        throw new DomainError('Add this teammate to the project group first.', 403);
+    }
     const normalized = input.title.toLowerCase().replace(/\s+/g, ' ').trim();
     if (
       this.tasks().some(
@@ -248,6 +262,9 @@ export class Store extends EventEmitter {
       const task = this.get<Task>('task', taskId),
         member = this.get<Member>('member', memberId);
       const session = sessionId ? this.get<CodexSession>('session', sessionId) : null;
+      const project = this.get<Project>('project', task.projectId);
+      if (project.memberIds && !project.memberIds.includes(memberId))
+        throw new DomainError('Add this teammate to the project group first.', 403);
       const scopes = session?.readOnly ? [] : task.scope;
       if (task.status !== 'ready') throw new DomainError('Only a ready task can be claimed.');
       if (

@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld(
   'relayDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.4.0',
+    version: '0.5.0',
     getStatus: () => ipcRenderer.invoke('relay:status'),
     beginSignIn: () => ipcRenderer.invoke('relay:sign-in'),
     signOut: () => ipcRenderer.invoke('relay:sign-out'),
@@ -15,5 +15,26 @@ contextBridge.exposeInMainWorld(
     chooseDirectory: () => ipcRenderer.invoke('relay:directory'),
     joinMachine: () => ipcRenderer.invoke('relay:join-machine'),
     stopMachine: (id) => ipcRenderer.invoke('relay:stop-machine', id),
+    getWindowState: () => ipcRenderer.invoke('relay:window-state'),
+    controlWindow: (action) => ipcRenderer.invoke('relay:window-control', action),
+    onWindowState: (callback) => {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on('relay:window-state', listener);
+      return () => ipcRenderer.removeListener('relay:window-state', listener);
+    },
+    browser: Object.freeze({
+      state: () => ipcRenderer.invoke('relay:browser-state'),
+      open: (input) => ipcRenderer.invoke('relay:browser-open', input),
+      bounds: (input) => ipcRenderer.invoke('relay:browser-bounds', input),
+      navigate: (action) => ipcRenderer.invoke('relay:browser-navigate', action),
+      snapshot: () => ipcRenderer.invoke('relay:browser-snapshot'),
+      review: (hidden) => ipcRenderer.invoke('relay:browser-review', hidden),
+      close: () => ipcRenderer.invoke('relay:browser-close'),
+      onState: (callback) => {
+        const listener = (_event, state) => callback(state);
+        ipcRenderer.on('relay:browser-state', listener);
+        return () => ipcRenderer.removeListener('relay:browser-state', listener);
+      },
+    }),
   }),
 );

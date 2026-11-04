@@ -100,7 +100,7 @@ try {
     version: app.getVersion(),
     packaged: app.isPackaged,
   }));
-  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.4.0', packaged: true });
+  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.5.0', packaged: true });
   const page = await desktop.firstWindow();
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const resourceName = (value: string) => {

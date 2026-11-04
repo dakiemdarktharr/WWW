@@ -175,6 +175,39 @@ test('two writing sessions share an account but hold independent process, task a
   assert.equal(f.store.leases().length, 2);
 });
 
+test('reaction feedback steers its existing author session once and never starts a new turn', async (t) => {
+  const f = await fixture(t);
+  const session = await f.create('Review feedback', ['.'], true);
+  await f.workspace.sessions.send(session.id, 'Read the project.');
+  const peer = f.peers.get(session.id)!;
+  const message = f.workspace.mesh.post({
+    projectId: f.project.id,
+    authorId: f.member.id,
+    sessionId: session.id,
+    kind: 'progress',
+    content: 'An option to review.',
+  });
+  f.workspace.mesh.react(message.id, 'down');
+  const starts = peer.calls.filter((call) => call.method === 'turn/start').length;
+  await f.workspace.sessions.notify(f.project.id);
+  await f.workspace.sessions.notify(f.project.id);
+  const steers = peer.calls.filter((call) => call.method === 'turn/steer');
+  assert.equal(steers.length, 1);
+  assert.match(steers[0].params.input[0].text, /disagree/);
+  assert.match(steers[0].params.input[0].text, /grants no security/);
+  assert.equal(peer.calls.filter((call) => call.method === 'turn/start').length, starts);
+  assert.equal(f.workspace.sessions.approvals().length, 0);
+  await f.complete(session);
+  f.workspace.mesh.react(message.id, 'heart');
+  await f.workspace.sessions.notify(f.project.id);
+  assert.equal(peer.calls.filter((call) => call.method === 'turn/start').length, starts);
+  assert.equal(
+    f.workspace.mesh.signals(f.project.id, f.member.id, session.id).feedback.length,
+    1,
+    'idle feedback waits for a safe explicit next turn',
+  );
+});
+
 test('a rejected initial prompt remains a visible failed session without creating a runtime or duplicate task', async (t) => {
   const f = await fixture(t);
   f.workspace.quota.assertCanRun = () => {

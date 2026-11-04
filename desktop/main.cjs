@@ -17,6 +17,7 @@ const { randomBytes } = require('node:crypto');
 const { mkdir, readFile, writeFile, unlink, rename, lstat } = require('node:fs/promises');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
+const { ProjectBrowser } = require('./browser.cjs');
 const {
   cloudOrigin,
   sameOrigin,
@@ -59,9 +60,22 @@ let quitting = false;
 let signInGeneration = 0;
 let bridgeGeneration = 0;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const projectBrowser = new ProjectBrowser({
+  getWindow: () => window,
+  getBackendOrigin: () => backendOrigin,
+  getOwnerId: () => identity?.owner.id,
+  testing,
+});
+
+function windowState() {
+  return { maximized: Boolean(window?.isMaximized()), fullscreen: Boolean(window?.isFullScreen()) };
+}
 
 function status() {
-  if (identity && Date.parse(identity.expiresAt) <= Date.now()) identity = null;
+  if (identity && Date.parse(identity.expiresAt) <= Date.now()) {
+    projectBrowser.close();
+    identity = null;
+  }
   return {
     signedIn: Boolean(identity),
     ...(identity ? { owner: identity.owner } : {}),
@@ -140,6 +154,7 @@ async function readIdentity() {
 }
 
 async function clearIdentity() {
+  projectBrowser.close();
   await stopMachines();
   identity = null;
   pending = null;
@@ -349,6 +364,41 @@ function trusted(event) {
 }
 
 function registerIpc() {
+  ipcMain.handle('relay:window-state', (event) => {
+    trusted(event);
+    return windowState();
+  });
+  ipcMain.handle('relay:window-control', (event, action) => {
+    trusted(event);
+    if (action === 'minimize') window.minimize();
+    else if (action === 'maximize') {
+      if (window.isFullScreen()) window.setFullScreen(false);
+      else if (window.isMaximized()) window.unmaximize();
+      else window.maximize();
+    } else if (action === 'fullscreen') window.setFullScreen(!window.isFullScreen());
+    else if (action === 'close') window.close();
+    else throw new Error('Unknown window action.');
+    return windowState();
+  });
+  for (const [name, action] of Object.entries({
+    state: () => projectBrowser.state(),
+    open: (input) => projectBrowser.open(input),
+    bounds: (input) => projectBrowser.setBounds(input),
+    navigate: (input) => projectBrowser.navigate(input),
+    snapshot: () => projectBrowser.snapshot(),
+    review: (hidden) => {
+      if (typeof hidden !== 'boolean') throw new Error('Invalid browser visibility.');
+      projectBrowser.hideForReview(hidden);
+    },
+    close: () => projectBrowser.close(),
+  })) {
+    ipcMain.handle(`relay:browser-${name}`, (event, input) => {
+      trusted(event);
+      if (!identity || Date.parse(identity.expiresAt) <= Date.now())
+        throw new Error('Sign in first.');
+      return action(input);
+    });
+  }
   ipcMain.handle('relay:status', (event) => {
     trusted(event);
     return status();
@@ -671,9 +721,10 @@ function createWindow() {
     minWidth: 960,
     minHeight: 660,
     show: false,
+    frame: false,
     title: 'Kivuno',
     icon: path.join(__dirname, 'icon.png'),
-    backgroundColor: '#101211',
+    backgroundColor: '#0b1513',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -732,6 +783,19 @@ function createWindow() {
     }
   });
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && !input.isAutoRepeat && input.key === 'F11') {
+      event.preventDefault();
+      window.setFullScreen(!window.isFullScreen());
+    }
+  });
+  for (const event of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) {
+    window.on(event, () => window.webContents.send('relay:window-state', windowState()));
+  }
+  window.on('hide', () => projectBrowser.suspendSoon());
+  window.on('minimize', () => projectBrowser.suspendSoon());
+  window.on('show', () => projectBrowser.resumeVisible());
+  window.on('restore', () => projectBrowser.resumeVisible());
   window.once('ready-to-show', () => {
     if (!testing || process.env.RELAY_DESKTOP_SHOW === '1') window.show();
   });
@@ -781,6 +845,7 @@ else {
     if (quitting) return;
     event.preventDefault();
     quitting = true;
+    projectBrowser.close();
     signInGeneration++;
     bridgeGeneration++;
     void Promise.all([stopBackend(), stopMachines()]).finally(() => {

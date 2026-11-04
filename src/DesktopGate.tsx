@@ -3,24 +3,44 @@ import { ArrowUpRight, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import App from './App';
 import { resetApiSession } from './api';
 import type { DesktopStatus } from './desktop';
+import DesktopTitleBar from './TitleBar';
 import './portal.css';
 
 export default function DesktopGate() {
+  return (
+    <div className="desktop-frame">
+      <DesktopTitleBar />
+      <div className="desktop-frame-content">
+        <DesktopWorkspace />
+      </div>
+    </div>
+  );
+}
+
+function DesktopWorkspace() {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
     let current = true;
+    let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
+      clearTimeout(timer);
+      let delay = 5000;
       try {
         const next = await window.relayDesktop!.getStatus();
-        if (current) setStatus(next);
+        delay = next.signedIn ? 10000 : 2000;
+        if (current)
+          setStatus((previous) =>
+            JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
+          );
       } catch (cause) {
         if (current) setError((cause as Error).message);
+      } finally {
+        if (current) timer = setTimeout(refresh, delay);
       }
     };
     void refresh();
-    const timer = setInterval(refresh, 2000);
     const logout = async () => {
       try {
         await window.relayDesktop!.signOut();
@@ -33,7 +53,7 @@ export default function DesktopGate() {
     window.addEventListener('relay-sign-out', logout);
     return () => {
       current = false;
-      clearInterval(timer);
+      clearTimeout(timer);
       window.removeEventListener('relay-sign-out', logout);
     };
   }, []);

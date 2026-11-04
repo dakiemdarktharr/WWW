@@ -39,6 +39,7 @@ const mime: Record<string, string> = {
   '.css': 'text/css',
   '.html': 'text/html',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
@@ -69,7 +70,7 @@ async function routePortal(context: BrowserContext, available = false) {
       // An unpublished release must render honestly, never as a working download.
       await route.fulfill({
         json: {
-          version: '0.4.0',
+          version: '0.5.0',
           available,
           platform: 'win32-x64',
           signed: false,
@@ -149,9 +150,30 @@ try {
   await mkdir('.local', { recursive: true });
   await page.screenshot({ path: '.local/kivuno-portal-desktop.png', fullPage: true });
   const messages = page.getByLabel('Tin nhắn minh họa, không phải hoạt động thật');
-  await page.getByRole('heading', { name: 'Neralu', exact: true }).scrollIntoViewIfNeeded();
+  await page
+    .getByRole('heading', { name: 'Neralu · Chat dự án', exact: true })
+    .scrollIntoViewIfNeeded();
   const menu = page.getByRole('navigation', { name: 'Menu Kivuno' });
   await expect(menu).toHaveClass(/is-docked/);
+  await expect
+    .poll(
+      async () => {
+        const dock = await menu.boundingBox();
+        return Boolean(dock && dock.y < 80 && Math.abs(dock.x + dock.width / 2 - 720) < 4);
+      },
+      { message: 'Scrolled navigation stays at the top, centered.' },
+    )
+    .toBe(true);
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await expect(page.getByLabel('Graph session minh họa')).toBeVisible();
+  await page.getByRole('button', { name: 'Session Tests của Ari' }).click();
+  await expect(page.locator('.kp-session-selected')).toContainText('Tests · Ari');
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await page.getByRole('button', { name: 'Đã hiểu', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: 'Đã hiểu', exact: true }).first()).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   await page.getByRole('button', { name: 'Bàn giao', exact: true }).click();
   await expect(messages.getByText('Usage còn 49%. Mình đã dừng nhận việc mới.')).toBeVisible();
   await page.getByRole('button', { name: 'Review', exact: true }).click();
@@ -202,6 +224,16 @@ try {
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
   }
+  await expect
+    .poll(() =>
+      page
+        .locator('.kp-hivemind-art')
+        .evaluate(
+          (img) =>
+            (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth === 1536,
+        ),
+    )
+    .toBe(true);
   await page.screenshot({ path: '.local/kivuno-portal-mobile.png', fullPage: true });
 
   const reduced = await browser.newContext({

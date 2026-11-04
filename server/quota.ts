@@ -10,6 +10,7 @@ import type {
 } from '../shared/types.ts';
 import { readRateLimits, type CodexClient } from './codex.ts';
 import { Store, DomainError } from './store.ts';
+import { groupMembers } from './groups.ts';
 import { redact } from './security.ts';
 
 const MAX_AGE = 120_000;
@@ -312,7 +313,7 @@ export class QuotaManager {
       }
       for (const project of this.store.projects()) {
         if (this.host.closing) break;
-        const roster = this.store.members().filter((member) => member.account);
+        const roster = groupMembers(this.store, project.id).filter((member) => member.account);
         if (!roster.length) continue;
         const allUnavailable = roster.every((member) => {
           try {
