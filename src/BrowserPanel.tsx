@@ -207,7 +207,6 @@ export default function BrowserPanel({
         <div className="project-browser-empty">
           <Globe2 size={28} />
           <strong>Mở trong Kivuno desktop</strong>
-          <p>Browser tương tác chạy trên máy bạn. Máy SSH chưa chia sẻ màn hình trình duyệt.</p>
         </div>
       </section>
     );
@@ -327,21 +326,16 @@ export default function BrowserPanel({
           !state.active && (
             <div className="project-browser-empty">
               <Globe2 size={30} />
-              <strong>Bạn điều khiển browser</strong>
-              <p>Mở website và tự đăng nhập. Chọn chia sẻ để Codex đọc phần nội dung bạn duyệt.</p>
+              <strong>Chưa mở trang</strong>
             </div>
           )
         )}
       </div>
       {!review && (
         <div className="project-browser-footer">
-          <span role="status">
-            {shared
-              ? shared
-              : sessionId
-                ? 'Bạn giữ quyền đăng nhập'
-                : 'Chọn một session để chia sẻ'}
-          </span>
+          {(shared || !sessionId) && (
+            <span role="status">{shared || 'Chọn một session để chia sẻ'}</span>
+          )}
           <button
             className="button"
             disabled={!state.active || !sessionId || busy}

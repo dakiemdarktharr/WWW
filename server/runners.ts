@@ -124,6 +124,8 @@ export class Runners {
   }
   create(memberId: string, taskId?: string) {
     const member = this.host.store.get<Member>('member', memberId);
+    if (member.provider && member.provider !== 'codex')
+      throw new DomainError('This remote runner currently supports Codex profiles only.');
     if (!member.runnerId) throw new DomainError('Account has no execution machine.');
     this.assertReady(member.runnerId);
     const peer = new RemoteCodexClient(this, this.host, member.runnerId, memberId, taskId);

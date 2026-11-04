@@ -15,6 +15,8 @@ import { createHackathonProject } from './hackathons.ts';
 import { DesktopIdentity, type DesktopOwner } from './desktop-auth.ts';
 import { registerDesktopRoutes } from './desktop-routes.ts';
 import { registerAegisRoutes } from './aegis-routes.ts';
+import { ExternalProviders, registerExternalRoutes } from './external-provider.ts';
+import { providerCapabilities } from './providers.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -70,6 +72,8 @@ export async function buildApp(
     : undefined;
   let bridgeConnection: { origin: string; exchangeUrl: string; bridgeKey: string } | undefined;
   const port = options.port || 4317;
+  const external = new ExternalProviders(workspace);
+  external.configure(port);
   const allowed = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
   if (options.development) {
     allowed.add('http://127.0.0.1:5173');
@@ -99,6 +103,19 @@ export async function buildApp(
       origin = request.headers.origin;
     const cloud = options.cloud;
     const pathname = request.url.split('?')[0];
+    if (!cloud && pathname === '/api/external-agent/rpc') {
+      if (
+        !host ||
+        !allowed.has(`http://${host}`) ||
+        origin ||
+        !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.ip)
+      )
+        return reply
+          .code(403)
+          .send({ error: 'The external agent bridge is available only on this computer.' });
+      external.authenticate(request.headers.authorization);
+      return;
+    }
     if (
       options.desktopSecret &&
       !safeEqual(String(request.headers['x-relay-desktop'] || ''), options.desktopSecret)
@@ -204,6 +221,7 @@ export async function buildApp(
       return owner;
     });
   registerAegisRoutes(app, workspace.aegis);
+  if (!options.cloud) registerExternalRoutes(app, external);
   app.get('/api/desktop/release', async () => {
     try {
       const manifest = JSON.parse(
@@ -211,7 +229,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.5.0', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.6.0', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -400,7 +418,19 @@ export async function buildApp(
     return workspace.runners.exchange(node.id, body);
   });
   app.post('/api/accounts/connect', async (request) => {
-    const input = z.object({ runnerId: id.optional() }).strict().parse(request.body);
+    const input = z
+      .object({
+        runnerId: id.optional(),
+        provider: z.enum(['codex', 'gemini', 'claude']).default('codex'),
+      })
+      .strict()
+      .parse(request.body);
+    if (input.provider !== 'codex' && input.runnerId)
+      throw new DomainError('This provider currently connects on this computer.');
+    if (options.cloud && input.provider !== 'codex')
+      throw new DomainError(
+        'Connect this provider from your desktop workspace. Cloud sign-in is not supported.',
+      );
     if (input.runnerId) workspace.runners.assertReady(input.runnerId);
     if (workspace.loginOwner) throw new DomainError('Finish the pending Codex sign-in first.');
     let member =
@@ -409,11 +439,21 @@ export async function buildApp(
         .find(
           (member) =>
             member.managed &&
+            (member.provider || 'codex') === input.provider &&
             member.runnerId === input.runnerId &&
             !member.connectedAt &&
             !member.account &&
             !workspace.sessions.hasLive(member.id),
-        ) || workspace.autonomy.addAccount();
+        ) || workspace.autonomy.addAccount(input.provider);
+    if (input.provider === 'claude')
+      return {
+        member,
+        login: {
+          type: 'external',
+          instructions:
+            'Connect your own Claude client through the local MESH MCP bridge. Kivuno does not manage its subscription login.',
+        },
+      };
     if (input.runnerId)
       member = workspace.store.updateMember(member.id, { runnerId: input.runnerId });
     const login = await workspace.login(member.id, 'device');
@@ -423,6 +463,7 @@ export async function buildApp(
     const input = z
       .object({
         name: text,
+        provider: z.enum(['codex', 'gemini', 'claude']).default('codex'),
         role: z.enum(['engineer', 'researcher', 'designer', 'reviewer']),
         color: z
           .string()
@@ -431,7 +472,10 @@ export async function buildApp(
       })
       .strict()
       .parse(request.body);
-    const member = workspace.store.addMember(input);
+    const member = workspace.store.addMember({
+      ...input,
+      integration: input.provider === 'claude' ? 'external' : 'native',
+    });
     workspace.log(`Added ${member.name} as ${member.role}.`, null, member.id, 'member');
     return member;
   });
@@ -462,6 +506,35 @@ export async function buildApp(
   app.post('/api/members/:id/quota/refresh', async (request) =>
     workspace.quota.refresh(params(request)),
   );
+  app.get('/api/providers', async () =>
+    (await providerCapabilities()).map((provider) =>
+      options.cloud && provider.id !== 'codex'
+        ? {
+            ...provider,
+            available: false,
+            reason: 'This provider connects only in the desktop workspace on your computer.',
+          }
+        : provider,
+    ),
+  );
+  app.post('/api/members/:id/quota/turn-grants', async (request) =>
+    workspace.quota.grantTurns(
+      params(request),
+      z
+        .object({
+          projectId: id,
+          maxTurns: z.number().int().min(1).max(10),
+          expiresAt: z.iso.datetime({ offset: true }),
+          acknowledgeUnknownQuota: z.literal(true),
+        })
+        .strict()
+        .parse(request.body),
+    ),
+  );
+  app.post('/api/quota/turn-grants/:id/revoke', async (request) => {
+    z.object({}).strict().parse(request.body);
+    return workspace.quota.revokeTurns(params(request));
+  });
   app.post('/api/members/:id/quota/grants', async (request) => {
     const grant = workspace.quota.grant(
       params(request),
@@ -735,6 +808,13 @@ export async function buildApp(
       .object({ method: z.enum(['browser', 'device']).default('browser') })
       .strict()
       .parse(request.body);
+    if (
+      options.cloud &&
+      workspace.store.get<Member>('member', params(request)).provider === 'gemini'
+    )
+      throw new DomainError(
+        'Connect Gemini from your desktop workspace. Cloud Google sign-in is not supported.',
+      );
     return workspace.login(params(request), options.cloud ? 'device' : method);
   });
   app.post('/api/members/:id/login/cancel', async (request) => {
@@ -944,6 +1024,7 @@ export async function buildApp(
     for (const disconnect of eventConnections) disconnect();
   });
   app.addHook('onClose', async () => {
+    external.close();
     await workspace.close();
   });
   return app;

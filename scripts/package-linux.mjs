@@ -66,6 +66,10 @@ await copyFile(
   path.join(root, 'scripts/check-runtime.mjs'),
   path.join(workspace, 'scripts/check-runtime.mjs'),
 );
+await copyFile(
+  path.join(root, 'scripts/mesh-mcp.mjs'),
+  path.join(workspace, 'scripts/mesh-mcp.mjs'),
+);
 await cp(path.join(root, 'contracts'), path.join(workspace, 'contracts'), { recursive: true });
 
 console.log(`Preparing verified Node ${nodeVersion} for Linux x64…`);

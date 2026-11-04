@@ -34,6 +34,7 @@ import {
 import GlassSelect from './GlassSelect';
 import SessionGraph from './SessionGraph';
 import BrowserPanel from './BrowserPanel';
+import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
 
 type Context = 'sessions' | 'team' | 'usage' | 'needs' | 'handoffs' | 'browser' | null;
@@ -263,7 +264,6 @@ export default function ProjectChat({
         {project && !members.length && (
           <div className="chat-setup">
             <Users size={18} />
-            <span>Choose who works on this project.</span>
             <button className="button compact primary" onClick={openRoster}>
               Choose members
             </button>
@@ -452,20 +452,7 @@ export default function ProjectChat({
               <div className="chat-empty-mark">
                 <MessageSquare size={28} />
               </div>
-              <h2>
-                {search
-                  ? 'No matching messages'
-                  : project
-                    ? 'What will your team build?'
-                    : 'One project. One shared conversation.'}
-              </h2>
-              {!search && (
-                <p>
-                  {project
-                    ? 'Share an idea, ask a question, or paste a challenge.'
-                    : 'Create a project, choose your Codex team, then send a prompt.'}
-                </p>
-              )}
+              <h2>{search ? 'No matching messages' : project ? 'No messages' : 'No project'}</h2>
               {!project && (
                 <button className="button primary" onClick={addProject}>
                   <Plus size={15} />
@@ -636,7 +623,7 @@ export default function ProjectChat({
                 <button
                   className="button compact"
                   onClick={() => setCreating(true)}
-                  disabled={!project || !members.length}
+                  disabled={!project || !members.some((member) => providerOf(member) !== 'claude')}
                 >
                   <Plus size={13} />
                   New session
@@ -708,8 +695,12 @@ export default function ProjectChat({
                       <div>
                         <strong>{member.name}</strong>
                         <span>
-                          {member.account?.planType || 'Not signed in'} ·{' '}
-                          {member.owner?.login || member.account?.email || 'Owner not set'}
+                          {providerLabels[providerOf(member)]} ·{' '}
+                          {member.account?.planType ||
+                            (providerOf(member) === 'claude'
+                              ? 'External client'
+                              : 'Not signed in')}{' '}
+                          · {member.owner?.login || member.account?.email || 'Owner not set'}
                         </span>
                       </div>
                       <Presence member={member} />
@@ -745,13 +736,9 @@ export default function ProjectChat({
                     location.hash = 'team';
                   }}
                 >
-                  Add your first Codex account <ArrowRight size={13} />
+                  Add your first agent account <ArrowRight size={13} />
                 </button>
               )}
-              <p className="context-note">
-                Offline members wait. Work goes to available teammates; busy means more than four
-                active sessions.
-              </p>
             </div>
           )}
           {panel === 'usage' && (
@@ -766,9 +753,7 @@ export default function ProjectChat({
                   busy={busy}
                 />
               ))}
-              {!members.length && (
-                <p className="context-note">Choose group members to see their usage.</p>
-              )}
+              {!members.length && <p>No members</p>}
             </div>
           )}
           {panel === 'needs' && (
@@ -791,7 +776,7 @@ export default function ProjectChat({
               ) : (
                 <div className="chat-empty compact">
                   <Check size={24} />
-                  <p>Nothing needs your attention.</p>
+                  <p>No requests</p>
                 </div>
               )}
             </div>
@@ -831,9 +816,6 @@ export default function ProjectChat({
               if (result) setRosterOpen(false);
             }}
           >
-            <p className="roster-description">
-              Your team belongs to you. Only selected members join {project.name}.
-            </p>
             <div className="roster-options">
               {state.members.map((member) => (
                 <label className="roster-option" key={member.id}>
@@ -852,8 +834,12 @@ export default function ProjectChat({
                   <span>
                     <strong>{member.name}</strong>
                     <small>
-                      {member.account?.planType || 'Not signed in'} ·{' '}
-                      {member.owner?.login || 'Owner not set'}
+                      {providerLabels[providerOf(member)]} ·{' '}
+                      {member.account?.planType ||
+                        (providerOf(member) === 'claude'
+                          ? 'External client'
+                          : 'Not signed in')}{' '}
+                      · {member.owner?.login || 'Owner not set'}
                     </small>
                   </span>
                   <Presence member={member} />

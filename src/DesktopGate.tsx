@@ -87,7 +87,7 @@ function DesktopWorkspace() {
         ) : pending ? (
           <div className="desktop-activation">
             <ShieldCheck size={24} />
-            <p>Xác nhận mã này trên web</p>
+            <span>Mã xác nhận</span>
             <strong className="activation-code">{status.pending!.userCode}</strong>
             <button
               className="button"
@@ -99,9 +99,6 @@ function DesktopWorkspace() {
             >
               Mở trang đăng nhập <ArrowUpRight size={15} />
             </button>
-            <span className="portal-muted" role="status">
-              App sẽ tự nhận kết nối sau khi bạn xác nhận.
-            </span>
           </div>
         ) : (
           <button
@@ -119,15 +116,11 @@ function DesktopWorkspace() {
           </p>
         )}
         {status?.runtime === 'stopped' && (
-          <p className="portal-muted">
+          <p className="error-text" role="alert">
             <RefreshCw size={14} /> Runtime đã dừng. Đóng Kivuno rồi mở lại để khôi phục.
           </p>
         )}
       </div>
-      <footer>
-        Kivuno {window.relayDesktop?.version} ·{' '}
-        {window.relayDesktop?.platform === 'linux' ? 'Linux' : 'Windows'}
-      </footer>
     </main>
   );
 }

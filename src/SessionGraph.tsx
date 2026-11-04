@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Search, Terminal } from 'lucide-react';
 import type { CodexSession, Member } from '../shared/types';
+import { providerLabels, providerOf } from './ProviderConnect';
 
 const perPage = 24;
 export default function SessionGraph({
@@ -19,7 +20,7 @@ export default function SessionGraph({
   const filtered = useMemo(
     () =>
       sessions.filter((session) =>
-        `${session.title} ${session.status} ${members.find((member) => member.id === session.memberId)?.name || ''}`
+        `${session.title} ${session.status} ${providerLabels[session.provider || providerOf(members.find((member) => member.id === session.memberId))]} ${members.find((member) => member.id === session.memberId)?.name || ''}`
           .toLowerCase()
           .includes(query.toLowerCase()),
       ),
@@ -86,7 +87,14 @@ export default function SessionGraph({
                 }}
               >
                 <title>
-                  {session.title} · {session.status} · {session.model || 'Auto model'}
+                  {session.title} ·{' '}
+                  {
+                    providerLabels[
+                      session.provider ||
+                        providerOf(members.find((member) => member.id === session.memberId))
+                    ]
+                  }{' '}
+                  · {session.status} · {session.model || 'Auto model'}
                 </title>
                 <rect
                   x={x - 52}
@@ -103,7 +111,13 @@ export default function SessionGraph({
                   {session.title.length > 15 ? `${session.title.slice(0, 14)}…` : session.title}
                 </text>
                 <text className="node-owner" x={x} y={y + 48} textAnchor="middle">
-                  {members.find((member) => member.id === session.memberId)?.name || 'Codex'}
+                  {members.find((member) => member.id === session.memberId)?.name || 'Agent'} ·{' '}
+                  {
+                    providerLabels[
+                      session.provider ||
+                        providerOf(members.find((member) => member.id === session.memberId))
+                    ]
+                  }
                 </text>
               </g>
             ))}
@@ -111,7 +125,7 @@ export default function SessionGraph({
         ) : (
           <div className="chat-empty compact">
             <Terminal size={25} />
-            <p>{query ? 'No matching sessions' : 'Your team’s conversations appear here.'}</p>
+            <p>{query ? 'No matching sessions' : 'No sessions'}</p>
           </div>
         )}
       </div>

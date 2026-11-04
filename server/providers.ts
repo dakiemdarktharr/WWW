@@ -1,0 +1,56 @@
+import type { Member, ProviderCapability } from '../shared/types.ts';
+import { CodexClient, resolveCodexCommand } from './codex.ts';
+import { GeminiClient, resolveGeminiCommand } from './gemini.ts';
+import { DomainError } from './store.ts';
+
+export function nativeProviderClient(member: Member, home: string, cwd: string): CodexClient {
+  if (member.integration === 'external' || member.provider === 'claude')
+    throw new DomainError(
+      'This teammate uses the external MESH bridge. Kivuno does not manage Claude subscription sign-in or start its process.',
+    );
+  return member.provider === 'gemini'
+    ? new GeminiClient({ home, cwd })
+    : new CodexClient({ home, cwd });
+}
+export async function providerCapabilities(): Promise<ProviderCapability[]> {
+  const [codex, gemini] = await Promise.allSettled([resolveCodexCommand(), resolveGeminiCommand()]);
+  return [
+    {
+      id: 'codex',
+      label: 'ChatGPT / Codex',
+      mode: 'native',
+      available: codex.status === 'fulfilled',
+      login: 'chatgpt',
+      quota: 'provider',
+      models: true,
+      reasoning: true,
+      ...(codex.status === 'rejected' ? { reason: 'The Codex runtime is unavailable.' } : {}),
+    },
+    {
+      id: 'gemini',
+      label: 'Gemini',
+      mode: 'native',
+      available: gemini.status === 'fulfilled',
+      login: 'google',
+      quota: 'unknown',
+      models: true,
+      reasoning: false,
+      reason:
+        gemini.status === 'fulfilled'
+          ? 'Google login only. ACP exposes models but not remaining subscription quota or reasoning controls. Scoped file tools; no shell execution. Explicit bounded turn allowance is required.'
+          : 'Install the Kivuno build containing Gemini CLI 0.66.0.',
+    },
+    {
+      id: 'claude',
+      label: 'Claude',
+      mode: 'external',
+      available: true,
+      login: 'external',
+      quota: 'unknown',
+      models: false,
+      reasoning: false,
+      reason:
+        'Connect your own client through the local MESH MCP bridge. Kivuno does not provide Claude subscription OAuth or a paid API fallback.',
+    },
+  ];
+}

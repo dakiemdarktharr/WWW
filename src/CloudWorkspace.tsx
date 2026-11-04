@@ -98,7 +98,7 @@ export default function CloudWorkspace() {
       {status === 'loading' ? (
         <div className="panel runner-consent" role="status">
           <Loader2 className="spin" size={24} />
-          <p>Đang mở cloud workspace… Lần mở sau khi tạm ngủ có thể mất một lúc.</p>
+          <p>Đang mở workspace…</p>
         </div>
       ) : (
         <form className="panel runner-consent" onSubmit={login}>
@@ -126,7 +126,6 @@ export default function CloudWorkspace() {
               <LogIn size={16} /> {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
             </button>
           </div>
-          <p>Codex chạy trên cloud. Không cần localhost hoặc giữ popup.</p>
         </form>
       )}
     </main>

@@ -210,7 +210,6 @@ export default function Aegis({ state, project }: { state: WorkspaceState; proje
             </header>
             {!status.setup ? (
               <div className="aegis-section-body">
-                <p>Create dedicated keys for the Fuji testnet. No mainnet transactions.</p>
                 <button
                   className="button primary"
                   disabled={!!busy}
@@ -327,7 +326,7 @@ export default function Aegis({ state, project }: { state: WorkspaceState; proje
                   <div>
                     <h2>{project.name}</h2>
                     <span className={`aegis-state ${policy?.enabled ? 'positive' : ''}`}>
-                      {policy?.enabled ? 'Policy enforced' : 'AEGIS not enabled for this project'}
+                      {policy?.enabled ? 'Policy enforced' : 'Policy disabled'}
                     </span>
                   </div>
                   <button
@@ -540,19 +539,13 @@ export default function Aegis({ state, project }: { state: WorkspaceState; proje
                       </div>
                     </div>
                   ))}
-                  {!receipts.length && (
-                    <p className="aegis-empty">
-                      Receipts appear after a handoff checkpoint is recorded.
-                    </p>
-                  )}
+                  {!receipts.length && <p className="aegis-empty">No receipts</p>}
                 </div>
               </section>
             </>
           ) : (
             <section className="panel aegis-section-body">
-              <p className="aegis-empty">
-                Select a project to manage its policy, permissions and receipts.
-              </p>
+              <p className="aegis-empty">No project selected</p>
             </section>
           )}
           <section className="panel">
@@ -589,10 +582,13 @@ export default function Aegis({ state, project }: { state: WorkspaceState; proje
                   {verification.error && <p className="error-text">{verification.error}</p>}
                 </div>
               )}
-              <p className="aegis-footnote">
-                A receipt verifies the recorded content and signer. It does not prove the code is
-                correct or that a reported test actually ran.
-              </p>
+              <details className="aegis-recovery">
+                <summary>Verification help</summary>
+                <p>
+                  A receipt verifies the recorded content and signer. It does not prove the code is
+                  correct or that a reported test actually ran.
+                </p>
+              </details>
             </div>
           </section>
         </>

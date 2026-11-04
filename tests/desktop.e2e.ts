@@ -215,14 +215,30 @@ try {
   );
   const guide = page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true });
   if (await guide.isVisible()) await guide.click();
-  await page.getByRole('button', { name: 'Toàn màn hình', exact: true }).click();
+  const titlebar = page.getByRole('banner', { name: 'Điều khiển cửa sổ' });
+  await expect(titlebar.getByRole('button')).toHaveCount(3);
+  await titlebar.getByRole('button', { name: 'Phóng to', exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).maximized,
+    )
+    .toBe(true);
+  await titlebar.getByRole('button', { name: 'Khôi phục cửa sổ', exact: true }).click();
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).maximized,
+    )
+    .toBe(false);
+  await page.keyboard.press('F11');
   await expect
     .poll(
       async () =>
         (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).fullscreen,
     )
     .toBe(true);
-  await page.getByRole('button', { name: 'Thoát toàn màn hình', exact: true }).click();
+  await page.keyboard.press('F11');
   await expect
     .poll(
       async () =>
@@ -327,6 +343,53 @@ try {
   assert.equal(sharedPage.snapshot.url, 'https://browser.kivuno.test/project');
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
   await expect.poll(rendererCount).toBe(baselineRenderers);
+
+  // External Claude config is offered only by a local desktop coordinator.
+  const external = await post('/members', {
+    name: 'Claude local',
+    role: 'engineer',
+    provider: 'claude',
+  });
+  await page.evaluate(
+    async ({ projectId, memberId }) => {
+      const { token } = await (await fetch('/api/session')).json();
+      const state = await (
+        await fetch('/api/state', { headers: { 'X-Relay-Token': token } })
+      ).json();
+      const project = state.projects.find((entry: { id: string }) => entry.id === projectId);
+      const response = await fetch(`/api/projects/${projectId}/members`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-Relay-Token': token },
+        body: JSON.stringify({ memberIds: [...project.memberIds, memberId] }),
+      });
+      if (!response.ok) throw new Error('Could not add the external fixture member.');
+    },
+    { projectId: uiFixture.projectId, memberId: external.id },
+  );
+  await page.reload();
+  await page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('button', { name: 'Team', exact: true })
+    .click();
+  const externalCard = page
+    .locator('.account-card-group')
+    .filter({ has: page.getByRole('heading', { name: 'Claude local', exact: true }) });
+  await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
+  const externalDialog = page.getByRole('dialog', { name: 'Claude · MESH connection' });
+  await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
+  await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();
+  await externalDialog.getByRole('button', { name: 'Generate MCP config', exact: true }).click();
+  const configInput = externalDialog.getByLabel('MCP configuration');
+  await expect(configInput).toBeVisible();
+  const config = JSON.parse(await configInput.inputValue());
+  const mcp = Object.values(config.mcpServers)[0] as {
+    env: { KIVUNO_MCP_URL: string; KIVUNO_MCP_TOKEN: string };
+  };
+  assert.equal(mcp.env.KIVUNO_MCP_URL, localOrigin + '/api/external-agent/rpc');
+  assert.match(mcp.env.KIVUNO_MCP_TOKEN, /^[A-Za-z0-9_-]{43}$/);
+  await externalDialog.getByRole('button', { name: 'Revoke connection', exact: true }).click();
+  await expect(configInput).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
 
   await page.evaluate(() => {
     void (window as any).relayDesktop.signOut();

@@ -20,7 +20,11 @@ export const hackathonInput = z
         const url = new URL(value);
         return url.protocol === 'https:' && !url.username && !url.password;
       }, 'Use an HTTPS competition URL without credentials.'),
-    deadline: z.iso.datetime({ offset: true }).nullable().optional(),
+    deadline: z.iso
+      .datetime({ offset: true })
+      .nullable()
+      .optional()
+      .transform((value) => (value ? new Date(value).toISOString() : null)),
     goal: z.string().trim().min(1).max(16000),
   })
   .strict();
@@ -67,7 +71,7 @@ export async function createHackathonProject(
     await mkdir(target, { recursive: true, mode: 0o700 });
     await writeFile(
       path.join(target, 'README.md'),
-      `# ${input.name}\n\n${input.goal}\n\nCompetition: ${input.competitionName}\n${input.competitionUrl}\n\nOwner: ${member.name}\nDeadline: ${input.deadline || 'Not set'}\n`,
+      `# ${input.name}\n\n${input.goal}\n\nCompetition: ${input.competitionName}\n${input.competitionUrl}\n\nOwner: ${member.name}\nDeadline: ${input.deadline ?? 'No deadline'}\n`,
     );
     await git(target, ['init', '-b', 'main']);
     await git(target, ['add', 'README.md']);
@@ -95,7 +99,7 @@ export async function createHackathonProject(
       competition: {
         name: input.competitionName,
         url: input.competitionUrl,
-        deadline: input.deadline || null,
+        deadline: input.deadline,
       },
     } satisfies Project);
     host.log(`Created ${repositoryName} for ${member.name}.`, null, member.id, 'project', id);

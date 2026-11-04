@@ -150,6 +150,38 @@ test('cloud gateway retains legacy owner access, blocks reserved signup/foreign 
       200,
     );
     assert.equal(store.members()[0].name, 'Cloud profile');
+    const providers = (await request('GET', '/api/providers', undefined, { cookie })).json();
+    for (const provider of ['gemini', 'claude']) {
+      assert.equal(providers.find((entry: any) => entry.id === provider).available, false);
+      assert.equal(
+        (
+          await request(
+            'POST',
+            '/api/accounts/connect',
+            { provider },
+            { cookie, 'x-relay-token': bootstrap.json().token },
+          )
+        ).statusCode,
+        409,
+      );
+    }
+    const gemini = store.addMember({
+      name: 'Desktop Gemini',
+      provider: 'gemini',
+      role: 'researcher',
+    });
+    assert.equal(
+      (
+        await request(
+          'POST',
+          `/api/members/${gemini.id}/login`,
+          { method: 'browser' },
+          { cookie, 'x-relay-token': bootstrap.json().token },
+        )
+      ).statusCode,
+      409,
+    );
+    assert.equal(workspace.clients.size, 0);
     await app.close();
     identity = await createCloudIdentity({
       directory: dir,

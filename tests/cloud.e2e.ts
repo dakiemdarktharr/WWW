@@ -124,7 +124,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.5.0',
+      version: '0.6.0',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -176,6 +176,7 @@ try {
   }
   await nav('Team').click();
   await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Connect Codex', exact: true }).click();
   await page.getByText('TEST-ONLY', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.getByRole('heading', { name: 'Atlas', exact: true }).waitFor();
@@ -183,7 +184,7 @@ try {
   const project = page.getByRole('dialog', { name: 'Connect project', exact: true });
   await project.getByLabel('Project type', { exact: true }).selectOption('hackathon');
   await project.getByLabel('Project name', { exact: true }).fill('Cloud project');
-  await project.getByLabel('Codex owner', { exact: true }).selectOption({ label: 'Atlas' });
+  await project.getByLabel('Project owner', { exact: true }).selectOption({ label: 'Atlas' });
   await project.getByLabel('Competition', { exact: true }).fill('Browser challenge');
   await project
     .getByLabel('Competition URL', { exact: true })
@@ -191,9 +192,20 @@ try {
   await project
     .getByLabel('Shared goal', { exact: true })
     .fill('Verify real cloud workspace interactions');
+  await expect(project.getByRole('combobox', { name: 'Deadline', exact: true })).toHaveText(
+    'No deadline',
+  );
+  await expect(project.getByLabel('Deadline date and time')).toHaveCount(0);
+  await project.getByRole('combobox', { name: 'Deadline', exact: true }).click();
+  await project.getByRole('option', { name: 'Set deadline', exact: true }).click();
+  await project.getByLabel('Deadline date and time').fill('2027-08-14T18:45');
+  await project.getByRole('combobox', { name: 'Deadline', exact: true }).click();
+  await project.getByRole('option', { name: 'No deadline', exact: true }).click();
+  await expect(project.getByLabel('Deadline date and time')).toHaveCount(0);
   await project.getByRole('button', { name: 'Create project', exact: true }).click();
   await project.waitFor({ state: 'hidden' });
   assert.equal(store.projects()[0].repositoryName, 'NoSleepClub_Browser-challenge_Cloud-project');
+  assert.equal(store.projects()[0].competition?.deadline, null);
   await nav('Neralu').click();
   await page.getByLabel('Message the project team').fill('Shared across devices');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -242,7 +254,7 @@ try {
   await other.getByText('Shared across devices', { exact: true }).waitFor();
   await advanced('Sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).first().click();
-  const session = page.getByRole('dialog', { name: 'New Codex session' });
+  const session = page.getByRole('dialog', { name: 'New agent session' });
   await session.getByLabel('Session title').fill('Saved conversation');
   await session.getByRole('button', { name: 'Create session', exact: true }).click();
   await session.waitFor({ state: 'hidden' });
@@ -276,12 +288,94 @@ try {
   await page.getByRole('button', { name: 'Browser', exact: true }).click();
   await expect(page.getByText('Mở trong Kivuno desktop', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
+  // Provider choice and safe external connection lifecycle; no provider login or model calls.
+  await nav('Team').click();
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Claude', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Add Claude connection', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Create a profile first', exact: true }).click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Claude', exact: true }).click();
+  await page.getByLabel('Agent name').fill('Claude test');
+  await page.getByRole('button', { name: 'Create profile', exact: true }).click();
+  await page.getByRole('heading', { name: 'Claude test', exact: true }).waitFor();
+  const claude = store.members().find((member) => member.provider === 'claude')!;
+  assert.ok(claude);
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Gemini', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Connect Gemini', exact: true })).toBeDisabled();
+  await expect(page.getByText('Google sign-in on this computer.', { exact: false })).toBeHidden();
+  await page.getByText('Connection help', { exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(page.getByText('Google sign-in on this computer.', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Create a profile first', exact: true }).click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Gemini', exact: true }).click();
+  await page.getByLabel('Agent name').fill('Gemini test');
+  await page.getByRole('button', { name: 'Create profile', exact: true }).click();
+  await page.getByRole('heading', { name: 'Gemini test', exact: true }).waitFor();
+  const gemini = store.members().find((member) => member.name === 'Gemini test')!;
+  assert.equal(gemini.provider, 'gemini');
+  const geminiCard = page
+    .locator('.account-card-group')
+    .filter({ has: page.getByRole('heading', { name: 'Gemini test', exact: true }) });
+  await expect(
+    geminiCard.getByRole('button', { name: 'Sign in with Google', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    geminiCard.getByRole('button', { name: 'Sign in with OpenAI', exact: true }),
+  ).toHaveCount(0);
+  await nav('Neralu').click();
+  await page.getByRole('button', { name: 'Group team', exact: true }).click();
+  await page.getByRole('button', { name: /Edit group members/ }).click();
+  for (const name of [claude.name, gemini.name])
+    await page
+      .locator('.roster-option')
+      .filter({ has: page.getByText(name, { exact: true }) })
+      .getByRole('checkbox')
+      .check();
+  await page.getByRole('button', { name: 'Save members', exact: true }).click();
+  await nav('Team').click();
+  await geminiCard
+    .getByRole('checkbox', { name: 'I understand remaining quota cannot be checked' })
+    .check();
+  await geminiCard.getByRole('button', { name: 'Allow prompts', exact: true }).click();
+  await expect(geminiCard.getByRole('button', { name: 'Revoke', exact: true })).toBeVisible();
+  assert.equal(workspace.snapshot().providerTurnGrants?.[0].usedTurns, 0);
+  await geminiCard.getByRole('button', { name: 'Revoke', exact: true }).click();
+  const claudeCard = page
+    .locator('.account-card-group')
+    .filter({ has: page.getByRole('heading', { name: claude.name, exact: true }) });
+  await claudeCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Claude · MESH connection' });
+  await expect(connection.getByRole('alert')).toBeVisible();
+  await expect(
+    connection.getByRole('button', { name: 'Generate MCP config', exact: true }),
+  ).toHaveCount(0);
+  await expect(connection.getByLabel('MCP configuration')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await advanced('Sessions');
+  await page.getByRole('button', { name: 'New session', exact: true }).first().click();
+  const providerSession = page.getByRole('dialog', { name: 'New agent session' });
+  assert.equal(await providerSession.locator(`option[value="${claude.id}"]`).count(), 0);
+  await providerSession.getByLabel('Account', { exact: true }).selectOption(gemini.id);
+  await providerSession.getByRole('checkbox', { name: 'Automatic model', exact: true }).uncheck();
+  await expect(providerSession.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await advanced('AEGIS');
   await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Refresh AEGIS', exact: true }).click();
   await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
   assert.equal(await page.getByText('Not deployed', { exact: true }).count(), 0);
   assert.equal(await page.getByText('Not configured', { exact: true }).count(), 1);
+  await expect(
+    page.getByText('A receipt verifies the recorded content and signer.', { exact: false }),
+  ).toBeHidden();
+  await page.screenshot({ path: path.join(screenshots, 'aegis-minimal.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
@@ -309,6 +403,11 @@ try {
       noLocalhost: true,
       noPopup: true,
       noModelUsage: true,
+      providerSelection: true,
+      geminiBoundedAllowance: true,
+      claudeCloudBoundary: true,
+      explicitNoDeadline: true,
+      collapsedSetupHelp: true,
       pageErrors: 0,
     }),
   );

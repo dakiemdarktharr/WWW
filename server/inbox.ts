@@ -114,6 +114,8 @@ export class InboxDispatcher {
       .map((member) => ({ ...member, ...memberPresence(this.host, member) }))
       .filter(
         (member) =>
+          member.provider !== 'claude' &&
+          member.integration !== 'external' &&
           member.presence !== 'offline' &&
           (message.effectiveConfig?.skills || []).every((skill) => member.skills.includes(skill)),
       );

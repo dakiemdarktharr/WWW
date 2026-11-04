@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { api, resetApiSession } from './api';
 import './portal-auth.css';
+import { PortalLanguage, usePortalLocale } from './PortalLocale';
 
 interface PortalAuthProps {
   mode: 'login' | 'signup';
@@ -46,6 +47,7 @@ const isUser = (value: unknown): value is AuthUser =>
   );
 
 export default function PortalAuth({ mode, activationCode, onClose }: PortalAuthProps) {
+  const { t } = usePortalLocale();
   const reducedMotion = useReducedMotion();
   const titleId = useId();
   const [flow, setFlow] = useState(mode);
@@ -145,7 +147,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
       })
       .catch(() => {
         if (alive.current && !abort.signal.aborted)
-          setError('Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.');
+          setError(t('Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.'));
       })
       .finally(() => {
         if (alive.current && !abort.signal.aborted) setLoading(false);
@@ -238,18 +240,18 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (response.status === 429)
-          throw new Error('Bạn đã thử nhiều lần. Vui lòng đợi một phút.');
-        if (response.status === 401) throw new Error('Email hoặc mật khẩu không đúng.');
+          throw new Error(t('Bạn đã thử nhiều lần. Vui lòng đợi một phút.'));
+        if (response.status === 401) throw new Error(t('Email hoặc mật khẩu không đúng.'));
         if (signup && /already|exist/i.test(`${result.code || ''} ${result.message || ''}`))
-          throw new Error('Email này đã có tài khoản. Chọn Đăng nhập để tiếp tục.');
+          throw new Error(t('Email này đã có tài khoản. Chọn Đăng nhập để tiếp tục.'));
         throw new Error(
           signup
-            ? 'Chưa tạo được tài khoản. Kiểm tra thông tin và thử lại.'
-            : 'Chưa đăng nhập được. Hãy thử lại.',
+            ? t('Chưa tạo được tài khoản. Kiểm tra thông tin và thử lại.')
+            : t('Chưa đăng nhập được. Hãy thử lại.'),
         );
       }
       if (!isUser(result.user))
-        throw new Error('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.');
+        throw new Error(t('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.'));
       resetApiSession();
       if (alive.current) {
         setPassword('');
@@ -270,7 +272,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
     setError('');
     try {
       const result = await api<{ approved: boolean }>('/desktop/approve', { userCode: code });
-      if (!result.approved) throw new Error('Chưa xác nhận được thiết bị. Hãy thử lại.');
+      if (!result.approved) throw new Error(t('Chưa xác nhận được thiết bị. Hãy thử lại.'));
       if (alive.current) setApproved(true);
     } catch (cause) {
       if (alive.current) setError((cause as Error).message);
@@ -290,7 +292,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
-      if (!response.ok) throw new Error('Chưa đăng xuất được. Hãy thử lại.');
+      if (!response.ok) throw new Error(t('Chưa đăng xuất được. Hãy thử lại.'));
       resetApiSession();
       if (alive.current) {
         setUser(null);
@@ -316,13 +318,13 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
     ? 'Kivuno'
     : user
       ? approved
-        ? 'Đã kết nối'
-        : 'Kết nối desktop'
+        ? t('Đã kết nối')
+        : t('Kết nối desktop')
       : legacy
-        ? 'Chủ workspace cũ'
+        ? t('Chủ workspace cũ')
         : flow === 'signup'
-          ? 'Tạo tài khoản'
-          : 'Đăng nhập';
+          ? t('Tạo tài khoản')
+          : t('Đăng nhập');
   const phase = loading ? 'loading' : user ? (approved ? 'approved' : 'activation') : 'credentials';
 
   return createPortal(
@@ -361,16 +363,19 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
           <div className="ka-surface">
             <header className="ka-header">
               <img src="/kivuno.svg" alt="" width="34" height="34" />
-              <motion.button
-                className="ka-icon"
-                type="button"
-                onClick={onClose}
-                aria-label="Đóng đăng nhập"
-                whileHover={reducedMotion ? undefined : { scale: 1.08 }}
-                whileTap={reducedMotion ? undefined : { scale: 0.92 }}
-              >
-                <X size={19} />
-              </motion.button>
+              <div className="ka-header-actions">
+                <motion.button
+                  className="ka-icon"
+                  type="button"
+                  onClick={onClose}
+                  aria-label={t('Đóng đăng nhập')}
+                  whileHover={reducedMotion ? undefined : { scale: 1.08 }}
+                  whileTap={reducedMotion ? undefined : { scale: 0.92 }}
+                >
+                  <X size={19} />
+                </motion.button>
+                <PortalLanguage />
+              </div>
             </header>
             <motion.h2 id={titleId} layout>
               {title}
@@ -387,7 +392,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                 {loading ? (
                   <div className="ka-loading" role="status">
                     <Loader2 className="spin" size={22} />
-                    Đang kết nối
+                    {t('Đang kết nối')}
                   </div>
                 ) : user ? (
                   approved ? (
@@ -395,13 +400,12 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                       <span className="ka-success-icon">
                         <CheckCheck size={32} />
                       </span>
-                      <p>Quay lại Kivuno để bắt đầu làm việc.</p>
                       <motion.button
                         className="ka-primary"
                         onClick={onClose}
                         whileTap={reducedMotion ? undefined : { scale: 0.97 }}
                       >
-                        Xong
+                        {t('Xong')}
                       </motion.button>
                     </div>
                   ) : (
@@ -410,10 +414,10 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                         <span className="ka-account-avatar">
                           {user.name.slice(0, 1).toUpperCase()}
                         </span>
-                        <span>{user.email === ownerEmail ? 'Chủ workspace cũ' : user.name}</span>
+                        <span>{user.email === ownerEmail ? t('Chủ workspace cũ') : user.name}</span>
                       </div>
                       <label className="ka-field">
-                        Mã từ app desktop
+                        {t('Mã từ app desktop')}
                         <input
                           className="ka-code"
                           value={code}
@@ -437,27 +441,23 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                       {lookingUp && (
                         <p className="ka-note" role="status">
                           <Loader2 className="spin" size={15} />
-                          Đang tìm thiết bị
+                          {t('Đang tìm thiết bị')}
                         </p>
                       )}
-                      {device ? (
+                      {device && (
                         <div className="ka-device">
                           <Monitor size={19} />
                           <strong>{device.name}</strong>
                         </div>
-                      ) : (
-                        !lookingUp && (
-                          <p className="ka-note">Nhập mã đang hiển thị trong app Kivuno.</p>
-                        )
                       )}
                       {device && (
                         <p className="ka-note">
-                          Chỉ xác nhận khi mã khớp với app trên máy của bạn.
+                          {t('Chỉ xác nhận khi mã khớp với app trên máy của bạn.')}
                         </p>
                       )}
                       {expired && (
                         <p className="ka-error" role="alert">
-                          Mã đã hết hạn. Tạo mã mới trong app.
+                          {t('Mã đã hết hạn. Tạo mã mới trong app.')}
                         </p>
                       )}
                       <motion.button
@@ -468,7 +468,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                         whileTap={reducedMotion ? undefined : { scale: 0.97 }}
                       >
                         {busy ? <Loader2 className="spin" size={17} /> : <CheckCheck size={18} />}
-                        Xác nhận kết nối
+                        {t('Xác nhận kết nối')}
                       </motion.button>
                     </form>
                   )
@@ -477,13 +477,13 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                     {legacy ? (
                       <div className="ka-legacy">
                         <KeyRound size={18} />
-                        Tài khoản workspace hiện tại
+                        {t('Tài khoản workspace hiện tại')}
                       </div>
                     ) : (
                       <>
                         {flow === 'signup' && (
                           <label className="ka-field">
-                            Tên của bạn
+                            {t('Tên của bạn')}
                             <input
                               name="name"
                               autoComplete="name"
@@ -524,7 +524,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                           transition={spring}
                         >
                           <label className="ka-field">
-                            {legacy ? 'Mật khẩu chủ workspace' : 'Mật khẩu'}
+                            {legacy ? t('Mật khẩu chủ workspace') : t('Mật khẩu')}
                             <input
                               name="password"
                               type="password"
@@ -532,13 +532,13 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                               value={password}
                               onChange={(event) => setPassword(event.target.value)}
                               minLength={flow === 'signup' ? 12 : undefined}
+                              placeholder={flow === 'signup' ? t('Tối thiểu 12 ký tự.') : undefined}
                               maxLength={128}
                               required
                               disabled={busy}
                               autoFocus
                             />
                           </label>
-                          {flow === 'signup' && <p className="ka-note">Tối thiểu 12 ký tự.</p>}
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -550,7 +550,11 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                       whileTap={reducedMotion ? undefined : { scale: 0.97 }}
                     >
                       {busy ? <Loader2 className="spin" size={17} /> : null}
-                      {!details ? 'Tiếp tục' : flow === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}
+                      {!details
+                        ? t('Tiếp tục')
+                        : flow === 'signup'
+                          ? t('Tạo tài khoản')
+                          : t('Đăng nhập')}
                       {!busy && <ArrowRight size={17} />}
                     </motion.button>
                     {details && (
@@ -569,7 +573,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                         }}
                       >
                         <ArrowLeft size={14} />
-                        Đổi email
+                        {t('Đổi email')}
                       </button>
                     )}
                   </form>
@@ -578,7 +582,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
             </AnimatePresence>
             {error && (
               <p className="ka-error" role="alert">
-                {error}
+                {t(error)}
               </p>
             )}
             {!loading && (
@@ -591,7 +595,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                     onClick={() => void signOut()}
                   >
                     <LogOut size={15} />
-                    Đăng xuất
+                    {t('Đăng xuất')}
                   </button>
                 ) : (
                   <>
@@ -601,7 +605,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                       type="button"
                       onClick={() => switchFlow(flow === 'login' ? 'signup' : 'login')}
                     >
-                      {flow === 'login' ? 'Tạo tài khoản' : 'Đã có tài khoản? Đăng nhập'}
+                      {flow === 'login' ? t('Tạo tài khoản') : t('Đã có tài khoản? Đăng nhập')}
                     </button>
                     {!legacy && (
                       <button
@@ -617,7 +621,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                           setError('');
                         }}
                       >
-                        Chủ workspace cũ
+                        {t('Chủ workspace cũ')}
                       </button>
                     )}
                   </>

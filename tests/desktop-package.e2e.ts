@@ -86,6 +86,23 @@ const codex = await execute(
   { windowsHide: true, env: gitEnvironment },
 );
 assert.match(codex.stdout, /codex-cli\s+0\.166\.0/);
+const gemini = await execute(
+  path.join(root, 'resources/runtime/node.exe'),
+  [
+    path.join(root, 'resources/workspace/node_modules/@google/gemini-cli/bundle/gemini.js'),
+    '--version',
+  ],
+  {
+    windowsHide: true,
+    env: { ...gitEnvironment, GEMINI_CLI_NO_RELAUNCH: '1', NO_BROWSER: '1' },
+    timeout: 30000,
+  },
+);
+assert.match(gemini.stdout, /0\.66\.0/);
+assert.match(
+  await readFile(path.join(root, 'resources/workspace/scripts/mesh-mcp.mjs'), 'utf8'),
+  /Local stdio MCP proxy/,
+);
 let desktop;
 const pageErrors: string[] = [];
 const rendererDiagnostics: string[] = [];
@@ -100,7 +117,7 @@ try {
     version: app.getVersion(),
     packaged: app.isPackaged,
   }));
-  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.5.0', packaged: true });
+  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.6.0', packaged: true });
   const page = await desktop.firstWindow();
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const resourceName = (value: string) => {
@@ -143,7 +160,7 @@ try {
     const signIn = page.getByRole('button', { name: 'Đăng nhập trên web', exact: true });
     await expect(signIn).toBeVisible();
     await expect(signIn).toBeEnabled();
-    await expect(page.locator('footer')).toContainText(`Kivuno ${metadata.version} · Windows`);
+    await expect(page.locator('.desktop-welcome footer')).toHaveCount(0);
   }
   assert.deepEqual(pageErrors, [], 'The packaged renderer must load without page errors.');
   assert.deepEqual(rendererDiagnostics, [], 'The packaged renderer must load all UI resources.');
@@ -177,6 +194,8 @@ try {
       version: metadata.version,
       bundledNode: node.stdout.trim(),
       bundledCodex: codex.stdout.trim(),
+      bundledGemini: gemini.stdout.trim(),
+      externalMcpBundled: true,
       bundledGit: git.stdout.trim(),
       bundledGitCommit: true,
       inheritedPath: 'Windows system directories only',
@@ -193,9 +212,9 @@ try {
 } catch (error) {
   if (desktop) {
     await mkdir('.local', { recursive: true });
-    const page = await desktop.firstWindow();
+    const page = desktop.windows()[0];
     await page
-      .screenshot({ path: '.local/kivuno-packaged-failure.png', timeout: 5000 })
+      ?.screenshot({ path: '.local/kivuno-packaged-failure.png', timeout: 5000 })
       .catch(() => {});
   }
   if (pageErrors.length) console.error('Packaged renderer errors:', pageErrors);

@@ -7,6 +7,7 @@ import type {
   QuotaGrant,
   QuotaWindow,
   RoomMessage,
+  ProviderTurnGrant,
 } from '../shared/types.ts';
 import { readRateLimits, type CodexClient } from './codex.ts';
 import { Store, DomainError } from './store.ts';
@@ -202,8 +203,47 @@ export class QuotaManager {
       this.refreshing.delete(memberId);
     }
   }
-  assertCanRun(memberId: string, projectId: string) {
+  assertCanRun(memberId: string, projectId: string, sessionId?: string) {
     const quota = this.current(memberId);
+    const member = this.store.get<Member>('member', memberId);
+    if (member.provider === 'gemini' && quota.status === 'unknown') {
+      const grants = this.store
+        .all<ProviderTurnGrant>('providerTurnGrant')
+        .filter(
+          (grant) =>
+            grant.memberId === memberId &&
+            grant.projectId === projectId &&
+            !grant.revokedAt &&
+            Date.parse(grant.expiresAt) > Date.now(),
+        );
+      const active = sessionId
+        ? this.store
+            .all<any>('providerTurnReservation')
+            .find(
+              (entry) =>
+                entry.id === sessionId &&
+                entry.memberId === memberId &&
+                entry.projectId === projectId,
+            )
+        : null;
+      const inProgress =
+        active &&
+        this.store
+          .sessions()
+          .some(
+            (session) =>
+              session.id === sessionId && ['starting', 'running'].includes(session.status),
+          );
+      if (
+        inProgress
+          ? grants.some((grant) => grant.id === active.grantId)
+          : grants.some((grant) => grant.usedTurns < grant.maxTurns)
+      )
+        return quota;
+      throw new DomainError(
+        'Gemini does not report remaining subscription quota. Grant a bounded number of Google-login prompts for this project before continuing.',
+      );
+    }
     if (['unknown', 'stale', 'blocked'].includes(quota.status))
       throw new DomainError(
         quota.error || `Account usage is ${quota.status}. Refresh usage before continuing.`,
@@ -224,6 +264,81 @@ export class QuotaManager {
         `Account reserve reached (${floor}% remaining floor). Handoff or request permission in MESH.`,
       );
     return quota;
+  }
+  grantTurns(
+    memberId: string,
+    input: {
+      projectId: string;
+      maxTurns: number;
+      expiresAt: string;
+      acknowledgeUnknownQuota: true;
+    },
+  ) {
+    const member = this.store.get<Member>('member', memberId);
+    if (
+      member.provider !== 'gemini' ||
+      !groupMembers(this.store, input.projectId).some((entry) => entry.id === memberId)
+    )
+      throw new DomainError('Choose a Gemini teammate in this project.');
+    if (
+      input.acknowledgeUnknownQuota !== true ||
+      !Number.isInteger(input.maxTurns) ||
+      input.maxTurns < 1 ||
+      input.maxTurns > 10 ||
+      Date.parse(input.expiresAt) <= Date.now() ||
+      Date.parse(input.expiresAt) > Date.now() + 2 * 3600_000 ||
+      !Number.isFinite(Date.parse(input.expiresAt))
+    )
+      throw new DomainError(
+        'Allow 1–10 prompts for at most two hours and acknowledge unknown quota.',
+        400,
+      );
+    return this.store.put('providerTurnGrant', {
+      id: randomUUID(),
+      memberId,
+      projectId: input.projectId,
+      maxTurns: input.maxTurns,
+      usedTurns: 0,
+      expiresAt: input.expiresAt,
+      createdAt: new Date().toISOString(),
+      revokedAt: null,
+    } satisfies ProviderTurnGrant);
+  }
+  revokeTurns(id: string) {
+    return this.store.put('providerTurnGrant', {
+      ...this.store.get<ProviderTurnGrant>('providerTurnGrant', id),
+      revokedAt: new Date().toISOString(),
+    });
+  }
+  consumeTurn(memberId: string, projectId: string, sessionId: string) {
+    if (this.store.get<Member>('member', memberId).provider !== 'gemini') return;
+    this.store.transaction(() => {
+      const grant = this.store
+        .all<ProviderTurnGrant>('providerTurnGrant')
+        .find(
+          (entry) =>
+            entry.memberId === memberId &&
+            entry.projectId === projectId &&
+            !entry.revokedAt &&
+            Date.parse(entry.expiresAt) > Date.now() &&
+            entry.usedTurns < entry.maxTurns,
+        );
+      if (!grant)
+        throw new DomainError(
+          'This Gemini prompt allowance is exhausted or expired. Ask the human for a new allowance.',
+        );
+      this.store.put('providerTurnGrant', { ...grant, usedTurns: grant.usedTurns + 1 });
+      this.store.put('providerTurnReservation', {
+        id: sessionId,
+        memberId,
+        projectId,
+        grantId: grant.id,
+      });
+    });
+  }
+  completeTurn(sessionId: string) {
+    if (this.store.all<any>('providerTurnReservation').some((entry) => entry.id === sessionId))
+      this.store.remove('providerTurnReservation', sessionId);
   }
   grant(memberId: string, input: { projectId: string; floor: number; expiresAt: string }) {
     this.store.get<Member>('member', memberId);
@@ -283,8 +398,15 @@ export class QuotaManager {
     if (this.host.closing) return;
     const active = this.store
       .sessions()
-      .filter((session) => ['running', 'starting'].includes(session.status));
-    const members = active.length ? this.store.members().filter((member) => member.account) : [];
+      .filter((session) => !session.external && ['running', 'starting'].includes(session.status));
+    const members = active.length
+      ? this.store
+          .members()
+          .filter(
+            (member) =>
+              member.account && member.provider !== 'claude' && member.integration !== 'external',
+          )
+      : [];
     await Promise.allSettled(members.map((member) => this.refresh(member.id)));
     await this.enforce();
   }
@@ -294,10 +416,10 @@ export class QuotaManager {
     try {
       for (const session of this.store
         .sessions()
-        .filter((entry) => ['running', 'starting'].includes(entry.status))) {
+        .filter((entry) => !entry.external && ['running', 'starting'].includes(entry.status))) {
         if (this.host.closing) break;
         try {
-          this.assertCanRun(session.memberId, session.projectId);
+          this.assertCanRun(session.memberId, session.projectId, session.id);
         } catch {
           try {
             await this.host.sessions?.interrupt(

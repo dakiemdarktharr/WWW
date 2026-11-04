@@ -24,7 +24,7 @@ Kivuno runs real Codex App Server conversations. Its browser is a **Kivuno-owned
 
 ## Window and memory behavior
 
-The 40px custom titlebar has minimize, maximize/restore, fullscreen, and hide-to-tray controls, including in fullscreen. F11 toggles fullscreen even when the project website has focus. Native IPC requires the trusted app's exact main frame; browser operations additionally require a signed-in owner. Website frames cannot operate the window or browser bridge. Native pages hide during app dialogs and snapshot review. Closing the main window preserves the existing tray behavior and active Codex work. **Quit Kivuno and stop agents** remains the explicit shutdown action.
+The 40px custom titlebar has three controls: minimize, maximize/restore, and hide to tray. F11 toggles fullscreen even when the project website has focus. Native IPC requires the trusted app's exact main frame; browser operations additionally require a signed-in owner. Website frames cannot operate the window or browser bridge. Native pages hide during app dialogs and snapshot review. Closing the main window preserves the existing tray behavior and active Codex work. **Quit Kivuno and stop agents** remains the explicit shutdown action.
 
 The project browser opens only on demand, closes on panel removal/sign-out, and is suspended after 60 seconds while the main window is hidden or minimized. Browser suspension does not kill Codex sessions; unsaved website forms can be lost, while website cookies persist. Signed-in identity polling is reduced to every 10 seconds, and unchanged status no longer re-renders the entire workspace.
 

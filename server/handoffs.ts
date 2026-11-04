@@ -76,6 +76,11 @@ export class Handoffs {
         'Planning ownership belongs to the team workflow. Resume that workflow instead.',
       );
     this.host.store.get<Member>('member', input.toMemberId);
+    const recipientProfile = this.host.store.get<Member>('member', input.toMemberId);
+    if (recipientProfile.provider === 'claude' || recipientProfile.integration === 'external')
+      throw new DomainError(
+        'Use a reviewed Git checkpoint and assign the ready task through the external MESH bridge for this teammate.',
+      );
     assertGroupMember(this.host.store, source.projectId, source.memberId);
     assertGroupMember(this.host.store, source.projectId, input.toMemberId);
     if (source.memberId === input.toMemberId)
@@ -239,6 +244,7 @@ export class Handoffs {
         const recipient = this.host.store.put('session', {
           id: randomUUID(),
           memberId: member.id,
+          provider: member.provider || 'codex',
           projectId: source.projectId,
           taskId: task.id,
           title: source.title,
@@ -313,6 +319,7 @@ export class Handoffs {
           (a.activeSessions || 0) - (b.activeSessions || 0),
       )
       .find((candidate) => {
+        if (candidate.provider === 'claude' || candidate.integration === 'external') return false;
         if (candidate.id === source.memberId || !candidate.account) return false;
         if (candidate.presence === 'offline') return false;
         try {

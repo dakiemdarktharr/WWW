@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Maximize, Minimize, Minus, Square, X } from 'lucide-react';
+import { Copy, Minus, Square, X } from 'lucide-react';
 import type { DesktopWindowState } from './desktop';
 import './TitleBar.css';
 
@@ -12,9 +12,25 @@ export default function DesktopTitleBar() {
       .getWindowState()
       .then(setState)
       .catch(() => {});
-    return desktop.onWindowState(setState);
+    const unsubscribe = desktop.onWindowState(setState);
+    const fullscreen = (event: KeyboardEvent) => {
+      if (event.key === 'F11' && !event.repeat) {
+        event.preventDefault();
+        void desktop
+          .controlWindow('fullscreen')
+          .then(setState)
+          .catch(() => {});
+      }
+    };
+    // Native before-input-event consumes real F11 first. This also covers
+    // renderer-delivered keyboard events (including accessibility/CDP input).
+    window.addEventListener('keydown', fullscreen);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('keydown', fullscreen);
+    };
   }, []);
-  const control = (action: 'minimize' | 'maximize' | 'fullscreen' | 'close') => {
+  const control = (action: 'minimize' | 'maximize' | 'close') => {
     void window.relayDesktop
       ?.controlWindow(action)
       .then(setState)
@@ -28,12 +44,6 @@ export default function DesktopTitleBar() {
         <span>Kivuno</span>
       </div>
       <div className="desktop-titlebar-controls">
-        <button
-          aria-label={state.fullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
-          onClick={() => control('fullscreen')}
-        >
-          {state.fullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
-        </button>
         <button aria-label="Thu nhỏ" onClick={() => control('minimize')}>
           <Minus size={15} />
         </button>
@@ -41,7 +51,7 @@ export default function DesktopTitleBar() {
           aria-label={state.maximized || state.fullscreen ? 'Khôi phục cửa sổ' : 'Phóng to'}
           onClick={() => control('maximize')}
         >
-          <Square size={12} />
+          {state.maximized || state.fullscreen ? <Copy size={12} /> : <Square size={12} />}
         </button>
         <button
           className="desktop-titlebar-close"

@@ -31,6 +31,10 @@ function fixture(t: TestContext) {
     store,
     closing: false,
     mesh,
+    async validateChatConfig(
+      _memberId: string,
+      _config: { model?: string; reasoningEffort?: string },
+    ) {},
     quota: {
       async refresh() {
         if (gate) await gate;
@@ -206,4 +210,35 @@ test('restart preserves an uncertain startup as blocked and never automatically 
   assert.equal(f.store.get<any>('meshDispatch', message.id).status, 'blocked');
   assert.equal(f.calls.length, 0);
   await restarted.close();
+});
+
+test('mixed-provider chat checks model and reasoning before claiming and skips external Claude', async (t) => {
+  const f = fixture(t);
+  const gemini = f.store.addMember({ name: 'Gemini', provider: 'gemini', role: 'researcher' });
+  const claude = f.store.addMember({
+    name: 'Claude',
+    provider: 'claude',
+    integration: 'external',
+    role: 'engineer',
+  });
+  for (const member of [gemini, claude])
+    f.store.updateMember(member.id, { account: { type: 'controlled' }, status: 'ready' });
+  f.store.put('project', { ...f.project, memberIds: [f.member.id, gemini.id, claude.id] });
+  const inspected: string[] = [];
+  f.host.validateChatConfig = async (memberId, config) => {
+    inspected.push(memberId);
+    assert.equal(config.reasoningEffort, 'high');
+    if (memberId === gemini.id) throw new Error('Gemini does not support reasoning controls');
+  };
+  const message = f.human();
+  f.store.put('message', {
+    ...message,
+    mentions: [gemini.id, claude.id],
+    effectiveConfig: { model: 'controlled-codex', reasoningEffort: 'high' },
+  });
+  await f.dispatcher.dispatch(f.project.id);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].memberId, f.member.id);
+  assert.deepEqual(inspected, [gemini.id, f.member.id]);
+  assert.equal(f.store.get<RoomMessage>('message', message.id).claimedBy, f.member.id);
 });

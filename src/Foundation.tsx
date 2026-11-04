@@ -36,7 +36,9 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
+import HelpDetails from './HelpDetails';
 import { openExternal, openPreview } from './desktop';
+import { ProviderTurnAllowance, providerLabels, providerOf } from './ProviderConnect';
 
 export type FoundationRequest = <T = unknown>(
   path: string,
@@ -102,9 +104,9 @@ export function FoundationDialog({
       if (event.key === 'Tab') {
         const controls = [
           ...(dialog.current?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]',
+            'summary,button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]',
           ) || []),
-        ];
+        ].filter((element) => element.getClientRects().length > 0);
         const first = controls[0],
           last = controls.at(-1);
         if (event.shiftKey && document.activeElement === first) {
@@ -173,6 +175,9 @@ export function QuotaCard({
       !entry.revokedAt &&
       new Date(entry.expiresAt).getTime() > Date.now(),
   );
+  if (providerOf(member) === 'gemini')
+    return <ProviderTurnAllowance member={member} state={state} busy={busy} request={request} />;
+  if (providerOf(member) === 'claude') return <span className="provider-tag">Quota unknown</span>;
   return (
     <section className="quota-card">
       <div className="quota-card-heading">
@@ -437,10 +442,15 @@ export function HandoffForm({
           <select name="recipient" required defaultValue="">
             <option value="">Choose account</option>
             {state.members
-              .filter((member) => member.id !== selected?.memberId)
+              .filter(
+                (member) =>
+                  member.id !== selected?.memberId &&
+                  providerOf(member) !== 'claude' &&
+                  project.memberIds?.includes(member.id),
+              )
               .map((member) => (
                 <option key={member.id} value={member.id}>
-                  {member.name}
+                  {member.name} · {providerLabels[providerOf(member)]}
                 </option>
               ))}
           </select>
@@ -463,10 +473,9 @@ export function HandoffForm({
             placeholder="Commands, results and known failures"
           />
         </label>
-        <div className="foundation-notice">
-          <GitBranch size={14} />
-          Stops the source, commits progress and verifies the push before transfer.
-        </div>
+        <HelpDetails title="Handoff steps">
+          <p>Stops the source, commits progress and verifies the push before transfer.</p>
+        </HelpDetails>
         <button className="button primary" disabled={busy || !source}>
           Checkpoint & hand off
           <ArrowRight size={14} />
@@ -657,7 +666,14 @@ export function SessionsPage({
           {!focusedId && (
             <button
               className="button primary"
-              disabled={!project || busy || !state.members.length}
+              disabled={
+                !project ||
+                busy ||
+                !state.members.some(
+                  (member) =>
+                    project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+                )
+              }
               onClick={() => setCreating(true)}
               data-usage="new-session"
             >
@@ -734,7 +750,6 @@ export function SessionsPage({
             sandbox="allow-scripts allow-forms allow-same-origin"
             referrerPolicy="no-referrer"
           />
-          <footer>Site refusing to display? Open it in your browser using the arrow above.</footer>
         </section>
       )}
       {!focusedId && (
@@ -785,7 +800,13 @@ export function SessionsPage({
             <button
               className="button"
               onClick={project ? () => setCreating(true) : addProject}
-              disabled={!!project && !state.members.length}
+              disabled={
+                !!project &&
+                !state.members.some(
+                  (member) =>
+                    project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+                )
+              }
             >
               <Plus size={14} />
               {project ? 'New session' : 'Connect project'}
@@ -855,13 +876,17 @@ export function CreateSession({
   const [readOnly, setReadOnly] = useState(true);
   const [taskId, setTaskId] = useState('');
   const [memberId, setMemberId] = useState(
-    project.memberIds?.includes(project.ownerMemberId || '') ? project.ownerMemberId || '' : '',
+    project.memberIds?.includes(project.ownerMemberId || '') &&
+      providerOf(state.members.find((member) => member.id === project.ownerMemberId)) !== 'claude'
+      ? project.ownerMemberId || ''
+      : '',
   );
   const [model, setModel] = useState('');
   const [effort, setEffort] = useState('');
   const [automatic, setAutomatic] = useState(true);
+  const provider = providerOf(state.members.find((member) => member.id === memberId));
   return (
-    <FoundationDialog title="New Codex session" close={close}>
+    <FoundationDialog title="New agent session" close={close}>
       <form
         className="form"
         onSubmit={async (event) => {
@@ -873,8 +898,8 @@ export function CreateSession({
             title: data.get('title'),
             readOnly,
             prompt: data.get('prompt'),
-            model: model || null,
-            reasoningEffort: effort || null,
+            model: automatic ? null : model || null,
+            reasoningEffort: automatic || provider !== 'codex' ? null : effort || null,
             modelPolicy: automatic ? 'auto' : 'manual',
             ...(taskId
               ? { taskId }
@@ -892,6 +917,7 @@ export function CreateSession({
           Account
           <select
             name="memberId"
+            aria-label="Account"
             required
             value={memberId}
             onChange={(event) => {
@@ -900,12 +926,15 @@ export function CreateSession({
               setEffort('');
             }}
           >
-            <option value="">Choose Codex account</option>
+            <option value="">Choose agent account</option>
             {state.members
-              .filter((member) => project.memberIds?.includes(member.id))
+              .filter(
+                (member) =>
+                  project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+              )
               .map((member) => (
                 <option key={member.id} value={member.id}>
-                  {member.name}
+                  {member.name} · {providerLabels[providerOf(member)]}
                   {member.account ? '' : ' · reconnect required'}
                 </option>
               ))}
@@ -917,11 +946,12 @@ export function CreateSession({
             checked={automatic}
             onChange={(event) => setAutomatic(event.target.checked)}
           />
-          Automatic model and reasoning
+          {provider === 'codex' ? 'Automatic model and reasoning' : 'Automatic model'}
         </label>
         {!automatic && (
           <ModelFields
             memberId={memberId}
+            reasoning={provider === 'codex'}
             model={model}
             effort={effort}
             change={(m, e) => {
@@ -986,11 +1016,12 @@ export function CreateSession({
             placeholder="Optional — send a prompt when ready"
           />
         </label>
-        <div className="foundation-notice">
-          <Terminal size={14} />
-          Uses this account's Codex usage.
-        </div>
-        <button className="button primary" disabled={busy}>
+        {provider === 'gemini' && (
+          <HelpDetails title="Usage help">
+            <p>Team → Gemini usage → grant a bounded prompt allowance.</p>
+          </HelpDetails>
+        )}
+        <button className="button primary" disabled={busy || !memberId || provider === 'claude'}>
           <Play size={14} />
           Create session
         </button>
@@ -1004,11 +1035,13 @@ function ModelFields({
   model,
   effort,
   change,
+  reasoning = true,
 }: {
   memberId: string;
   model: string;
   effort: string;
   change: (model: string, effort: string) => void;
+  reasoning?: boolean;
 }) {
   const [models, setModels] = useState<CodexModel[]>([]);
   const [error, setError] = useState('');
@@ -1055,21 +1088,23 @@ function ModelFields({
           ))}
         </select>
       </label>
-      <label>
-        Reasoning
-        <select
-          value={effort}
-          disabled={loading || !selected}
-          onChange={(event) => change(model, event.target.value)}
-        >
-          <option value="">Model default</option>
-          {selected?.supportedReasoningEfforts.map((item) => (
-            <option key={item.reasoningEffort} value={item.reasoningEffort}>
-              {item.reasoningEffort}
-            </option>
-          ))}
-        </select>
-      </label>
+      {reasoning && (
+        <label>
+          Reasoning
+          <select
+            value={effort}
+            disabled={loading || !selected}
+            onChange={(event) => change(model, event.target.value)}
+          >
+            <option value="">Model default</option>
+            {selected?.supportedReasoningEfforts.map((item) => (
+              <option key={item.reasoningEffort} value={item.reasoningEffort}>
+                {item.reasoningEffort}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {loading && <p role="status">Loading account models…</p>}
       {error && (
         <p className="error-text" role="status">
@@ -1106,7 +1141,8 @@ function SessionSettings({
                 `/sessions/${session.id}/config`,
                 {
                   model: automatic ? null : model || null,
-                  reasoningEffort: automatic ? null : effort || null,
+                  reasoningEffort:
+                    automatic || session.provider === 'gemini' ? null : effort || null,
                   modelPolicy: automatic ? 'auto' : 'manual',
                 },
                 'PATCH',
@@ -1124,11 +1160,12 @@ function SessionSettings({
             checked={automatic}
             onChange={(event) => setAutomatic(event.target.checked)}
           />
-          Automatic model and reasoning
+          {session.provider === 'gemini' ? 'Automatic model' : 'Automatic model and reasoning'}
         </label>
         {!automatic && (
           <ModelFields
             memberId={session.memberId}
+            reasoning={session.provider !== 'gemini'}
             model={model}
             effort={effort}
             change={(m, e) => {
@@ -1168,6 +1205,8 @@ export function SessionConsole({
   const [settings, setSettings] = useState(false);
   const output = useRef<HTMLDivElement>(null);
   const member = state.members.find((item) => item.id === session.memberId);
+  const provider = session.provider || providerOf(member);
+  const external = provider === 'claude' || session.external;
   const task = state.tasks.find((item) => item.id === session.taskId);
   const approvals = state.approvals.filter((item) => item.taskId === session.taskId);
   const running = ['running', 'starting'].includes(session.status);
@@ -1177,8 +1216,10 @@ export function SessionConsole({
       ['checkpointing', 'blocked', 'awaiting_ack'].includes(handoff.status),
   );
   const canSend =
-    !pendingHandoff && ['idle', 'paused', 'review', 'running'].includes(session.status);
-  const needsRecovery = session.status === 'interrupted';
+    !external &&
+    !pendingHandoff &&
+    ['idle', 'paused', 'review', 'running'].includes(session.status);
+  const needsRecovery = !external && session.status === 'interrupted';
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
@@ -1233,12 +1274,16 @@ export function SessionConsole({
       <div className="session-runtime">
         <Face member={member} />
         <strong>{member?.name || 'Account'}</strong>
+        <span className="provider-tag">
+          {providerLabels[provider]}
+          {external ? ' · external' : ''}
+        </span>
         <span>{session.readOnly ? 'Read only' : 'Workspace write'}</span>
         <span>
           {session.model || 'Account default'}
           {session.reasoningEffort ? ` · ${session.reasoningEffort}` : ''}
         </span>
-        {['idle', 'paused', 'review'].includes(session.status) && (
+        {!external && ['idle', 'paused', 'review'].includes(session.status) && (
           <button className="text-button" onClick={() => setSettings(true)}>
             Model settings
           </button>
@@ -1300,7 +1345,7 @@ export function SessionConsole({
             ))
         ) : (
           <div className="session-output-empty">
-            {running ? 'Waiting for Codex events…' : 'No recorded output'}
+            {running ? `Waiting for ${providerLabels[provider]} events…` : 'No recorded output'}
           </div>
         )}
       </div>
@@ -1376,6 +1421,11 @@ export function SessionConsole({
           </button>
         </div>
       )}
+      {external && (
+        <HelpDetails title="Session help">
+          <p>Continue in your own Claude client. Shared progress appears in Neralu.</p>
+        </HelpDetails>
+      )}
       <form
         className="session-input"
         onSubmit={async (event) => {
@@ -1399,7 +1449,7 @@ export function SessionConsole({
           onChange={(event) => setPrompt(event.target.value)}
           placeholder={
             session.status === 'running'
-              ? 'Steer the current Codex turn…'
+              ? `Steer the current ${providerLabels[provider]} turn…`
               : canSend
                 ? 'Continue this session…'
                 : 'Resume or recover this session to continue'
@@ -1408,7 +1458,7 @@ export function SessionConsole({
         />
         <div className="session-input-actions">
           <div>
-            {running && (
+            {!external && running && (
               <button
                 className="button compact"
                 disabled={busy || !!pendingHandoff}
@@ -1419,7 +1469,7 @@ export function SessionConsole({
                 Pause
               </button>
             )}
-            {running && (
+            {!external && running && (
               <button
                 className="button compact"
                 disabled={busy}
@@ -1430,18 +1480,21 @@ export function SessionConsole({
                 Stop
               </button>
             )}
-            {!pendingHandoff && ['paused', 'stopped', 'error'].includes(session.status) && (
-              <button
-                className="button compact"
-                disabled={busy}
-                type="button"
-                onClick={() => void request(`/sessions/${session.id}/resume`, {})}
-              >
-                <Play size={12} />
-                Resume
-              </button>
-            )}
-            {!pendingHandoff &&
+            {!external &&
+              !pendingHandoff &&
+              ['paused', 'stopped', 'error'].includes(session.status) && (
+                <button
+                  className="button compact"
+                  disabled={busy}
+                  type="button"
+                  onClick={() => void request(`/sessions/${session.id}/resume`, {})}
+                >
+                  <Play size={12} />
+                  Resume
+                </button>
+              )}
+            {!external &&
+              !pendingHandoff &&
               !session.readOnly &&
               !['stopped', 'handoff'].includes(session.status) && (
                 <button className="text-button" disabled={busy} type="button" onClick={handoff}>

@@ -7,6 +7,7 @@ import {
   useReducedMotion,
   useScroll,
   useTransform,
+  type MotionValue,
 } from 'motion/react';
 import {
   ArrowDownToLine,
@@ -19,14 +20,11 @@ import {
   GitCommitHorizontal,
   Laptop,
   LogIn,
-  MessageCircle,
   Network,
   Heart,
   ThumbsUp,
   ThumbsDown,
   Monitor,
-  Pause,
-  Play,
   Server,
   ShieldCheck,
   Sparkles,
@@ -34,6 +32,7 @@ import {
   X,
 } from 'lucide-react';
 import PortalAuth from './PortalAuth';
+import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
 
 type Platform = 'windows' | 'linux';
@@ -172,259 +171,274 @@ const scenarios = {
   ],
 };
 type Scenario = keyof typeof scenarios;
-function MessagingDemo() {
-  const [scenario, setScenario] = useState<Scenario>('plan');
-  const [visible, setVisible] = useState(5);
-  const [playing, setPlaying] = useState(false);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [selectedSession, setSelectedSession] = useState(0);
-  const [feedback, setFeedback] = useState<Record<string, string>>({});
-  const reduced = useReducedMotion();
-  const messages = scenarios[scenario];
-  useEffect(() => {
-    if (!playing) return;
-    if (visible >= messages.length) {
-      setPlaying(false);
-      return;
-    }
-    const timer = setTimeout(() => setVisible((v) => v + 1), 1100);
-    return () => clearTimeout(timer);
-  }, [playing, visible, messages.length]);
-  function choose(next: Scenario) {
-    setScenario(next);
-    setVisible(scenarios[next].length);
-    setPlaying(false);
-  }
+type DemoMessage = (typeof scenarios)[Scenario][number];
+function ScrollMessage({
+  message,
+  index,
+  progress,
+  instant,
+}: {
+  message: DemoMessage;
+  index: number;
+  progress: MotionValue<number>;
+  instant: boolean;
+}) {
+  const { t } = usePortalLocale();
+  const [reaction, setReaction] = useState('');
+  const [active, setActive] = useState(instant);
+  const start = 0.08 + index * 0.135;
+  const opacity = useTransform(progress, [start, start + 0.11], [0, 1]);
+  const y = useTransform(progress, [start, start + 0.11], [42, 0]);
+  const scale = useTransform(progress, [start, start + 0.11], [0.91, 1]);
+  useMotionValueEvent(opacity, 'change', (value) => setActive(value > 0.85));
   return (
-    <section className="kp-chat-section" id="neralu" aria-labelledby="neralu-title">
-      <div className="kp-section-heading">
-        <h2 id="neralu-title">Neralu · Chat dự án</h2>
-        <span className="kp-demo-badge">Demo tương tác</span>
-      </div>
-      <div className="kp-chat-layout">
-        <div className="kp-chat-intro">
-          <h3>
-            Nói ý tưởng.
-            <br />
-            Cùng hiện thực hóa.
-          </h3>
-          <div className="kp-scenario-controls" role="group" aria-label="Kịch bản demo">
-            {(
-              [
-                ['plan', 'Chia việc'],
-                ['handoff', 'Bàn giao'],
-                ['review', 'Review'],
-              ] as const
-            ).map(([key, label]) => (
-              <motion.button
+    <motion.article
+      className={'kp-message ' + message.color}
+      data-scroll-message={index}
+      style={instant ? { opacity: 1, y: 0, scale: 1 } : { opacity, y, scale }}
+    >
+      <span className="kp-avatar">
+        {message.who === 'BOT' ? <ShieldCheck size={18} /> : t(message.who).slice(0, 1)}
+      </span>
+      <div>
+        <div className="kp-message-who">
+          <strong>{t(message.who)}</strong>
+          <span>{t(message.tag)}</span>
+          <time dateTime={'2026-11-04T09:' + String(30 + index) + ':00+07:00'}>
+            09:{30 + index}
+          </time>
+        </div>
+        <p>
+          {t(message.text)
+            .split(/(@[\p{L}\w]+)/u)
+            .map((part, i) => (part.startsWith('@') ? <mark key={i}>{part}</mark> : part))}
+        </p>
+        {message.color !== 'human' && (
+          <div
+            className="kp-reactions"
+            role="group"
+            aria-label={t('Phản hồi demo cho') + ' ' + message.who}
+          >
+            {[
+              { key: 'heart', label: t('Đã hiểu'), Icon: Heart },
+              { key: 'up', label: t('Đồng ý'), Icon: ThumbsUp },
+              { key: 'down', label: t('Không đồng ý'), Icon: ThumbsDown },
+            ].map(({ key, label, Icon }) => (
+              <button
                 key={key}
-                whileHover={{ x: reduced ? 0 : 5 }}
-                whileTap={{ scale: reduced ? 1 : 0.96 }}
-                className={scenario === key ? 'selected' : ''}
-                aria-pressed={scenario === key}
-                onClick={() => choose(key)}
+                tabIndex={instant || active ? 0 : -1}
+                title={t(label)}
+                aria-label={t(label)}
+                aria-pressed={reaction === key}
+                onClick={() => setReaction(reaction === key ? '' : key)}
               >
-                {label}
-                <ArrowRight size={17} />
-              </motion.button>
+                <Icon size={13} />
+              </button>
             ))}
           </div>
-          <button
-            className="kp-replay"
-            onClick={() => {
-              if (playing) setPlaying(false);
-              else {
-                setVisible(0);
-                setPlaying(true);
+        )}
+      </div>
+    </motion.article>
+  );
+}
+function DemoSessions() {
+  const { t } = usePortalLocale();
+  const [selected, setSelected] = useState(0);
+  return (
+    <aside
+      id="demo-session-graph"
+      className="kp-session-preview"
+      aria-label={t('Graph session minh họa')}
+    >
+      <div className="kp-session-preview-title">
+        <strong>4 sessions</strong>
+        <span>3 Codex</span>
+      </div>
+      <svg
+        viewBox="0 0 240 260"
+        role="group"
+        aria-label={t('Bốn session nối với cùng dự án; Ari có hai session')}
+      >
+        <g className="kp-session-edges">
+          <path d="M120 125L55 48M120 125L186 62M120 125L56 206M120 125L183 210" />
+        </g>
+        <circle cx="120" cy="125" r="25" className="kp-session-hub" />
+        <text x="120" y="129" textAnchor="middle">
+          Aurora
+        </text>
+        {[
+          { x: 55, y: 48, name: 'API', owner: 'Ari' },
+          { x: 186, y: 62, name: 'Tests', owner: 'Ari' },
+          { x: 56, y: 206, name: 'UI', owner: 'Nova' },
+          { x: 183, y: 210, name: 'Research', owner: 'Sol' },
+        ].map((node, i) => (
+          <g
+            key={node.name}
+            role="button"
+            tabIndex={0}
+            aria-label={'Session ' + node.name + ' ' + t('của') + ' ' + node.owner}
+            aria-pressed={selected === i}
+            onClick={() => setSelected(i)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setSelected(i);
               }
             }}
+            className={selected === i ? 'is-selected' : ''}
           >
-            {playing ? <Pause size={15} /> : <Play size={15} />}
-            {playing ? 'Tạm dừng' : 'Phát demo'}
-          </button>
-        </div>
-        <div className="kp-chat-window glass">
-          <div className="kp-chat-bar">
-            <span className="kp-chat-mark">
-              <MessageCircle size={19} /> UniHack / Aurora
-            </span>
-            <button
-              className="kp-session-toggle"
-              aria-pressed={sessionsOpen}
-              onClick={() => setSessionsOpen(!sessionsOpen)}
-            >
-              <Network size={16} /> Sessions
-            </button>
-          </div>
-          <div className={`kp-conversation-body ${sessionsOpen ? 'with-sessions' : ''}`}>
-            <div className="kp-messages" aria-label="Tin nhắn minh họa, không phải hoạt động thật">
-              <AnimatePresence mode="popLayout" initial={false}>
-                {messages.slice(0, visible).map((message, i) => (
-                  <motion.article
-                    layout
-                    key={`${scenario}-${i}`}
-                    className={`kp-message ${message.color}`}
-                    initial={{ opacity: 0, y: reduced ? 0 : 18, scale: reduced ? 1 : 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={spring}
-                  >
-                    <span className="kp-avatar">
-                      {message.who === 'BOT' ? <ShieldCheck size={18} /> : message.who.slice(0, 1)}
-                    </span>
-                    <div>
-                      <div className="kp-message-who">
-                        <strong>{message.who}</strong>
-                        <span>{message.tag}</span>
-                        <time
-                          dateTime={`2026-11-04T09:${String(30 + i).padStart(2, '0')}:00+07:00`}
-                        >
-                          09:{30 + i}
-                        </time>
-                      </div>
-                      <p>
-                        {message.text
-                          .split(/(@\w+)/)
-                          .map((part, j) =>
-                            part.startsWith('@') ? <mark key={j}>{part}</mark> : part,
-                          )}
-                      </p>
-                      {message.color !== 'human' && (
-                        <div
-                          className="kp-reactions"
-                          role="group"
-                          aria-label={`Phản hồi demo cho ${message.who}`}
-                        >
-                          {(
-                            [
-                              { key: 'heart', label: 'Đã hiểu', Icon: Heart },
-                              { key: 'up', label: 'Đồng ý', Icon: ThumbsUp },
-                              { key: 'down', label: 'Không đồng ý', Icon: ThumbsDown },
-                            ] as const
-                          ).map(({ key, label, Icon }) => (
-                            <button
-                              key={key}
-                              title={label}
-                              aria-label={label}
-                              aria-pressed={feedback[`${scenario}-${i}`] === key}
-                              onClick={() =>
-                                setFeedback((current) => ({
-                                  ...current,
-                                  [`${scenario}-${i}`]:
-                                    current[`${scenario}-${i}`] === key ? '' : key,
-                                }))
-                              }
-                            >
-                              <Icon size={13} />
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </motion.article>
-                ))}
-              </AnimatePresence>
+            <rect
+              x={node.x - 31}
+              y={node.y - 23}
+              width={62}
+              height={63}
+              fill="transparent"
+              pointerEvents="all"
+            />
+            <circle cx={node.x} cy={node.y} r="17" />
+            <text x={node.x} y={node.y + 4} textAnchor="middle">
+              {node.owner[0]}
+            </text>
+            <text x={node.x} y={node.y + 34} textAnchor="middle">
+              {node.name}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div className="kp-session-selected">
+        <strong>{['API · Ari', 'Tests · Ari', 'UI · Nova', 'Research · Sol'][selected]}</strong>
+        <span>{t([t('Đang làm'), t('Đang kiểm tra'), t('Chờ API'), t('Hoàn tất')][selected])}</span>
+      </div>
+    </aside>
+  );
+}
+function ScrollStory({ scenario, index }: { scenario: Scenario; index: number }) {
+  const { t, locale } = usePortalLocale();
+  const section = useRef<HTMLElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [overflow, setOverflow] = useState(0);
+  const instant = !!reduced;
+  const { scrollYProgress } = useScroll({ target: section, offset: ['start 75%', 'end 90%'] });
+  const listY = useTransform(scrollYProgress, [0, 0.48, 0.94, 1], [0, 0, -overflow, -overflow]);
+  useEffect(() => {
+    const measure = () =>
+      setOverflow(
+        Math.max(0, (list.current?.scrollHeight || 0) - (viewport.current?.clientHeight || 0)),
+      );
+    const observer = new ResizeObserver(measure);
+    if (list.current) observer.observe(list.current);
+    if (viewport.current) observer.observe(viewport.current);
+    measure();
+    return () => observer.disconnect();
+  }, [locale, instant, sessionsOpen]);
+  const copy = {
+    plan: {
+      label: t('Chia việc'),
+      title: t('Một ý tưởng. Cả đội vào việc.'),
+    },
+    handoff: {
+      label: t('Bàn giao'),
+      title: t('Đổi người. Không mất mạch.'),
+    },
+    review: {
+      label: 'Review',
+      title: t('Cùng sửa. Bạn duyệt.'),
+    },
+  }[scenario];
+  return (
+    <section
+      ref={section}
+      id={'demo-' + scenario}
+      data-story={scenario}
+      className={'kp-scroll-story ' + (instant ? 'show-all' : '')}
+      aria-labelledby={'story-title-' + scenario}
+    >
+      <div className="kp-story-sticky">
+        <div className="kp-chat-layout">
+          <div className="kp-chat-intro">
+            <div className="kp-story-kicker">
+              <span>0{index + 1}</span>
+              <h2 id={'story-title-' + scenario}>{t(copy.label)}</h2>
             </div>
-            {sessionsOpen && (
-              <aside className="kp-session-preview" aria-label="Graph session minh họa">
-                <div className="kp-session-preview-title">
-                  <strong>4 sessions</strong>
-                  <span>3 Codex</span>
-                </div>
-                <svg
-                  viewBox="0 0 240 260"
-                  role="img"
-                  aria-label="Bốn session nối với cùng dự án; Ari có hai session"
-                >
-                  <g className="kp-session-edges">
-                    <path d="M120 125L55 48M120 125L186 62M120 125L56 206M120 125L183 210" />
-                  </g>
-                  <circle cx="120" cy="125" r="25" className="kp-session-hub" />
-                  <text x="120" y="129" textAnchor="middle">
-                    Aurora
-                  </text>
-                  {[
-                    { x: 55, y: 48, name: 'API', owner: 'Ari' },
-                    { x: 186, y: 62, name: 'Tests', owner: 'Ari' },
-                    { x: 56, y: 206, name: 'UI', owner: 'Nova' },
-                    { x: 183, y: 210, name: 'Research', owner: 'Sol' },
-                  ].map((node, i) => (
-                    <g
-                      key={node.name}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Session ${node.name} của ${node.owner}`}
-                      aria-pressed={selectedSession === i}
-                      onClick={() => setSelectedSession(i)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          setSelectedSession(i);
-                        }
-                      }}
-                      className={selectedSession === i ? 'is-selected' : ''}
-                    >
-                      <circle cx={node.x} cy={node.y} r="17" />
-                      <text x={node.x} y={node.y + 4} textAnchor="middle">
-                        {node.owner[0]}
-                      </text>
-                      <text x={node.x} y={node.y + 34} textAnchor="middle">
-                        {node.name}
-                      </text>
-                    </g>
-                  ))}
-                </svg>
-                <div className="kp-session-selected">
-                  <strong>
-                    {['API · Ari', 'Tests · Ari', 'UI · Nova', 'Research · Sol'][selectedSession]}
-                  </strong>
-                  <span>
-                    {['Đang làm', 'Đang kiểm tra', 'Chờ API', 'Hoàn tất'][selectedSession]}
-                  </span>
-                </div>
-              </aside>
+            <h3>{t(copy.title)}</h3>
+            {scenario === 'plan' && (
+              <button
+                className="kp-session-toggle"
+                aria-pressed={sessionsOpen}
+                aria-controls="demo-session-graph"
+                onClick={() => setSessionsOpen(!sessionsOpen)}
+              >
+                <Network size={16} />
+                Sessions
+              </button>
             )}
           </div>
-          <div className="kp-chat-bottom">
-            <span>
-              <span className="kp-status-dot" />
-              {Object.values(feedback).some(Boolean)
-                ? 'Đã ghi nhận phản hồi trong demo.'
-                : '3 Codex online · Bạn dẫn đội'}
-            </span>
-            <CheckCheck size={17} />
+          <div className="kp-chat-window glass">
+            <div className={'kp-conversation-body ' + (sessionsOpen ? 'with-sessions' : '')}>
+              <div className="kp-story-message-viewport" ref={viewport}>
+                <motion.div
+                  ref={list}
+                  className="kp-messages"
+                  aria-label={t('Tin nhắn minh họa, không phải hoạt động thật')}
+                  style={instant ? { y: 0 } : { y: listY }}
+                >
+                  {scenarios[scenario].map((message, i) => (
+                    <ScrollMessage
+                      key={i}
+                      message={message}
+                      index={i}
+                      progress={scrollYProgress}
+                      instant={instant}
+                    />
+                  ))}
+                </motion.div>
+              </div>
+              {sessionsOpen && <DemoSessions />}
+            </div>
           </div>
         </div>
       </div>
     </section>
   );
 }
+function MessagingDemo() {
+  const { t } = usePortalLocale();
+  return (
+    <div className="kp-chat-section" id="neralu">
+      <div className="kp-section-heading">
+        <h2>{t('Neralu · Chat dự án')}</h2>
+      </div>
+      {(['plan', 'handoff', 'review'] as Scenario[]).map((scenario, index) => (
+        <ScrollStory key={scenario} scenario={scenario} index={index} />
+      ))}
+    </div>
+  );
+}
 
 function WorkspaceDemo() {
+  const { t } = usePortalLocale();
   const [step, setStep] = useState(0);
   const steps = [
     {
-      label: 'Thêm Codex',
-      title: 'Cả đội ở đây.',
-      content: 'Đăng nhập các Codex trong Team. Chọn những thành viên bạn muốn đưa vào từng nhóm.',
+      label: t('Thêm Codex'),
+      title: t('Cả đội ở đây.'),
     },
     {
-      label: 'Tạo dự án',
-      title: 'Một mục tiêu chung.',
-      content:
-        'Tạo nhóm, chọn thư mục và viết mục tiêu vào chat. Thành viên làm quen, chia sẻ năng lực và nhận việc.',
+      label: t('Tạo dự án'),
+      title: t('Một mục tiêu chung.'),
     },
     {
-      label: 'Dẫn đội',
-      title: 'Bạn quyết định.',
-      content:
-        'Mở graph Sessions để theo dõi từng cuộc hội thoại. React để phản hồi; vào Reviews khi cần duyệt thay đổi.',
+      label: t('Dẫn đội'),
+      title: t('Bạn quyết định.'),
     },
   ];
   return (
     <section className="kp-guide" id="workflow" aria-labelledby="workflow-title">
-      <h2 id="workflow-title">Từ ý tưởng đến cùng làm.</h2>
-      <div className="kp-guide-tabs" role="tablist" aria-label="Cách dùng Kivuno">
+      <h2 id="workflow-title">{t('Từ ý tưởng đến cùng làm.')}</h2>
+      <div className="kp-guide-tabs" role="tablist" aria-label={t('Cách dùng Kivuno')}>
         {steps.map((item, i) => (
           <button
             key={item.label}
@@ -455,13 +469,11 @@ function WorkspaceDemo() {
       >
         <div className="kp-guide-copy">
           <h3>{steps[step].title}</h3>
-          <p>{steps[step].content}</p>
         </div>
-        <div className="kp-mini-workspace" aria-label="Minh họa workspace">
+        <div className="kp-mini-workspace" aria-label={t('Minh họa workspace')}>
           <div className="kp-mini-bar">
             <img src="/kivuno.svg" alt="" />
             <span>{['Team', 'Aurora', 'Reviews'][step]}</span>
-            <span className="kp-demo-badge">Demo</span>
           </div>
           {step === 0 ? (
             <div className="kp-team-list">
@@ -478,8 +490,8 @@ function WorkspaceDemo() {
             <div className="kp-scope-list">
               {[
                 ['API', 'Ari', 'server/'],
-                ['Giao diện', 'Nova', 'src/'],
-                ['Nghiên cứu', 'Sol', 'docs/'],
+                [t('Giao diện'), 'Nova', 'src/'],
+                [t('Nghiên cứu'), 'Sol', 'docs/'],
               ].map(([task, name, scope]) => (
                 <div key={task}>
                   <Cpu size={17} />
@@ -493,15 +505,15 @@ function WorkspaceDemo() {
             <div className="kp-review-demo">
               <div>
                 <GitCommitHorizontal size={20} />
-                <strong>Checkpoint sẵn sàng</strong>
+                <strong>{t('Checkpoint sẵn sàng')}</strong>
               </div>
               <code>
-                <span>+ Kiểm tra quyền trước khi thực thi</span>
-                <span>+ Thêm test cho trường hợp bị từ chối</span>
+                <span>{t('+ Kiểm tra quyền trước khi thực thi')}</span>
+                <span>{t('+ Thêm test cho trường hợp bị từ chối')}</span>
               </code>
               <span className="kp-review-label">
                 <ShieldCheck size={15} />
-                Chờ bạn duyệt
+                {t('Chờ bạn duyệt')}
               </span>
             </div>
           )}
@@ -511,7 +523,8 @@ function WorkspaceDemo() {
   );
 }
 
-export default function Portal() {
+function PortalContent() {
+  const { t, locale } = usePortalLocale();
   const [release, setRelease] = useState<Release | null>(null);
   const [releaseError, setReleaseError] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'signup' | null>(
@@ -557,13 +570,13 @@ export default function Portal() {
     const controller = new AbortController();
     fetch('/api/desktop/release', { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error('Chưa tải được thông tin bản cài.');
+        if (!response.ok) throw new Error(t('Chưa tải được thông tin bản cài.'));
         const value = (await response.json()) as Release;
         if (typeof value.version !== 'string' || typeof value.available !== 'boolean')
-          throw new Error('Bản cài chưa sẵn sàng.');
+          throw new Error(t('Bản cài chưa sẵn sàng.'));
         for (const item of [value, ...Object.values(value.platforms || {})])
           if (item?.url && new URL(item.url, location.origin).origin !== location.origin)
-            throw new Error('Đường tải bản cài không hợp lệ.');
+            throw new Error(t('Đường tải bản cài không hợp lệ.'));
         setRelease(value);
       })
       .catch((error) => {
@@ -654,7 +667,7 @@ export default function Portal() {
         {...gestures}
         className={className}
         href={item.url}
-        aria-label={`Tải Kivuno cho ${platformNames[platform]}`}
+        aria-label={t('Tải Kivuno cho') + ' ' + platformNames[platform]}
       >
         {content}
       </motion.a>
@@ -662,8 +675,8 @@ export default function Portal() {
       <button
         className={className}
         disabled
-        aria-label={`${platformNames[platform]} chưa có bản tải`}
-        title="Bản cài chưa sẵn sàng"
+        aria-label={platformNames[platform] + ' ' + t('chưa có bản tải')}
+        title={t('Bản cài chưa sẵn sàng')}
       >
         {content}
       </button>
@@ -683,7 +696,7 @@ export default function Portal() {
               {...gestures}
               layout
               className="kp-logo"
-              aria-label="Kivuno — về màn hình đầu"
+              aria-label={t('Kivuno — về màn hình đầu')}
               onClick={home}
             >
               <img src="/kivuno.svg" alt="" />
@@ -698,8 +711,8 @@ export default function Portal() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   className="kp-nav-button"
-                  aria-label="Tải app"
-                  title="Tải app"
+                  aria-label={t('Tải app')}
+                  title={t('Tải app')}
                   onClick={() => setDownloadsOpen(true)}
                 >
                   <ArrowDownToLine size={20} />
@@ -707,25 +720,26 @@ export default function Portal() {
               )}
             </AnimatePresence>
             <motion.div layout className="kp-auth-nav">
+              <PortalLanguage />
               <motion.button
                 {...gestures}
                 className="kp-nav-button"
-                aria-label="Đăng nhập"
-                title="Đăng nhập"
+                aria-label={t('Đăng nhập')}
+                title={t('Đăng nhập')}
                 onClick={() => setAuthMode('login')}
               >
                 <LogIn size={19} />
-                <span>Đăng nhập</span>
+                <span>{t('Đăng nhập')}</span>
               </motion.button>
               <motion.button
                 {...gestures}
                 className="kp-nav-button kp-nav-signup"
-                aria-label="Đăng ký"
-                title="Đăng ký"
+                aria-label={t('Đăng ký')}
+                title={t('Đăng ký')}
                 onClick={() => setAuthMode('signup')}
               >
                 <UserPlus size={19} />
-                <span>Đăng ký</span>
+                <span>{t('Đăng ký')}</span>
               </motion.button>
             </motion.div>
           </motion.nav>
@@ -750,48 +764,40 @@ export default function Portal() {
                 </div>
                 {releaseError && (
                   <p className="kp-error" role="status">
-                    {releaseError}
+                    {t(releaseError)}
                   </p>
                 )}
               </motion.div>
-              <a className="kp-scroll-cue" href="#neralu" aria-label="Khám phá Neralu">
+              <a className="kp-scroll-cue" href="#neralu" aria-label={t('Khám phá Neralu')}>
                 <ChevronDown size={21} />
               </a>
             </section>
             <div className="kp-below-fold">
               <MessagingDemo />
-              <section className="kp-features" aria-label="Tính năng Kivuno">
+              <section className="kp-features" aria-label={t('Tính năng Kivuno')}>
                 <article className="kp-feature machines">
                   <div className="kp-feature-copy">
                     <h2>
-                      Một đội.
+                      {t('Một đội.')}
                       <br />
-                      Nhiều máy.
+                      {t('Nhiều máy.')}
                     </h2>
-                    <p>
-                      Chạy trên máy của bạn. Ghép thêm máy của đội khi cần. Mỗi task có scope và
-                      người nhận rõ ràng.
-                    </p>
                   </div>
-                  <div className="kp-machine-map glass" aria-label="Minh họa kết nối máy">
+                  <div className="kp-machine-map glass" aria-label={t('Minh họa kết nối máy')}>
                     <div className="kp-machine-node lead">
                       <Laptop />
-                      <span>Máy của bạn</span>
+                      <span>{t('Máy của bạn')}</span>
                     </div>
                     <span className="kp-wire wire-a" />
                     <span className="kp-wire wire-b" />
                     <div className="kp-machine-node remote">
                       <Server />
-                      <span>Máy SSH</span>
+                      <span>{t('Máy SSH')}</span>
                     </div>
                     <div className="kp-machine-node extra">
                       <Monitor />
-                      <span>Máy đồng đội</span>
+                      <span>{t('Máy đồng đội')}</span>
                     </div>
-                    <span className="kp-map-seal">
-                      <ShieldCheck size={14} />
-                      Kết nối riêng
-                    </span>
                   </div>
                 </article>
                 <article className="kp-feature handoff">
@@ -806,40 +812,31 @@ export default function Portal() {
                       </span>
                     </div>
                     <div>
-                      <strong>Giữ sức cho cả đội.</strong>
+                      <strong>{t('Giữ sức cho cả đội.')}</strong>
                       <div className="kp-handoff-route">
                         <span>Ari</span>
                         <GitCommitHorizontal size={25} />
                         <ArrowRight size={17} />
                         <span>Nova</span>
                       </div>
-                      <span className="kp-proof-line">
-                        <CheckCheck size={16} />
-                        Checkpoint trước handoff
-                      </span>
                     </div>
                   </div>
                   <div className="kp-feature-copy">
                     <h2>
-                      Công việc tiếp tục.
+                      {t('Công việc tiếp tục.')}
                       <br />
-                      Context ở lại.
+                      {t('Context ở lại.')}
                     </h2>
-                    <p>
-                      Theo dõi quota thật. Dừng ở ngưỡng bạn đặt, bàn giao tiến độ đã commit và khôi
-                      phục rõ ràng khi gián đoạn.
-                    </p>
                   </div>
                 </article>
                 <article className="kp-feature aegis" id="aegis">
                   <div className="kp-feature-copy">
-                    <h2>Quyền do bạn giữ.</h2>
-                    <p>
-                      AEGIS ràng buộc quyền của máy và phê duyệt với đúng diff. Tích hợp Avalanche
-                      Fuji là chế độ testnet tùy chọn, cần triển khai contract trước khi dùng.
-                    </p>
+                    <h2>{t('Quyền do bạn giữ.')}</h2>
                   </div>
-                  <div className="kp-aegis-proof glass">
+                  <div
+                    className="kp-aegis-proof glass"
+                    aria-label={t('AEGIS · Avalanche Fuji testnet tùy chọn')}
+                  >
                     <div className="kp-aegis-emblem">
                       <Fingerprint size={52} strokeWidth={1.1} />
                     </div>
@@ -850,15 +847,15 @@ export default function Portal() {
                     <div className="kp-proof-states">
                       <span>
                         <ShieldCheck size={16} />
-                        Cấp quyền
+                        {t('Cấp quyền')}
                       </span>
                       <span>
                         <GitCommitHorizontal size={16} />
-                        Duyệt diff
+                        {t('Duyệt diff')}
                       </span>
                       <span>
                         <CheckCheck size={16} />
-                        Xác minh
+                        {t('Xác minh')}
                       </span>
                     </div>
                   </div>
@@ -876,7 +873,9 @@ export default function Portal() {
                 <img
                   className="kp-hivemind-art"
                   src="/art/kivuno-hivemind.png"
-                  alt="Tranh biểu hiện trừu tượng: những nét mint và trắng ngà vừa kết nối vừa tách rời quanh một khoảng trống, gợi nhiều cá thể cùng suy nghĩ."
+                  alt={t(
+                    'Tranh biểu hiện trừu tượng: những nét mint và trắng ngà vừa kết nối vừa tách rời quanh một khoảng trống, gợi nhiều cá thể cùng suy nghĩ.',
+                  )}
                   decoding="async"
                   width="1536"
                   height="1024"
@@ -884,9 +883,9 @@ export default function Portal() {
               )}
               <div className="kp-footer-top">
                 <h2>
-                  Đến lượt bạn
+                  {t('Đến lượt bạn')}
                   <br />
-                  dẫn đội.
+                  {t('dẫn đội.')}
                 </h2>
                 <motion.button
                   {...gestures}
@@ -894,15 +893,15 @@ export default function Portal() {
                   onClick={() => setAuthMode('signup')}
                 >
                   <Sparkles size={22} />
-                  Bắt đầu
+                  {t('Bắt đầu')}
                   <ArrowRight size={22} />
                 </motion.button>
               </div>
               <div className="kp-footer-bottom">
                 <span>Kivuno · NoSleepClub</span>
-                <span>{release?.version || '0.5.0'}</span>
-                <button onClick={() => setDownloadsOpen(true)}>Bản cài & checksum</button>
-                <button onClick={home}>Về đầu trang</button>
+                <span>{release?.version || '0.6.0'}</span>
+                <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
+                <button onClick={home}>{t('Về đầu trang')}</button>
               </div>
             </motion.div>
           </footer>
@@ -940,10 +939,10 @@ export default function Portal() {
                 transition={spring}
               >
                 <div className="kp-dialog-heading">
-                  <h2 id="download-title">Tải Kivuno</h2>
+                  <h2 id="download-title">{t('Tải Kivuno')}</h2>
                   <button
                     className="kp-close"
-                    aria-label="Đóng tải app"
+                    aria-label={t('Đóng tải app')}
                     onClick={() => setDownloadsOpen(false)}
                   >
                     <X size={20} />
@@ -952,9 +951,9 @@ export default function Portal() {
                 {downloadLink('windows')}
                 {downloadLink('linux')}
                 <details>
-                  <summary>Thông tin bản cài</summary>
-                  <p>Windows x64 · Chưa ký chứng chỉ</p>
-                  <p>Linux x64 · Cần Git, keyring và desktop Linux hỗ trợ sandbox.</p>
+                  <summary>{t('Thông tin bản cài')}</summary>
+                  <p>{t('Windows x64 · Chưa ký chứng chỉ')}</p>
+                  <p>{t('Linux x64 · Cần Git, keyring và desktop Linux hỗ trợ sandbox.')}</p>
                   {(['windows', 'linux'] as Platform[]).map(
                     (platform) =>
                       download(platform)?.sha256 && (
@@ -995,5 +994,13 @@ export default function Portal() {
         )}
       </div>
     </MotionConfig>
+  );
+}
+
+export default function Portal() {
+  return (
+    <PortalLocaleProvider>
+      <PortalContent />
+    </PortalLocaleProvider>
   );
 }

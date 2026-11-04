@@ -1,4 +1,26 @@
 export type Role = 'engineer' | 'researcher' | 'designer' | 'reviewer';
+export type ProviderId = 'codex' | 'gemini' | 'claude';
+export interface ProviderCapability {
+  id: ProviderId;
+  label: string;
+  mode: 'native' | 'external';
+  available: boolean;
+  login: 'chatgpt' | 'google' | 'external';
+  quota: 'provider' | 'unknown';
+  models: boolean;
+  reasoning: boolean;
+  reason?: string;
+}
+export interface ProviderTurnGrant {
+  id: string;
+  memberId: string;
+  projectId: string;
+  maxTurns: number;
+  usedTurns: number;
+  expiresAt: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
 export type TaskStatus = 'backlog' | 'ready' | 'running' | 'review' | 'done' | 'blocked';
 export type TaskKind = 'code' | 'research' | 'design' | 'review';
 export interface ChatConfig {
@@ -28,6 +50,9 @@ export interface HumanPresence {
   lastSeen: string;
 }
 export interface Member {
+  provider?: ProviderId;
+  integration?: 'native' | 'external';
+  externalLastSeen?: string;
   presence?: 'online' | 'offline' | 'busy';
   activeSessions?: number;
   id: string;
@@ -169,6 +194,9 @@ export interface RoomMessage {
   claimedBy?: string | null;
 }
 export interface CodexSession {
+  provider?: ProviderId;
+  external?: boolean;
+  externalConnectionId?: string;
   skills?: string[];
   id: string;
   memberId: string;
@@ -287,6 +315,7 @@ export interface Activity {
   createdAt: string;
 }
 export interface WorkspaceState {
+  providerTurnGrants?: ProviderTurnGrant[];
   groupIntroductions?: GroupIntroduction[];
   humanPresence?: HumanPresence[];
   projects: Project[];
@@ -314,6 +343,7 @@ export interface WorkspaceState {
   };
 }
 export interface LoginResult {
+  instructions?: string;
   type: string;
   loginId?: string;
   authUrl?: string;

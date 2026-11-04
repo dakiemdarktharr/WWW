@@ -4,7 +4,7 @@ import { access, mkdir, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { CodexModel, LoginResult, Member } from '../shared/types.ts';
+import type { CodexModel, LoginResult, Member, ProviderId } from '../shared/types.ts';
 
 const execFileAsync = promisify(execFile);
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -177,6 +177,7 @@ export async function probeCodex(): Promise<{ available: boolean; version: strin
 
 /** One stdio App Server, owned by one isolated account profile. Never connects to a shared daemon. */
 export class CodexClient extends EventEmitter {
+  readonly provider: ProviderId = 'codex';
   private child: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<RpcId, Pending>();
   private nextId = 1;
@@ -501,12 +502,12 @@ export async function readAccount(client: CodexClient): Promise<Member['account'
   const result = await client.request('account/read', { refreshToken: false });
   const account = result?.account;
   if (!account) return null;
-  if (account.type !== 'chatgpt')
+  if (account.type !== (client.provider === 'gemini' ? 'gemini-google' : 'chatgpt'))
     throw new Error(
       'RELAY requires ChatGPT subscription sign-in for this profile. API-key accounts are not used.',
     );
   return {
-    type: 'chatgpt',
+    type: account.type,
     ...(typeof account.email === 'string' ? { email: account.email } : {}),
     ...(typeof account.planType === 'string' ? { planType: account.planType } : {}),
   };
@@ -633,12 +634,19 @@ export async function startTask(
     dynamicTools?: readonly DynamicTool[];
     resumeThreadId?: string;
     onThread?: (threadId: string) => void;
+    scopes?: string[];
   },
 ): Promise<{ threadId: string; turnId: string; model?: string; reasoningEffort?: string }> {
   await client.start();
   if (!(await readAccount(client)))
     throw new Error("Sign in to this member's ChatGPT account before running a task.");
   await verifyModelSettings(client, options);
+  if (client.provider === 'gemini')
+    await client.request('kivuno/policy', {
+      cwd: options.cwd,
+      readOnly: !!options.readOnly,
+      scopes: options.scopes || ['.'],
+    });
   const result = await client.request(options.resumeThreadId ? 'thread/resume' : 'thread/start', {
     ...(options.resumeThreadId ? { threadId: options.resumeThreadId } : {}),
     cwd: options.cwd,
@@ -651,10 +659,15 @@ export async function startTask(
     sandbox: options.readOnly ? 'read-only' : 'workspace-write',
     ...(!options.resumeThreadId ? { serviceName: 'relay_workspace' } : {}),
     developerInstructions: options.developerInstructions ?? null,
-    ...(!options.resumeThreadId ? { dynamicTools: options.dynamicTools ?? relayDynamicTools } : {}),
+    ...(!options.resumeThreadId || client.provider === 'gemini'
+      ? { dynamicTools: options.dynamicTools ?? relayDynamicTools }
+      : {}),
   });
   if (
-    result.sandbox?.type !== (options.readOnly ? 'readOnly' : 'workspaceWrite') ||
+    (client.provider === 'gemini'
+      ? result.toolPolicy?.readOnly !== !!options.readOnly ||
+        result.toolPolicy?.kind !== 'scoped-mcp'
+      : result.sandbox?.type !== (options.readOnly ? 'readOnly' : 'workspaceWrite')) ||
     result.approvalPolicy !== 'on-request' ||
     result.approvalsReviewer !== 'user'
   ) {

@@ -2,12 +2,13 @@ import type { Member, Task } from '../shared/types.ts';
 import { git, taskDiff } from './git.ts';
 import { DomainError } from './store.ts';
 
+export function isPrivateCredentialPath(file: string) {
+  return /(^|\/)(?:auth\.json|oauth_creds\.json|google_accounts\.json|\.?credentials(?:\.[^/]+)?|\.env(?:\.|$)|\.(?:git|relay|aws|ssh|codex|gemini|claude)(?:\/|$))/i.test(
+    file.replaceAll('\\', '/'),
+  );
+}
 function validateFiles(task: Task, files: string[]) {
-  if (
-    files.some((file) =>
-      /(^|\/)(?:auth\.json|\.env(?:\.|$)|\.(?:git|relay|aws|ssh|codex)(?:\/|$))/i.test(file),
-    )
-  )
+  if (files.some(isPrivateCredentialPath))
     throw new DomainError('Private account/configuration files cannot be checkpointed.');
   if (
     files.some(
@@ -76,7 +77,7 @@ export async function checkpointProgress(task: Task, owner: Member['owner']) {
     validateFiles(task, names.split('\0').filter(Boolean));
     const patch = await git(task.worktree, ['show', '--format=', '--no-ext-diff', commit]);
     if (
-      /\b(?:sk-|gh[opsu]_)[A-Za-z0-9_-]{16,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(
+      /\b(?:sk-|gh[opsu]_)[A-Za-z0-9_-]{16,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|["'](?:refresh_token|access_token|id_token)["']\s*:\s*["'][A-Za-z0-9_.\/-]{20,}["']/.test(
         patch,
       )
     )

@@ -70,7 +70,7 @@ async function routePortal(context: BrowserContext, available = false) {
       // An unpublished release must render honestly, never as a working download.
       await route.fulfill({
         json: {
-          version: '0.5.0',
+          version: '0.6.0',
           available,
           platform: 'win32-x64',
           signed: false,
@@ -147,42 +147,143 @@ try {
   await expect(page.getByRole('link', { name: /Tải Kivuno/ })).toHaveCount(0);
   await expect(page.getByText(/macos/i)).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toHaveCount(0);
+  await page.evaluate(() => document.fonts.ready);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const dom = await cdp.send('DOM.getDocument');
+  const vietnameseHeading = await cdp.send('DOM.querySelector', {
+    nodeId: dom.root.nodeId,
+    selector: '#demo-plan h3',
+  });
+  const renderedFonts = await cdp.send('CSS.getPlatformFontsForNode', {
+    nodeId: vietnameseHeading.nodeId,
+  });
+  assert.ok(
+    renderedFonts.fonts.some((font) => /Geist/i.test(font.familyName) && font.glyphCount > 0),
+    'Vietnamese heading uses real Geist glyphs.',
+  );
+  assert.ok(
+    renderedFonts.fonts.every((font) => /Geist/i.test(font.familyName) || font.glyphCount === 0),
+    'Vietnamese diacritics do not fall back to a different font.',
+  );
+  await cdp.detach();
   await mkdir('.local', { recursive: true });
   await page.screenshot({ path: '.local/kivuno-portal-desktop.png', fullPage: true });
-  const messages = page.getByLabel('Tin nhắn minh họa, không phải hoạt động thật');
-  await page
-    .getByRole('heading', { name: 'Neralu · Chat dự án', exact: true })
-    .scrollIntoViewIfNeeded();
   const menu = page.getByRole('navigation', { name: 'Menu Kivuno' });
+  const stories = page.locator('[data-story]');
+  await expect(stories).toHaveCount(3);
+  assert.deepEqual(
+    await stories.evaluateAll((items) => items.map((item) => item.getAttribute('data-story'))),
+    ['plan', 'handoff', 'review'],
+  );
+  await expect(
+    page.locator(
+      '.kp-story-description, .kp-read-story, .kp-story-scroll, .kp-chat-bar, .kp-chat-bottom, .kp-demo-badge, .kp-feature-copy p, .kp-guide-copy p',
+    ),
+  ).toHaveCount(0);
+  await expect(page.getByText('UniHack / Aurora', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('3 Codex online · Bạn dẫn đội', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Xem tất cả tin nhắn' })).toHaveCount(0);
+  async function storyProgress(name: string, progress: number) {
+    await page.locator('[data-story="' + name + '"]').evaluate((element, value) => {
+      const top = element.getBoundingClientRect().top + scrollY;
+      scrollTo({
+        top:
+          top -
+          innerHeight * 0.75 +
+          (element.getBoundingClientRect().height - innerHeight * 0.15) * value,
+        behavior: 'instant',
+      });
+    }, progress);
+  }
+  const plan = page.locator('#demo-plan');
+  const planMessages = plan.locator('[data-scroll-message]');
+  await storyProgress('plan', 0.02);
+  await expect(planMessages.first()).toHaveCSS('opacity', '0');
+  await storyProgress('plan', 0.4);
+  await expect(planMessages.first()).toHaveCSS('opacity', '1');
+  await expect(planMessages.nth(3)).toHaveCSS('opacity', '0');
+  await page.screenshot({ path: '.local/kivuno-scroll-plan-mid.png' });
+  await storyProgress('plan', 0.85);
+  await expect(planMessages.last()).toHaveCSS('opacity', '1');
+  await storyProgress('plan', 0.2);
+  await expect(planMessages.last()).toHaveCSS('opacity', '0');
+  await expect(planMessages.first()).toHaveCSS('opacity', '1');
   await expect(menu).toHaveClass(/is-docked/);
   await expect
-    .poll(
-      async () => {
-        const dock = await menu.boundingBox();
-        return Boolean(dock && dock.y < 80 && Math.abs(dock.x + dock.width / 2 - 720) < 4);
-      },
-      { message: 'Scrolled navigation stays at the top, centered.' },
-    )
+    .poll(async () => {
+      const dock = await menu.boundingBox();
+      return Boolean(dock && dock.y < 80 && Math.abs(dock.x + dock.width / 2 - 720) < 4);
+    })
     .toBe(true);
-  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await storyProgress('plan', 0.85);
+  await expect(planMessages.last()).toHaveCSS('opacity', '1');
+  await plan.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await storyProgress('plan', 0.5);
   await expect(page.getByLabel('Graph session minh họa')).toBeVisible();
   await page.getByRole('button', { name: 'Session Tests của Ari' }).click();
   await expect(page.locator('.kp-session-selected')).toContainText('Tests · Ari');
-  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
-  await page.getByRole('button', { name: 'Đã hiểu', exact: true }).first().click();
-  await expect(page.getByRole('button', { name: 'Đã hiểu', exact: true }).first()).toHaveAttribute(
+  await plan.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await plan.getByRole('button', { name: 'Đã hiểu', exact: true }).first().click();
+  await expect(plan.getByRole('button', { name: 'Đã hiểu', exact: true }).first()).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await page.getByRole('button', { name: 'Bàn giao', exact: true }).click();
-  await expect(messages.getByText('Usage còn 49%. Mình đã dừng nhận việc mới.')).toBeVisible();
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
-  await expect(messages.getByText(/route admin thiếu kiểm tra quyền/)).toBeVisible();
-  await page.getByRole('button', { name: 'Phát demo', exact: true }).click();
-  await page.getByRole('button', { name: 'Tạm dừng', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Phát demo', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Chia việc', exact: true }).click();
-  await expect(messages.getByText('@Nova mình nhận backend. Bạn làm giao diện nhé?')).toBeVisible();
+  for (const name of ['handoff', 'review']) {
+    await storyProgress(name, 0.85);
+    await expect(page.locator('#demo-' + name + ' [data-scroll-message]').last()).toHaveCSS(
+      'opacity',
+      '1',
+    );
+    await page.screenshot({ path: '.local/kivuno-scroll-' + name + '.png' });
+    await storyProgress(name, 0.05);
+    await expect(page.locator('#demo-' + name + ' [data-scroll-message]').last()).toHaveCSS(
+      'opacity',
+      '0',
+    );
+  }
+  await menu.getByRole('button', { name: 'Switch to English' }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.getByRole('button', { name: 'Read all messages' })).toHaveCount(0);
+  await expect(page.getByText('Scroll to follow', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Divide the work', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'Hand off', exact: true })).toHaveCount(1);
+  await expect(
+    page.getByRole('heading', { name: 'Refine together. You approve.', exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    plan.getByText('/goal Build a research assistant for UniHack.', { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator('#demo-handoff')
+      .getByText('49% usage left. I’ve paused new work.', { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator('#demo-review')
+      .getByText('Demo finding: the admin route is missing an authorization check.', {
+        exact: true,
+      }),
+  ).toHaveCount(1);
+  await storyProgress('review', 0.8);
+  await page.screenshot({ path: '.local/kivuno-scroll-english.png' });
+  await menu.getByRole('button', { name: 'Sign up', exact: true }).click();
+  const englishAuth = page.getByRole('dialog');
+  await expect(englishAuth).toHaveAccessibleName('Create account');
+  await englishAuth.getByLabel('Your name').fill('Language check');
+  await englishAuth.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
+  await expect(englishAuth.getByLabel('Tên của bạn')).toHaveValue('Language check');
+  await englishAuth.getByRole('button', { name: 'Switch to English' }).click();
+  await englishAuth.getByRole('button', { name: 'Close sign-in' }).click();
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(menu.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Windows download not available', exact: true }),
+  ).toBeDisabled();
+  await menu.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
   const guide = page.getByRole('tablist', { name: 'Cách dùng Kivuno' });
   await guide.getByRole('tab', { name: '2 Tạo dự án' }).click();
   await expect(page.getByRole('tabpanel')).toContainText('Một mục tiêu chung.');
@@ -218,7 +319,14 @@ try {
   await expect(loginOpener).toBeFocused();
   await expect(page.locator('#root')).not.toHaveAttribute('inert', '');
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const selector of ['.kp-hero', '#neralu', '#workflow', '.kp-footer']) {
+  for (const selector of [
+    '.kp-hero',
+    '#demo-plan',
+    '#demo-handoff',
+    '#demo-review',
+    '#workflow',
+    '.kp-footer',
+  ]) {
     await page.locator(selector).scrollIntoViewIfNeeded();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
@@ -234,6 +342,8 @@ try {
         ),
     )
     .toBe(true);
+  await storyProgress('handoff', 0.75);
+  await page.screenshot({ path: '.local/kivuno-scroll-mobile.png' });
   await page.screenshot({ path: '.local/kivuno-portal-mobile.png', fullPage: true });
 
   const reduced = await browser.newContext({
@@ -259,7 +369,7 @@ try {
   assert.equal(approvalRequests, 0, 'Signup must not automatically approve the desktop.');
   assert.equal((await exchange(grant.deviceCode)).statusCode, 202);
   await dialog.getByRole('button', { name: 'Xác nhận kết nối', exact: true }).click();
-  await dialog.getByText('Quay lại Kivuno để bắt đầu làm việc.').waitFor();
+  await expect(dialog).toHaveAccessibleName('Đã kết nối');
   const memberToken = await exchange(grant.deviceCode);
   assert.equal(memberToken.statusCode, 200, memberToken.body);
   assert.equal(memberToken.json().owner.name, 'Ari Test');
@@ -305,7 +415,7 @@ try {
   });
   assert.equal(waiting.statusCode, 202);
   await dialog.getByRole('button', { name: 'Xác nhận kết nối', exact: true }).click();
-  await dialog.getByText('Quay lại Kivuno để bắt đầu làm việc.').waitFor();
+  await expect(dialog).toHaveAccessibleName('Đã kết nối');
   const token = await app.inject({
     method: 'POST',
     url: '/api/desktop/token',
@@ -342,6 +452,9 @@ try {
   await expect(accountPage.getByRole('heading', { name: 'Kivuno', exact: true })).toHaveText(
     'Kivuno',
   );
+  await expect(accountPage.locator('.kp-scroll-story.show-all')).toHaveCount(3);
+  for (const message of await accountPage.locator('[data-scroll-message]').all())
+    await expect(message).toHaveCSS('opacity', '1');
   assert.deepEqual(workspaceCalls, []);
   assert.deepEqual(errors, []);
   console.log(
@@ -352,6 +465,15 @@ try {
       platformDownloads: true,
       hiddenMacOS: true,
       interactiveDemos: true,
+      noDecorativeSubtext: true,
+      separateScrollStories: true,
+      reversibleScrollBubbles: true,
+      persistedVietnameseEnglish: true,
+      localizedAuth: true,
+      vietnameseRenderedFonts: renderedFonts.fonts.map((font) => ({
+        family: font.familyName,
+        glyphs: font.glyphCount,
+      })),
       dockAndLogoReturn: true,
       keyboardFocus: true,
       reducedMotion: true,

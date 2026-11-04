@@ -307,3 +307,17 @@
     scroll-behavior: auto !important;
   }
 }
+.ka-overlay {
+  font-family: 'Geist Variable', system-ui, sans-serif;
+}
+.ka-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ka-header-actions .kp-language {
+  order: -1;
+  width: 35px;
+  height: 35px;
+  flex-basis: 35px;
+}

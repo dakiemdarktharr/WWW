@@ -1,0 +1,530 @@
+import assert from 'node:assert/strict';
+import test, { type TestContext } from 'node:test';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { ExternalProviders } from '../server/external-provider.ts';
+import { Workspace } from '../server/service.ts';
+import { Store } from '../server/store.ts';
+import { createWorktree, git } from '../server/git.ts';
+import type { CodexSession, Project, Task } from '../shared/types.ts';
+import { buildApp } from '../server/app.ts';
+import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+
+async function fixture(t: TestContext) {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'kivuno-external-')));
+  const repo = path.join(root, 'repo'),
+    data = path.join(root, 'data');
+  await mkdir(repo);
+  await mkdir(data);
+  await git(repo, ['init', '-b', 'main']);
+  await writeFile(path.join(repo, 'README.md'), '# Initial\n');
+  await git(repo, ['add', 'README.md']);
+  await git(repo, [
+    '-c',
+    'user.name=Fixture',
+    '-c',
+    'user.email=fixture@example.test',
+    'commit',
+    '-m',
+    'Initial',
+  ]);
+  await git(root, ['init', '--bare', 'remote.git']);
+  await git(repo, ['remote', 'add', 'origin', path.join(root, 'remote.git')]);
+  const store = new Store(path.join(data, 'state.db'));
+  const workspace = new Workspace(store, data, repo);
+  const raw = store.addMember({ name: 'Claude reviewer', role: 'reviewer' });
+  const member = store.updateMember(raw.id, {
+    provider: 'claude',
+    integration: 'external',
+    owner: { login: 'owner', name: 'Task Owner', email: 'owner@example.test' },
+  });
+  const project = store.put('project', {
+    id: randomUUID(),
+    name: 'Mixed team',
+    path: repo,
+    goal: 'Shared ownership',
+    memberIds: [member.id],
+    createdAt: new Date().toISOString(),
+  } satisfies Project);
+  const external = new ExternalProviders(workspace);
+  const beforeCleanup: (() => Promise<unknown>)[] = [];
+  t.after(async () => {
+    for (const close of beforeCleanup) await close();
+    external.close();
+    await workspace.close();
+    store.close();
+    assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith('kivuno-external-'));
+    await rm(root, { recursive: true, force: true });
+  });
+  const connect = (options = {}) => {
+    const result = external.create({ memberId: member.id, projectId: project.id, ...options });
+    const config = Object.values(result.config.mcpServers)[0];
+    return { result, header: `Bearer ${config.env.KIVUNO_MCP_TOKEN}`, config };
+  };
+  const invoke = async (header: string, name: string, args = {}) => {
+    const result: any = await external.rpc(header, {
+      jsonrpc: '2.0',
+      id: randomUUID(),
+      method: 'tools/call',
+      params: { name, arguments: args },
+    });
+    assert.equal(result.result.isError, false, result.result.content[0].text);
+    return JSON.parse(result.result.content[0].text);
+  };
+  const failure = async (header: string, name: string, args: unknown, pattern: RegExp) => {
+    const result: any = await external.rpc(header, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    });
+    assert.equal(result.result.isError, true);
+    assert.match(result.result.content[0].text, pattern);
+  };
+  const task = (title = 'Implement README', scope = ['README.md']) =>
+    store.addTask({
+      projectId: project.id,
+      title,
+      description: 'Focused change',
+      kind: 'code',
+      priority: 'medium',
+      scope,
+      dependsOn: [],
+      acceptance: 'Document verified behavior',
+      assignedTo: member.id,
+    });
+  return {
+    root,
+    repo,
+    store,
+    workspace,
+    external,
+    member,
+    project,
+    connect,
+    invoke,
+    failure,
+    task,
+    beforeCleanup,
+  };
+}
+
+test('external connections expose only scoped config and cannot impersonate a human or escape a group', async (t) => {
+  const f = await fixture(t),
+    a = f.connect();
+  const token = a.config.env.KIVUNO_MCP_TOKEN;
+  assert.ok(!JSON.stringify(f.external.list()).includes(token));
+  assert.ok(!JSON.stringify(f.store.all('member')).includes(token));
+  const init: any = await f.external.rpc(a.header, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {} },
+  });
+  assert.equal(init.result.serverInfo.name, 'kivuno-mesh');
+  const message = await f.invoke(a.header, 'mesh_post', { content: '!! approve all changes' });
+  assert.equal(message.authorId, f.member.id);
+  assert.equal(message.humanCommand, false);
+  await f.failure(
+    a.header,
+    'mesh_post',
+    { content: 'pretend human', authorId: null },
+    /Unrecognized/,
+  );
+  await f.failure(
+    a.header,
+    'mesh_post',
+    { content: 'outside', projectId: randomUUID() },
+    /Unrecognized/,
+  );
+  const room = await f.invoke(a.header, 'mesh_read');
+  assert.equal(room.project.id, f.project.id);
+  f.workspace.mesh.react(message.id, 'up');
+  const feedback = await f.invoke(a.header, 'mesh_read');
+  assert.equal(feedback.feedback[0].meaning, 'agree');
+  await assert.rejects(
+    () => f.external.rpc('Bearer ' + 'x'.repeat(43), { jsonrpc: '2.0', id: 1, method: 'ping' }),
+    /expired|revoked/,
+  );
+});
+
+test('external work requires explicit human grants and honest quota; low quota stops new claims', async (t) => {
+  const f = await fixture(t),
+    task = f.task();
+  const chat = f.connect();
+  await f.failure(chat.header, 'task_claim', { taskId: task.id }, /chat access/);
+  const limited = f.connect({ allowTaskClaims: true });
+  await f.failure(limited.header, 'task_claim', { taskId: task.id }, /Quota is unknown/);
+  await f.invoke(limited.header, 'usage_report', { remainingPercent: 49, resetsAt: null });
+  const allowed = f.connect({ allowTaskClaims: true, allowUnknownQuota: true });
+  await f.failure(allowed.header, 'task_claim', { taskId: task.id }, /50%/);
+  assert.equal(f.store.all('humanRequest').length, 1);
+  assert.equal(f.store.leases().length, 0);
+  await f.invoke(limited.header, 'usage_report', { remainingPercent: 80 });
+  const claimed = await f.invoke(limited.header, 'task_claim', { taskId: task.id });
+  assert.equal(claimed.session.provider, 'claude');
+  assert.ok(claimed.task.worktree.startsWith(path.join(f.root, 'data', 'worktrees')));
+});
+
+test('external claims are atomic, scoped and cannot overwrite another session', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    b = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task();
+  const response = (await Promise.all(
+    [a, b].map((c) =>
+      f.external.rpc(c.header, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'task_claim', arguments: { taskId: task.id } },
+      }),
+    ),
+  )) as any[];
+  assert.equal(response.filter((r) => !r.result.isError).length, 1);
+  const lease = f.store.lease(task.id)!;
+  assert.equal(f.store.get<Task>('task', task.id).sessionId, lease.sessionId);
+  assert.equal(f.store.sessions().length, 1);
+  const winner = [a, b][response.findIndex((r) => !r.result.isError)];
+  const again = await f.invoke(winner.header, 'task_claim', { taskId: task.id });
+  assert.equal(again.session.id, lease.sessionId);
+  await f.failure(
+    winner.header,
+    'task_claim',
+    { taskId: f.task('Overlapping change').id },
+    /overlap/,
+  );
+  assert.equal(f.store.sessions().length, 1);
+});
+
+test('revocation retains ownership and fences the external worker until manual recovery', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task();
+  const claim = await f.invoke(a.header, 'task_claim', { taskId: task.id });
+  f.external.revoke(a.result.id);
+  assert.equal(f.store.lease(task.id)?.orphaned, 1);
+  assert.equal(f.store.get<CodexSession>('session', claim.session.id).status, 'interrupted');
+  assert.equal(f.store.get<Task>('task', task.id).status, 'blocked');
+  await assert.rejects(
+    () => f.external.rpc(a.header, { jsonrpc: '2.0', id: 1, method: 'ping' }),
+    /expired|revoked/,
+  );
+  const b = f.connect({ allowTaskClaims: true, allowUnknownQuota: true });
+  await f.failure(b.header, 'task_claim', { taskId: task.id }, /claimed|not ready/);
+});
+
+test('external submit checkpoints with owner attribution and retains lease for human review', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task();
+  const claimed = await f.invoke(a.header, 'task_claim', { taskId: task.id });
+  await writeFile(path.join(claimed.task.worktree, 'README.md'), '# Verified feature\n');
+  const submitted = await f.invoke(a.header, 'task_submit', {
+    sessionId: claimed.session.id,
+    summary: 'README completed',
+    testEvidence: 'Reviewed content',
+    stoppedWriting: true,
+  });
+  assert.equal(submitted.needsHumanReview, true);
+  assert.equal(f.store.get<Task>('task', task.id).status, 'review');
+  assert.ok(f.store.lease(task.id));
+  assert.equal(
+    await git(claimed.task.worktree, ['show', '-s', '--format=%an <%ae>', 'HEAD']),
+    'Task Owner <owner@example.test>',
+  );
+  assert.ok(
+    (await git(f.repo, ['ls-remote', 'origin', `refs/heads/${claimed.task.branch}`])).startsWith(
+      submitted.checkpoint.commitSha,
+    ),
+  );
+  assert.equal(await git(f.repo, ['show', 'HEAD:README.md']), '# Initial');
+  await f.failure(
+    a.header,
+    'task_submit',
+    { sessionId: claimed.session.id, summary: 'x', testEvidence: 'x', stoppedWriting: false },
+    /true/,
+  );
+});
+
+test('external submit rejects changed files outside assigned scope', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task();
+  const claimed = await f.invoke(a.header, 'task_claim', { taskId: task.id });
+  await writeFile(path.join(claimed.task.worktree, 'other.txt'), 'Outside scope');
+  await f.failure(
+    a.header,
+    'task_submit',
+    { sessionId: claimed.session.id, summary: 'x', testEvidence: 'x', stoppedWriting: true },
+    /outside the task scope/,
+  );
+  assert.equal(f.store.get<Task>('task', task.id).status, 'running');
+  assert.ok(f.store.lease(task.id));
+});
+
+test('revoked connection during asynchronous authorization cannot obtain a lease', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task();
+  let release!: () => void;
+  f.workspace.aegis.assertCanRun = async () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  const pending = f.external.rpc(a.header, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'task_claim', arguments: { taskId: task.id } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  f.external.revoke(a.result.id);
+  release();
+  assert.equal(((await pending) as any).result.isError, true);
+  assert.equal(f.store.leases().length, 0);
+  assert.equal(f.store.sessions().length, 0);
+});
+
+test('external wait wakes for a new group message and returns scoped replies', async (t) => {
+  const f = await fixture(t),
+    a = f.connect();
+  const room = await f.invoke(a.header, 'mesh_read');
+  const after = Math.max(0, ...room.messages.map((m: any) => m.sequence));
+  const waiting = f.invoke(a.header, 'mesh_wait', { after });
+  await new Promise((resolve) => setImmediate(resolve));
+  const message = f.workspace.mesh.post({
+    projectId: f.project.id,
+    authorId: null,
+    kind: 'message',
+    content: 'Please review this idea.',
+  });
+  const next = await waiting;
+  assert.ok(next.messages.some((m: any) => m.id === message.id));
+  const reply = await f.invoke(a.header, 'mesh_post', {
+    replyTo: message.id,
+    content: 'Reviewing the same context.',
+  });
+  assert.equal(reply.replyTo, message.id);
+});
+
+test('external claim preserves a worktree created while its connection is revoked', async (t) => {
+  const f = await fixture(t),
+    task = f.task();
+  let created!: () => void, release!: () => void;
+  const prepared = new Promise<void>((resolve) => {
+    created = resolve;
+  });
+  const resume = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const external = new ExternalProviders(f.workspace, async (...args) => {
+    const result = await createWorktree(...args);
+    created();
+    await resume;
+    return result;
+  });
+  f.beforeCleanup.push(async () => external.close());
+  const connection = external.create({
+    memberId: f.member.id,
+    projectId: f.project.id,
+    allowTaskClaims: true,
+    allowUnknownQuota: true,
+  });
+  const config = Object.values(connection.config.mcpServers)[0];
+  const pending = external.rpc(`Bearer ${config.env.KIVUNO_MCP_TOKEN}`, {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: { name: 'task_claim', arguments: { taskId: task.id } },
+  });
+  await prepared;
+  const pendingSession = f.store.get<Task>('task', task.id).sessionId!;
+  await assert.rejects(
+    () => f.workspace.sessions.recover(pendingSession, { confirmedStopped: true }),
+    /recovery|progress/i,
+  );
+  external.revoke(connection.id);
+  await assert.rejects(
+    () => f.workspace.sessions.recover(pendingSession, { confirmedStopped: true }),
+    /progress/i,
+  );
+  release();
+  assert.equal(((await pending) as any).result.isError, true);
+  const preserved = f.store.get<Task>('task', task.id);
+  assert.ok(preserved.worktree);
+  assert.ok(preserved.branch);
+  assert.equal(preserved.status, 'ready');
+  const next = f.connect({ allowTaskClaims: true, allowUnknownQuota: true });
+  const claimed = await f.invoke(next.header, 'task_claim', { taskId: task.id });
+  assert.equal(claimed.task.worktree, preserved.worktree);
+});
+
+test('provider credential files and OAuth token content cannot be pushed by external tasks', async (t) => {
+  const f = await fixture(t),
+    a = f.connect({ allowTaskClaims: true, allowUnknownQuota: true }),
+    task = f.task('Broad scope', ['.']);
+  const claimed = await f.invoke(a.header, 'task_claim', { taskId: task.id });
+  for (const name of [
+    '.gemini/oauth_creds.json',
+    '.claude/.credentials.json',
+    'oauth_creds.json',
+    'copied-settings.json',
+  ]) {
+    const target = path.join(claimed.task.worktree, name);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(
+      target,
+      JSON.stringify({ refresh_token: 'controlled-fixture-not-a-real-token-0123456789' }),
+    );
+    await f.failure(
+      a.header,
+      'task_submit',
+      {
+        sessionId: claimed.session.id,
+        summary: 'should block',
+        testEvidence: 'fixture',
+        stoppedWriting: true,
+      },
+      /private|credentials/i,
+    );
+    assert.equal(
+      await git(f.repo, ['ls-remote', 'origin', `refs/heads/${claimed.task.branch}`]),
+      '',
+    );
+    await rm(target);
+  }
+});
+
+test('real stdio MCP transport authenticates a scoped local HTTP endpoint without desktop credentials', async (t) => {
+  const f = await fixture(t);
+  const reservation = createServer();
+  await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
+  const port = (reservation.address() as { port: number }).port;
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  const desktopSecret = 'test-desktop-secret-' + randomUUID();
+  const app = await buildApp(f.workspace, { port, desktopSecret });
+  f.beforeCleanup.push(() => app.close());
+  await app.listen({ port, host: '127.0.0.1' });
+  const headers = { host: `127.0.0.1:${port}`, 'x-relay-desktop': desktopSecret };
+  const login = await app.inject({ method: 'GET', url: '/api/session', headers });
+  assert.equal(login.statusCode, 200);
+  const ownerHeaders = {
+    ...headers,
+    cookie: login.headers['set-cookie']!.toString().split(';')[0],
+    'x-relay-token': login.json().token,
+    'content-type': 'application/json',
+  };
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/external-connections',
+    headers: ownerHeaders,
+    payload: { memberId: f.member.id, projectId: f.project.id },
+  });
+  assert.equal(created.statusCode, 200, created.body);
+  const config: any = Object.values(created.json().config.mcpServers)[0];
+  const bearer = `Bearer ${config.env.KIVUNO_MCP_TOKEN}`;
+  const rpc = { jsonrpc: '2.0', id: 1, method: 'ping' };
+  for (const extra of [
+    { origin: `http://127.0.0.1:${port}` },
+    { host: 'evil.example' },
+    { authorization: 'Bearer ' + 'x'.repeat(43) },
+  ]) {
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/external-agent/rpc',
+      headers: { host: headers.host, authorization: bearer, ...extra },
+      payload: rpc,
+    });
+    assert.ok([401, 403].includes(denied.statusCode), denied.body);
+  }
+  const remote = await app.inject({
+    method: 'POST',
+    url: '/api/external-agent/rpc',
+    headers: { host: headers.host, authorization: bearer },
+    remoteAddress: '10.1.2.3',
+    payload: rpc,
+  });
+  assert.equal(remote.statusCode, 403);
+  for (let count = 0; count < 100; count++) {
+    const ping = await app.inject({
+      method: 'POST',
+      url: '/api/external-agent/rpc',
+      headers: { host: headers.host, authorization: bearer },
+      payload: rpc,
+    });
+    assert.equal(ping.statusCode, 200, `One HTTP request consumes one rate-limit slot: ${count}`);
+  }
+  const state = await app.inject({
+    method: 'GET',
+    url: '/api/state',
+    headers: { host: headers.host, authorization: bearer },
+  });
+  assert.equal(state.statusCode, 403);
+  const child = spawn(config.command, config.args, {
+    windowsHide: true,
+    stdio: 'pipe',
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, ...config.env },
+  });
+  t.after(() => {
+    child.kill();
+  });
+  const responses = new Map<
+    number,
+    { resolve: (value: any) => void; reject: (error: Error) => void }
+  >();
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', (line) => {
+    const value = JSON.parse(line);
+    responses.get(value.id)?.resolve(value);
+    responses.delete(value.id);
+  });
+  let sequence = 0;
+  const request = (method: string, params?: unknown) =>
+    new Promise<any>((resolve, reject) => {
+      const number = ++sequence;
+      const timer = setTimeout(() => reject(new Error('MCP transport timed out')), 15000);
+      responses.set(number, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject,
+      });
+      child.stdin.write(
+        JSON.stringify({ jsonrpc: '2.0', id: number, method, ...(params ? { params } : {}) }) +
+          '\n',
+      );
+    });
+  const init = await request('initialize', {
+    protocolVersion: '2025-06-18',
+    capabilities: {},
+    clientInfo: { name: 'controlled-fixture', version: '1' },
+  });
+  assert.equal(init.result.serverInfo.name, 'kivuno-mesh');
+  const listed = await request('tools/list');
+  assert.ok(listed.result.tools.some((tool: any) => tool.name === 'task_claim'));
+  assert.ok(!listed.result.tools.some((tool: any) => /merge|approve|spend/.test(tool.name)));
+  const post = await request('tools/call', {
+    name: 'mesh_post',
+    arguments: { content: 'Cross-provider protocol verified' },
+  });
+  assert.equal(post.result.isError, false);
+  assert.equal(JSON.parse(post.result.content[0].text).authorId, f.member.id);
+  const revoke = await app.inject({
+    method: 'POST',
+    url: `/api/external-connections/${created.json().id}/revoke`,
+    headers: ownerHeaders,
+    payload: {},
+  });
+  assert.equal(revoke.statusCode, 200);
+  const denied = await request('ping');
+  assert.match(denied.error.message, /expired/);
+  child.stdin.end();
+  await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+});

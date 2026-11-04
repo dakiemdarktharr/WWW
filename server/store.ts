@@ -53,6 +53,14 @@ export class Store extends EventEmitter {
       sequence = Math.max(sequence + 1, message.sequence || 0);
       if (!message.sequence) this.put('message', { ...message, sequence });
     }
+    for (const member of this.members())
+      if (!member.provider) this.put('member', { ...member, provider: 'codex' });
+    for (const session of this.sessions())
+      if (!session.provider)
+        this.put('session', {
+          ...session,
+          provider: this.get<Member>('member', session.memberId).provider || 'codex',
+        });
   }
   all<T>(kind: string): T[] {
     return (
@@ -148,11 +156,19 @@ export class Store extends EventEmitter {
   lease(taskId: string) {
     return this.leases().find((l) => l.taskId === taskId);
   }
-  addMember(input: { name: string; role: Member['role']; color?: string }): Member {
+  addMember(input: {
+    name: string;
+    role: Member['role'];
+    color?: string;
+    provider?: Member['provider'];
+    integration?: Member['integration'];
+  }): Member {
     if (this.members().length >= 16)
       throw new DomainError('This room supports up to 16 local profiles.');
     return this.put('member', {
       id: randomUUID(),
+      provider: input.provider || 'codex',
+      integration: input.integration || 'native',
       name: input.name,
       role: input.role,
       color: input.color || ['#b8f682', '#a8bbff', '#e9a8ee', '#f6c47e'][this.members().length % 4],

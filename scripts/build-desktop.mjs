@@ -96,6 +96,10 @@ await cp(
   path.join(root, 'scripts', 'check-runtime.mjs'),
   path.join(workspace, 'scripts', 'check-runtime.mjs'),
 );
+await cp(
+  path.join(root, 'scripts', 'mesh-mcp.mjs'),
+  path.join(workspace, 'scripts', 'mesh-mcp.mjs'),
+);
 if (existsSync(path.join(root, 'contracts')))
   await cp(path.join(root, 'contracts'), path.join(workspace, 'contracts'), { recursive: true });
 

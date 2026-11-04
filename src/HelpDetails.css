@@ -1,0 +1,30 @@
+.app-help {
+  font-size: 12px;
+  min-width: 0;
+  color: var(--text);
+}
+.app-help > summary {
+  cursor: pointer;
+  width: fit-content;
+  padding: 5px 0;
+  font-weight: 500;
+}
+.app-help > summary:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.app-help > div {
+  line-height: 1.6;
+  padding: 8px 0;
+}
+.app-help > div > p {
+  margin: 0;
+}
+.app-help ol {
+  margin: 0;
+  padding-left: 18px;
+}
+.app-help code {
+  overflow-wrap: anywhere;
+}

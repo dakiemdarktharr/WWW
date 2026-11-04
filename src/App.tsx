@@ -51,12 +51,23 @@ import type {
   TaskStatus,
   WorkspaceState,
   Workflow,
+  ProviderId,
 } from '../shared/types';
 import { api } from './api';
 import Workroom from './Workroom';
 import Machines from './Machines';
 import UsageGuide from './UsageGuide';
 import Aegis from './Aegis';
+import DeadlineField from './DeadlineField';
+import HelpDetails from './HelpDetails';
+import { deadlineFromForm } from './deadline';
+import ProviderConnect, {
+  ExternalConnection,
+  ProviderPicker,
+  ProviderTurnAllowance,
+  providerLabels,
+  providerOf,
+} from './ProviderConnect';
 import {
   AccountSettings,
   MeshPage,
@@ -67,7 +78,8 @@ import {
 
 type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings' | 'aegis';
 type ModalState =
-  | { type: 'member' | 'project' | 'task' | 'search' }
+  | { type: 'member' | 'project' | 'task' | 'search' | 'connect' }
+  | { type: 'external'; memberId: string }
   | { type: 'detail'; taskId: string }
   | { type: 'login'; memberId: string; result: LoginResult }
   | { type: 'setup'; memberId: string; home: string; instructions: string }
@@ -185,6 +197,7 @@ function Button({
   className = '',
   type = 'button',
   guide,
+  title,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -193,6 +206,7 @@ function Button({
   className?: string;
   type?: 'button' | 'submit';
   guide?: string;
+  title?: string;
 }) {
   return (
     <button
@@ -201,6 +215,7 @@ function Button({
       onClick={onClick}
       className={`button ${primary ? 'primary' : ''} ${className}`}
       data-usage={guide}
+      title={title}
     >
       {children}
     </button>
@@ -231,9 +246,9 @@ function Modal({
       if (event.key === 'Tab') {
         const elements = [
           ...(ref.current?.querySelectorAll<HTMLElement>(
-            'a[href],button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
+            'summary,a[href],button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]',
           ) || []),
-        ];
+        ].filter((element) => element.getClientRects().length > 0);
         const first = elements[0],
           last = elements[elements.length - 1];
         if (event.shiftKey && document.activeElement === first) {
@@ -333,6 +348,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [projectMode, setProjectMode] = useState<'existing' | 'hackathon'>(
     cloud ? 'hackathon' : 'existing',
   );
+  const [profileProvider, setProfileProvider] = useState<ProviderId>('codex');
 
   const refresh = useCallback(async () => {
     try {
@@ -500,20 +516,31 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       });
   }
   async function login(member: Member, method: 'browser' | 'device') {
+    if (providerOf(member) === 'claude') {
+      setModal({ type: 'external', memberId: member.id });
+      return;
+    }
     const result = await perform<LoginResult>(`login-${member.id}`, `/members/${member.id}/login`, {
       method,
     });
     if (result) setModal({ type: 'login', memberId: member.id, result });
   }
-  async function connectAccount() {
+  async function connectAccount(provider: ProviderId) {
     const result = await perform<{ member: Member; login: LoginResult }>(
       'connect-account',
       '/accounts/connect',
-      selectedMachine ? { runnerId: selectedMachine } : {},
+      {
+        provider,
+        ...(selectedMachine && provider !== 'claude' ? { runnerId: selectedMachine } : {}),
+      },
     );
     if (result) {
       navigate('team');
-      setModal({ type: 'login', memberId: result.member.id, result: result.login });
+      setModal(
+        provider === 'claude'
+          ? { type: 'external', memberId: result.member.id }
+          : { type: 'login', memberId: result.member.id, result: result.login },
+      );
     }
   }
   async function openSetup(member: Member) {
@@ -639,6 +666,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               onClick={() => navigate(item.id)}
               className={`nav-item ${view === item.id ? 'active' : ''}`}
               aria-current={view === item.id ? 'page' : undefined}
+              aria-label={item.label}
             >
               <item.icon size={18} />
               <span>{item.label}</span>
@@ -661,6 +689,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 className={`nav-item ${view === item.id ? 'active' : ''}`}
                 onClick={() => navigate(item.id)}
                 aria-current={view === item.id ? 'page' : undefined}
+                aria-label={item.label}
               >
                 <item.icon size={16} />
                 <span>{item.label}</span>
@@ -679,14 +708,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <Settings2 size={17} />
             <span>Settings</span>
           </button>
-          <span className="local-status">
-            <LockKeyhole size={13} />
-            {cloud
-              ? 'Cloud workspace'
-              : window.relayDesktop
-                ? 'Desktop workspace'
-                : 'Local workspace'}
-          </span>
         </div>
       </aside>
 
@@ -807,7 +828,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               busy={pending}
               openTask={openDetail}
               addProject={() => setModal({ type: 'project' })}
-              addMember={() => void connectAccount()}
+              addMember={() => setModal({ type: 'connect' })}
               manageTeam={() => navigate('team')}
               review={() => navigate('reviews')}
               start={async (prompt) =>
@@ -836,7 +857,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   primary
                   guide="add-account"
                   disabled={pending}
-                  onClick={() => void connectAccount()}
+                  onClick={() => setModal({ type: 'connect' })}
                 >
                   <Plus size={16} /> Add account
                 </Button>
@@ -853,6 +874,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           t.assignedTo === member.id && ['running', 'review'].includes(t.status),
                       )}
                       busy={pending}
+                      cloud={cloud || state?.runtime.deployment === 'cloud'}
                       login={(method) => void login(member, method)}
                       refresh={() =>
                         void perform(
@@ -880,15 +902,27 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       }
                       openTask={openDetail}
                       setup={() => void openSetup(member)}
+                      external={() => setModal({ type: 'external', memberId: member.id })}
                     />
                     <div className="account-control-panel panel" data-usage="account-controls">
-                      <QuotaCard
-                        member={member}
-                        project={project}
-                        state={state!}
-                        busy={pending}
-                        request={foundationRequest}
-                      />
+                      {providerOf(member) === 'gemini' ? (
+                        <ProviderTurnAllowance
+                          member={member}
+                          state={state!}
+                          busy={pending}
+                          request={foundationRequest}
+                        />
+                      ) : providerOf(member) === 'codex' ? (
+                        <QuotaCard
+                          member={member}
+                          project={project}
+                          state={state!}
+                          busy={pending}
+                          request={foundationRequest}
+                        />
+                      ) : (
+                        <span className="provider-tag">Quota unknown</span>
+                      )}
                       <AccountSettings member={member} busy={pending} request={foundationRequest} />
                     </div>
                   </div>
@@ -897,7 +931,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <div className="panel compact-empty">
                     <Users size={22} />
                     <span>No accounts</span>
-                    <Button disabled={pending} onClick={() => void connectAccount()}>
+                    <Button disabled={pending} onClick={() => setModal({ type: 'connect' })}>
                       <Plus size={14} />
                       Add account
                     </Button>
@@ -1168,10 +1202,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                     )}
                   </dl>
                   {!state?.runtime.codexAvailable && (
-                    <div className="install-hint">
+                    <HelpDetails title="Install Codex">
                       <p>Install the official Codex CLI, then restart Kivuno.</p>
                       <code>npm install -g @openai/codex</code>
-                    </div>
+                    </HelpDetails>
                   )}
                 </section>
               </div>
@@ -1180,11 +1214,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <AlertTriangle size={24} />
                   <div>
                     <h3>Recover interrupted tasks</h3>
-                    <p>
-                      Stop any orphan Codex processes from the previous Kivuno session before
-                      releasing their locks. Releasing a lock while an old worker is still running
-                      can create conflicting work.
-                    </p>
+                    <HelpDetails title="Recovery requirements">
+                      <p>
+                        Stop any orphan Codex processes from the previous Kivuno session before
+                        releasing their locks. Releasing a lock while an old worker is still running
+                        can create conflicting work.
+                      </p>
+                    </HelpDetails>
                     <Button
                       disabled={pending}
                       onClick={() => {
@@ -1225,6 +1261,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         </div>
       )}
 
+      {modal?.type === 'connect' && (
+        <Modal title="Add account" close={closeModal}>
+          <ProviderConnect
+            busy={pending}
+            runnerId={selectedMachine || undefined}
+            connect={(provider) => void connectAccount(provider)}
+            profile={() => setModal({ type: 'member' })}
+          />
+        </Modal>
+      )}
+      {modal?.type === 'external' && members.find((member) => member.id === modal.memberId) && (
+        <Modal title="Claude · MESH connection" close={closeModal}>
+          <ExternalConnection
+            member={members.find((member) => member.id === modal.memberId)!}
+            projects={state?.projects || []}
+          />
+        </Modal>
+      )}
       {modal?.type === 'member' && (
         <Modal title="Add account" close={closeModal}>
           <form
@@ -1235,7 +1289,12 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               const result = await perform(
                 'create-member',
                 '/members',
-                { name: data.get('name'), role: data.get('role'), color: data.get('color') },
+                {
+                  name: data.get('name'),
+                  role: data.get('role'),
+                  color: data.get('color'),
+                  provider: profileProvider,
+                },
                 'Profile created. Sign in to connect this agent.',
               );
               if (result) {
@@ -1244,6 +1303,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               }
             }}
           >
+            <ProviderPicker value={profileProvider} change={setProfileProvider} />
             <label>
               Agent name
               <input
@@ -1298,6 +1358,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             onSubmit={async (e) => {
               e.preventDefault();
               const data = new FormData(e.currentTarget);
+              let deadline: string | null = null;
+              try {
+                if (projectMode === 'hackathon') deadline = deadlineFromForm(data);
+              } catch (error) {
+                setToast({ text: (error as Error).message, error: true });
+                return;
+              }
               const result = await perform<Project>(
                 'create-project',
                 projectMode === 'hackathon' ? '/hackathons' : '/projects',
@@ -1307,9 +1374,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       memberId: data.get('memberId'),
                       competitionName: data.get('competitionName'),
                       competitionUrl: data.get('competitionUrl'),
-                      deadline: data.get('deadline')
-                        ? new Date(String(data.get('deadline'))).toISOString()
-                        : null,
+                      deadline,
                       goal: data.get('goal'),
                     }
                   : { name: data.get('name'), path: data.get('path'), goal: data.get('goal') },
@@ -1343,8 +1408,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             {projectMode === 'hackathon' ? (
               <>
                 <label>
-                  Codex owner
-                  <select aria-label="Codex owner" name="memberId" required defaultValue="">
+                  Project owner
+                  <select aria-label="Project owner" name="memberId" required defaultValue="">
                     <option value="">Choose profile</option>
                     {state?.members.map((member) => (
                       <option key={member.id} value={member.id}>
@@ -1361,10 +1426,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   Competition URL
                   <input name="competitionUrl" type="url" required placeholder="https://…" />
                 </label>
-                <label>
-                  Deadline
-                  <input name="deadline" type="datetime-local" />
-                </label>
+                <DeadlineField />
               </>
             ) : (
               <label>
@@ -1514,7 +1576,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   defaultValue="*"
                   placeholder="src/components, src/styles"
                 />
-                <small>Comma-separated paths. * reserves the whole project.</small>
               </label>
             </div>
             <label>
@@ -1529,9 +1590,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             </label>
             {tasks.length > 0 && (
               <fieldset className="dependency-field">
-                <legend>
-                  Dependencies <span>Optional · must finish before this task runs</span>
-                </legend>
+                <legend>Dependencies</legend>
                 <div>
                   {tasks
                     .filter((t) => t.status !== 'done')
@@ -1557,7 +1616,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
 
       {modal?.type === 'login' && (
         <Modal
-          title="Sign in"
+          title={modal.result.type === 'geminiGoogle' ? 'Google sign-in' : 'OpenAI sign-in'}
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
           close={closeModal}
         >
@@ -1565,10 +1624,14 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <span className="login-symbol">
               <LockKeyhole size={30} />
             </span>
-            <p>
-              Complete sign-in on OpenAI, then return to this room. Choose the account you want this
-              agent to use.
-            </p>
+            <HelpDetails title="Sign-in help">
+              <p>
+                {modal.result.type === 'geminiGoogle'
+                  ? modal.result.instructions ||
+                    'Complete Google sign-in in the browser opened by Gemini CLI, then check sign-in here.'
+                  : 'Complete sign-in on OpenAI, then return to this room. Choose the account you want this agent to use.'}
+              </p>
+            </HelpDetails>
             {modal.result.userCode && (
               <div className="device-code">
                 <span>YOUR ONE-TIME CODE</span>
@@ -1588,7 +1651,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 </button>
               </div>
             )}
-            {validAuthUrl(modal.result.authUrl || modal.result.verificationUrl) ? (
+            {modal.result.type === 'geminiGoogle' ? null : validAuthUrl(
+                modal.result.authUrl || modal.result.verificationUrl,
+              ) ? (
               <a
                 className="button primary"
                 href={validAuthUrl(modal.result.authUrl || modal.result.verificationUrl)}
@@ -1603,9 +1668,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 No valid OpenAI sign-in URL was returned. Close this dialog and try again.
               </p>
             )}
-            <p className="login-help">
-              Signing in another account? Switch accounts on the OpenAI page before continuing.
-            </p>
             <div className="modal-footer">
               <Button
                 onClick={async () => {
@@ -1630,7 +1692,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                     setToast({ text: 'Account connected. Welcome to the room.' });
                   } else if (result)
                     setToast({
-                      text: 'Sign-in is not complete yet. Finish on OpenAI and check again.',
+                      text: `Sign-in is not complete yet. Finish on ${modal.result.type === 'geminiGoogle' ? 'Google' : 'OpenAI'} and check again.`,
                     });
                 }}
                 disabled={pending}
@@ -1645,10 +1707,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       {modal?.type === 'setup' && (
         <Modal title="Skills & plugins" close={closeModal}>
           <div className="setup-content">
-            <p>
-              Skills, plugins, and MCP configuration belong to this Codex profile. They do not
-              automatically follow a ChatGPT subscription.
-            </p>
             <h3>PROFILE HOME</h3>
             <div className="setup-path">
               <code>{modal.home}</code>
@@ -1675,7 +1733,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 ? `$env:CODEX_HOME = '${modal.home.replace(/'/g, "''")}'\ncodex`
                 : `CODEX_HOME='${modal.home.replace(/'/g, "'\\''")}' codex`}
             </pre>
-            <p className="setup-instructions">{modal.instructions}</p>
+            <HelpDetails title="Setup steps">
+              <p>{modal.instructions}</p>
+            </HelpDetails>
             <div className="modal-footer">
               <Button onClick={closeModal}>Done</Button>
             </div>
@@ -1818,21 +1878,23 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <div className="modal-footer detail-footer">
               <Button onClick={closeModal}>Close</Button>
               <div>
-                {selectedTask.status === 'running' && (
-                  <Button
-                    disabled={pending}
-                    onClick={() =>
-                      void perform(
-                        'stop',
-                        `/tasks/${selectedTask.id}/stop`,
-                        {},
-                        'Task stopped. Its worktree is preserved.',
-                      )
-                    }
-                  >
-                    <Square size={14} /> Stop task
-                  </Button>
-                )}
+                {selectedTask.status === 'running' &&
+                  providerOf(members.find((member) => member.id === selectedTask.assignedTo)) !==
+                    'claude' && (
+                    <Button
+                      disabled={pending}
+                      onClick={() =>
+                        void perform(
+                          'stop',
+                          `/tasks/${selectedTask.id}/stop`,
+                          {},
+                          'Task stopped. Its worktree is preserved.',
+                        )
+                      }
+                    >
+                      <Square size={14} /> Stop task
+                    </Button>
+                  )}
                 {!selectedTask.workflowId &&
                   ['ready', 'backlog', 'blocked'].includes(selectedTask.status) && (
                     <>
@@ -1846,6 +1908,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           .filter(
                             (m) =>
                               m.status === 'ready' &&
+                              providerOf(m) !== 'claude' &&
+                              project?.memberIds?.includes(m.id) &&
                               !tasks.some(
                                 (t) =>
                                   t.assignedTo === m.id && ['running', 'review'].includes(t.status),
@@ -1853,14 +1917,22 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           )
                           .map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name}
+                              {m.name} · {providerLabels[providerOf(m)]}
                               {m.status !== 'ready' ? ' (not ready)' : ''}
                             </option>
                           ))}
                       </select>
                       <Button
                         primary
-                        disabled={pending || !(detailMember || selectedTask.assignedTo)}
+                        disabled={
+                          pending ||
+                          !(detailMember || selectedTask.assignedTo) ||
+                          providerOf(
+                            members.find(
+                              (member) => member.id === (detailMember || selectedTask.assignedTo),
+                            ),
+                          ) === 'claude'
+                        }
                         onClick={async () => {
                           const result = await perform(
                             'run',
@@ -1950,9 +2022,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   </button>
                 ))}
             </div>
-            <div className="quick-hint">
-              <kbd>esc</kbd> to close
-            </div>
           </div>
         </Modal>
       )}
@@ -1974,6 +2043,8 @@ function MemberCard({
   importSkills,
   openTask,
   setup,
+  external,
+  cloud,
 }: {
   member: Member;
   task?: Task;
@@ -1984,8 +2055,11 @@ function MemberCard({
   importSkills: () => void;
   openTask: (task: Task) => void;
   setup: () => void;
+  external: () => void;
+  cloud: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const provider = providerOf(member);
   return (
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
@@ -1996,7 +2070,13 @@ function MemberCard({
         </span>
       </div>
       <h2>{member.name}</h2>
-      <span className="role-label">{member.role}</span>
+      <span className="role-label">
+        {member.role} ·{' '}
+        <span className="provider-tag">
+          {providerLabels[provider]}
+          {provider === 'claude' ? ' · external' : ''}
+        </span>
+      </span>
       <div className="member-account">
         <span>{member.account?.email || 'Not connected'}</span>
         {member.account?.planType && <span className="plan-tag">{member.account.planType}</span>}
@@ -2028,37 +2108,50 @@ function MemberCard({
       </button>
       {expanded && (
         <div className="capability-list">
-          <h4>AVAILABLE SKILLS</h4>
-          {member.skills.length ? (
+          {member.skills.length > 0 && <h4>AVAILABLE SKILLS</h4>}
+          {member.skills.length > 0 && (
             <div className="chips">
               {member.skills.map((s) => (
                 <span key={s}>{s}</span>
               ))}
             </div>
-          ) : (
-            <p>No skills</p>
           )}
-          <h4>INSTALLED PLUGINS</h4>
-          {member.plugins.length ? (
+          {member.plugins.length > 0 && <h4>INSTALLED PLUGINS</h4>}
+          {member.plugins.length > 0 && (
             <div className="chips">
               {member.plugins.map((s) => (
                 <span key={s}>{s}</span>
               ))}
             </div>
-          ) : (
-            <p>No plugins</p>
           )}
           {member.capabilitiesError && <p className="error-text">{member.capabilitiesError}</p>}
-          <button className="text-button accent" onClick={importSkills} disabled={busy}>
-            <ArrowDownLeft size={14} /> Import local skills
-          </button>
-          <button className="text-button capability-setup" onClick={setup}>
-            <Terminal size={14} /> Configure skills & plugins
-          </button>
+          {provider === 'codex' && (
+            <button className="text-button accent" onClick={importSkills} disabled={busy}>
+              <ArrowDownLeft size={14} /> Import local skills
+            </button>
+          )}
+          {provider === 'codex' ? (
+            <button className="text-button capability-setup" onClick={setup}>
+              <Terminal size={14} /> Configure skills & plugins
+            </button>
+          ) : (
+            <HelpDetails title="Skill setup">
+              <p>
+                {provider === 'gemini'
+                  ? 'Configure Gemini skills in its own CLI profile. Codex plugins are not imported.'
+                  : 'Configure skills and plugins in your Claude client.'}
+              </p>
+            </HelpDetails>
+          )}
         </div>
       )}
       <div className="member-actions">
-        {member.account ? (
+        {provider === 'claude' ? (
+          <Button primary onClick={external} disabled={busy}>
+            <ExternalLink size={15} />
+            MESH connection
+          </Button>
+        ) : member.account ? (
           <>
             <Button onClick={refresh} disabled={busy}>
               <RefreshCw size={14} /> Refresh
@@ -2069,7 +2162,12 @@ function MemberCard({
               aria-label={`Sign ${member.name} out`}
               title="Sign out"
               onClick={() => {
-                if (window.confirm(`Sign ${member.name} out of its Codex account?`)) logout();
+                if (
+                  window.confirm(
+                    `Sign ${member.name} out of its ${providerLabels[provider]} account?`,
+                  )
+                )
+                  logout();
               }}
             >
               <LogOut size={16} />
@@ -2077,12 +2175,21 @@ function MemberCard({
           </>
         ) : (
           <>
-            <Button primary onClick={() => login('browser')} disabled={busy}>
-              <ArrowUpRight size={15} /> Sign in with OpenAI
+            <Button
+              primary
+              onClick={() => login('browser')}
+              disabled={busy || (cloud && provider === 'gemini')}
+              title={
+                cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
+              }
+            >
+              <ArrowUpRight size={15} /> Sign in with {provider === 'gemini' ? 'Google' : 'OpenAI'}
             </Button>
-            <button className="text-button" disabled={busy} onClick={() => login('device')}>
-              Use a code
-            </button>
+            {provider === 'codex' && (
+              <button className="text-button" disabled={busy} onClick={() => login('device')}>
+                Use a code
+              </button>
+            )}
           </>
         )}
       </div>

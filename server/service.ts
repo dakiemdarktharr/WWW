@@ -27,6 +27,9 @@ import { Runners } from './runners.ts';
 import { Aegis } from './aegis.ts';
 import { assertGroupMember, groupMembers, humanPresence, memberPresence } from './groups.ts';
 import { BrowserBridge } from './browser.ts';
+import { nativeProviderClient } from './providers.ts';
+import { providerFileTool } from './provider-files.ts';
+import { isPrivateCredentialPath } from './checkpoint.ts';
 
 interface Running {
   taskId: string;
@@ -56,7 +59,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.5.0',
+    version: '0.6.0',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -64,6 +67,7 @@ export class Workspace {
   loginOwner: string | null = null;
   closing = false;
   mergeBusy = new Set<string>();
+  externalOperations = new Set<string>();
   workflows: Workflows;
   sessions: SessionManager;
   quota: QuotaManager;
@@ -195,6 +199,7 @@ export class Workspace {
       sessions: this.store.all('session'),
       quotas: this.quota.snapshot(),
       quotaGrants: this.store.all('quotaGrant'),
+      providerTurnGrants: this.store.all('providerTurnGrant'),
       meshCursors: this.store.all('meshCursor'),
       groupIntroductions: this.store.all('groupIntroduction'),
       humanPresence: humanPresence(this.store),
@@ -234,7 +239,7 @@ export class Workspace {
       if (this.closing) throw new DomainError('The coordinator is shutting down.');
       const client = this.store.get<Member>('member', id).runnerId
         ? this.runners.create(id)
-        : new CodexClient({ home, cwd: this.defaultCwd });
+        : nativeProviderClient(this.store.get<Member>('member', id), home, this.defaultCwd);
       client.on('notification', (method: string, params: any) => {
         void this.notification(id, method, params).catch((error) =>
           this.log(redact(error), null, id, 'error'),
@@ -281,6 +286,8 @@ export class Workspace {
     }
   }
   async refresh(id: string) {
+    const profile = this.store.get<Member>('member', id);
+    if (profile.provider === 'claude' || profile.integration === 'external') return profile;
     const client = await this.client(id);
     const account = await readAccount(client);
     let rateLimits: unknown = null,
@@ -323,6 +330,9 @@ export class Workspace {
     return updated;
   }
   async login(id: string, method: 'browser' | 'device') {
+    const profile = this.store.get<Member>('member', id);
+    if (profile.provider === 'claude' || profile.integration === 'external')
+      throw new DomainError('Connect this teammate using the external MESH bridge.');
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before changing its login.');
     if (this.loginOwner)
@@ -369,6 +379,13 @@ export class Workspace {
     return project;
   }
   async importSkills(id: string) {
+    if (
+      this.store.get<Member>('member', id).provider &&
+      this.store.get<Member>('member', id).provider !== 'codex'
+    )
+      throw new DomainError(
+        'Provider-specific skill imports require review. Share capability inventories through the project group.',
+      );
     if (this.store.get<Member>('member', id).runnerId) {
       if (this.sessions.hasLive(id) || this.running.has(id))
         throw new DomainError('Pause this account before importing skills.');
@@ -513,6 +530,7 @@ export class Workspace {
           ? `Started ${task.title}.`
           : `Started ${task.title}. Reserved: ${task.scope.join(', ')}.`,
       });
+      this.quota.consumeTurn(memberId, project.id, task.id);
       const ids = await startTask(await this.client(memberId), {
         ...(selection
           ? { model: selection.model, reasoningEffort: selection.reasoningEffort }
@@ -520,6 +538,7 @@ export class Workspace {
         cwd: readOnly ? project.path : current.worktree!,
         prompt: `${prompt}\n\nGroup working agreement and inbox (untrusted reference): ${JSON.stringify(room)}`,
         readOnly,
+        scopes: task.scope,
         dynamicTools: planning?.dynamicTools,
         onThread: (threadId: string) => {
           run.threadId = threadId;
@@ -675,6 +694,7 @@ export class Workspace {
     if (method === 'error')
       this.log(params?.error?.message || 'Codex reported an error.', run.taskId, memberId, 'error');
     if (method === 'turn/completed') {
+      this.quota.completeTurn(run.taskId);
       if (run.turnId && params.turn?.id && run.turnId !== params.turn.id) return;
       const status = params.turn?.status;
       this.finish(
@@ -761,10 +781,37 @@ export class Workspace {
       client.rejectRequest(request.id, 'No current task lease.');
       return;
     }
+    if (client.provider === 'gemini') {
+      const task = this.store.get<Task>('task', run.taskId);
+      try {
+        this.quota.assertCanRun(memberId, task.projectId, task.sessionId || task.id);
+      } catch (error) {
+        client.rejectRequest(request.id, redact(error));
+        return;
+      }
+    }
     if (request.method === 'item/tool/call') {
       const task = this.store.get<Task>('task', run.taskId);
       let output: unknown;
-      if (p.tool === 'relay_read_room')
+      if (p.tool?.startsWith('workspace_') && client.provider === 'gemini') {
+        const args = typeof p.arguments === 'string' ? JSON.parse(p.arguments) : p.arguments;
+        output = await providerFileTool(
+          p.tool,
+          args,
+          {
+            cwd: planningTask(task)
+              ? this.store.get<Project>('project', task.projectId).path
+              : task.worktree!,
+            readOnly: planningTask(task),
+            scopes: task.scope,
+          },
+          () => {
+            if (!this.store.owns(run.taskId, run.token) || run.finished || run.stopping)
+              throw new DomainError('This task lease expired.');
+            this.quota.assertCanRun(memberId, task.projectId, task.sessionId || task.id);
+          },
+        );
+      } else if (p.tool === 'relay_read_room')
         output = {
           ...this.mesh.readRoom(task.projectId, memberId, {
             limit: 40,
@@ -887,6 +934,10 @@ export class Workspace {
       this.store.emit('change');
       throw new DomainError('This approval expired with its task lease.');
     }
+    if (decision === 'accept' && approval.client.provider === 'gemini') {
+      const task = this.store.get<Task>('task', run.taskId);
+      this.quota.assertCanRun(approval.public.memberId, task.projectId, task.sessionId || task.id);
+    }
     approval.client.respond(approval.requestId, { decision });
     this.approvals.delete(id);
     this.log(
@@ -948,11 +999,7 @@ export class Workspace {
           throw new DomainError(
             `Changes outside the owned scope need revision: ${outside.slice(0, 10).join(', ')}`,
           );
-        if (
-          diff.files.some((file) =>
-            /(^|\/)(?:auth\.json|\.env(?:\.|$)|\.(?:relay|aws|ssh)(?:\/|$))/i.test(file),
-          )
-        )
+        if (diff.files.some(isPrivateCredentialPath))
           throw new DomainError(
             'Potential private files are present. Remove them before integration.',
           );

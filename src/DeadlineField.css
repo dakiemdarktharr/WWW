@@ -1,0 +1,15 @@
+.deadline-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.deadline-field > label {
+  display: grid;
+  gap: 8px;
+}
+.deadline-field .glass-select {
+  width: 100%;
+}
+.deadline-field .glass-select > button {
+  width: 100%;
+}

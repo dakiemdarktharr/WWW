@@ -66,6 +66,12 @@ export function chooseModel(
         ? ['low', 'minimal', 'medium']
         : ['medium', 'high', 'low'];
   const supported = model.supportedReasoningEfforts.map((option) => option.reasoningEffort);
+  if (!supported.length && !model.defaultReasoningEffort)
+    return {
+      model: model.model,
+      reasoningEffort: undefined,
+      selectionReason: `Account catalog → ${model.displayName}. This provider does not advertise reasoning controls.`,
+    };
   const effort =
     preferred.find((value) => supported.includes(value)) || model.defaultReasoningEffort;
   if (!supported.includes(effort))
@@ -253,7 +259,7 @@ export class Autonomy {
       }
     }
   }
-  addAccount() {
+  addAccount(provider: Member['provider'] = 'codex') {
     return this.host.store.transaction(() => {
       const members = this.host.store.members();
       const used = new Set(members.map((member) => member.name.toLowerCase()));
@@ -261,6 +267,8 @@ export class Autonomy {
       if (!name) throw new DomainError('This workspace already has its maximum team size.');
       const member = this.host.store.addMember({
         name,
+        provider,
+        integration: provider === 'claude' ? 'external' : 'native',
         role: roles[members.length % roles.length],
       });
       return this.host.store.updateMember(member.id, { managed: true });
@@ -308,6 +316,7 @@ export class Autonomy {
   private async onboard(memberId: string) {
     const member = this.host.store.get<Member>('member', memberId);
     if (!member.account) return;
+    if (member.provider === 'claude' || member.integration === 'external') return;
     this.join(memberId);
     // Await on the next turn too; login does not start model work.
     await this.shareSkills(memberId);
@@ -354,6 +363,8 @@ export class Autonomy {
     this.publish(memberId);
   }
   shareSkills(memberId: string): Promise<void> {
+    const member = this.host.store.get<Member>('member', memberId);
+    if (member.provider && member.provider !== 'codex') return Promise.resolve();
     const existing = this.syncing.get(memberId);
     if (existing) return existing;
     if (Date.now() - (this.lastSync.get(memberId) || 0) < 60_000) return Promise.resolve();
@@ -377,6 +388,7 @@ export class Autonomy {
     const member = this.host.store.get<Member>('member', memberId);
     for (const source of this.host.store.members().filter(
       (source) =>
+        (!source.provider || source.provider === 'codex') &&
         source.id !== memberId &&
         source.account &&
         this.host.store.projects().some((project) => {

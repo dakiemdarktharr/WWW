@@ -31,9 +31,14 @@ export function memberPresence(
   const runner = member.runnerId
     ? host.runners?.list().find((node) => node.id === member.runnerId)
     : null;
-  const machineReady = member.runnerId
-    ? !!runner?.online && !!runner.ready
-    : host.runtime?.codexAvailable !== false;
+  const machineReady =
+    member.integration === 'external' || member.provider === 'claude'
+      ? !!member.externalLastSeen && Date.now() - Date.parse(member.externalLastSeen) < 45_000
+      : member.provider === 'gemini'
+        ? true
+        : member.runnerId
+          ? !!runner?.online && !!runner.ready
+          : host.runtime?.codexAvailable !== false;
   const online =
     !host.closing &&
     machineReady &&
@@ -89,7 +94,7 @@ export function introduce(store: Store, projectId: string, memberId: string): Gr
     authorId: memberId,
     kind: 'system',
     content: redact(
-      `${member.name} ${existing ? 'updated their introduction' : 'joined'}. Owner: ${member.owner?.login || member.owner?.name || 'not linked'}. Plan: ${member.account?.planType || 'unknown'}. Role: ${member.role}. Skills: ${skills.join(', ') || 'none reported'}. Plugins: ${plugins.join(', ') || 'none reported'}.\nGroup working agreement: ${workingAgreement}`,
+      `${member.name} ${existing ? 'updated their introduction' : 'joined'}. Provider: ${member.provider || 'codex'}. Owner: ${member.owner?.login || member.owner?.name || 'not linked'}. Plan: ${member.account?.planType || 'unknown'}. Role: ${member.role}. Skills: ${skills.join(', ') || 'none reported'}. Plugins: ${plugins.join(', ') || 'none reported'}.\nGroup working agreement: ${workingAgreement}`,
     ),
     mentions: [],
     humanCommand: false,

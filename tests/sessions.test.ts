@@ -421,6 +421,65 @@ test('failed process stop keeps an orphan lease and recovery never starts a paid
   assert.equal(peer.calls.filter((call) => call.method === 'turn/start').length, turns);
 });
 
+test('recovery cannot reopen an accepted task or a task owned by a newer session without a lease', async (t) => {
+  const f = await fixture(t),
+    session = await f.create('Historical conversation', ['src']);
+  f.workspace.sessions.update(session.id, { status: 'paused' });
+  for (const patch of [
+    { status: 'done' as const, sessionId: session.id },
+    { status: 'review' as const, sessionId: session.id },
+    { status: 'blocked' as const, sessionId: randomUUID() },
+  ]) {
+    f.store.updateTask(session.taskId, patch);
+    await assert.rejects(
+      f.workspace.sessions.recover(session.id, { confirmedStopped: true }),
+      /active unfinished/,
+    );
+    assert.equal(f.store.get<any>('task', session.taskId).status, patch.status);
+    assert.equal(f.store.get<any>('task', session.taskId).sessionId, patch.sessionId);
+  }
+});
+
+test('recovery retains external ownership while a checkpoint or claim is in flight', async (t) => {
+  const f = await fixture(t),
+    session = await f.create('External checkpoint', ['src']);
+  f.workspace.sessions.update(session.id, { status: 'interrupted', external: true });
+  const { lease } = f.store.claim(session.taskId, f.member.id, session.id);
+  f.store.updateTask(session.taskId, { status: 'blocked' });
+  f.workspace.externalOperations.add(session.taskId);
+  await assert.rejects(
+    f.workspace.sessions.recover(session.id, { confirmedStopped: true }),
+    /still in progress/,
+  );
+  assert.equal(f.store.lease(session.taskId)?.token, lease.token);
+  assert.equal(f.store.get<any>('task', session.taskId).status, 'blocked');
+  f.workspace.externalOperations.delete(session.taskId);
+  await f.workspace.sessions.recover(session.id, { confirmedStopped: true });
+  assert.equal(f.store.lease(session.taskId), undefined);
+  assert.equal(f.store.get<any>('task', session.taskId).status, 'ready');
+});
+
+test('recovery rechecks task ownership after awaiting process termination', async (t) => {
+  const f = await fixture(t),
+    session = await f.create('Concurrent recovery', ['src']);
+  await f.workspace.sessions.send(session.id, 'Implement task.');
+  f.workspace.sessions.update(session.id, { status: 'interrupted' });
+  const lease = f.store.lease(session.taskId)!;
+  const peer = f.peers.get(session.id)!;
+  const newer = randomUUID();
+  peer.stop = async () => {
+    f.store.updateTask(session.taskId, { status: 'done', sessionId: newer });
+  };
+  await assert.rejects(
+    f.workspace.sessions.recover(session.id, { confirmedStopped: true }),
+    /active unfinished/,
+  );
+  assert.equal(f.store.lease(session.taskId)?.token, lease.token);
+  assert.equal(f.store.get<any>('task', session.taskId).status, 'done');
+  assert.equal(f.store.get<any>('task', session.taskId).sessionId, newer);
+  f.workspace.sessions.update(session.id, { status: 'paused' });
+});
+
 test('early completion during turn start stays terminal and a writable sandbox cannot downgrade read-only', async (t) => {
   const f = await fixture(t),
     session = await f.create('Immediate completion', ['.'], true);

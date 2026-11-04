@@ -1,25 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, BookOpen, Check, MessageSquare, Network, Users, X } from 'lucide-react';
+import { ArrowRight, BookOpen, MessageSquare, Network, Users, X } from 'lucide-react';
 import './guide.css';
 
 type Stage =
   'hosted' | 'mesh' | 'sessions' | 'team' | 'workroom' | 'tasks' | 'reviews' | 'settings' | 'aegis';
 const guideKey = 'kivuno-guide-v3';
-const tips: Partial<Record<Stage, string>> = {
-  sessions:
-    'Mỗi chấm là một cuộc trò chuyện. Một Codex có thể có nhiều session, model và mức reasoning riêng.',
-  team: 'Team là tất cả tài khoản của bạn. Trong mỗi nhóm, bạn chọn những thành viên cần tham gia.',
-  reviews:
-    'Đọc kết quả, kiểm thử và thay đổi trước khi tích hợp. React đồng ý không thay thế quyền duyệt code.',
-  aegis: 'AEGIS ghi bằng chứng bàn giao trên Avalanche Fuji. Chỉ sử dụng test AVAX miễn phí.',
-  settings:
-    'Máy tắt thì Codex trên máy đó offline. Khôi phục phiên bị gián đoạn trước khi tiếp tục.',
-};
 export default function UsageGuide({
-  stage,
   enabled = true,
-  cloud = false,
 }: {
   stage: Stage;
   enabled?: boolean;
@@ -96,9 +84,6 @@ export default function UsageGuide({
             </button>
           </header>
           <div className="usage-modal-scroll">
-            <p className="guide-definition">
-              <strong>Neralu</strong> là khu trò chuyện theo dự án của Kivuno.
-            </p>
             <ol className="guide-steps">
               <li>
                 <span className="guide-step-icon">
@@ -106,7 +91,7 @@ export default function UsageGuide({
                 </span>
                 <div>
                   <h3>1. Chọn nhóm</h3>
-                  <p>Thêm tài khoản trong Team. Tạo dự án, rồi chọn Codex sẽ tham gia nhóm.</p>
+                  <p>Team → Thêm tài khoản. Dự án → Chọn thành viên.</p>
                 </div>
               </li>
               <li>
@@ -116,8 +101,8 @@ export default function UsageGuide({
                 <div>
                   <h3>2. Gửi điều bạn muốn làm</h3>
                   <p>
-                    Chat để hỏi và nghiên cứu. Chọn <strong>Plan project</strong> để lên kế hoạch và
-                    xây dựng. Gõ <code>/</code> để chọn model, reasoning hoặc skill.
+                    Neralu → Gửi prompt. <strong>Plan project</strong> → Lên kế hoạch.{' '}
+                    <code>/</code> → Lệnh nhanh.
                   </p>
                 </div>
               </li>
@@ -127,10 +112,7 @@ export default function UsageGuide({
                 </span>
                 <div>
                   <h3>3. Theo dõi và phản hồi</h3>
-                  <p>
-                    Mở Sessions trong nhóm để xem từng cuộc trò chuyện. Đọc kết quả, phản hồi và
-                    duyệt trong Reviews.
-                  </p>
+                  <p>Sessions → Theo dõi. Reviews → Kiểm tra và duyệt kết quả.</p>
                 </div>
               </li>
             </ol>
@@ -139,22 +121,8 @@ export default function UsageGuide({
               <span>👍 Đồng ý</span>
               <span>👎 Không đồng ý</span>
             </div>
-            {tips[stage] && (
-              <p className="guide-context">
-                <Check size={14} />
-                {tips[stage]}
-              </p>
-            )}
-            {stage === 'hosted' && (
-              <p className="guide-context">
-                Đăng nhập trên web, xác nhận kết nối rồi quay lại app để làm việc.
-              </p>
-            )}
           </div>
           <footer>
-            <button className="usage-skip" onClick={close}>
-              Bỏ qua hướng dẫn
-            </button>
             <button className="usage-primary" onClick={close}>
               Bắt đầu <ArrowRight size={15} />
             </button>
