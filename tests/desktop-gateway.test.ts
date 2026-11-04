@@ -4,7 +4,29 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
-import gateway from '../api/gateway.ts';
+import gateway, { gatewayTarget } from '../api/gateway.ts';
+
+test('Vercel rewrite metadata never reaches strict desktop lookup and bridge query schemas', () => {
+  for (const [route, query] of [
+    ['desktop/request', 'code=ABCDE-12345'],
+    ['desktop/bridge/exchange', `host=${randomUUID()}`],
+  ]) {
+    for (const incoming of [
+      `/api/gateway?relay_path=${route}&path=${route}&${query}`,
+      `/api/${route}?path=${route}&${query}`,
+      `/api/${route}?${query}`,
+    ]) {
+      const target = gatewayTarget(incoming);
+      assert.equal(target.pathname + target.search, `/api/${route}?${query}`);
+    }
+  }
+  // Genuine unknown application parameters must still reach strict validation.
+  const unknown = gatewayTarget(
+    '/api/gateway?relay_path=desktop/request&path=desktop/request&code=ABCDE-12345&unexpected=1',
+  );
+  assert.equal(unknown.searchParams.get('unexpected'), '1');
+  assert.equal(gatewayTarget('/api/desktop/request?path=wrong').searchParams.get('path'), 'wrong');
+});
 
 test('public gateway never forwards private drain or immutable deployment requests to shared cloud state', async () => {
   const previous = process.env.RELAY_PUBLIC_ORIGIN;

@@ -10,6 +10,7 @@ import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
 import { createCloudIdentity } from '../server/cloud-auth.ts';
+import { gatewayTarget } from '../api/gateway.ts';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'relay-portal-browser-'));
 const data = path.join(root, 'state');
@@ -90,9 +91,15 @@ async function routePortal(context: BrowserContext, available = false) {
     }
     if (url.pathname.startsWith('/api/')) {
       const headers = await request.allHeaders();
+      // Vercel's named catch-all adds path alongside the destination query.
+      const rewritten = new URL('/api/gateway', origin);
+      rewritten.search = url.search;
+      rewritten.searchParams.set('relay_path', url.pathname.slice('/api/'.length));
+      rewritten.searchParams.set('path', url.pathname.slice('/api/'.length));
+      const target = gatewayTarget(rewritten.href);
       const response = await app.inject({
         method: request.method() as 'GET' | 'POST',
-        url: url.pathname + url.search,
+        url: target.pathname + target.search,
         headers: { ...headers, 'x-relay-gateway': gatewaySecret },
         ...(request.postData() ? { payload: request.postData()! } : {}),
       });

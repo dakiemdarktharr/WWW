@@ -3,6 +3,20 @@ import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+export function gatewayTarget(requestUrl: string) {
+  const url = new URL(requestUrl, 'https://workspace.invalid');
+  const route = url.searchParams.get('relay_path');
+  if (route !== null) {
+    url.pathname = `/api/${route}`;
+    url.searchParams.delete('relay_path');
+  }
+  // Vercel also forwards the named :path* capture as query metadata.
+  // Strip only that capture; preserve application parameters for strict validation.
+  if (url.searchParams.get('path') === url.pathname.slice('/api/'.length))
+    url.searchParams.delete('path');
+  return url;
+}
+
 export default async function handler(
   request: IncomingMessage & { body?: unknown },
   response: ServerResponse,
@@ -10,12 +24,7 @@ export default async function handler(
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   try {
-    const url = new URL(request.url || '/', 'https://workspace.invalid');
-    const route = url.searchParams.get('relay_path');
-    if (route !== null) {
-      url.pathname = `/api/${route}`;
-      url.searchParams.delete('relay_path');
-    }
+    const url = gatewayTarget(request.url || '/');
     if (!/^\/api\/[a-zA-Z0-9/-]+$/.test(url.pathname) || url.pathname.includes('//')) {
       response.writeHead(400).end(JSON.stringify({ error: 'Invalid workspace route.' }));
       return;
