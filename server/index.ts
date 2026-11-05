@@ -1,7 +1,8 @@
 import '../scripts/check-runtime.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, openSync, closeSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { acquireCoordinatorLock } from './coordinator-lock.ts';
 import { privateDirectory } from './security.ts';
 import { Store } from './store.ts';
 import { Workspace } from './service.ts';
@@ -11,40 +12,7 @@ import { createCloudIdentity, type CloudAccess } from './cloud-auth.ts';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.RELAY_DATA_DIR || path.join(projectRoot, '.relay'));
 await privateDirectory(dataDir);
-// One coordinator per state directory prevents a second instance from orphaning active leases.
-const lock = path.join(dataDir, 'coordinator.lock');
-const bootFile = path.join(dataDir, 'coordinator.boot');
-const bootId =
-  process.env.RELAY_DEPLOYMENT === 'cloud'
-    ? readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
-    : '';
-if (bootId && existsSync(lock) && existsSync(bootFile) && readFileSync(bootFile, 'utf8') !== bootId)
-  unlinkSync(lock); // A different microVM boot cannot still own this process lease.
-try {
-  const handle = openSync(lock, 'wx', 0o600);
-  writeFileSync(handle, String(process.pid));
-  closeSync(handle);
-  if (bootId) writeFileSync(bootFile, bootId, { mode: 0o600 });
-} catch {
-  const pid = Number(readFileSync(lock, 'utf8'));
-  let alive = false;
-  if (Number.isInteger(pid) && pid > 0)
-    try {
-      process.kill(pid, 0);
-      alive = true;
-    } catch (e) {
-      alive = (e as NodeJS.ErrnoException).code === 'EPERM';
-    }
-  if (alive)
-    throw new Error(
-      `RELAY is already running (process ${pid}). Open http://127.0.0.1:${process.env.RELAY_PORT || 4317}.`,
-    );
-  unlinkSync(lock);
-  const handle = openSync(lock, 'wx', 0o600);
-  writeFileSync(handle, String(process.pid));
-  closeSync(handle);
-  if (bootId) writeFileSync(bootFile, bootId, { mode: 0o600 });
-}
+const lock = await acquireCoordinatorLock(dataDir);
 const store = new Store(path.join(dataDir, 'workspace.db'));
 const workspace = new Workspace(store, dataDir, projectRoot);
 await workspace.initialize();
@@ -90,9 +58,7 @@ const shutdown = async () => {
   stopping = true;
   await app.close();
   store.close();
-  try {
-    unlinkSync(lock);
-  } catch {}
+  await lock.release();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
@@ -115,8 +81,6 @@ try {
 } catch (error) {
   await workspace.close();
   store.close();
-  try {
-    unlinkSync(lock);
-  } catch {}
+  await lock.release();
   throw error;
 }

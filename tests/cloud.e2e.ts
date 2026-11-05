@@ -124,7 +124,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.6.0',
+      version: '0.6.1',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -306,6 +306,20 @@ try {
   assert.ok(claude);
   await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
   await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Antigravity', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Add Antigravity connection', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'Create a profile first', exact: true }).click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
+  await page.getByRole('option', { name: 'Antigravity', exact: true }).click();
+  await page.getByLabel('Agent name').fill('Antigravity test');
+  await page.getByRole('button', { name: 'Create profile', exact: true }).click();
+  await page.getByRole('heading', { name: 'Antigravity test', exact: true }).waitFor();
+  const antigravity = store.members().find((member) => member.provider === 'antigravity')!;
+  assert.equal(antigravity.integration, 'external');
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+  await page.getByRole('combobox', { name: 'AI provider' }).click();
   await page.getByRole('option', { name: 'Gemini', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Connect Gemini', exact: true })).toBeDisabled();
   await expect(page.getByText('Google sign-in on this computer.', { exact: false })).toBeHidden();
@@ -332,7 +346,7 @@ try {
   await nav('Neralu').click();
   await page.getByRole('button', { name: 'Group team', exact: true }).click();
   await page.getByRole('button', { name: /Edit group members/ }).click();
-  for (const name of [claude.name, gemini.name])
+  for (const name of [claude.name, gemini.name, antigravity.name])
     await page
       .locator('.roster-option')
       .filter({ has: page.getByText(name, { exact: true }) })
@@ -362,6 +376,7 @@ try {
   await page.getByRole('button', { name: 'New session', exact: true }).first().click();
   const providerSession = page.getByRole('dialog', { name: 'New agent session' });
   assert.equal(await providerSession.locator(`option[value="${claude.id}"]`).count(), 0);
+  assert.equal(await providerSession.locator(`option[value="${antigravity.id}"]`).count(), 0);
   await providerSession.getByLabel('Account', { exact: true }).selectOption(gemini.id);
   await providerSession.getByRole('checkbox', { name: 'Automatic model', exact: true }).uncheck();
   await expect(providerSession.getByLabel('Reasoning', { exact: true })).toHaveCount(0);

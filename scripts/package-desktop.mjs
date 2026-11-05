@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 import { build, Platform, Arch } from 'electron-builder';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
+import { configureDestinationStaging } from './nsis-destination-staging.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -66,6 +67,7 @@ await build({
     async afterPack(context) {
       const { appOutDir } = context;
       configureLinuxNsisExtraction(context);
+      await configureDestinationStaging(context);
       // Fail the build before producing a downloadable installer with missing deps.
       for (const required of [
         'runtime/node.exe',

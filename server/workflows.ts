@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
 import type { Member, Project, Proposal, Task, TeamPlan, Workflow } from '../shared/types.ts';
 import type { DynamicTool } from './codex.ts';
@@ -62,7 +63,7 @@ export class Workflows {
       if (!prompt.trim() || prompt.length > 16000)
         throw new DomainError('Enter a prompt of up to 16,000 characters.');
       const profiles = groupMembers(this.store, projectId).filter(
-        (member) => member.provider !== 'claude' && member.integration !== 'external',
+        (member) => !isExternalMember(member),
       );
       // Reads account metadata only. No model turns or login flows occur during preflight.
       const checks = await Promise.allSettled(
@@ -75,8 +76,7 @@ export class Workflows {
           `Cannot check ${profiles[failed].name}. Refresh this profile in Team and try again.`,
         );
       const members = groupMembers(this.store, projectId).filter(
-        (member) =>
-          !!member.account && member.provider !== 'claude' && member.integration !== 'external',
+        (member) => !!member.account && !isExternalMember(member),
       );
       if (!members.length) throw new DomainError('Sign in to at least one Codex profile in Team.');
       const now = new Date().toISOString();

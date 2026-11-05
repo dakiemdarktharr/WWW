@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import type { CodexSession, Member, RoomMessage, ChatConfig } from '../shared/types.ts';
 import { Store, DomainError } from './store.ts';
 import { redact } from './security.ts';
@@ -114,8 +115,7 @@ export class InboxDispatcher {
       .map((member) => ({ ...member, ...memberPresence(this.host, member) }))
       .filter(
         (member) =>
-          member.provider !== 'claude' &&
-          member.integration !== 'external' &&
+          !isExternalMember(member) &&
           member.presence !== 'offline' &&
           (message.effectiveConfig?.skills || []).every((skill) => member.skills.includes(skill)),
       );

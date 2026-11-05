@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
 import type {
   Approval,
@@ -307,7 +308,7 @@ export class SessionManager {
   }): Promise<CodexSession> {
     if (this.host.closing) throw new DomainError('The coordinator is shutting down.');
     const member = this.host.store.get<Member>('member', options.memberId);
-    if (member.provider === 'claude' || member.integration === 'external')
+    if (isExternalMember(member))
       throw new DomainError(
         'Create this conversation in the external client using its MESH bridge.',
       );

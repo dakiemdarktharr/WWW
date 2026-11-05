@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isExternalMember, isExternalProvider } from '../shared/providers.ts';
 import path from 'node:path';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import type { CodexModel, Member, Task } from '../shared/types.ts';
@@ -268,7 +269,7 @@ export class Autonomy {
       const member = this.host.store.addMember({
         name,
         provider,
-        integration: provider === 'claude' ? 'external' : 'native',
+        integration: isExternalProvider(provider) ? 'external' : 'native',
         role: roles[members.length % roles.length],
       });
       return this.host.store.updateMember(member.id, { managed: true });
@@ -316,7 +317,7 @@ export class Autonomy {
   private async onboard(memberId: string) {
     const member = this.host.store.get<Member>('member', memberId);
     if (!member.account) return;
-    if (member.provider === 'claude' || member.integration === 'external') return;
+    if (isExternalMember(member)) return;
     this.join(memberId);
     // Await on the next turn too; login does not start model work.
     await this.shareSkills(memberId);

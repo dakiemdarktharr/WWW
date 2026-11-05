@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -28,6 +28,7 @@ const fixture = [
   'let result = {};',
   'switch(m.method) {',
   "case 'initialize': result={userAgent:'fixture'}; break;",
+  "case 'windowsSandbox/readiness': result={status:'ready'}; break;",
   "case 'echo': result=p; break;",
   "case 'environment': result={keys:Object.keys(process.env),home:process.env.CODEX_HOME,args:process.argv.slice(2)}; break;",
   "case 'account/read': result={account:{type:'chatgpt',email:'fixture@example.test',planType:'plus',accessToken:'must-not-leak'}}; break;",
@@ -168,6 +169,77 @@ test('client handshakes once, correlates concurrent requests and forces isolated
   assert.ok(environment.args.includes('stdio://'));
   assert.ok(client.pid);
 });
+
+test(
+  'a new Windows profile completes official limited setup and restarts without an account exit',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const source =
+      "import fs from 'node:fs'; import path from 'node:path'; const marker=path.join(process.env.CODEX_HOME,'sandbox-ready');\n" +
+      fixture.replace(
+        "case 'windowsSandbox/readiness': result={status:'ready'}; break;",
+        "case 'windowsSandbox/readiness': result={status:fs.existsSync(marker)?'ready':'notConfigured'}; break; case 'windowsSandbox/setupStart': if(p.mode!=='unelevated') throw Error('must not elevate'); fs.writeFileSync(marker,String(process.pid)); send({method:'windowsSandbox/setupCompleted',params:{mode:'unelevated',success:true}}); result={started:true}; break;",
+      );
+    const client = await clientFor(t, source);
+    let exits = 0;
+    client.on('exit', () => exits++);
+    await client.start();
+    const environment = await client.request('environment');
+    const initialPid = Number(await readFile(path.join(environment.home, 'sandbox-ready'), 'utf8'));
+    assert.notEqual(initialPid, client.pid);
+    assert.equal(exits, 0, 'internal setup restart must preserve the Workspace client/login lock');
+    assert.deepEqual(await client.request('echo', { ready: true }), { ready: true });
+    await client.stop();
+    assert.equal(exits, 1);
+  },
+);
+
+test(
+  'configured Windows profiles never silently fall back from an update requirement',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const source = fixture.replace("result={status:'ready'}", "result={status:'updateRequired'}");
+    const client = await clientFor(t, source);
+    await assert.rejects(client.start(), /Windows sandbox is not ready/);
+    assert.equal(client.pid, undefined);
+  },
+);
+
+test(
+  'failed Windows sandbox setup stops the process before tools can run',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const source = fixture.replace(
+      "case 'windowsSandbox/readiness': result={status:'ready'}; break;",
+      "case 'windowsSandbox/readiness': result={status:'notConfigured'}; break; case 'windowsSandbox/setupStart': send({method:'windowsSandbox/setupCompleted',params:{mode:'unelevated',success:false,error:'setup unavailable'}}); result={started:true}; break;",
+    );
+    const client = await clientFor(t, source);
+    await assert.rejects(client.start(), /Windows sandbox setup failed/);
+    assert.equal(client.pid, undefined);
+  },
+);
+
+test(
+  'stopping Windows setup cancels startup without relaunching the profile',
+  { skip: process.platform !== 'win32' },
+  async (t) => {
+    const source = fixture.replace(
+      "case 'windowsSandbox/readiness': result={status:'ready'}; break;",
+      "case 'windowsSandbox/readiness': result={status:'notConfigured'}; break; case 'windowsSandbox/setupStart': send({method:'fixture/setup',params:{}}); setTimeout(()=>{send({method:'windowsSandbox/setupCompleted',params:{mode:'unelevated',success:true}});send({id:m.id,result:{started:true}})},2000); return;",
+    );
+    const client = await clientFor(t, source);
+    const setup = new Promise<void>((resolve) =>
+      client.on('notification', (method) => {
+        if (method === 'fixture/setup') resolve();
+      }),
+    );
+    const stopped = assert.rejects(client.start(), /stopped|exited|cancelled/);
+    await setup;
+    await client.stop();
+    await stopped;
+    assert.equal(client.pid, undefined);
+  },
+);
 
 test('account/capability views include only active capabilities and exclude private account fields', async (t) => {
   const client = await clientFor(t);

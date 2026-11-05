@@ -1,3 +1,4 @@
+import { isExternalProvider } from '../shared/providers';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
@@ -623,7 +624,9 @@ export default function ProjectChat({
                 <button
                   className="button compact"
                   onClick={() => setCreating(true)}
-                  disabled={!project || !members.some((member) => providerOf(member) !== 'claude')}
+                  disabled={
+                    !project || !members.some((member) => !isExternalProvider(providerOf(member)))
+                  }
                 >
                   <Plus size={13} />
                   New session
@@ -697,7 +700,7 @@ export default function ProjectChat({
                         <span>
                           {providerLabels[providerOf(member)]} ·{' '}
                           {member.account?.planType ||
-                            (providerOf(member) === 'claude'
+                            (isExternalProvider(providerOf(member))
                               ? 'External client'
                               : 'Not signed in')}{' '}
                           · {member.owner?.login || member.account?.email || 'Owner not set'}
@@ -836,7 +839,7 @@ export default function ProjectChat({
                     <small>
                       {providerLabels[providerOf(member)]} ·{' '}
                       {member.account?.planType ||
-                        (providerOf(member) === 'claude'
+                        (isExternalProvider(providerOf(member))
                           ? 'External client'
                           : 'Not signed in')}{' '}
                       · {member.owner?.login || 'Owner not set'}

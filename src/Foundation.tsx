@@ -1,3 +1,4 @@
+import { isExternalProvider } from '../shared/providers';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowRight,
@@ -177,7 +178,8 @@ export function QuotaCard({
   );
   if (providerOf(member) === 'gemini')
     return <ProviderTurnAllowance member={member} state={state} busy={busy} request={request} />;
-  if (providerOf(member) === 'claude') return <span className="provider-tag">Quota unknown</span>;
+  if (isExternalProvider(providerOf(member)))
+    return <span className="provider-tag">Quota unknown</span>;
   return (
     <section className="quota-card">
       <div className="quota-card-heading">
@@ -445,7 +447,7 @@ export function HandoffForm({
               .filter(
                 (member) =>
                   member.id !== selected?.memberId &&
-                  providerOf(member) !== 'claude' &&
+                  !isExternalProvider(providerOf(member)) &&
                   project.memberIds?.includes(member.id),
               )
               .map((member) => (
@@ -671,7 +673,8 @@ export function SessionsPage({
                 busy ||
                 !state.members.some(
                   (member) =>
-                    project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+                    project.memberIds?.includes(member.id) &&
+                    !isExternalProvider(providerOf(member)),
                 )
               }
               onClick={() => setCreating(true)}
@@ -804,7 +807,8 @@ export function SessionsPage({
                 !!project &&
                 !state.members.some(
                   (member) =>
-                    project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+                    project.memberIds?.includes(member.id) &&
+                    !isExternalProvider(providerOf(member)),
                 )
               }
             >
@@ -877,7 +881,9 @@ export function CreateSession({
   const [taskId, setTaskId] = useState('');
   const [memberId, setMemberId] = useState(
     project.memberIds?.includes(project.ownerMemberId || '') &&
-      providerOf(state.members.find((member) => member.id === project.ownerMemberId)) !== 'claude'
+      !isExternalProvider(
+        providerOf(state.members.find((member) => member.id === project.ownerMemberId)),
+      )
       ? project.ownerMemberId || ''
       : '',
   );
@@ -930,7 +936,7 @@ export function CreateSession({
             {state.members
               .filter(
                 (member) =>
-                  project.memberIds?.includes(member.id) && providerOf(member) !== 'claude',
+                  project.memberIds?.includes(member.id) && !isExternalProvider(providerOf(member)),
               )
               .map((member) => (
                 <option key={member.id} value={member.id}>
@@ -1021,7 +1027,10 @@ export function CreateSession({
             <p>Team → Gemini usage → grant a bounded prompt allowance.</p>
           </HelpDetails>
         )}
-        <button className="button primary" disabled={busy || !memberId || provider === 'claude'}>
+        <button
+          className="button primary"
+          disabled={busy || !memberId || isExternalProvider(provider)}
+        >
           <Play size={14} />
           Create session
         </button>
@@ -1206,7 +1215,7 @@ export function SessionConsole({
   const output = useRef<HTMLDivElement>(null);
   const member = state.members.find((item) => item.id === session.memberId);
   const provider = session.provider || providerOf(member);
-  const external = provider === 'claude' || session.external;
+  const external = isExternalProvider(provider) || session.external;
   const task = state.tasks.find((item) => item.id === session.taskId);
   const approvals = state.approvals.filter((item) => item.taskId === session.taskId);
   const running = ['running', 'starting'].includes(session.status);
@@ -1423,7 +1432,10 @@ export function SessionConsole({
       )}
       {external && (
         <HelpDetails title="Session help">
-          <p>Continue in your own Claude client. Shared progress appears in Neralu.</p>
+          <p>
+            Continue in your own {providerLabels[provider]} client. Shared progress appears in
+            Neralu.
+          </p>
         </HelpDetails>
       )}
       <form

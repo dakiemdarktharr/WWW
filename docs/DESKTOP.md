@@ -5,10 +5,18 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 ## Install and sign in
 
 1. Download the Windows x64 installer and compare its SHA256 with the download page.
-2. Install Kivuno for your Windows user. This free alpha has no paid Authenticode certificate; Windows may show an unknown-publisher warning. A checksum detects a changed download but does not replace publisher signing.
+2. Install Kivuno for your Windows user. Choose a drive with enough free space; the installer displays its requirement, including temporary extraction space. If C: is nearly full, choose a folder such as `D:\Kivuno`. Version 0.6.1 keeps the large archive and extraction staging on that selected drive and does not cache another full installer in LocalAppData. A small writable Windows TEMP directory and space for your workspace data are still needed. This free alpha has no paid Authenticode certificate; Windows may show an unknown-publisher warning. A checksum detects a changed download but does not replace publisher signing.
 3. Open Kivuno and choose **Sign in on the web**. Complete the website login and approve the displayed device code.
 4. Return to Kivuno. The short-lived activation request is bound to a random proof verifier held only by the app. A consumed activation cannot issue another session.
-5. Add Codex accounts in **Team**, authenticate each account through OpenAI, and create or open a project.
+5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. Gemini uses its own Google sign-in. Claude Code and Antigravity use your separately installed, signed-in client with the scoped [MESH MCP configuration](EXTERNAL-MESH.md); adding a profile does not sign that client in.
+
+On Windows, a fresh Codex profile needs the official limited sandbox before write tasks can run. Kivuno 0.6.1 performs the official unelevated setup when that profile is not configured, then restarts its App Server. It does not downgrade an existing sandbox. A failed setup blocks execution and reports the error. Skills/plugins are account-specific; credentials and trusted-tool permissions are never automatically copied between accounts/providers.
+
+## Recheck a download
+
+From the source checkout, `npm run verify:download -- --platform=windows` downloads the complete current installer and checks HTTPS origin, status, exact size, checksum sidecar and SHA-256. Use `--platform=linux` for the Linux archive. Results go into `.local/download-audit`; the command never installs software, signs in or calls a model. `--version=0.6.0` can explicitly audit an older release while preparing an update.
+
+The packaged smoke test accepts `KIVUNO_PACKAGE_DIR` pointing at an actual installed directory (for example `D:\Kivuno`). It runs bundled Node/Git/Codex/Gemini, opens the real Electron app, checks renderer isolation and protected local API, then closes it gracefully. Do not run it while another Kivuno instance or active tasks use the same Windows workspace.
 
 Each Codex account has a separate home in the workspace. The app uses the official Codex App Server and the account's real provider entitlements. No API-key replacement or fake model turn is used. Multiple conversations share their account's actual quota.
 

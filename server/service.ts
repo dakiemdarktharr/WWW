@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { cp, mkdir, readdir, lstat } from 'node:fs/promises';
@@ -59,7 +60,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.6.0',
+    version: '0.6.1',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -287,7 +288,7 @@ export class Workspace {
   }
   async refresh(id: string) {
     const profile = this.store.get<Member>('member', id);
-    if (profile.provider === 'claude' || profile.integration === 'external') return profile;
+    if (isExternalMember(profile)) return profile;
     const client = await this.client(id);
     const account = await readAccount(client);
     let rateLimits: unknown = null,
@@ -331,7 +332,7 @@ export class Workspace {
   }
   async login(id: string, method: 'browser' | 'device') {
     const profile = this.store.get<Member>('member', id);
-    if (profile.provider === 'claude' || profile.integration === 'external')
+    if (isExternalMember(profile))
       throw new DomainError('Connect this teammate using the external MESH bridge.');
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before changing its login.');

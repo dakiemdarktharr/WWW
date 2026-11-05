@@ -1,4 +1,5 @@
 import Fastify, { type FastifyRequest } from 'fastify';
+import { isExternalProvider } from '../shared/providers.ts';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -229,7 +230,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.6.0', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.6.1', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -421,7 +422,7 @@ export async function buildApp(
     const input = z
       .object({
         runnerId: id.optional(),
-        provider: z.enum(['codex', 'gemini', 'claude']).default('codex'),
+        provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
       })
       .strict()
       .parse(request.body);
@@ -445,13 +446,13 @@ export async function buildApp(
             !member.account &&
             !workspace.sessions.hasLive(member.id),
         ) || workspace.autonomy.addAccount(input.provider);
-    if (input.provider === 'claude')
+    if (isExternalProvider(input.provider))
       return {
         member,
         login: {
           type: 'external',
           instructions:
-            'Connect your own Claude client through the local MESH MCP bridge. Kivuno does not manage its subscription login.',
+            'Connect your own client through the local MESH MCP bridge. Kivuno does not manage its subscription login.',
         },
       };
     if (input.runnerId)
@@ -463,7 +464,7 @@ export async function buildApp(
     const input = z
       .object({
         name: text,
-        provider: z.enum(['codex', 'gemini', 'claude']).default('codex'),
+        provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
         role: z.enum(['engineer', 'researcher', 'designer', 'reviewer']),
         color: z
           .string()
@@ -474,7 +475,7 @@ export async function buildApp(
       .parse(request.body);
     const member = workspace.store.addMember({
       ...input,
-      integration: input.provider === 'claude' ? 'external' : 'native',
+      integration: isExternalProvider(input.provider) ? 'external' : 'native',
     });
     workspace.log(`Added ${member.name} as ${member.role}.`, null, member.id, 'member');
     return member;

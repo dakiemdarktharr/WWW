@@ -228,6 +228,10 @@ test('Gemini scoped MCP write requires a human decision and a current owned scop
     '.codex/config.toml',
     '.gemini/oauth_creds.json',
     '.claude/.credentials.json',
+    '.mcp.json',
+    '.claude.json',
+    '.agents/mcp_config.json',
+    '.antigravity/credentials.json',
     'oauth_creds.json',
     'google_accounts.json',
     '.credentials.json',
@@ -364,6 +368,10 @@ test('unknown Gemini quota stays unknown, cannot run automatically, and consumes
   );
   assert.throws(
     () => nativeProviderClient({ ...member, provider: 'claude' }, 'C:/unused', 'C:/unused'),
+    /external MESH/,
+  );
+  assert.throws(
+    () => nativeProviderClient({ ...member, provider: 'antigravity' }, 'C:/unused', 'C:/unused'),
     /external MESH/,
   );
 });

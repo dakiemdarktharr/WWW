@@ -1,3 +1,4 @@
+import { isExternalProvider } from '../shared/providers';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownLeft,
@@ -516,7 +517,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       });
   }
   async function login(member: Member, method: 'browser' | 'device') {
-    if (providerOf(member) === 'claude') {
+    if (isExternalProvider(providerOf(member))) {
       setModal({ type: 'external', memberId: member.id });
       return;
     }
@@ -531,13 +532,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       '/accounts/connect',
       {
         provider,
-        ...(selectedMachine && provider !== 'claude' ? { runnerId: selectedMachine } : {}),
+        ...(selectedMachine && !isExternalProvider(provider) ? { runnerId: selectedMachine } : {}),
       },
     );
     if (result) {
       navigate('team');
       setModal(
-        provider === 'claude'
+        isExternalProvider(provider)
           ? { type: 'external', memberId: result.member.id }
           : { type: 'login', memberId: result.member.id, result: result.login },
       );
@@ -1272,7 +1273,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         </Modal>
       )}
       {modal?.type === 'external' && members.find((member) => member.id === modal.memberId) && (
-        <Modal title="Claude · MESH connection" close={closeModal}>
+        <Modal
+          title={`${providerLabels[providerOf(members.find((member) => member.id === modal.memberId))]} · MESH connection`}
+          close={closeModal}
+        >
           <ExternalConnection
             member={members.find((member) => member.id === modal.memberId)!}
             projects={state?.projects || []}
@@ -1879,8 +1883,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <Button onClick={closeModal}>Close</Button>
               <div>
                 {selectedTask.status === 'running' &&
-                  providerOf(members.find((member) => member.id === selectedTask.assignedTo)) !==
-                    'claude' && (
+                  !isExternalProvider(
+                    providerOf(members.find((member) => member.id === selectedTask.assignedTo)),
+                  ) && (
                     <Button
                       disabled={pending}
                       onClick={() =>
@@ -1908,7 +1913,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           .filter(
                             (m) =>
                               m.status === 'ready' &&
-                              providerOf(m) !== 'claude' &&
+                              !isExternalProvider(providerOf(m)) &&
                               project?.memberIds?.includes(m.id) &&
                               !tasks.some(
                                 (t) =>
@@ -1927,11 +1932,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                         disabled={
                           pending ||
                           !(detailMember || selectedTask.assignedTo) ||
-                          providerOf(
-                            members.find(
-                              (member) => member.id === (detailMember || selectedTask.assignedTo),
+                          isExternalProvider(
+                            providerOf(
+                              members.find(
+                                (member) => member.id === (detailMember || selectedTask.assignedTo),
+                              ),
                             ),
-                          ) === 'claude'
+                          )
                         }
                         onClick={async () => {
                           const result = await perform(
@@ -2074,7 +2081,7 @@ function MemberCard({
         {member.role} ·{' '}
         <span className="provider-tag">
           {providerLabels[provider]}
-          {provider === 'claude' ? ' · external' : ''}
+          {isExternalProvider(provider) ? ' · external' : ''}
         </span>
       </span>
       <div className="member-account">
@@ -2139,14 +2146,14 @@ function MemberCard({
               <p>
                 {provider === 'gemini'
                   ? 'Configure Gemini skills in its own CLI profile. Codex plugins are not imported.'
-                  : 'Configure skills and plugins in your Claude client.'}
+                  : `Configure skills and plugins in your ${providerLabels[provider]} client.`}
               </p>
             </HelpDetails>
           )}
         </div>
       )}
       <div className="member-actions">
-        {provider === 'claude' ? (
+        {isExternalProvider(provider) ? (
           <Button primary onClick={external} disabled={busy}>
             <ExternalLink size={15} />
             MESH connection

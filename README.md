@@ -3,9 +3,9 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.6** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI và Claude qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno **0.6.1** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
-Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.6 tách ba demo cuộn, thêm No deadline và tích hợp đa provider; [ghi chú bản 0.6](docs/RELEASE-0.6.md) nêu rõ phạm vi đã kiểm thử. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [nhận diện](docs/BRAND.md) mô tả cách cài, kết nối máy và giới hạn. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
+Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.6.1 sửa bộ cài khác ổ đĩa, thiết lập sandbox Windows cho Codex và phục hồi coordinator; [ghi chú kiểm chứng 0.6.1](docs/RELEASE-0.6.1.md) phân biệt kết quả runtime thật với phần hội thoại cần bạn đăng nhập thử. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [nhận diện](docs/BRAND.md) mô tả cách cài, kết nối máy và giới hạn. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
 
 Mở [NoSleepClub Kivuno](https://nosleepclub-relay.vercel.app) để tải bản Windows hoặc Linux x64. App mở trang đăng nhập trên trình duyệt; kiểm tra và xác nhận mã hiển thị rồi quay lại app. Không gửi token đăng nhập qua URL. Nút **Hướng dẫn** trong desktop có hướng dẫn tiếng Việt theo từng khu vực. Xem [bản 0.4](docs/RELEASE-0.4.md) và [nghiên cứu coin gas riêng](docs/CUSTOM-L1.md); coin hiện chưa được triển khai.
 
@@ -19,7 +19,7 @@ Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có th�
 
 ## Bắt đầu trong bốn bước
 
-1. **Team → Add account:** chọn Codex hoặc Gemini để đăng nhập. Claude dùng kết nối MCP trong client của bạn; xem [cách kết nối](docs/EXTERNAL-MESH.md).
+1. **Team → Add account:** chọn Codex hoặc Gemini để đăng nhập. Claude Code và Antigravity dùng kết nối MCP trong client của bạn; xem [cách kết nối](docs/EXTERNAL-MESH.md).
 2. **Neralu:** tạo dự án và chọn thành viên nhóm; bạn không cần đưa toàn bộ Team vào mỗi nhóm.
 3. **Chat:** nhập yêu cầu nghiên cứu/trao đổi, hoặc dùng **Plan project** để lập kế hoạch triển khai và duyệt workflow. Chat thường tạo session read-only. `/goal`, `/model`, `/reasoning`, `/skills` và `/tên-skill` cấu hình yêu cầu; lệnh không hợp lệ được báo lỗi.
 4. **Sessions / Reviews:** graph hiển thị từng conversation, kể cả nhiều conversation của cùng một Codex. Chọn node để xem tiến độ, react để phản hồi và vào Reviews để duyệt thay đổi.

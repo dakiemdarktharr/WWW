@@ -14,7 +14,7 @@ import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, provider: 'claude' | 'antigravity' = 'claude') {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'kivuno-external-')));
   const repo = path.join(root, 'repo'),
     data = path.join(root, 'data');
@@ -38,7 +38,7 @@ async function fixture(t: TestContext) {
   const workspace = new Workspace(store, data, repo);
   const raw = store.addMember({ name: 'Claude reviewer', role: 'reviewer' });
   const member = store.updateMember(raw.id, {
-    provider: 'claude',
+    provider,
     integration: 'external',
     owner: { login: 'owner', name: 'Task Owner', email: 'owner@example.test' },
   });
@@ -151,6 +151,22 @@ test('external connections expose only scoped config and cannot impersonate a hu
     () => f.external.rpc('Bearer ' + 'x'.repeat(43), { jsonrpc: '2.0', id: 1, method: 'ping' }),
     /expired|revoked/,
   );
+});
+
+test('Antigravity has its own external identity and scoped task session', async (t) => {
+  const f = await fixture(t, 'antigravity');
+  const connection = f.connect({ allowTaskClaims: true, allowUnknownQuota: true });
+  assert.equal(connection.result.provider, 'antigravity');
+  const posted = await f.invoke(connection.header, 'mesh_post', { content: 'Antigravity joined.' });
+  assert.equal(posted.authorId, f.member.id);
+  const task = f.task();
+  const claimed = await f.invoke(connection.header, 'task_claim', { taskId: task.id });
+  assert.equal(claimed.session.provider, 'antigravity');
+  assert.equal(claimed.session.external, true);
+  assert.equal(claimed.session.externalConnectionId, connection.result.id);
+  assert.equal(claimed.task.worktree, f.store.get<Task>('task', task.id).worktree);
+  f.store.updateMember(f.member.id, { provider: 'claude' });
+  await assert.rejects(() => f.invoke(connection.header, 'mesh_read'), /External profile changed/);
 });
 
 test('external work requires explicit human grants and honest quota; low quota stops new claims', async (t) => {
@@ -373,14 +389,20 @@ test('provider credential files and OAuth token content cannot be pushed by exte
   for (const name of [
     '.gemini/oauth_creds.json',
     '.claude/.credentials.json',
+    '.mcp.json',
+    '.agents/mcp_config.json',
     'oauth_creds.json',
     'copied-settings.json',
+    'copied-mesh.json',
   ]) {
     const target = path.join(claimed.task.worktree, name);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(
       target,
-      JSON.stringify({ refresh_token: 'controlled-fixture-not-a-real-token-0123456789' }),
+      JSON.stringify({
+        [name === 'copied-mesh.json' ? 'KIVUNO_MCP_TOKEN' : 'refresh_token']:
+          'controlled-fixture-not-a-real-token-0123456789',
+      }),
     );
     await f.failure(
       a.header,

@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
 import type {
   AccountQuota,
@@ -400,12 +401,7 @@ export class QuotaManager {
       .sessions()
       .filter((session) => !session.external && ['running', 'starting'].includes(session.status));
     const members = active.length
-      ? this.store
-          .members()
-          .filter(
-            (member) =>
-              member.account && member.provider !== 'claude' && member.integration !== 'external',
-          )
+      ? this.store.members().filter((member) => member.account && !isExternalMember(member))
       : [];
     await Promise.allSettled(members.map((member) => this.refresh(member.id)));
     await this.enforce();

@@ -1,12 +1,13 @@
 import type { Member, ProviderCapability } from '../shared/types.ts';
+import { isExternalMember } from '../shared/providers.ts';
 import { CodexClient, resolveCodexCommand } from './codex.ts';
 import { GeminiClient, resolveGeminiCommand } from './gemini.ts';
 import { DomainError } from './store.ts';
 
 export function nativeProviderClient(member: Member, home: string, cwd: string): CodexClient {
-  if (member.integration === 'external' || member.provider === 'claude')
+  if (isExternalMember(member))
     throw new DomainError(
-      'This teammate uses the external MESH bridge. Kivuno does not manage Claude subscription sign-in or start its process.',
+      'This teammate uses the external MESH bridge. Kivuno does not manage its subscription sign-in or start its process.',
     );
   return member.provider === 'gemini'
     ? new GeminiClient({ home, cwd })
@@ -42,7 +43,7 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
     },
     {
       id: 'claude',
-      label: 'Claude',
+      label: 'Claude Code',
       mode: 'external',
       available: true,
       login: 'external',
@@ -51,6 +52,18 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       reasoning: false,
       reason:
         'Connect your own client through the local MESH MCP bridge. Kivuno does not provide Claude subscription OAuth or a paid API fallback.',
+    },
+    {
+      id: 'antigravity',
+      label: 'Antigravity',
+      mode: 'external',
+      available: true,
+      login: 'external',
+      quota: 'unknown',
+      models: false,
+      reasoning: false,
+      reason:
+        'Connect your installed Antigravity client through local MESH MCP. This is not Gemini CLI; Kivuno does not start its model, manage Google sign-in or import its tools.',
     },
   ];
 }

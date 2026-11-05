@@ -198,7 +198,7 @@ export class GeminiClient extends CodexClient {
     try {
       const response = await this.rpc('initialize', {
         protocolVersion: 1,
-        clientInfo: { name: 'kivuno', version: '0.6.0' },
+        clientInfo: { name: 'kivuno', version: '0.6.1' },
         clientCapabilities: {},
       });
       if (

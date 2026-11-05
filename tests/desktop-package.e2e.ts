@@ -11,7 +11,9 @@ import path from 'node:path';
 import os from 'node:os';
 
 const execute = promisify(execFile);
-const root = path.resolve('release/win-unpacked');
+const root = path.resolve(process.env.KIVUNO_PACKAGE_DIR || 'release/win-unpacked');
+const expectedVersion =
+  process.env.KIVUNO_EXPECTED_VERSION || JSON.parse(await readFile('package.json', 'utf8')).version;
 const env = { ...process.env } as Record<string, string>;
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.RELAY_DESKTOP_TESTING;
@@ -117,7 +119,7 @@ try {
     version: app.getVersion(),
     packaged: app.isPackaged,
   }));
-  assert.deepEqual(metadata, { name: 'Kivuno', version: '0.6.0', packaged: true });
+  assert.deepEqual(metadata, { name: 'Kivuno', version: expectedVersion, packaged: true });
   const page = await desktop.firstWindow();
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const resourceName = (value: string) => {
@@ -177,12 +179,16 @@ try {
   assert.equal(response.status, 403);
   await mkdir('.local', { recursive: true });
   await page.screenshot({ path: '.local/relay-windows-packaged.png' });
-  const release = JSON.parse(await readFile('dist/downloads/release.json', 'utf8'));
+  const release = JSON.parse(
+    await readFile(process.env.KIVUNO_RELEASE_MANIFEST || 'dist/downloads/release.json', 'utf8'),
+  );
   assert.equal(release.available, true);
   assert.equal(release.signed, false);
   const installerHash = createHash('sha256');
   let installerBytes = 0;
-  for await (const chunk of createReadStream(path.resolve('release', path.basename(release.url)))) {
+  for await (const chunk of createReadStream(
+    process.env.KIVUNO_INSTALLER_FILE || path.resolve('release', path.basename(release.url)),
+  )) {
     installerHash.update(chunk);
     installerBytes += chunk.length;
   }

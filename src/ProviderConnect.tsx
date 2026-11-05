@@ -8,6 +8,7 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
+import { isExternalProvider } from '../shared/providers';
 import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
 import type { FoundationRequest } from './Foundation';
@@ -17,6 +18,7 @@ export const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex',
   gemini: 'Gemini',
   claude: 'Claude',
+  antigravity: 'Antigravity',
 };
 export const providerOf = (member?: Pick<Member, 'provider'>): ProviderId =>
   member?.provider || 'codex';
@@ -80,7 +82,7 @@ export default function ProviderConnect({
             ? 'Use your ChatGPT account with real Codex sessions.'
             : provider === 'gemini'
               ? 'Google sign-in on this computer. File tools and limited prompts; no shell or reasoning controls.'
-              : 'Connect your own Claude client to this project through MESH MCP.'}
+              : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
       {remoteGemini ? (
@@ -101,7 +103,9 @@ export default function ProviderConnect({
         onClick={() => connect(provider)}
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
-        {provider === 'claude' ? 'Add Claude connection' : `Connect ${providerLabels[provider]}`}
+        {isExternalProvider(provider)
+          ? `Add ${providerLabels[provider]} connection`
+          : `Connect ${providerLabels[provider]}`}
       </button>
       <button className="text-button" onClick={profile} disabled={busy}>
         Create a profile first
@@ -137,7 +141,7 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
   const [error, setError] = useState('');
   const refresh = async () => {
     const capability = (await api<ProviderCapability[]>('/providers')).find(
-      (entry) => entry.id === 'claude',
+      (entry) => entry.id === providerOf(member),
     );
     setAvailable(Boolean(capability?.available));
     if (!capability?.available) {
@@ -226,7 +230,7 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
               checked={quota}
               onChange={(event) => setQuota(event.target.checked)}
             />
-            I will monitor Claude usage in my client
+            I will monitor {providerLabels[providerOf(member)]} usage in my client
           </label>
           <button
             className="button primary"
@@ -271,9 +275,13 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
             {copied ? <Check size={14} /> : <Copy size={14} />}
             {copied ? 'Copied' : 'Copy configuration'}
           </button>
-          <HelpDetails title="Connect your Claude client">
+          <HelpDetails title={`Connect your ${providerLabels[providerOf(member)]} client`}>
             <ol>
-              <li>Paste this private config into your Claude client's MCP configuration.</li>
+              <li>
+                {providerOf(member) === 'antigravity'
+                  ? 'In Antigravity, open MCP Servers → Manage MCP Servers → View raw config. Add this entry under mcpServers without replacing existing servers.'
+                  : 'Add this private entry under mcpServers in your Claude Code local/user MCP configuration. Keep existing servers.'}
+              </li>
               <li>Restart that client and ask it to read this project's MESH group.</li>
               <li>
                 Save your copy before closing. Access expires at{' '}

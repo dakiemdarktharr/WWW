@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import type { Member, Project, GroupIntroduction, HumanPresence } from '../shared/types.ts';
 import { DomainError, type Store } from './store.ts';
 import { redact } from './security.ts';
@@ -31,14 +32,13 @@ export function memberPresence(
   const runner = member.runnerId
     ? host.runners?.list().find((node) => node.id === member.runnerId)
     : null;
-  const machineReady =
-    member.integration === 'external' || member.provider === 'claude'
-      ? !!member.externalLastSeen && Date.now() - Date.parse(member.externalLastSeen) < 45_000
-      : member.provider === 'gemini'
-        ? true
-        : member.runnerId
-          ? !!runner?.online && !!runner.ready
-          : host.runtime?.codexAvailable !== false;
+  const machineReady = isExternalMember(member)
+    ? !!member.externalLastSeen && Date.now() - Date.parse(member.externalLastSeen) < 45_000
+    : member.provider === 'gemini'
+      ? true
+      : member.runnerId
+        ? !!runner?.online && !!runner.ready
+        : host.runtime?.codexAvailable !== false;
   const online =
     !host.closing &&
     machineReady &&

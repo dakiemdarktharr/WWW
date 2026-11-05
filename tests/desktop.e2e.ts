@@ -344,52 +344,55 @@ try {
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
   await expect.poll(rendererCount).toBe(baselineRenderers);
 
-  // External Claude config is offered only by a local desktop coordinator.
-  const external = await post('/members', {
-    name: 'Claude local',
-    role: 'engineer',
-    provider: 'claude',
-  });
-  await page.evaluate(
-    async ({ projectId, memberId }) => {
-      const { token } = await (await fetch('/api/session')).json();
-      const state = await (
-        await fetch('/api/state', { headers: { 'X-Relay-Token': token } })
-      ).json();
-      const project = state.projects.find((entry: { id: string }) => entry.id === projectId);
-      const response = await fetch(`/api/projects/${projectId}/members`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'X-Relay-Token': token },
-        body: JSON.stringify({ memberIds: [...project.memberIds, memberId] }),
-      });
-      if (!response.ok) throw new Error('Could not add the external fixture member.');
-    },
-    { projectId: uiFixture.projectId, memberId: external.id },
-  );
-  await page.reload();
-  await page
-    .getByRole('navigation', { name: 'Main navigation' })
-    .getByRole('button', { name: 'Team', exact: true })
-    .click();
-  const externalCard = page
-    .locator('.account-card-group')
-    .filter({ has: page.getByRole('heading', { name: 'Claude local', exact: true }) });
-  await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
-  const externalDialog = page.getByRole('dialog', { name: 'Claude · MESH connection' });
-  await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
-  await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();
-  await externalDialog.getByRole('button', { name: 'Generate MCP config', exact: true }).click();
-  const configInput = externalDialog.getByLabel('MCP configuration');
-  await expect(configInput).toBeVisible();
-  const config = JSON.parse(await configInput.inputValue());
-  const mcp = Object.values(config.mcpServers)[0] as {
-    env: { KIVUNO_MCP_URL: string; KIVUNO_MCP_TOKEN: string };
-  };
-  assert.equal(mcp.env.KIVUNO_MCP_URL, localOrigin + '/api/external-agent/rpc');
-  assert.match(mcp.env.KIVUNO_MCP_TOKEN, /^[A-Za-z0-9_-]{43}$/);
-  await externalDialog.getByRole('button', { name: 'Revoke connection', exact: true }).click();
-  await expect(configInput).toHaveCount(0);
-  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  // Both real-client connection types use scoped local MCP, not native model dispatch.
+  for (const provider of ['claude', 'antigravity'] as const) {
+    const label = provider === 'claude' ? 'Claude' : 'Antigravity';
+    const external = await post('/members', {
+      name: `${label} local`,
+      role: 'engineer',
+      provider,
+    });
+    await page.evaluate(
+      async ({ projectId, memberId }) => {
+        const { token } = await (await fetch('/api/session')).json();
+        const state = await (
+          await fetch('/api/state', { headers: { 'X-Relay-Token': token } })
+        ).json();
+        const project = state.projects.find((entry: { id: string }) => entry.id === projectId);
+        const response = await fetch(`/api/projects/${projectId}/members`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'X-Relay-Token': token },
+          body: JSON.stringify({ memberIds: [...project.memberIds, memberId] }),
+        });
+        if (!response.ok) throw new Error('Could not add the external fixture member.');
+      },
+      { projectId: uiFixture.projectId, memberId: external.id },
+    );
+    await page.reload();
+    await page
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('button', { name: 'Team', exact: true })
+      .click();
+    const externalCard = page
+      .locator('.account-card-group')
+      .filter({ has: page.getByRole('heading', { name: `${label} local`, exact: true }) });
+    await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
+    const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
+    await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
+    await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();
+    await externalDialog.getByRole('button', { name: 'Generate MCP config', exact: true }).click();
+    const configInput = externalDialog.getByLabel('MCP configuration');
+    await expect(configInput).toBeVisible();
+    const config = JSON.parse(await configInput.inputValue());
+    const mcp = Object.values(config.mcpServers)[0] as {
+      env: { KIVUNO_MCP_URL: string; KIVUNO_MCP_TOKEN: string };
+    };
+    assert.equal(mcp.env.KIVUNO_MCP_URL, localOrigin + '/api/external-agent/rpc');
+    assert.match(mcp.env.KIVUNO_MCP_TOKEN, /^[A-Za-z0-9_-]{43}$/);
+    await externalDialog.getByRole('button', { name: 'Revoke connection', exact: true }).click();
+    await expect(configInput).toHaveCount(0);
+    await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  }
 
   await page.evaluate(() => {
     void (window as any).relayDesktop.signOut();

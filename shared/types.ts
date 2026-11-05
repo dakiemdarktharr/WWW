@@ -1,5 +1,5 @@
 export type Role = 'engineer' | 'researcher' | 'designer' | 'reviewer';
-export type ProviderId = 'codex' | 'gemini' | 'claude';
+export type ProviderId = 'codex' | 'gemini' | 'claude' | 'antigravity';
 export interface ProviderCapability {
   id: ProviderId;
   label: string;

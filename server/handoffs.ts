@@ -1,3 +1,4 @@
+import { isExternalMember } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
 import type { CodexSession, Handoff, Member, Task, Workflow } from '../shared/types.ts';
 import { Store, DomainError } from './store.ts';
@@ -77,7 +78,7 @@ export class Handoffs {
       );
     this.host.store.get<Member>('member', input.toMemberId);
     const recipientProfile = this.host.store.get<Member>('member', input.toMemberId);
-    if (recipientProfile.provider === 'claude' || recipientProfile.integration === 'external')
+    if (isExternalMember(recipientProfile))
       throw new DomainError(
         'Use a reviewed Git checkpoint and assign the ready task through the external MESH bridge for this teammate.',
       );
@@ -319,7 +320,7 @@ export class Handoffs {
           (a.activeSessions || 0) - (b.activeSessions || 0),
       )
       .find((candidate) => {
-        if (candidate.provider === 'claude' || candidate.integration === 'external') return false;
+        if (isExternalMember(candidate)) return false;
         if (candidate.id === source.memberId || !candidate.account) return false;
         if (candidate.presence === 'offline') return false;
         try {

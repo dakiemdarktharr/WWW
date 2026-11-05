@@ -222,7 +222,15 @@ async function fixture(t: TestContext) {
   }
   async function artifact(task: Task) {
     const current = currentTask(task);
-    assert.ok(current.worktree);
+    assert.ok(
+      current.worktree,
+      JSON.stringify({
+        task: current.title,
+        status: current.status,
+        error: current.error,
+        workflow: current.workflowId ? workflow(current.workflowId).error : null,
+      }),
+    );
     await writeFile(
       path.join(current.worktree!, current.scope[0]),
       `Verified ${current.planKey}\n`,

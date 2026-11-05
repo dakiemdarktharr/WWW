@@ -76,6 +76,7 @@ const tools = [
 
 export interface ExternalConnection {
   id: string;
+  provider: 'claude' | 'antigravity';
   memberId: string;
   projectId: string;
   createdAt: string;
@@ -127,8 +128,8 @@ export class ExternalProviders {
   create(input: unknown) {
     const values = configuration.parse(input);
     const member = this.host.store.get<Member>('member', values.memberId);
-    if (member.provider !== 'claude' || member.runnerId)
-      throw new DomainError('Choose a local external Claude profile.', 400);
+    if ((member.provider !== 'claude' && member.provider !== 'antigravity') || member.runnerId)
+      throw new DomainError('Choose a local external Claude Code or Antigravity profile.', 400);
     assertGroupMember(this.host.store, values.projectId, member.id);
     this.sweep();
     for (const [key, c] of this.connections)
@@ -138,6 +139,7 @@ export class ExternalProviders {
     const token = randomBytes(32).toString('base64url');
     const connection: PrivateConnection = {
       ...values,
+      provider: member.provider,
       id: randomUUID(),
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + values.durationMinutes * 60000).toISOString(),
@@ -185,7 +187,8 @@ export class ExternalProviders {
       throw new DomainError('External connection expired or revoked. Reconnect in Team.', 401);
     assertGroupMember(this.host.store, connection.projectId, connection.memberId);
     const member = this.host.store.get<Member>('member', connection.memberId);
-    if (member.provider !== 'claude') throw new DomainError('External profile changed.', 403);
+    if (member.provider !== connection.provider)
+      throw new DomainError('External profile changed. Create a new connection.', 403);
     return connection;
   }
   revoke(connectionId: string) {
@@ -361,7 +364,7 @@ export class ExternalProviders {
         const created = this.host.sessions.adopt(taskId, c.memberId);
         const claimed = this.host.store.claim(taskId, c.memberId, created.id);
         session = this.host.store.updateSession(created.id, {
-          provider: 'claude',
+          provider: c.provider,
           external: true,
           externalConnectionId: c.id,
           status: 'starting',
@@ -500,7 +503,7 @@ export class ExternalProviders {
       return response({
         protocolVersion: '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'kivuno-mesh', version: '0.6.0' },
+        serverInfo: { name: 'kivuno-mesh', version: '0.6.1' },
         instructions:
           'You are an external teammate in one Kivuno group. Read mesh_read before acting, use task_claim for existing tasks, share progress and evidence. Your own client controls its models, authentication, quota and tool approvals. Kivuno never buys usage or starts your model.',
       });

@@ -188,6 +188,8 @@ export class CodexClient extends EventEmitter {
   private closed: Promise<void> = Promise.resolve();
   private resolveClosed: (() => void) | null = null;
   private stopping: Promise<void> | null = null;
+  private internalRestart = false;
+  private launchEpoch = 0;
 
   constructor(private readonly options: { home: string; cwd: string; command?: string }) {
     super();
@@ -203,13 +205,13 @@ export class CodexClient extends EventEmitter {
     if (this.stopping) return this.stopping.then(() => this.start());
     if (this.initialized) return Promise.resolve();
     if (this.starting) return this.starting;
-    this.starting = this.launch().finally(() => {
+    this.starting = this.launch(false, ++this.launchEpoch).finally(() => {
       this.starting = null;
     });
     return this.starting;
   }
 
-  private async launch(): Promise<void> {
+  private async launch(afterSandboxSetup = false, epoch = this.launchEpoch): Promise<void> {
     if (!path.isAbsolute(this.options.home) || !path.isAbsolute(this.options.cwd))
       throw new Error('Codex home and working directory must be absolute.');
     await mkdir(this.options.home, { recursive: true, mode: 0o700 });
@@ -266,7 +268,9 @@ export class CodexClient extends EventEmitter {
       );
       this.resolveClosed?.();
       this.resolveClosed = null;
-      this.emit('exit', { code, signal });
+      // Preparing a new Windows profile is part of start(), not a disconnected account.
+      // Keep the Workspace client reference and global sign-in lock during this restart.
+      if (!this.internalRestart) this.emit('exit', { code, signal });
     });
     try {
       await this.request('initialize', {
@@ -278,10 +282,84 @@ export class CodexClient extends EventEmitter {
         },
       });
       this.write({ method: 'initialized', params: {} });
+      this.assertStarting(epoch);
+      if (process.platform === 'win32') {
+        const readiness = await this.request('windowsSandbox/readiness', {});
+        if (readiness.status === 'notConfigured' && !afterSandboxSetup) {
+          await this.prepareWindowsSandbox();
+          this.assertStarting(epoch);
+          this.internalRestart = true;
+          let restartEpoch: number;
+          try {
+            const stopped = this.stop();
+            restartEpoch = this.launchEpoch;
+            await stopped;
+            this.assertStarting(restartEpoch);
+          } finally {
+            this.internalRestart = false;
+          }
+          // command/exec uses startup configuration; a fresh process must load the
+          // sandbox that setup persisted before any tools may be requested.
+          await this.launch(true, restartEpoch!);
+          return;
+        }
+        if (readiness.status !== 'ready')
+          throw new Error(
+            'Codex Windows sandbox is not ready. Complete sandbox setup in this profile before running tasks; Kivuno will not run tools without it.',
+          );
+      }
+      this.assertStarting(epoch);
       this.initialized = true;
     } catch (error) {
       await this.stop();
       throw error;
+    }
+  }
+
+  private assertStarting(epoch: number): void {
+    if (epoch !== this.launchEpoch) throw new Error('Codex startup was cancelled.');
+  }
+
+  private async prepareWindowsSandbox(): Promise<void> {
+    let onNotification: (method: string, params: any) => void;
+    let onExit: () => void;
+    let timer: NodeJS.Timeout;
+    const completed = new Promise<void>((resolve, reject) => {
+      onNotification = (method, params) => {
+        if (method !== 'windowsSandbox/setupCompleted') return;
+        if (params.mode === 'unelevated' && params.success === true) resolve();
+        else
+          reject(
+            new Error(
+              `Codex Windows sandbox setup failed: ${redactCodexError(params.error || 'setup was not completed')}`,
+            ),
+          );
+      };
+      onExit = () => reject(new Error('Codex exited while preparing its Windows sandbox.'));
+      this.on('notification', onNotification);
+      this.once('exit', onExit);
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error('Codex Windows sandbox setup timed out. Restart this profile to retry.'),
+          ),
+        REQUEST_TIMEOUT_MS,
+      );
+      timer.unref();
+    });
+    // Attach immediately: a setup notification can arrive before the RPC response.
+    void completed.catch(() => {});
+    try {
+      const started = await this.request('windowsSandbox/setupStart', {
+        mode: 'unelevated',
+        cwd: this.options.cwd,
+      });
+      if (started.started !== true) throw new Error('Codex Windows sandbox setup did not start.');
+      await completed;
+    } finally {
+      clearTimeout(timer!);
+      this.off('notification', onNotification!);
+      this.off('exit', onExit!);
     }
   }
 
@@ -392,6 +470,7 @@ export class CodexClient extends EventEmitter {
   }
 
   stop(): Promise<void> {
+    this.launchEpoch++;
     if (this.stopping) return this.stopping;
     this.stopping = this.terminate().finally(() => {
       this.stopping = null;
