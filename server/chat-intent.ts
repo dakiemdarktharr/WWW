@@ -6,7 +6,7 @@ const fold = (value: string) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[’‘]/g, "'")
-    .replace(/đ/g, 'd')
+    .replace(/[đĐ]/g, 'd')
     .toLowerCase();
 
 /** Resolve addresses, not names mentioned inside quoted material or code. */
@@ -35,8 +35,14 @@ export function reserveIntent(content: string, quotaContext: boolean) {
   const text = fold(content).trim();
   if (!quotaContext && !/\b(?:usage|quota|reserve|remaining|con lai|han muc)\b/.test(text))
     return null;
-  if (/`|^>|["“”]/m.test(text) || /\b(?:not|never|dont|don't|khong|chua|dung)\b/.test(text))
+  if (
+    /`|^>|["“”]|(?:^|\s)'[^']*'(?:\s|$)/m.test(text) ||
+    /\b(?:not|never|dont|don't|cannot|can't|cant|won't|wont|refuse|deny|cancel|revoke|stop|khong|chua|dung)\b/.test(
+      text,
+    )
+  )
     return null;
+  if (/^(?:!!\s*)?\//.test(text)) return null;
   const explicit =
     /\b(?:i (?:allow|authorize|permit|approve)|you have my permission|(?:toi|minh|tui) (?:cho phep|dong y|cap phep)|cho phep|cap phep|dong y cho)\b/.test(
       text,
@@ -47,7 +53,7 @@ export function reserveIntent(content: string, quotaContext: boolean) {
   if (!explicit && !contextual) return null;
   if (/\b(?:if|unless|whether|when|once|after|example|quote|neu|khi|vi du)\b|\?/.test(text))
     return null;
-  const amounts = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map((match) =>
+  const amounts = [...text.matchAll(/([+-]?\d+(?:[.,]\d+)?)\s*%/g)].map((match) =>
     Number(match[1].replace(',', '.')),
   );
   const floor = amounts[0] ?? 20;

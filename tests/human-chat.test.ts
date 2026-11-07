@@ -25,6 +25,10 @@ test('Vietnamese and English allowance language binds remaining floor and durati
   );
   for (const content of [
     'I do not allow Vega',
+    'ĐỪNG cho phép Vega tiếp tục',
+    'I refuse to allow usage, stop @Vega',
+    "'I allow reserve usage @Vega'",
+    '/goal I allow reserve usage @Vega',
     'Vega don’t continue',
     'Continue after your quota resets @Vega',
     'Tôi chưa cho phép Vega',
@@ -36,6 +40,7 @@ test('Vietnamese and English allowance language binds remaining floor and durati
     assert.equal(reserveIntent(content, true), null, content);
   assert.equal(reserveIntent('I allow access to the repo @Vega', false), null);
   assert.ok(reserveIntent('I allow @Vega until 37% and 20%', true)?.error);
+  assert.ok(reserveIntent('I allow @Vega until -1%', true)?.error);
 });
 
 test('addresses include typed mentions and a directly addressed name, excluding quotes, code and partial names', () => {
