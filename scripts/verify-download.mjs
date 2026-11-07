@@ -14,7 +14,7 @@ const options = Object.fromEntries(
     return [match[1], match[2]];
   }),
 );
-const origin = new URL(options.origin || 'https://nosleepclub-relay.vercel.app');
+const origin = new URL(options.origin || 'https://kivuno.vercel.app');
 assert.equal(origin.protocol, 'https:');
 assert.equal(origin.href, origin.origin + '/');
 const platform = options.platform || 'windows';

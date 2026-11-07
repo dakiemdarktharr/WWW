@@ -42,7 +42,7 @@ const testing = !app.isPackaged && process.env.RELAY_DESKTOP_TESTING === '1';
 if (testing && process.env.RELAY_DESKTOP_DATA_DIR)
   app.setPath('userData', path.resolve(process.env.RELAY_DESKTOP_DATA_DIR));
 const identityOrigin = cloudOrigin(
-  (!app.isPackaged && process.env.RELAY_CLOUD_ORIGIN) || 'https://nosleepclub-relay.vercel.app',
+  (!app.isPackaged && process.env.RELAY_CLOUD_ORIGIN) || 'https://kivuno.vercel.app',
   testing,
 );
 const dataDirectory = app.getPath('userData');

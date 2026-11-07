@@ -397,8 +397,8 @@ export class SessionManager {
     },
   ) {
     const session = this.get(id);
-    if (this.busy.has(id) || !['idle', 'paused', 'review'].includes(session.status))
-      throw new DomainError('Pause the conversation before changing its model.');
+    if (this.busy.has(id) || !['idle', 'paused', 'review', 'running'].includes(session.status))
+      throw new DomainError('Wait for conversation startup or recovery before changing its model.');
     this.busy.add(id);
     try {
       await verifyModelSettings(await this.host.client(session.memberId), {
@@ -606,7 +606,7 @@ export class SessionManager {
       }
       const { client, created } = allocated;
       this.host.store.updateTask(task.id, { status: 'running', sessionId: id });
-      this.update(id, { status: 'starting', error: null });
+      this.update(id, { status: 'starting', error: null, pausedFor: undefined });
       const active: ActiveSession = {
         client,
         token: lease.token,
@@ -1197,7 +1197,7 @@ export class SessionManager {
       const latestTask = this.host.store.get<Task>('task', session.taskId);
       if (latestTask.status !== 'done')
         this.host.store.updateTask(session.taskId, { status: 'blocked', error: reason });
-      this.update(id, { status: 'paused', pid: null, error: null });
+      this.update(id, { status: 'paused', pid: null, error: null, pausedFor: undefined });
       this.event(id, 'system', reason);
       this.refreshMember(session.memberId);
       return this.get(id);

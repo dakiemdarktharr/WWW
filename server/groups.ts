@@ -94,7 +94,7 @@ export function introduce(store: Store, projectId: string, memberId: string): Gr
     authorId: memberId,
     kind: 'system',
     content: redact(
-      `${member.name} ${existing ? 'updated their introduction' : 'joined'}. Provider: ${member.provider || 'codex'}. Owner: ${member.owner?.login || member.owner?.name || 'not linked'}. Plan: ${member.account?.planType || 'unknown'}. Role: ${member.role}. Skills: ${skills.join(', ') || 'none reported'}. Plugins: ${plugins.join(', ') || 'none reported'}.\nGroup working agreement: ${workingAgreement}`,
+      `${member.name} ${existing ? 'updated their introduction' : 'joined'} · ${member.provider || 'codex'} · ${member.account?.planType || 'unknown'} · ${skills.length} skills · ${plugins.length} plugins.\nOwner: ${member.owner?.login || member.owner?.name || 'not linked'}. Plan: ${member.account?.planType || 'unknown'}. Role: ${member.role}. Skills: ${skills.join(', ') || 'none reported'}. Plugins: ${plugins.join(', ') || 'none reported'}.\nGroup working agreement: ${workingAgreement}`,
     ),
     mentions: [],
     humanCommand: false,

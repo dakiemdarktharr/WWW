@@ -136,7 +136,10 @@ const start=await (${prepareCloudUpgrade.toString()})(process.env.RELAY_REVISION
  coordinator,
  async drain() {
   try {
-   const response=await fetch('http://127.0.0.1:4317/api/cloud/prepare-upgrade',{method:'POST',headers:{'X-Relay-Gateway':process.env.RELAY_GATEWAY_SECRET,'Origin':process.env.RELAY_PUBLIC_ORIGIN,'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(60000)});
+   const runningPid=coordinator();
+   const originEntry=runningPid?fs.readFileSync('/proc/'+runningPid+'/environ','utf8').split('\\0').find(value=>value.startsWith('RELAY_PUBLIC_ORIGIN=')):null;
+   const runningOrigin=originEntry?originEntry.slice('RELAY_PUBLIC_ORIGIN='.length):process.env.RELAY_PUBLIC_ORIGIN;
+   const response=await fetch('http://127.0.0.1:4317/api/cloud/prepare-upgrade',{method:'POST',headers:{'X-Relay-Gateway':process.env.RELAY_GATEWAY_SECRET,'Origin':runningOrigin,'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(60000)});
    return response.ok&&(await response.json()).ready===true;
   } catch { return false; }
  },

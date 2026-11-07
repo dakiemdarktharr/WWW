@@ -37,6 +37,7 @@ import SessionGraph from './SessionGraph';
 import BrowserPanel from './BrowserPanel';
 import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
+import './chat-interactions.css';
 
 type Context = 'sessions' | 'team' | 'usage' | 'needs' | 'handoffs' | 'browser' | null;
 const feedback = [
@@ -83,7 +84,15 @@ export default function ProjectChat({
   const [limit, setLimit] = useState(80);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [thread, setThread] = useState<string | null>(null);
-  const [mention, setMention] = useState('');
+  const [caret, setCaret] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
+  const [sending, setSending] = useState(false);
+  const sendLock = useRef(false);
+  const retry = useRef<{ key: string; id: string } | null>(null);
+  const currentProject = useRef(project?.id);
+  currentProject.current = project?.id;
+  const activeSeen = useRef({ project: '', ids: new Set<string>() });
   const [selectedSession, setSelectedSession] = useState('');
   const [rosterOpen, setRosterOpen] = useState(false);
   const [roster, setRoster] = useState<string[]>([]);
@@ -98,6 +107,28 @@ export default function ProjectChat({
   const members = state.members.filter((member) => memberIds.includes(member.id));
   const projectSessions = state.sessions.filter((session) => session.projectId === project?.id);
   const session = projectSessions.find((entry) => entry.id === selectedSession);
+  const activeSessions = projectSessions.filter((entry) =>
+    ['starting', 'running'].includes(entry.status),
+  );
+  const activeKey = activeSessions.map((entry) => entry.id).join(',');
+  useEffect(() => {
+    if (activeSeen.current.project !== project?.id)
+      activeSeen.current = { project: project?.id || '', ids: new Set() };
+    const started = activeSessions.find((entry) => !activeSeen.current.ids.has(entry.id));
+    activeSeen.current.ids = new Set(activeSessions.map((entry) => entry.id));
+    if (started) {
+      setSelectedSession(started.id);
+      setPanel('sessions');
+    }
+  }, [project?.id, activeKey]);
+  useEffect(() => {
+    setContent('');
+    setReplyTo(null);
+    setThread(null);
+    setSearch('');
+    setLimit(80);
+    retry.current = null;
+  }, [project?.id]);
   const messages = useMemo(
     () =>
       state.messages
@@ -142,7 +173,15 @@ export default function ProjectChat({
     { name: 'skills', hint: 'Choose skills for this group', example: '/skills ' },
     ...skills.map((name) => ({ name, hint: 'Use installed skill', example: `/${name} ` })),
   ];
-  const slash = /^\/[^\s]*$/.test(content);
+  const mentionMatch = menuDismissed ? null : /(?:^|\s)@([^\s@]*)$/.exec(content.slice(0, caret));
+  const mentionSuggestions = mentionMatch
+    ? members
+        .filter((member) =>
+          member.name.toLowerCase().replace(/\s+/g, '-').startsWith(mentionMatch[1].toLowerCase()),
+        )
+        .slice(0, 16)
+    : [];
+  const slash = !menuDismissed && /^\/[^\s]*$/.test(content);
   const suggestions = slash
     ? commands
         .filter((command) => command.name.toLowerCase().startsWith(content.slice(1).toLowerCase()))
@@ -169,21 +208,44 @@ export default function ProjectChat({
     setCommandIndex(0);
     input.current?.focus();
   }
+  function chooseMention(member: Member) {
+    const start = mentionMatch ? caret - mentionMatch[1].length - 1 : caret;
+    const value = `@${member.name.replace(/\s+/g, '-')} `;
+    setContent(content.slice(0, start) + value + content.slice(caret));
+    setMenuDismissed(true);
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(start + value.length, start + value.length);
+      setCaret(start + value.length);
+    });
+  }
   async function send(event: FormEvent) {
     event.preventDefault();
-    if (!project || !content.trim()) return;
-    const result = await request<RoomMessage>('/mesh/messages', {
-      projectId: project.id,
-      content: content.trim(),
-      replyTo: replyTo || undefined,
-      mentions: mention ? [mention] : [],
-    });
-    if (result) {
-      setContent('');
-      setReplyTo(null);
-      setMention('');
-      nearBottom.current = true;
-      input.current?.focus();
+    if (!project || !content.trim() || sendLock.current) return;
+    sendLock.current = true;
+    setSending(true);
+    const sentContent = content;
+    const sentProject = project.id;
+    const key = JSON.stringify([project.id, content.trim(), replyTo]);
+    if (retry.current?.key !== key) retry.current = { key, id: crypto.randomUUID() };
+    try {
+      const result = await request<RoomMessage>('/mesh/messages', {
+        projectId: project.id,
+        content: content.trim(),
+        replyTo: replyTo || undefined,
+        clientRequestId: retry.current.id,
+      });
+      if (result && currentProject.current === sentProject) {
+        setContent((current) => (current === sentContent ? '' : current));
+        setReplyTo(null);
+        retry.current = null;
+        nearBottom.current = true;
+        input.current?.focus();
+      }
+    } finally {
+      sendLock.current = false;
+      setSending(false);
     }
   }
   const openRoster = () => {
@@ -360,10 +422,13 @@ export default function ProjectChat({
                     message.content.length > 420 &&
                     message.content.includes('\n') ? (
                       <>
-                        <p>{message.content.split('\n')[0]}</p>
+                        <p>
+                          {message.content.split('\n')[0].slice(0, 220)}
+                          {message.content.split('\n')[0].length > 220 ? '…' : ''}
+                        </p>
                         <details className="chat-system-details">
-                          <summary>Working agreement & details</summary>
-                          <p>{message.content.slice(message.content.indexOf('\n') + 1)}</p>
+                          <summary>Details</summary>
+                          <p>{message.content}</p>
                         </details>
                       </>
                     ) : (
@@ -444,10 +509,50 @@ export default function ProjectChat({
                       </span>
                     )}
                   </div>
+                  {human && message.requestStatus === 'open' && (
+                    <span className="chat-queued">Queued · waiting for an available teammate</span>
+                  )}
                 </div>
               </article>
             );
           })}
+          {!thread &&
+            members
+              .filter((member) => activeSessions.some((entry) => entry.memberId === member.id))
+              .map((member) => (
+                <article
+                  className="chat-message from-agent"
+                  key={`thinking-${member.id}`}
+                  aria-label={`${member.name} is working`}
+                >
+                  <Avatar member={member} />
+                  <div className="chat-message-content">
+                    <div className="chat-message-meta">
+                      <strong>{member.name}</strong>
+                    </div>
+                    <button
+                      className="chat-bubble thinking-bubble"
+                      onClick={() => {
+                        setSelectedSession(
+                          activeSessions.find((entry) => entry.memberId === member.id)!.id,
+                        );
+                        setPanel('sessions');
+                      }}
+                    >
+                      <span className="thinking-dots" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      <span>
+                        Working ·{' '}
+                        {activeSessions.filter((entry) => entry.memberId === member.id).length}{' '}
+                        session(s)
+                      </span>
+                    </button>
+                  </div>
+                </article>
+              ))}
           {!shown.length && (
             <div className="chat-empty">
               <div className="chat-empty-mark">
@@ -477,6 +582,31 @@ export default function ProjectChat({
           )}
         </div>
         <form className="chat-composer" onSubmit={send}>
+          {mentionSuggestions.length > 0 && (
+            <div
+              className="slash-menu mention-menu"
+              role="listbox"
+              id="mention-suggestions"
+              aria-label="Group teammates"
+            >
+              {mentionSuggestions.map((member, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  id={`mention-${index}`}
+                  aria-selected={index === mentionIndex}
+                  className={index === mentionIndex ? 'selected' : ''}
+                  key={member.id}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseMention(member)}
+                >
+                  <Avatar member={member} />
+                  <strong>{member.name}</strong>
+                  <Presence member={member} />
+                </button>
+              ))}
+            </div>
+          )}
           {replyTo && (
             <div className="composer-reply">
               <Reply size={13} />
@@ -519,8 +649,20 @@ export default function ProjectChat({
             id="mesh-composer"
             ref={input}
             aria-label="Message the project team"
-            aria-controls={suggestions.length ? 'slash-suggestions' : undefined}
-            aria-activedescendant={suggestions.length ? `slash-${commandIndex}` : undefined}
+            aria-controls={
+              mentionSuggestions.length
+                ? 'mention-suggestions'
+                : suggestions.length
+                  ? 'slash-suggestions'
+                  : undefined
+            }
+            aria-activedescendant={
+              mentionSuggestions.length
+                ? `mention-${mentionIndex}`
+                : suggestions.length
+                  ? `slash-${commandIndex}`
+                  : undefined
+            }
             data-usage="mesh-input"
             rows={2}
             maxLength={10000}
@@ -531,9 +673,30 @@ export default function ProjectChat({
             }
             onChange={(event) => {
               setContent(event.target.value);
+              setCaret(event.target.selectionStart);
+              setMenuDismissed(false);
+              setMentionIndex(0);
               setCommandIndex(0);
             }}
+            onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
             onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (
+                mentionSuggestions.length &&
+                !event.shiftKey &&
+                ['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape'].includes(event.key)
+              ) {
+                event.preventDefault();
+                if (event.key === 'Escape') setMenuDismissed(true);
+                else if (event.key === 'ArrowDown')
+                  setMentionIndex((mentionIndex + 1) % mentionSuggestions.length);
+                else if (event.key === 'ArrowUp')
+                  setMentionIndex(
+                    (mentionIndex + mentionSuggestions.length - 1) % mentionSuggestions.length,
+                  );
+                else chooseMention(mentionSuggestions[mentionIndex]);
+                return;
+              }
               if (
                 suggestions.length &&
                 ['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape'].includes(event.key) &&
@@ -544,7 +707,7 @@ export default function ProjectChat({
                   setCommandIndex((commandIndex + 1) % suggestions.length);
                 else if (event.key === 'ArrowUp')
                   setCommandIndex((commandIndex + suggestions.length - 1) % suggestions.length);
-                else if (event.key === 'Escape') setContent('');
+                else if (event.key === 'Escape') setMenuDismissed(true);
                 else chooseCommand(suggestions[commandIndex].example);
                 return;
               }
@@ -555,19 +718,21 @@ export default function ProjectChat({
             }}
           />
           <div className="chat-composer-toolbar">
-            <GlassSelect
-              label="Mention a teammate"
-              value={mention}
-              options={[
-                { value: '', label: '@ Mention' },
-                ...members.map((member) => ({
-                  value: member.id,
-                  label: `${member.name} · ${member.presence || 'offline'}`,
-                })),
-              ]}
-              onChange={setMention}
+            <button
+              type="button"
+              className="text-button"
+              aria-label="Mention a teammate"
               disabled={!project}
-            />
+              onClick={() => {
+                const text = `${content}${content && !/\s$/.test(content) ? ' ' : ''}@`;
+                setContent(text);
+                setCaret(text.length);
+                setMenuDismissed(false);
+                input.current?.focus();
+              }}
+            >
+              @
+            </button>
             <button
               type="button"
               className="text-button"
@@ -587,7 +752,7 @@ export default function ProjectChat({
               type="submit"
               className="send-prompt"
               aria-label="Send"
-              disabled={!project || !content.trim() || busy}
+              disabled={!project || !content.trim() || busy || sending}
             >
               <Send size={17} />
             </button>

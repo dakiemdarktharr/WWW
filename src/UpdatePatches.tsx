@@ -6,6 +6,32 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.7.2',
+    date: '2026-11-07',
+    fixes: [
+      {
+        vi: 'Gõ @ để chọn teammate. Trả lời tin nhắn giữ ngữ cảnh session; gửi lại khi mất kết nối không tạo prompt trùng.',
+        en: 'Type @ to choose a teammate. Replies keep session context; reconnect retries do not duplicate prompts.',
+      },
+      {
+        vi: 'Cho phép usage bằng tin nhắn Việt/Anh. Mặc định dừng ở 20% còn lại trong 1 giờ; mức ghi rõ được ưu tiên.',
+        en: 'Allow reserve usage in Vietnamese or English. Defaults to a 20% remaining floor for one hour; explicit limits take precedence.',
+      },
+      {
+        vi: 'Tự bàn giao khi usage thấp, giữ checkpoint, ngữ cảnh và quyền sở hữu công việc. Session bạn chủ động dừng sẽ không tự chạy lại.',
+        en: 'Low usage triggers handoff with checkpoints, context and task ownership. Manually paused sessions stay paused.',
+      },
+      {
+        vi: 'Hiện bubble khi teammate đang làm việc, tự mở Sessions và cho chỉnh model/reasoning cho lượt tiếp theo.',
+        en: 'Working teammates show activity bubbles, Sessions opens automatically, and model/reasoning changes apply to the next turn.',
+      },
+      {
+        vi: 'Địa chỉ mới kivuno.vercel.app, bản tải Windows/Linux 0.7.2 và thông tin tìm kiếm cập nhật.',
+        en: 'New kivuno.vercel.app address, Windows/Linux 0.7.2 downloads, and updated search metadata.',
+      },
+    ],
+  },
+  {
     version: '0.7.1',
     date: '2026-11-07',
     fixes: [

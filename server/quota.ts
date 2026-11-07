@@ -344,6 +344,8 @@ export class QuotaManager {
   grant(memberId: string, input: { projectId: string; floor: number; expiresAt: string }) {
     this.store.get<Member>('member', memberId);
     this.store.get('project', input.projectId);
+    if (!groupMembers(this.store, input.projectId).some((member) => member.id === memberId))
+      throw new DomainError('Choose a teammate in this project.');
     if (
       !Number.isInteger(input.floor) ||
       input.floor < 0 ||
@@ -400,9 +402,15 @@ export class QuotaManager {
     const active = this.store
       .sessions()
       .filter((session) => !session.external && ['running', 'starting'].includes(session.status));
-    const members = active.length
-      ? this.store.members().filter((member) => member.account && !isExternalMember(member))
-      : [];
+    const waiting =
+      this.store.sessions().some((session) => session.pausedFor === 'quota') ||
+      this.store
+        .all<RoomMessage>('message')
+        .some((message) => message.authorId === null && message.requestStatus === 'open');
+    const members =
+      active.length || waiting
+        ? this.store.members().filter((member) => member.account && !isExternalMember(member))
+        : [];
     await Promise.allSettled(members.map((member) => this.refresh(member.id)));
     await this.enforce();
   }
@@ -422,8 +430,8 @@ export class QuotaManager {
               session.id,
               'Account quota policy paused this session.',
             );
-            if (!session.readOnly && !this.host.closing)
-              await this.host.handoffs?.automatic(session.id);
+            this.store.updateSession(session.id, { pausedFor: 'quota' });
+            if (!this.host.closing) await this.host.handoffs?.automatic(session.id);
           } catch (error) {
             this.host.log(redact(error), session.taskId, session.memberId, 'error');
           }

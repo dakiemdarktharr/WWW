@@ -252,10 +252,10 @@ test('prompt routing observes roster, live machine, skills and busy load, passin
   const message = f.post('@Atlas @Vega Please inspect the brief');
   await Promise.all([dispatcher.dispatch(f.project.id), dispatcher.dispatch(f.project.id)]);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].memberId, c.id);
+  assert.equal(calls[0].memberId, b.id, 'an explicit human mention takes priority over idle load');
   assert.equal(calls[0].model, 'real-model');
   assert.equal(calls[0].reasoningEffort, 'high');
   assert.equal(calls[0].modelPolicy, 'manual');
   assert.deepEqual(calls[0].skills, ['writing']);
-  assert.equal(f.store.get<any>('message', message.id).claimedBy, c.id);
+  assert.equal(f.store.get<any>('message', message.id).claimedBy, b.id);
 });

@@ -503,7 +503,7 @@ export class ExternalProviders {
       return response({
         protocolVersion: '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'kivuno-mesh', version: '0.7.1' },
+        serverInfo: { name: 'kivuno-mesh', version: '0.7.2' },
         instructions:
           'You are an external teammate in one Kivuno group. Read mesh_read before acting, use task_claim for existing tasks, share progress and evidence. Your own client controls its models, authentication, quota and tool approvals. Kivuno never buys usage or starts your model.',
       });

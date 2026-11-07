@@ -282,7 +282,7 @@ test('account-wide enforcement pauses every session across projects and creates 
   f.quota.ingest(b.id, usage(70));
   await f.quota.enforce();
   assert.deepEqual(new Set(f.interrupted), new Set(['one', 'two', 'three']));
-  assert.deepEqual(new Set(f.automatic), new Set(['one', 'two']));
+  assert.deepEqual(new Set(f.automatic), new Set(['one', 'two', 'three']));
   assert.ok(f.store.sessions().every((session) => session.status === 'paused'));
   const requests = f.store.all<HumanRequest>('humanRequest');
   assert.equal(requests.length, 2);

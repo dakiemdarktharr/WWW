@@ -44,6 +44,14 @@ function fixture(t: TestContext) {
       },
     },
     sessions: {
+      async send(id: string, prompt: string) {
+        calls.push({ sessionId: id, prompt });
+        return store.updateSession(id, { status: 'running' });
+      },
+      async resume(id: string) {
+        calls.push({ resumed: id });
+        return store.updateSession(id, { status: 'running', pausedFor: undefined });
+      },
       async create(options: any): Promise<CodexSession> {
         calls.push(options);
         if (failStart) throw new Error('Controlled startup failed.');
@@ -111,6 +119,74 @@ test('a human chat prompt is claimed once before a read-only session starts', as
   assert.equal(f.store.get<RoomMessage>('message', message.id).requestStatus, 'done');
   await f.dispatcher.dispatch(f.project.id);
   assert.equal(f.calls.length, 1);
+});
+
+test('an addressed follow-up steers the one active conversation and a reply resumes that same conversation', async (t) => {
+  const f = fixture(t);
+  f.human();
+  await f.dispatcher.dispatch(f.project.id);
+  const session = f.store.sessions()[0];
+  f.store.updateSession(session.id, { status: 'running' });
+  f.human('@Vega focus on installer reliability');
+  await f.dispatcher.dispatch(f.project.id);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[1].sessionId, session.id);
+  assert.equal(f.store.sessions().length, 1);
+  f.store.updateSession(session.id, { status: 'idle' });
+  const answer = f.mesh.post({
+    projectId: f.project.id,
+    authorId: f.member.id,
+    sessionId: session.id,
+    kind: 'message',
+    content: 'Here is the review.',
+  });
+  f.mesh.post({
+    projectId: f.project.id,
+    authorId: null,
+    replyTo: answer.id,
+    kind: 'message',
+    content: 'Explain the first finding',
+  });
+  await f.dispatcher.dispatch(f.project.id);
+  assert.equal(f.calls.at(-1).sessionId, session.id);
+  assert.equal(f.store.sessions().length, 1);
+});
+
+test('only quota-paused conversations recover automatically; manual pause stays paused', async (t) => {
+  const f = fixture(t);
+  f.human();
+  await f.dispatcher.dispatch(f.project.id);
+  const session = f.store.sessions()[0];
+  f.store.updateSession(session.id, { status: 'paused', pausedFor: 'quota' });
+  await f.dispatcher.dispatch(f.project.id);
+  assert.equal(f.calls.at(-1).resumed, session.id);
+  assert.equal(f.store.sessions()[0].status, 'running');
+  f.store.updateSession(session.id, { status: 'paused', pausedFor: undefined });
+  const count = f.calls.length;
+  await f.dispatcher.dispatch(f.project.id);
+  assert.equal(f.calls.length, count);
+  assert.equal(f.store.sessions()[0].status, 'paused');
+});
+
+test('manual pause during quota refresh fences automatic recovery', async (t) => {
+  const f = fixture(t);
+  f.human();
+  await f.dispatcher.dispatch(f.project.id);
+  const session = f.store.sessions()[0];
+  f.store.updateSession(session.id, { status: 'paused', pausedFor: 'quota' });
+  let release!: () => void;
+  f.delay(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  const dispatch = f.dispatcher.dispatch(f.project.id);
+  await Promise.resolve();
+  f.store.updateSession(session.id, { status: 'paused', pausedFor: undefined });
+  release();
+  await dispatch;
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.sessions()[0].status, 'paused');
 });
 
 test('agent progress and system messages cannot create model-turn ping-pong', async (t) => {

@@ -334,3 +334,45 @@ test('restart marks incomplete checkpoints blocked without resuming a worker or 
   assert.equal(f.interruptions, stops);
   assert.equal(f.store.lease(f.source.taskId)!.token, f.lease.token);
 });
+
+test('automatic handoff checkpoints, transfers the pending chat claim and resumes one recipient', async (t) => {
+  const f = await fixture(t);
+  const message = f.mesh.post({
+    projectId: f.project.id,
+    authorId: null,
+    kind: 'message',
+    content: 'Finish the assigned artifact.',
+  });
+  f.mesh.claim(message.id, f.sender.id);
+  f.store.put('meshDispatch', {
+    id: message.id,
+    sessionId: f.source.id,
+    memberId: f.sender.id,
+    projectId: f.project.id,
+    status: 'running',
+  });
+  const result = await f.handoffs.automatic(f.source.id);
+  assert.equal(result?.status, 'accepted');
+  assert.ok(result?.commitSha);
+  assert.equal(f.store.get<CodexSession>('session', result!.toSessionId!).status, 'running');
+  assert.equal(f.store.get<any>('meshDispatch', message.id).memberId, f.recipient.id);
+  assert.equal(f.store.get<any>('message', message.id).claimedBy, f.recipient.id);
+  assert.equal(f.store.get<CodexSession>('session', f.source.id).status, 'stopped');
+});
+
+test('read-only automatic handoff preserves saved conversation without fabricating a Git checkpoint', async (t) => {
+  const f = await fixture(t);
+  f.store.release(f.source.taskId, f.lease.token);
+  f.store.updateSession(f.source.id, { readOnly: true });
+  f.store.put('sessionEvent', {
+    id: randomUUID(),
+    sessionId: f.source.id,
+    kind: 'user',
+    text: 'Compare installer recovery options.',
+  });
+  const result = await f.handoffs.automatic(f.source.id);
+  assert.equal(result?.status, 'accepted');
+  assert.equal(result?.commitSha, null);
+  assert.match(result!.nextSteps, /Compare installer recovery options/);
+  assert.equal(f.store.get<CodexSession>('session', result!.toSessionId!).readOnly, true);
+});

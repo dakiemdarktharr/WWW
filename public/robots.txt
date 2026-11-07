@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /desktop/
+Sitemap: https://kivuno.vercel.app/sitemap.xml

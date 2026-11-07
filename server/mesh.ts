@@ -13,6 +13,7 @@ import type {
 } from '../shared/types.ts';
 import { DomainError, Store } from './store.ts';
 import { redact } from './security.ts';
+import { chatRecipients } from './chat-intent.ts';
 import {
   assertGroupMember,
   groupMembers,
@@ -247,7 +248,12 @@ export class Mesh {
       throw new DomainError('Mention at most 16 known teammates.', 400);
     const mentions = new Set(input.mentions || []);
     const content = redact(input.content.trim());
-    for (const member of groupMembers(this.store, input.projectId)) {
+    if (input.authorId === null && input.kind === 'message')
+      for (const id of chatRecipients(content, groupMembers(this.store, input.projectId)))
+        mentions.add(id);
+    for (const member of input.authorId === null && input.kind === 'message'
+      ? []
+      : groupMembers(this.store, input.projectId)) {
       const alias = member.name.trim().replace(/\s+/g, '-');
       if (new RegExp(`(^|\\s)@${escapeRegex(alias)}(?=$|[\\s.,:;!?/])`, 'iu').test(content))
         mentions.add(member.id);
@@ -408,6 +414,9 @@ export class Mesh {
       : members.map((member) => member.id);
     for (const requestedId of requested) {
       const candidate =
+        (message.authorId === null && message.kind === 'message' && message.mentions?.length
+          ? members.find((member) => member.id === requestedId)
+          : undefined) ||
         eligible.find(
           (member) => member.id === requestedId && (!hasUnbusy || member.presence !== 'busy'),
         ) ||

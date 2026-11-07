@@ -3,6 +3,14 @@
   "framework": "vite",
   "buildCommand": "npm run build:release",
   "outputDirectory": "dist",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "nosleepclub-relay.vercel.app" }],
+      "destination": "https://kivuno.vercel.app/:path*",
+      "permanent": true
+    }
+  ],
   "functions": {
     "api/gateway.ts": { "maxDuration": 300, "includeFiles": ".cloud/**" }
   },

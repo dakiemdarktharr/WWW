@@ -19,11 +19,18 @@ export default function SessionGraph({
   const [page, setPage] = useState(0);
   const filtered = useMemo(
     () =>
-      sessions.filter((session) =>
-        `${session.title} ${session.status} ${providerLabels[session.provider || providerOf(members.find((member) => member.id === session.memberId))]} ${members.find((member) => member.id === session.memberId)?.name || ''}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-      ),
+      sessions
+        .filter((session) =>
+          `${session.title} ${session.status} ${providerLabels[session.provider || providerOf(members.find((member) => member.id === session.memberId))]} ${members.find((member) => member.id === session.memberId)?.name || ''}`
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+        )
+        .sort(
+          (a, b) =>
+            Number(['starting', 'running'].includes(b.status)) -
+              Number(['starting', 'running'].includes(a.status)) ||
+            b.updatedAt.localeCompare(a.updatedAt),
+        ),
     [sessions, members, query],
   );
   const pages = Math.max(1, Math.ceil(filtered.length / perPage));

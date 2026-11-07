@@ -1,4 +1,5 @@
 import Fastify, { type FastifyRequest } from 'fastify';
+import { postHumanChat } from './human-chat.ts';
 import { isExternalProvider } from '../shared/providers.ts';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
@@ -254,7 +255,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.7.1', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.7.2', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -662,6 +663,7 @@ export async function buildApp(
       .object({
         projectId: id,
         content: z.string().trim().min(1).max(10000),
+        clientRequestId: id.optional(),
         replyTo: id.nullable().optional(),
         mentions: z.array(id).max(16).optional(),
         taskId: id.nullable().optional(),
@@ -679,14 +681,7 @@ export async function buildApp(
     const catalog = catalogs.flatMap((result) =>
       result.status === 'fulfilled' ? result.value : [],
     );
-    const message = workspace.mesh.post(
-      {
-        ...input,
-        authorId: null,
-        kind: 'message',
-      },
-      catalog,
-    );
+    const message = postHumanChat(workspace, input, catalog);
     void workspace.inbox
       .dispatch(message.projectId)
       .catch((error) => workspace.log(redact(error), null, null, 'error', message.projectId));

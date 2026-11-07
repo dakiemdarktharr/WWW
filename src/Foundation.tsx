@@ -258,7 +258,7 @@ export function QuotaCard({
         >
           <label>
             Minimum remaining %
-            <input name="floor" type="number" required min={0} max={49} defaultValue={25} />
+            <input name="floor" type="number" required min={0} max={49} defaultValue={20} />
           </label>
           <label>
             Allow until
@@ -1082,6 +1082,7 @@ function ModelFields({
       <label>
         Model
         <select
+          aria-label="Model"
           value={model}
           disabled={loading || !models.length}
           onChange={(event) => change(event.target.value, '')}
@@ -1101,6 +1102,7 @@ function ModelFields({
         <label>
           Reasoning
           <select
+            aria-label="Reasoning"
             value={effort}
             disabled={loading || !selected}
             onChange={(event) => change(model, event.target.value)}
@@ -1139,6 +1141,7 @@ function SessionSettings({
   const [saving, setSaving] = useState(false);
   return (
     <FoundationDialog title="Conversation settings" close={close}>
+      {session.status === 'running' && <p>Changes apply to the next turn.</p>}
       <form
         className="form"
         onSubmit={async (event) => {
@@ -1292,7 +1295,7 @@ export function SessionConsole({
           {session.model || 'Account default'}
           {session.reasoningEffort ? ` · ${session.reasoningEffort}` : ''}
         </span>
-        {!external && ['idle', 'paused', 'review'].includes(session.status) && (
+        {!external && ['idle', 'paused', 'review', 'running'].includes(session.status) && (
           <button className="text-button" onClick={() => setSettings(true)}>
             Model settings
           </button>

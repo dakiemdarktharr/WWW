@@ -251,6 +251,8 @@ export class Handoffs {
           title: source.title,
           status: 'paused',
           readOnly: source.readOnly,
+          skills: source.skills || [],
+          modelPolicy: 'auto',
           threadId: null,
           turnId: null,
           pid: null,
@@ -295,6 +297,18 @@ export class Handoffs {
           kind: 'progress',
           content: `Acknowledged handoff for ${task.title}. Ownership transferred; session is paused until resumed.`,
         });
+        for (const dispatch of this.host.store.all<any>('meshDispatch'))
+          if (dispatch.sessionId === source.id && dispatch.status === 'running') {
+            this.host.store.put('meshDispatch', {
+              ...dispatch,
+              memberId: member.id,
+              sessionId: recipient.id,
+              status: 'running',
+            });
+            const message = this.host.store.get<any>('message', dispatch.id);
+            if (message.claimedBy === source.memberId)
+              this.host.store.put('message', { ...message, claimedBy: member.id });
+          }
         return accepted;
       });
     } finally {
@@ -323,6 +337,7 @@ export class Handoffs {
         if (isExternalMember(candidate)) return false;
         if (candidate.id === source.memberId || !candidate.account) return false;
         if (candidate.presence === 'offline') return false;
+        if (source.skills?.some((skill) => !candidate.skills.includes(skill))) return false;
         try {
           this.host.quota.assertCanRun(candidate.id, source.projectId);
           return (
@@ -347,12 +362,23 @@ export class Handoffs {
       sessionId,
       toMemberId: member.id,
       summary: `Quota checkpoint: ${task.title}. ${task.summary || 'See the persisted session events for the latest work.'}`,
-      nextSteps: `Continue the assigned task and verify acceptance: ${task.acceptance}\n${task.description}`,
+      nextSteps: `Continue the assigned task and verify acceptance: ${task.acceptance}\n${task.description}\nSaved conversation context:\n${this.host.store
+        .all<{ sessionId: string; kind: string; text: string }>('sessionEvent')
+        .filter((event) => event.sessionId === source.id && ['user', 'agent'].includes(event.kind))
+        .slice(-8)
+        .map((event) => `${event.kind}: ${event.text}`)
+        .join('\n')
+        .slice(-10000)}`,
       testEvidence:
         'Review the saved session command events. No new model-generated tests were assumed to pass.',
     });
-    // Stop at recipient ACK: the UI or recipient tool must explicitly accept.
-    return handoff;
+    if (handoff.status !== 'awaiting_ack') return handoff;
+    const accepted = await this.accept(handoff.id);
+    if (accepted.toSessionId) {
+      this.host.store.updateSession(accepted.toSessionId, { pausedFor: 'quota' });
+      await this.host.sessions.resume(accepted.toSessionId);
+    }
+    return accepted;
   }
   cancel(id: string) {
     if (this.busy.has(id))

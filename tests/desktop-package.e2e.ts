@@ -153,7 +153,7 @@ try {
   const status = await page.evaluate(() => (window as any).relayDesktop.getStatus());
   assert.equal(await page.evaluate(() => (window as any).relayDesktop.version), metadata.version);
   assert.equal(status.runtime, 'ready');
-  assert.equal(status.cloudOrigin, 'https://nosleepclub-relay.vercel.app');
+  assert.equal(status.cloudOrigin, 'https://kivuno.vercel.app');
   if (status.signedIn) {
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({
       timeout: 30000,

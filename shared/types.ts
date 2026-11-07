@@ -183,6 +183,7 @@ export interface Workflow {
   updatedAt: string;
 }
 export interface RoomMessage {
+  clientRequestId?: string;
   reactions?: MessageReaction[];
   effectiveConfig?: ChatConfig;
   command?: string;
@@ -202,6 +203,7 @@ export interface RoomMessage {
   claimedBy?: string | null;
 }
 export interface CodexSession {
+  pausedFor?: 'quota';
   provider?: ProviderId;
   external?: boolean;
   externalConnectionId?: string;
