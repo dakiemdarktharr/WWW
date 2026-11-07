@@ -5,6 +5,47 @@ import './TitleBar.css';
 
 export default function DesktopTitleBar() {
   const [state, setState] = useState<DesktopWindowState>({ maximized: false, fullscreen: false });
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const frame = document.querySelector('.desktop-frame');
+    frame?.classList.toggle('is-fullscreen', state.fullscreen);
+    setRevealed(false);
+    if (state.fullscreen && document.activeElement?.closest('.desktop-titlebar'))
+      (document.activeElement as HTMLElement).blur();
+    return () => frame?.classList.remove('is-fullscreen');
+  }, [state.fullscreen]);
+  useEffect(() => {
+    if (!state.fullscreen) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reveal = (event: PointerEvent) => {
+      if (event.clientY <= 6) {
+        clearTimeout(timer);
+        setRevealed(true);
+      } else if (event.clientY > 40) {
+        clearTimeout(timer);
+        timer = setTimeout(() => setRevealed(false), 350);
+      } else clearTimeout(timer);
+    };
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'F10') {
+        event.preventDefault();
+        setRevealed(true);
+        document.querySelector<HTMLButtonElement>('.desktop-titlebar button')?.focus();
+      }
+      if (event.key === 'Escape') {
+        setRevealed(false);
+        if (document.activeElement?.closest('.desktop-titlebar'))
+          (document.activeElement as HTMLElement).blur();
+      }
+    };
+    window.addEventListener('pointermove', reveal);
+    window.addEventListener('keydown', keyboard);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', reveal);
+      window.removeEventListener('keydown', keyboard);
+    };
+  }, [state.fullscreen]);
   useEffect(() => {
     const desktop = window.relayDesktop;
     if (!desktop) return;
@@ -38,7 +79,14 @@ export default function DesktopTitleBar() {
   };
   if (!window.relayDesktop) return null;
   return (
-    <header className="desktop-titlebar" aria-label="Điều khiển cửa sổ">
+    <header
+      className={`desktop-titlebar${state.fullscreen ? ' fullscreen' : ''}${revealed ? ' revealed' : ''}`}
+      aria-label="Điều khiển cửa sổ"
+      onFocus={() => setRevealed(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setRevealed(false);
+      }}
+    >
       <div className="desktop-titlebar-drag" onDoubleClick={() => control('maximize')}>
         <img src="/kivuno.svg" alt="" />
         <span>Kivuno</span>

@@ -12,18 +12,22 @@ export async function git(
   maxBuffer = 4 * 1024 * 1024,
 ): Promise<string> {
   try {
-    const { stdout } = await exec('git', args, {
-      cwd,
-      windowsHide: true,
-      timeout: 30000,
-      maxBuffer,
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_EDITOR: 'true',
-        GIT_MERGE_AUTOEDIT: 'no',
+    const { stdout } = await exec(
+      'git',
+      process.platform === 'win32' ? ['-c', 'core.longpaths=true', ...args] : args,
+      {
+        cwd,
+        windowsHide: true,
+        timeout: 30000,
+        maxBuffer,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_EDITOR: 'true',
+          GIT_MERGE_AUTOEDIT: 'no',
+        },
       },
-    });
+    );
     return stdout.trimEnd();
   } catch (error) {
     const e = error as Error & { stderr?: string };

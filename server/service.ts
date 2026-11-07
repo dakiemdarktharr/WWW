@@ -68,13 +68,19 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.6.2',
+    version: '0.7.0',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
   };
   loginOwner: string | null = null;
   private loginId: string | null = null;
+  private loginGeneration = 0;
+  private loginCancelling = false;
+  private loginChecks = new Map<number, Promise<Member>>();
+  private accountEpoch = new Map<string, number>();
+  private loginTimer?: ReturnType<typeof setTimeout>;
+  private enrichment = new Map<string, Promise<void>>();
   closing = false;
   mergeBusy = new Set<string>();
   externalOperations = new Set<string>();
@@ -271,6 +277,7 @@ export class Workspace {
         this.store.updateMember(id, { error: redact(error.message) });
       });
       client.on('exit', () => {
+        this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
         this.clients.delete(id);
         if (this.loginOwner === id) {
           this.loginOwner = null;
@@ -301,22 +308,57 @@ export class Workspace {
     }
   }
   async refresh(id: string) {
+    const epoch = this.accountEpoch.get(id) || 0;
     const profile = this.store.get<Member>('member', id);
     if (profile.removedAt) throw new DomainError('This teammate was removed.', 410);
     if (isExternalMember(profile)) return profile;
     const client = await this.client(id);
     const account = await readAccount(client);
+    // Publish identity first. Slow marketplace/quota calls must never hold the
+    // sign-in dialog open after the provider has confirmed authentication.
+    const current = this.store.get<Member>('member', id);
+    if (current.removedAt) throw new DomainError('This teammate was removed.', 410);
+    if (epoch !== (this.accountEpoch.get(id) || 0)) return current;
+    this.store.updateMember(id, {
+      account,
+      status:
+        this.running.has(id) || this.sessions.hasLive(id)
+          ? 'working'
+          : account
+            ? 'ready'
+            : 'offline',
+      ...(account ? { connectedAt: current.connectedAt || new Date().toISOString() } : {}),
+    });
     let rateLimits: unknown = null,
       error: string | null = null;
+    const cwd = this.store.projects()[0]?.path || this.defaultCwd;
+    this.store.updateMember(id, { capabilitiesLoading: true });
+    const capabilities = readCapabilities(client, cwd)
+      .catch((error) => ({ skills: [], plugins: [], errors: [redact(error)] }))
+      .then((caps) => {
+        if (
+          !this.closing &&
+          epoch === (this.accountEpoch.get(id) || 0) &&
+          !this.store.get<Member>('member', id).removedAt
+        )
+          this.store.updateMember(id, {
+            skills: caps.skills,
+            plugins: caps.plugins,
+            capabilitiesError: caps.errors.join('; ') || undefined,
+            capabilitiesLoading: false,
+          });
+        return caps;
+      });
     if (account)
       try {
         rateLimits = await readRateLimits(client);
+        if (epoch !== (this.accountEpoch.get(id) || 0)) return this.store.get<Member>('member', id);
         this.quota.ingest(id, rateLimits);
       } catch (e) {
         error = redact((e as Error).message);
       }
-    const cwd = this.store.projects()[0]?.path || this.defaultCwd;
-    const caps = await readCapabilities(client, cwd);
+    const caps = await capabilities;
+    if (epoch !== (this.accountEpoch.get(id) || 0)) return this.store.get<Member>('member', id);
     if (this.store.get<Member>('member', id).removedAt)
       throw new DomainError('This teammate was removed.', 410);
     const updated = this.store.updateMember(id, {
@@ -342,6 +384,7 @@ export class Workspace {
       skills: caps.skills,
       plugins: caps.plugins,
       capabilitiesError: caps.errors.join('; ') || undefined,
+      capabilitiesLoading: false,
       rateLimits,
       error,
     });
@@ -360,14 +403,25 @@ export class Workspace {
         'Finish or cancel the pending sign-in before connecting another account.',
       );
     this.loginOwner = id;
+    this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
+    const generation = ++this.loginGeneration;
+    this.store.updateMember(id, {
+      error: null,
+      signIn: { state: 'starting', startedAt: new Date().toISOString() },
+    });
     try {
       const result = await loginAccount(await this.client(id), method);
-      if (this.loginOwner === id) this.loginId = result.loginId || null;
+      if (this.loginOwner === id && generation === this.loginGeneration) {
+        this.loginId = result.loginId || null;
+        this.setSignIn(id, 'waiting');
+        this.scheduleLoginCheck(id, generation);
+      }
       return result;
     } catch (error) {
       if (this.loginOwner === id) {
         this.loginOwner = null;
         this.loginId = null;
+        this.setSignIn(id, 'error', redact(error));
       }
       throw error;
     }
@@ -376,6 +430,9 @@ export class Workspace {
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before signing out.');
     const client = await this.client(id);
+    // Invalidate reads that were started before logout.
+    this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
+    if (this.loginOwner === id) this.loginGeneration++;
     await client.request('account/logout');
     if (this.loginOwner === id) {
       this.loginOwner = null;
@@ -388,22 +445,111 @@ export class Workspace {
       account: null,
       rateLimits: null,
       error: null,
+      signIn: undefined,
+      capabilitiesLoading: false,
+      skills: [],
+      plugins: [],
     });
   }
   async cancelLogin(id: string, loginId: string) {
     // Completion and cancellation may race. Never cancel or unlock another account.
     if (this.loginOwner !== id || (this.loginId && this.loginId !== loginId)) return { ok: true };
     const attempt = this.loginId;
-    await (await this.client(id)).request('account/login/cancel', { loginId });
+    this.loginCancelling = true;
+    this.loginGeneration++;
+    clearTimeout(this.loginTimer);
+    try {
+      await (await this.client(id)).request('account/login/cancel', { loginId });
+    } finally {
+      this.loginCancelling = false;
+    }
     if (this.loginOwner === id && this.loginId === attempt) {
       this.loginOwner = null;
       this.loginId = null;
+      this.loginGeneration++;
+      clearTimeout(this.loginTimer);
+      this.setSignIn(id, 'cancelled');
     }
     return { ok: true };
+  }
+  private setSignIn(id: string, state: NonNullable<Member['signIn']>['state'], error?: string) {
+    const member = this.store.get<Member>('member', id);
+    if (member.removedAt) return;
+    this.store.updateMember(id, {
+      signIn: {
+        state,
+        startedAt: member.signIn?.startedAt || new Date().toISOString(),
+        ...(error ? { error } : {}),
+      },
+    });
+  }
+  private scheduleLoginCheck(id: string, generation: number) {
+    clearTimeout(this.loginTimer);
+    this.loginTimer = setTimeout(async () => {
+      if (this.closing || generation !== this.loginGeneration || this.loginOwner !== id) return;
+      const started = Date.parse(this.store.get<Member>('member', id).signIn?.startedAt || '');
+      if (Date.now() - started > 15 * 60_000) {
+        if (this.loginId) await this.cancelLogin(id, this.loginId).catch(() => {});
+        this.setSignIn(id, 'error', 'Sign-in expired. Start again.');
+        return;
+      }
+      await this.checkLogin(id).catch(() => {});
+      if (generation === this.loginGeneration && this.loginOwner === id)
+        this.scheduleLoginCheck(id, generation);
+    }, 1500);
+    this.loginTimer.unref();
+  }
+  async checkLogin(id: string): Promise<Member> {
+    if (this.loginOwner !== id || this.loginCancelling) return this.store.get<Member>('member', id);
+    const generation = this.loginGeneration;
+    const previous = this.loginChecks.get(generation);
+    if (previous) return previous;
+    const check = (async () => {
+      const account = await readAccount(await this.client(id));
+      if (generation !== this.loginGeneration || this.loginOwner !== id || this.closing)
+        return this.store.get<Member>('member', id);
+      if (account) {
+        this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
+        const member = this.store.get<Member>('member', id);
+        this.store.updateMember(id, {
+          account,
+          status: 'ready',
+          capabilitiesLoading: true,
+          skills: [],
+          plugins: [],
+          connectedAt: member.connectedAt || new Date().toISOString(),
+          error: null,
+        });
+        this.setSignIn(id, 'connected');
+        this.loginOwner = null;
+        this.loginId = null;
+        clearTimeout(this.loginTimer);
+        // Enrich after publishing connected. Quota admission still fails closed
+        // until real limits arrive; this never starts a model turn.
+        const enrich = this.refresh(id)
+          .then(() => this.autonomy.ready(id))
+          .then(() => {})
+          .catch((error) => {
+            if (!this.closing) this.log(`Account details: ${redact(error)}`, null, id, 'error');
+          })
+          .finally(() => {
+            if (this.enrichment.get(id) === enrich) this.enrichment.delete(id);
+          });
+        this.enrichment.set(id, enrich);
+      }
+      return this.store.get<Member>('member', id);
+    })();
+    this.loginChecks.set(generation, check);
+    try {
+      return await check;
+    } finally {
+      this.loginChecks.delete(generation);
+    }
   }
   async removeMember(id: string) {
     const member = this.store.get<Member>('member', id);
     if (member.removedAt) return { removed: true };
+    this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
     const sessions = this.store.sessions().filter((session) => session.memberId === id);
     const sessionIds = new Set(sessions.map((session) => session.id));
     if (this.loginOwner === id || this.connecting.has(id))
@@ -770,15 +916,17 @@ export class Workspace {
         return;
       try {
         if (params.success) {
-          await this.refresh(memberId);
-          await this.autonomy.ready(memberId);
-        } else
+          this.setSignIn(memberId, 'verifying');
+          await this.checkLogin(memberId);
+        } else {
+          this.setSignIn(memberId, 'error', redact(params.error || 'Sign-in was cancelled.'));
           this.store.updateMember(memberId, {
             status: 'offline',
             error: redact(params.error || 'Sign-in was cancelled.'),
           });
+        }
       } finally {
-        if (this.loginOwner === memberId && this.loginId === attempt) {
+        if (!params.success && this.loginOwner === memberId && this.loginId === attempt) {
           this.loginOwner = null;
           this.loginId = null;
         }
@@ -1195,6 +1343,10 @@ export class Workspace {
   async close() {
     if (this.closing) return;
     this.closing = true;
+    this.loginGeneration++;
+    clearTimeout(this.loginTimer);
+    await Promise.allSettled(this.loginChecks.values());
+    await Promise.allSettled(this.enrichment.values());
     await Promise.allSettled([...this.connecting.values()]);
     await this.autonomy.close();
     await this.inbox.close();

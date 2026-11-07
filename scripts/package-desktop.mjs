@@ -50,6 +50,7 @@ await build({
       'preload.cjs',
       'security.cjs',
       'browser.cjs',
+      'workspaces.cjs',
       'package.json',
       'icon.png',
       'icon.ico',

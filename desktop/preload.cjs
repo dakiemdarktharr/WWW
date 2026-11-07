@@ -6,9 +6,16 @@ contextBridge.exposeInMainWorld(
   'relayDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.6.1',
+    version: '0.7.0',
     getStatus: () => ipcRenderer.invoke('relay:status'),
+    onStatus: (callback) => {
+      const listener = (_event, value) => callback(value);
+      ipcRenderer.on('relay:status-changed', listener);
+      return () => ipcRenderer.removeListener('relay:status-changed', listener);
+    },
     beginSignIn: () => ipcRenderer.invoke('relay:sign-in'),
+    cancelSignIn: () => ipcRenderer.invoke('relay:cancel-sign-in'),
+    groups: (input) => ipcRenderer.invoke('relay:groups', input),
     signOut: () => ipcRenderer.invoke('relay:sign-out'),
     openExternal: (url) => ipcRenderer.invoke('relay:external', url),
     openPreview: (url) => ipcRenderer.invoke('relay:preview', url),

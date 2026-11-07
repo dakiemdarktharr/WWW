@@ -47,6 +47,7 @@ const git = await execute(
 );
 assert.equal(git.stdout.trim(), 'git version 2.56.0.windows.4');
 const gitProbe = await mkdtemp(path.join(os.tmpdir(), 'relay-packaged-git-'));
+const isolatedProfile = await mkdtemp(path.join(os.tmpdir(), 'kivuno-packaged-profile-'));
 try {
   await writeFile(path.join(gitProbe, 'smoke.txt'), 'Bundled Kivuno Git smoke test.\n');
   await writeFile(path.join(gitProbe, 'empty.gitconfig'), '');
@@ -111,6 +112,7 @@ const rendererDiagnostics: string[] = [];
 try {
   desktop = await electron.launch({
     executablePath: path.join(root, 'Kivuno.exe'),
+    args: [`--user-data-dir=${isolatedProfile}`],
     env,
     timeout: 60000,
   });
@@ -120,6 +122,7 @@ try {
     packaged: app.isPackaged,
   }));
   assert.deepEqual(metadata, { name: 'Kivuno', version: expectedVersion, packaged: true });
+  assert.equal(await desktop.evaluate(({ app }) => app.getPath('userData')), isolatedProfile);
   const page = await desktop.firstWindow();
   page.on('pageerror', (error) => pageErrors.push(error.message));
   const resourceName = (value: string) => {
@@ -159,7 +162,7 @@ try {
     await expect(page.getByRole('heading', { name: 'Kivuno', exact: true })).toBeVisible({
       timeout: 30000,
     });
-    const signIn = page.getByRole('button', { name: 'Đăng nhập trên web', exact: true });
+    const signIn = page.getByRole('button', { name: 'Đăng nhập Kivuno', exact: true });
     await expect(signIn).toBeVisible();
     await expect(signIn).toBeEnabled();
     await expect(page.locator('.desktop-welcome footer')).toHaveCount(0);
@@ -229,4 +232,7 @@ try {
   throw error;
 } finally {
   if (desktop) await desktop.close();
+  assert.equal(path.dirname(isolatedProfile), os.tmpdir());
+  assert.ok(path.basename(isolatedProfile).startsWith('kivuno-packaged-profile-'));
+  await rm(isolatedProfile, { recursive: true, force: true });
 }

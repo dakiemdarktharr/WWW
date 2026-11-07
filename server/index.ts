@@ -47,6 +47,7 @@ const app = await buildApp(workspace, {
   port,
   cloud,
   desktopSecret: process.env.RELAY_DESKTOP_SECRET || undefined,
+  desktopLocked: process.env.RELAY_DESKTOP_LOCKED === '1',
   development: process.env.NODE_ENV !== 'production',
   distDir: existsSync(path.join(projectRoot, 'dist', 'index.html'))
     ? path.join(projectRoot, 'dist')

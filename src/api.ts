@@ -1,7 +1,10 @@
 let sessionToken = '';
 let sessionPromise: Promise<void> | null = null;
+let generation = 0;
 export function resetApiSession() {
+  generation++;
   sessionToken = '';
+  sessionPromise = null;
 }
 function expired(data: { code?: string }) {
   if (data.code === 'CLOUD_SIGN_IN_REQUIRED') window.dispatchEvent(new Event('relay-auth-expired'));
@@ -9,7 +12,8 @@ function expired(data: { code?: string }) {
 
 async function session() {
   if (sessionToken) return;
-  if (!sessionPromise)
+  if (!sessionPromise) {
+    const started = generation;
     sessionPromise = fetch('/api/session', { credentials: 'same-origin' })
       .then(async (response) => {
         const data = await response.json();
@@ -17,11 +21,14 @@ async function session() {
           expired(data);
           throw new Error(data.error || 'Workspace unavailable. Try again.');
         }
+        if (started !== generation)
+          throw new Error('Account changed. Open your current workspace.');
         sessionToken = data.token;
       })
       .finally(() => {
-        sessionPromise = null;
+        if (started === generation) sessionPromise = null;
       });
+  }
   await sessionPromise;
 }
 

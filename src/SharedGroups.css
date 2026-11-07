@@ -1,0 +1,134 @@
+.neralu-mode {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 14px;
+}
+.neralu-mode button[aria-pressed='true'] {
+  background: var(--lime);
+  color: #10211b;
+}
+.shared-groups {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  min-height: 65vh;
+  overflow: hidden;
+}
+.shared-group-list {
+  padding: 20px;
+  border-right: 1px solid var(--line-soft);
+}
+.shared-group-list form,
+.group-invitation {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+}
+.shared-group-list nav {
+  display: grid;
+  gap: 6px;
+}
+.shared-group-link {
+  padding: 12px;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.shared-group-link[aria-current] {
+  border-color: var(--line);
+  background: var(--surface);
+}
+.shared-group-room {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  gap: 16px;
+}
+.shared-group-room header,
+.shared-group-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.shared-group-members {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+}
+.shared-group-members label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shared-group-members input[type='checkbox'] {
+  width: auto;
+}
+.shared-group-members form {
+  display: flex;
+  gap: 10px;
+}
+.shared-group-members li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+.shared-group-roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shared-group-roster span {
+  border: 1px solid var(--line-soft);
+  border-radius: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.shared-group-history {
+  flex: 1;
+  min-height: 160px;
+  max-height: 48vh;
+  overflow-y: auto;
+}
+.shared-group-history article {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.shared-group-history time {
+  margin-left: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.shared-group-history p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.shared-group-compose {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+.shared-group-compose textarea {
+  flex: 1;
+  min-height: 75px;
+}
+@media (max-width: 850px) {
+  .shared-groups {
+    grid-template-columns: 1fr;
+  }
+  .shared-group-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .shared-group-members form {
+    flex-wrap: wrap;
+  }
+}

@@ -6,6 +6,28 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-0.6.2.md and docs/RELEASE-0.6.1.md.
 const patches = [
   {
+    version: '0.7.0',
+    date: '2026-11-07',
+    fixes: [
+      {
+        vi: 'Xác nhận đăng nhập AI tự cập nhật, có tiến trình và không chờ tải plugins.',
+        en: 'AI sign-in updates automatically with progress, without waiting for plugins.',
+      },
+      {
+        vi: 'Mỗi lần mở app yêu cầu đăng nhập Kivuno; dữ liệu được tách theo tài khoản trên cùng máy.',
+        en: 'Each launch requires Kivuno sign-in; accounts on a shared computer have separate workspaces.',
+      },
+      {
+        vi: 'Group chat hỗ trợ mời tài khoản Kivuno và mỗi thành viên thêm teammate riêng.',
+        en: 'Group chats support Kivuno invitations and each participant’s own teammates.',
+      },
+      {
+        vi: 'Thanh điều khiển cửa sổ tự ẩn khi toàn màn hình; đưa chuột lên mép trên hoặc nhấn F10 để mở.',
+        en: 'Fullscreen window controls hide automatically; move to the top edge or press F10 to reveal them.',
+      },
+    ],
+  },
+  {
     version: '0.6.2',
     date: '2026-11-07',
     fixes: [

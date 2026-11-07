@@ -50,6 +50,11 @@ export interface HumanPresence {
   lastSeen: string;
 }
 export interface Member {
+  signIn?: {
+    state: 'starting' | 'waiting' | 'verifying' | 'connected' | 'cancelled' | 'error';
+    startedAt: string;
+    error?: string;
+  };
   provider?: ProviderId;
   integration?: 'native' | 'external';
   externalLastSeen?: string;
@@ -64,6 +69,7 @@ export interface Member {
   skills: string[];
   plugins: string[];
   capabilitiesError?: string;
+  capabilitiesLoading?: boolean;
   rateLimits: unknown;
   error?: string | null;
   createdAt: string;

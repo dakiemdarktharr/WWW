@@ -18,6 +18,7 @@ import { registerDesktopRoutes } from './desktop-routes.ts';
 import { registerAegisRoutes } from './aegis-routes.ts';
 import { ExternalProviders, registerExternalRoutes } from './external-provider.ts';
 import { providerCapabilities } from './providers.ts';
+import { registerCollaboration } from './collaboration.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -54,6 +55,7 @@ export async function buildApp(
     distDir?: string;
     cloud?: CloudAccess;
     desktopSecret?: string;
+    desktopLocked?: boolean;
   } = {},
 ) {
   const app = Fastify({
@@ -122,6 +124,18 @@ export async function buildApp(
       !safeEqual(String(request.headers['x-relay-desktop'] || ''), options.desktopSecret)
     )
       return reply.code(403).send({ error: 'Open this workspace in RELAY Desktop.' });
+    if (
+      options.desktopLocked &&
+      pathname.startsWith('/api/') &&
+      !(
+        pathname === '/api/session' &&
+        safeEqual(String(request.headers['x-relay-control'] || ''), options.desktopSecret || '')
+      )
+    ) {
+      return reply
+        .code(401)
+        .send({ error: 'Sign in to Kivuno first.', code: 'KIVUNO_SIGN_IN_REQUIRED' });
+    }
     if (cloud) {
       const gateway = request.headers['x-relay-gateway'];
       if (typeof gateway !== 'string' || !safeEqual(gateway, cloud.gatewaySecret))
@@ -142,7 +156,12 @@ export async function buildApp(
       )
         return;
       if (
-        ['/api/desktop/me', '/api/desktop/revoke', '/api/desktop/bridge/poll'].includes(pathname)
+        [
+          '/api/desktop/me',
+          '/api/desktop/revoke',
+          '/api/desktop/bridge/poll',
+          '/api/desktop/groups',
+        ].includes(pathname)
       ) {
         desktopIdentity!.authenticate(request.headers.authorization);
         return;
@@ -221,6 +240,11 @@ export async function buildApp(
       if (!owner) throw new DomainError('Sign in before approving a desktop.', 401);
       return owner;
     });
+  if (desktopIdentity && options.cloud)
+    registerCollaboration(app, workspace.store, desktopIdentity, (account) => {
+      const user = options.cloud!.auth.findUser(account);
+      return user ? { id: user.id, name: user.name } : null;
+    });
   registerAegisRoutes(app, workspace.aegis);
   if (!options.cloud) registerExternalRoutes(app, external);
   app.get('/api/desktop/release', async () => {
@@ -230,7 +254,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.6.1', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.7.0', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -433,7 +457,7 @@ export async function buildApp(
         'Connect this provider from your desktop workspace. Cloud sign-in is not supported.',
       );
     if (input.runnerId) workspace.runners.assertReady(input.runnerId);
-    if (workspace.loginOwner) throw new DomainError('Finish the pending Codex sign-in first.');
+    if (workspace.loginOwner) throw new DomainError('Finish or cancel the pending sign-in first.');
     let member = workspace.autonomy.addAccount(input.provider);
     if (isExternalProvider(input.provider))
       return {
@@ -446,7 +470,10 @@ export async function buildApp(
       };
     if (input.runnerId)
       member = workspace.store.updateMember(member.id, { runnerId: input.runnerId });
-    const login = await workspace.login(member.id, 'device');
+    const login = await workspace.login(
+      member.id,
+      !options.cloud && !input.runnerId && input.provider === 'codex' ? 'browser' : 'device',
+    );
     return { member, login };
   });
   app.post('/api/members', async (request) => {
@@ -813,6 +840,9 @@ export async function buildApp(
     const input = z.object({ loginId: z.string().min(1) }).parse(request.body);
     return workspace.cancelLogin(memberId, input.loginId);
   });
+  app.get('/api/members/:id/login/status', async (request) =>
+    workspace.checkLogin(params(request)),
+  );
   app.post('/api/members/:id/refresh', async (request) => workspace.refresh(params(request)));
   app.post('/api/members/:id/logout', async (request) => workspace.logout(params(request)));
   app.post('/api/members/:id/skills/import', async (request) =>

@@ -137,6 +137,7 @@ test('four accounts on one machine retain distinct profiles, email and quota; ca
         'ready',
         'late login timeout cannot disconnect an authenticated profile',
       );
+      await t.waitFor(() => assert.ok(f.workspace.quota.current(member.id).windows.length > 0));
       assert.equal(
         f.workspace.quota.current(member.id).windows[0].remainingPercent,
         100 - client.used,
@@ -167,6 +168,36 @@ test('logging out one account and cancelling an old dialog never unlock another 
   assert.equal(f.workspace.loginOwner, second.id);
   await f.workspace.cancelLogin(second.id, login.loginId!);
   assert.equal(f.workspace.loginOwner, null);
+});
+
+test('provider confirmation publishes connected and unlocks the next sign-in before slow plugins finish', async (t) => {
+  const f = await fixture(t);
+  const member = f.workspace.autonomy.addAccount();
+  const login = await f.workspace.login(member.id, 'browser');
+  const client = f.workspace.clients.get(member.id) as ProfileClient;
+  client.signedIn = true;
+  const original = client.request.bind(client);
+  let release!: () => void;
+  const plugins = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  client.request = async (method: string) => {
+    if (method === 'plugin/list') await plugins;
+    return original(method);
+  };
+  t.after(() => release());
+  const before = Date.now();
+  await f.workspace.notification(member.id, 'account/login/completed', {
+    loginId: login.loginId,
+    success: true,
+  });
+  assert.ok(Date.now() - before < 500, 'identity completion must not wait for plugin timeout');
+  assert.equal(f.store.get<Member>('member', member.id).signIn?.state, 'connected');
+  assert.equal(f.workspace.loginOwner, null);
+  const next = f.workspace.autonomy.addAccount();
+  await f.workspace.login(next.id, 'device');
+  assert.equal(f.workspace.loginOwner, next.id);
+  release();
 });
 
 test('removing a teammate requires owner CSRF, signs out only that profile, retains history and rejects reuse', async (t) => {

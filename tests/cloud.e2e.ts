@@ -141,6 +141,7 @@ async function login(context: BrowserContext) {
       getWindowState: async () => ({ maximized: false, fullscreen: false }),
       controlWindow: async () => ({ maximized: false, fullscreen: false }),
       onWindowState: () => () => {},
+        onStatus: () => () => {},
     };
   `);
   await page.goto(`${origin}/#mesh`);

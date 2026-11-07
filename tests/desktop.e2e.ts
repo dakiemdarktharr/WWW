@@ -12,6 +12,7 @@ const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
 const accessToken = 'desktop-test-session-' + '0'.repeat(64);
 let challenge = '';
 let approved = false;
+let accountId = 'desktop-test-owner';
 let tokenRequests = 0;
 let revoked = false;
 let bridgePolls = 0;
@@ -25,7 +26,7 @@ const fixture = createServer(async (request, response) => {
   const identity = {
     accessToken,
     expiresAt,
-    owner: { id: 'desktop-test-owner', name: 'Desktop test owner' },
+    owner: { id: accountId, name: accountId },
     deviceId: '1c62a82e-a094-43ce-b1c3-bf5df6c1387b',
   };
   if (request.url?.startsWith('/browser-fixture')) {
@@ -100,8 +101,8 @@ try {
   assert.equal(before.signedIn, false);
   assert.equal(before.runtime, 'ready');
   assert.equal(await page.evaluate(() => typeof (window as any).require), 'undefined');
-  const localOrigin = new URL(page.url()).origin;
-  const unauthorized = await fetch(localOrigin + '/api/session');
+  const lockedOrigin = new URL(page.url()).origin;
+  const unauthorized = await fetch(lockedOrigin + '/api/session');
   assert.equal(
     unauthorized.status,
     403,
@@ -119,6 +120,9 @@ try {
     )
     .toBe(true);
   assert.ok(tokenRequests > 0);
+  await page.waitForURL((url) => url.origin !== lockedOrigin, { timeout: 30000 });
+  await page.waitForLoadState('domcontentloaded');
+  const localOrigin = new URL(page.url()).origin;
   const state = await page.evaluate(async () => {
     const session = await (await fetch('/api/session')).json();
     const response = await fetch('/api/state', { headers: { 'X-Relay-Token': session.token } });
@@ -231,6 +235,7 @@ try {
         (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).maximized,
     )
     .toBe(false);
+  await page.locator('body').click({ position: { x: 300, y: 150 } });
   await page.keyboard.press('F11');
   await expect
     .poll(
@@ -238,6 +243,21 @@ try {
         (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).fullscreen,
     )
     .toBe(true);
+  await expect
+    .poll(() => titlebar.evaluate((element) => element.getBoundingClientRect().bottom))
+    .toBeLessThanOrEqual(0);
+  await page.mouse.move(300, 2);
+  await expect
+    .poll(() => titlebar.evaluate((element) => element.getBoundingClientRect().top))
+    .toBe(0);
+  await page.mouse.move(300, 150);
+  await expect
+    .poll(() => titlebar.evaluate((element) => element.getBoundingClientRect().bottom))
+    .toBeLessThanOrEqual(0);
+  await page.keyboard.press('F10');
+  await expect
+    .poll(() => titlebar.evaluate((element) => element.getBoundingClientRect().top))
+    .toBe(0);
   await page.keyboard.press('F11');
   await expect
     .poll(
@@ -389,6 +409,28 @@ try {
     };
     assert.equal(mcp.env.KIVUNO_MCP_URL, localOrigin + '/api/external-agent/rpc');
     assert.match(mcp.env.KIVUNO_MCP_TOKEN, /^[A-Za-z0-9_-]{43}$/);
+    await expect(externalDialog.getByRole('progressbar')).toHaveAttribute('value', '1');
+    const connectedClient = await fetch(mcp.env.KIVUNO_MCP_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${mcp.env.KIVUNO_MCP_TOKEN}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'controlled-ui-fixture', version: '1' },
+        },
+      }),
+    });
+    assert.equal(connectedClient.status, 200);
+    await expect(externalDialog.getByRole('progressbar')).toHaveAttribute('value', '3', {
+      timeout: 5000,
+    });
     await externalDialog.getByRole('button', { name: 'Revoke connection', exact: true }).click();
     await expect(configInput).toHaveCount(0);
     await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
@@ -406,6 +448,45 @@ try {
     )
     .toBe(false);
   await expect.poll(() => revoked).toBe(true);
+  // Same OS profile, two distinct Kivuno identities; projects and AI profiles must
+  // survive switching back, never follow the machine's last user.
+  const switchIn = async (id: string) => {
+    accountId = id;
+    const oldOrigin = new URL(page.url()).origin;
+    await page.evaluate(() => (window as any).relayDesktop.beginSignIn());
+    await page.waitForURL((url) => url.origin !== oldOrigin, { timeout: 60000 });
+    await page.waitForFunction(() => Boolean((window as any).relayDesktop));
+    return page.evaluate(async () => {
+      const session = await (await fetch('/api/session')).json();
+      return (await fetch('/api/state', { headers: { 'X-Relay-Token': session.token } })).json();
+    });
+  };
+  const bob = await switchIn('second-kivuno-user');
+  assert.equal(bob.members.length, 0);
+  assert.equal(bob.projects.length, 0);
+  assert.notEqual(bob.runtime.dataDir, state.runtime.dataDir);
+  await post('/members', { name: 'Only Bob', role: 'researcher' });
+  const bobOrigin = new URL(page.url()).origin;
+  await page.evaluate(() => {
+    void (window as any).relayDesktop.signOut();
+  });
+  await page.waitForURL((url) => url.origin !== bobOrigin, { timeout: 30000 });
+  const returned = await switchIn('desktop-test-owner');
+  assert.ok(returned.projects.some((item: { id: string }) => item.id === uiFixture.projectId));
+  assert.ok(!returned.members.some((item: { name: string }) => item.name === 'Only Bob'));
+  // A new app launch must show sign-in even while a prior session file exists.
+  await desktop.close();
+  desktop = await electron.launch({ args: [path.resolve('desktop')], env, timeout: 60000 });
+  const reopened = await desktop.firstWindow();
+  await reopened.waitForFunction(() => Boolean((window as any).relayDesktop));
+  assert.equal(
+    (await reopened.evaluate(() => (window as any).relayDesktop.getStatus())).signedIn,
+    false,
+  );
+  await expect(
+    reopened.getByRole('button', { name: 'Đăng nhập Kivuno', exact: true }),
+  ).toBeVisible();
+
   console.log(
     'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
   );

@@ -6,13 +6,17 @@ The Vite frontend calls same-origin Vercel Node Functions at `/api/*`. The gatew
 
 ## Sign in
 
-The owner password is generated randomly during provisioning and delivered separately in `.local/cloud/WORKSPACE-ACCESS.txt`, never in Git or public assets. Enter it on the web, including on another device. Public signup is disabled. The owner can change the password through Better Auth's authenticated `/api/auth/change-password` endpoint; bootstrap never resets an existing owner's password.
+The owner password is generated randomly during provisioning and delivered separately in `.local/cloud/WORKSPACE-ACCESS.txt`, never in Git or public assets. Enter it on the web, including on another device. Public signup creates separate Kivuno identities; only the immutable bootstrap owner can access the legacy hosted workspace. The owner can change the password through Better Auth's authenticated `/api/auth/change-password` endpoint; bootstrap never resets an existing owner's password.
 
 In Team, add profiles and sign in to each OpenAI account yourself using device codes. The server forces device authentication, avoiding a localhost OAuth callback. Separate `CODEX_HOME` directories hold each profile's real ChatGPT subscription credentials. Skills/plugins are server installations; those on your desktop are not automatically copied or synchronized by OpenAI sign-in.
 
 Choose New project, owner, competition name/link, deadline and goal. RELAY creates a real Git repository and MESH group. The proposed remote name is `NoSleepClub_[competition]_[project]`. It does not create a remote GitHub repository before GitHub credentials are connected. Projects group RELAY conversations; they are not native Codex Desktop or ChatGPT Projects.
 
 Sessions lets each account open multiple conversations with model/reasoning from its real `model/list` catalog. Empty prompts save conversations without consuming a model turn. Sending starts a real App Server thread; Pause/Resume retains that thread ID. Selected model/reasoning and human-approval sandbox policies are checked before a turn starts. A deployed HTTPS URL can be opened as the project demo.
+
+## Shared groups (0.7)
+
+Desktop sends bounded commands to `/api/desktop/groups` using its private bearer in the main process. The existing cloud database stores groups, invitations, owned teammate metadata and messages; every command enforces membership. The renderer never receives the bearer. See [release scope and limits](RELEASE-0.7.md).
 
 ## Free limits and recovery
 

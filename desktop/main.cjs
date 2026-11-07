@@ -18,6 +18,7 @@ const { mkdir, readFile, writeFile, unlink, rename, lstat } = require('node:fs/p
 const { existsSync } = require('node:fs');
 const path = require('node:path');
 const { ProjectBrowser } = require('./browser.cjs');
+const { workspaceDirectory } = require('./workspaces.cjs');
 const {
   cloudOrigin,
   sameOrigin,
@@ -33,6 +34,10 @@ const {
 app.setName('Kivuno');
 // Keep the existing storage location across the product rename.
 app.setPath('userData', path.join(app.getPath('appData'), 'RELAY'));
+// Honor Electron's explicit isolated profile switch (also used by release QA).
+const explicitProfile = app.commandLine.getSwitchValue('user-data-dir');
+if (explicitProfile && path.isAbsolute(explicitProfile))
+  app.setPath('userData', path.resolve(explicitProfile));
 const testing = !app.isPackaged && process.env.RELAY_DESKTOP_TESTING === '1';
 if (testing && process.env.RELAY_DESKTOP_DATA_DIR)
   app.setPath('userData', path.resolve(process.env.RELAY_DESKTOP_DATA_DIR));
@@ -43,14 +48,15 @@ const identityOrigin = cloudOrigin(
 const dataDirectory = app.getPath('userData');
 const identityFile = path.join(dataDirectory, 'desktop-session.bin');
 const ownerFile = path.join(dataDirectory, 'workspace-owner.json');
-const machinesDirectory = path.join(dataDirectory, 'workspace', 'machine-links');
-const machinesIndex = path.join(machinesDirectory, 'connections.json');
+let machinesDirectory = '';
+let machinesIndex = '';
 const machines = new Map();
-const desktopSecret = randomBytes(32).toString('hex');
+let desktopSecret = randomBytes(32).toString('hex');
 let window = null;
 let tray = null;
 let backend = null;
 let backendOrigin = '';
+let transitionOrigin = '';
 let runtime = 'starting';
 let identity = null;
 let pinnedOwner = '';
@@ -59,6 +65,7 @@ let lastError = '';
 let quitting = false;
 let signInGeneration = 0;
 let bridgeGeneration = 0;
+let identityTransition = false;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const projectBrowser = new ProjectBrowser({
   getWindow: () => window,
@@ -73,8 +80,7 @@ function windowState() {
 
 function status() {
   if (identity && Date.parse(identity.expiresAt) <= Date.now()) {
-    projectBrowser.close();
-    identity = null;
+    void signOutWorkspace().catch(() => {});
   }
   return {
     signedIn: Boolean(identity),
@@ -89,7 +95,7 @@ function status() {
         }
       : {}),
     ...(lastError ? { error: lastError } : {}),
-    runtime,
+    runtime: identityTransition ? 'starting' : runtime,
     cloudOrigin: identityOrigin,
     machines: [...machines.values()].map(({ id, name, status, error }) => ({
       id,
@@ -98,6 +104,9 @@ function status() {
       ...(error ? { error } : {}),
     })),
   };
+}
+function publishStatus() {
+  if (window && !window.isDestroyed()) window.webContents.send('relay:status-changed', status());
 }
 
 async function cloudRequest(route, body, token) {
@@ -124,46 +133,69 @@ async function cloudRequest(route, body, token) {
 }
 
 async function persistIdentity(value) {
+  const generation = signInGeneration;
   if (!secureCredentialStorage(safeStorage, process.platform))
     throw new Error(
       'Secure operating-system credential storage is unavailable. Kivuno did not save your session.',
     );
   const encrypted = safeStorage.encryptString(JSON.stringify(value));
-  const temporary = identityFile + '.tmp';
+  const temporary = identityFile + `.${generation}.tmp`;
   await writeFile(temporary, encrypted, { mode: 0o600 });
-  await rename(temporary, identityFile);
-  if (!pinnedOwner) {
-    pinnedOwner = value.owner.id;
-    await writeFile(ownerFile, JSON.stringify({ id: pinnedOwner }), { mode: 0o600 });
+  if (generation !== signInGeneration) {
+    await unlink(temporary).catch(() => {});
+    return;
   }
+  await rename(temporary, identityFile);
 }
 
 async function readIdentity() {
   try {
     pinnedOwner = JSON.parse(await readFile(ownerFile, 'utf8')).id || '';
   } catch {}
+  // A fresh launch requires explicit Kivuno authentication. Never open the last
+  // user's projects just because this OS account has an encrypted session file.
+  identity = null;
+  // Retire the previous launch's device lease so normal restarts cannot fill
+  // the cloud's active-device limit. A failed cleanup never authenticates UI.
   try {
-    if (!secureCredentialStorage(safeStorage, process.platform)) return;
-    identity = validIdentity(
-      JSON.parse(safeStorage.decryptString(await readFile(identityFile))),
-      pinnedOwner,
-    );
-  } catch {
-    identity = null;
-  }
+    if (secureCredentialStorage(safeStorage, process.platform)) {
+      const previous = JSON.parse(safeStorage.decryptString(await readFile(identityFile)));
+      if (typeof previous.accessToken === 'string')
+        void cloudRequest('/api/desktop/revoke', {}, previous.accessToken).catch(() => {});
+    }
+  } catch {}
 }
 
 async function clearIdentity() {
   projectBrowser.close();
-  await stopMachines();
   identity = null;
   pending = null;
   signInGeneration++;
   bridgeGeneration++;
+  publishStatus();
+  await stopMachines();
+  machines.clear();
   await unlink(identityFile).catch(() => {});
+}
+async function signOutWorkspace() {
+  if (identityTransition) return;
+  identityTransition = true;
+  const token = identity?.accessToken;
+  try {
+    await clearIdentity();
+    lastError = '';
+    if (token) void cloudRequest('/api/desktop/revoke', {}, token).catch(() => {});
+    await stopBackend();
+    await startBackend();
+    await window?.loadURL(backendOrigin);
+  } finally {
+    identityTransition = false;
+    publishStatus();
+  }
 }
 
 async function beginSignIn() {
+  if (identityTransition) throw new Error('Finishing account switch. Try again in a moment.');
   if (identity) return status();
   if (pending && Date.parse(pending.expiresAt) > Date.now()) {
     if (!testing) await shell.openExternal(pending.verificationUri);
@@ -178,6 +210,7 @@ async function beginSignIn() {
       name: `${app.getName()} on ${require('node:os').hostname().slice(0, 80)}`,
     });
     if (!response.ok) throw new Error(body.error || 'Cannot start desktop sign-in.');
+    if (generation !== signInGeneration) return status();
     if (
       typeof body.deviceCode !== 'string' ||
       body.deviceCode.length < 24 ||
@@ -189,6 +222,7 @@ async function beginSignIn() {
     )
       throw new Error('The identity server returned an invalid sign-in request.');
     pending = { ...body, verifier: proof.verifier };
+    publishStatus();
     if (!testing) await shell.openExternal(body.verificationUri);
     void pollSignIn(generation);
   } catch (error) {
@@ -206,36 +240,70 @@ async function pollSignIn(generation) {
       lastError = 'The sign-in code expired. Start sign-in again.';
       return;
     }
-    await pause(3000);
+    await pause(Math.max(1, Number(pending.interval) || 3) * 1000);
     if (!pending || generation !== signInGeneration) return;
     try {
-      const { response, body } = await cloudRequest('/api/desktop/token', {
-        deviceCode: pending.deviceCode,
-        verifier: pending.verifier,
-      });
-      if (generation !== signInGeneration) return;
-      if (
-        response.status === 202 ||
-        response.status === 429 ||
-        body.error === 'authorization_pending'
-      )
+      let exchange;
+      try {
+        exchange = await cloudRequest('/api/desktop/token', {
+          deviceCode: pending.deviceCode,
+          verifier: pending.verifier,
+        });
+      } catch {
+        if (generation !== signInGeneration) return;
+        lastError =
+          'Reconnecting to Kivuno. Keep this confirmation open; your code is still valid.';
+        publishStatus();
+        await pause(3000);
         continue;
+      }
+      const { response, body } = exchange;
+      if (generation !== signInGeneration) return;
+      if (response.status >= 500) {
+        lastError = 'Kivuno is waking up. Your confirmation will update automatically.';
+        publishStatus();
+        await pause(3000);
+        continue;
+      }
+      lastError = '';
+      if (response.status === 202 || body.error === 'authorization_pending') continue;
+      if (response.status === 429) {
+        await pause(
+          Math.max(3, Math.min(60, Number(response.headers.get('Retry-After')) || 3)) * 1000,
+        );
+        continue;
+      }
       if (!response.ok) throw new Error(body.error || 'Desktop sign-in was not approved.');
-      const nextIdentity = validIdentity(body, pinnedOwner);
+      const nextIdentity = validIdentity(body);
       nextIdentity.bridgeKey = randomBytes(32).toString('hex');
+      identityTransition = true;
       await persistIdentity(nextIdentity);
+      if (generation !== signInGeneration || quitting) {
+        identityTransition = false;
+        return;
+      }
+      runtime = 'starting';
       identity = nextIdentity;
       pending = null;
       lastError = '';
+      publishStatus();
+      await stopBackend();
+      await startBackend();
+      if (quitting) return;
+      await window?.loadURL(backendOrigin);
+      identityTransition = false;
+      publishStatus();
       void bridgeLoop();
       void restoreMachines();
       window?.show();
       window?.focus();
       return;
     } catch (error) {
+      identityTransition = false;
       if (generation !== signInGeneration) return;
       pending = null;
       lastError = error instanceof Error ? error.message : 'Desktop sign-in failed.';
+      publishStatus();
       return;
     }
   }
@@ -254,7 +322,7 @@ async function bridgeLoop() {
     );
     if (generation !== bridgeGeneration || !identity) return;
     if (response.status === 401) {
-      await clearIdentity();
+      await signOutWorkspace();
       lastError = 'Your desktop session expired or was revoked. Sign in again.';
       return;
     }
@@ -309,7 +377,7 @@ async function bridgeLoop() {
       );
       if (generation !== bridgeGeneration || !identity) return;
       if (response.status === 401) {
-        await clearIdentity();
+        await signOutWorkspace();
         lastError = 'Your desktop session expired or was revoked. Sign in again.';
         return;
       }
@@ -353,12 +421,15 @@ async function bridgeLoop() {
   }
 }
 
-function trusted(event) {
+function trusted(event, statusOnly = false) {
   if (
     !window ||
     event.sender !== window.webContents ||
     event.senderFrame !== event.sender.mainFrame ||
-    !sameOrigin(event.senderFrame.url, backendOrigin)
+    !(
+      sameOrigin(event.senderFrame.url, backendOrigin) ||
+      (statusOnly && sameOrigin(event.senderFrame.url, transitionOrigin))
+    )
   )
     throw new Error('Untrusted desktop request.');
 }
@@ -400,22 +471,60 @@ function registerIpc() {
     });
   }
   ipcMain.handle('relay:status', (event) => {
-    trusted(event);
+    trusted(event, true);
     return status();
   });
   ipcMain.handle('relay:sign-in', (event) => {
     trusted(event);
     return beginSignIn();
   });
+  ipcMain.handle('relay:groups', async (event, input) => {
+    trusted(event);
+    const owner = identity;
+    if (!owner || identityTransition || Date.parse(owner.expiresAt) <= Date.now())
+      throw new Error('Sign in to Kivuno first.');
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      ![
+        'list',
+        'create',
+        'read',
+        'invite',
+        'accept',
+        'decline',
+        'leave',
+        'remove',
+        'teammates',
+        'message',
+      ].includes(input.action) ||
+      Buffer.byteLength(JSON.stringify(input)) > 64 * 1024
+    )
+      throw new Error('Invalid group request.');
+    const generation = signInGeneration;
+    const { response, body } = await cloudRequest('/api/desktop/groups', input, owner.accessToken);
+    if (identity !== owner || generation !== signInGeneration)
+      throw new Error('Account changed. Open your current workspace.');
+    if (response.status === 401) {
+      void signOutWorkspace();
+      throw new Error('Your Kivuno session expired. Sign in again.');
+    }
+    if (!response.ok) throw new Error(body.error || 'Group request failed. Try again.');
+    return body;
+  });
+  ipcMain.handle('relay:cancel-sign-in', async (event) => {
+    trusted(event);
+    if (identityTransition) return status();
+    signInGeneration++;
+    pending = null;
+    lastError = '';
+    publishStatus();
+    return status();
+  });
   ipcMain.handle('relay:sign-out', async (event) => {
     trusted(event);
-    const token = identity?.accessToken;
-    await clearIdentity();
-    lastError = '';
-    if (token) void cloudRequest('/api/desktop/revoke', {}, token).catch(() => {});
-    await stopBackend();
-    await startBackend();
-    await window.loadURL(backendOrigin);
+    await signOutWorkspace();
   });
   ipcMain.handle('relay:external', async (event, value) => {
     trusted(event);
@@ -649,6 +758,11 @@ async function freePort() {
 
 async function startBackend() {
   runtime = 'starting';
+  transitionOrigin = backendOrigin;
+  desktopSecret = randomBytes(32).toString('hex');
+  const workspacePath = workspaceDirectory(dataDirectory, identity?.owner.id, pinnedOwner);
+  machinesDirectory = path.join(workspacePath, 'machine-links');
+  machinesIndex = path.join(machinesDirectory, 'connections.json');
   const { root, node, binPath } = runtimePaths();
   const port = await freePort();
   backendOrigin = `http://127.0.0.1:${port}`;
@@ -659,14 +773,19 @@ async function startBackend() {
     env: runtimeEnvironment(process.env, {
       NODE_ENV: testing ? 'test' : 'production',
       PATH: binPath,
-      RELAY_DATA_DIR: path.join(dataDirectory, 'workspace'),
+      RELAY_DATA_DIR: workspacePath,
       RELAY_PORT: String(port),
       RELAY_DESKTOP_SECRET: desktopSecret,
+      RELAY_DESKTOP_LOCKED: identity ? '0' : '1',
       RELAY_CODEX_COMMAND: path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
     }),
   });
+  const started = backend;
   backend.on('exit', () => {
-    runtime = 'stopped';
+    if (backend === started) {
+      runtime = 'stopped';
+      publishStatus();
+    }
   });
   backend.on('error', () => {
     runtime = 'stopped';
@@ -676,11 +795,12 @@ async function startBackend() {
       throw new Error('The local workspace could not start. Reopen Kivuno to enter recovery.');
     try {
       const response = await fetch(backendOrigin + '/api/session', {
-        headers: { 'X-Relay-Desktop': desktopSecret },
+        headers: { 'X-Relay-Desktop': desktopSecret, 'X-Relay-Control': desktopSecret },
         signal: AbortSignal.timeout(1000),
       });
       if (response.ok) {
         runtime = 'ready';
+        publishStatus();
         return;
       }
     } catch {}

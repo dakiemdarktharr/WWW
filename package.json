@@ -1,12 +1,12 @@
 {
   "name": "relay-workspace",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "private": true,
   "overrides": {
     "zod": "$zod"
   },
   "type": "module",
-  "description": "Kivuno — a desktop workspace for real Codex teams",
+  "description": "Kivuno â€” a desktop workspace for real Codex teams",
   "engines": {
     "node": ">=24.22.1 <25"
   },
@@ -21,6 +21,7 @@
     "test:cloud": "tsx tests/cloud.e2e.ts",
     "test:portal": "tsx tests/portal.e2e.ts",
     "test:desktop": "tsx tests/desktop.e2e.ts",
+    "test:collaboration": "tsx tests/collaboration.e2e.ts",
     "test:codex-native": "tsx tests/codex-native.e2e.ts",
     "desktop:stage": "node scripts/build-desktop.mjs",
     "desktop:package": "node scripts/package-desktop.mjs",

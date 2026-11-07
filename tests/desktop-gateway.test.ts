@@ -69,6 +69,7 @@ test('private cloud drain refuses merge/checkpoint work, then fences new request
       origin,
       gatewaySecret,
       auth: {
+        findUser: () => null,
         authorized: async () => true,
         currentUser: async () => ({
           id: 'workspace-owner',

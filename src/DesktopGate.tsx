@@ -5,6 +5,7 @@ import { resetApiSession } from './api';
 import type { DesktopStatus } from './desktop';
 import DesktopTitleBar from './TitleBar';
 import './portal.css';
+import ConnectionProgress from './ConnectionProgress';
 
 export default function DesktopGate() {
   return (
@@ -24,13 +25,26 @@ function DesktopWorkspace() {
   useEffect(() => {
     let current = true;
     let timer: ReturnType<typeof setTimeout>;
+    let revision = 0;
+    const unsubscribe = window.relayDesktop!.onStatus((next) => {
+      revision++;
+      if (current) {
+        setStatus(next);
+        setError('');
+        if (!next.signedIn) {
+          resetApiSession();
+          sessionStorage.clear();
+        }
+      }
+    });
     const refresh = async () => {
+      const requestedAt = revision;
       clearTimeout(timer);
       let delay = 5000;
       try {
         const next = await window.relayDesktop!.getStatus();
         delay = next.signedIn ? 10000 : 2000;
-        if (current)
+        if (current && requestedAt === revision)
           setStatus((previous) =>
             JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
           );
@@ -43,6 +57,10 @@ function DesktopWorkspace() {
     void refresh();
     const logout = async () => {
       try {
+        setStatus((previous) =>
+          previous ? { ...previous, signedIn: false, pending: undefined } : null,
+        );
+        resetApiSession();
         await window.relayDesktop!.signOut();
         resetApiSession();
         await refresh();
@@ -54,11 +72,12 @@ function DesktopWorkspace() {
     return () => {
       current = false;
       clearTimeout(timer);
+      unsubscribe();
       window.removeEventListener('relay-sign-out', logout);
     };
   }, []);
 
-  if (status?.signedIn && status.runtime === 'ready') return <App />;
+  if (status?.signedIn && status.runtime === 'ready') return <App key={status.owner?.id} />;
 
   async function signIn() {
     setBusy(true);
@@ -86,6 +105,10 @@ function DesktopWorkspace() {
           </p>
         ) : pending ? (
           <div className="desktop-activation">
+            <ConnectionProgress
+              step={1}
+              labels={['Mở trang đăng nhập', 'Xác nhận tài khoản Kivuno', 'Mở workspace riêng']}
+            />
             <ShieldCheck size={24} />
             <span>Mã xác nhận</span>
             <strong className="activation-code">{status.pending!.userCode}</strong>
@@ -99,15 +122,26 @@ function DesktopWorkspace() {
             >
               Mở trang đăng nhập <ArrowUpRight size={15} />
             </button>
+            <button
+              className="text-button"
+              onClick={() =>
+                void window
+                  .relayDesktop!.cancelSignIn()
+                  .then(setStatus)
+                  .catch((cause) => setError(cause.message))
+              }
+            >
+              Hủy đăng nhập
+            </button>
           </div>
         ) : (
           <button
             className="button primary desktop-signin"
-            disabled={busy || !status}
+            disabled={busy || !status || status.runtime === 'starting'}
             onClick={() => void signIn()}
           >
             {busy || !status ? <Loader2 className="spin" size={18} /> : <ArrowUpRight size={18} />}
-            Đăng nhập trên web
+            Đăng nhập Kivuno
           </button>
         )}
         {(error || status?.error) && (

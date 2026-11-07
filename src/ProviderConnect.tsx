@@ -13,6 +13,7 @@ import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
 import type { FoundationRequest } from './Foundation';
 import './ProviderConnect.css';
+import ConnectionProgress from './ConnectionProgress';
 
 export const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex',
@@ -103,9 +104,11 @@ export default function ProviderConnect({
         onClick={() => connect(provider)}
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
-        {isExternalProvider(provider)
-          ? `Add ${providerLabels[provider]} connection`
-          : `Connect ${providerLabels[provider]}`}
+        {busy
+          ? `Preparing ${providerLabels[provider]}…`
+          : isExternalProvider(provider)
+            ? `Add ${providerLabels[provider]} connection`
+            : `Connect ${providerLabels[provider]}`}
       </button>
       <button className="text-button" onClick={profile} disabled={busy}>
         Create a profile first
@@ -161,11 +164,19 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
   };
   useEffect(() => {
     void refresh().catch((cause) => setError(cause.message));
-    const timer = setInterval(() => {
-      if (!document.hidden) void refresh().catch((cause) => setError(cause.message));
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [member.id]);
+    const timer = setInterval(
+      () => {
+        if (!document.hidden) void refresh().catch((cause) => setError(cause.message));
+      },
+      created ? 1500 : 10000,
+    );
+    const focus = () => void refresh().catch((cause) => setError(cause.message));
+    window.addEventListener('focus', focus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', focus);
+    };
+  }, [member.id, created?.id]);
   useEffect(() => {
     if (!eligible.some((project) => project.id === projectId)) {
       setProjectId(eligible[0]?.id || '');
@@ -256,6 +267,28 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
       )}
       {created && (
         <section className="provider-secret">
+          <ConnectionProgress
+            step={
+              connections.some(
+                (connection) =>
+                  connection.id === created.id &&
+                  connection.lastSeen &&
+                  !connection.revokedAt &&
+                  Date.parse(connection.expiresAt) > Date.now(),
+              )
+                ? 3
+                : 1
+            }
+            labels={[
+              'Create connection',
+              `Add config in ${providerLabels[providerOf(member)]}`,
+              'Verify MCP connection',
+            ]}
+          />
+          <p>
+            Sign in inside your {providerLabels[providerOf(member)]} client, add this configuration,
+            then ask it to read the group. Kivuno confirms the connection automatically.
+          </p>
           <strong>MCP configuration</strong>
           <textarea
             aria-label="MCP configuration"

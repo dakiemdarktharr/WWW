@@ -1,0 +1,29 @@
+.connection-progress {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+.connection-progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--lime, #afdc59);
+  border: 0;
+}
+.connection-progress strong {
+  font-size: 14px;
+}
+.connection-progress ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.connection-progress li[data-complete='true'],
+.connection-progress li[aria-current='step'] {
+  color: var(--text);
+}

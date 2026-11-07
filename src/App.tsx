@@ -1,3 +1,5 @@
+import ProviderSignIn from './ProviderSignIn';
+import SharedGroups from './SharedGroups';
 import { isExternalProvider } from '../shared/providers';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -314,6 +316,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         : 'mesh',
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
+  const [neraluMode, setNeraluMode] = useState<'projects' | 'groups'>('projects');
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedMachine, setSelectedMachine] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -810,7 +813,31 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             </div>
           )}
 
-          {view === 'mesh' && state && (
+          {view === 'mesh' && state && window.relayDesktop && (
+            <div className="neralu-mode" aria-label="Neralu view">
+              <button
+                className="button compact"
+                aria-pressed={neraluMode === 'projects'}
+                onClick={() => setNeraluMode('projects')}
+              >
+                Projects
+              </button>
+              <button
+                className="button compact"
+                aria-pressed={neraluMode === 'groups'}
+                onClick={() => setNeraluMode('groups')}
+              >
+                Groups
+              </button>
+            </div>
+          )}
+          {view === 'mesh' && state && neraluMode === 'groups' && window.relayDesktop && (
+            <SharedGroups
+              members={state.members}
+              addTeammate={() => setModal({ type: 'connect' })}
+            />
+          )}
+          {view === 'mesh' && state && neraluMode === 'projects' && (
             <MeshPage
               key={project?.id || 'empty-mesh'}
               state={state}
@@ -1655,79 +1682,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
           close={() => void dismissSignIn()}
         >
-          <div className="login-content">
-            <span className="login-symbol">
-              <LockKeyhole size={30} />
-            </span>
-            <HelpDetails title="Sign-in help">
-              <p>
-                {modal.result.type === 'geminiGoogle'
-                  ? modal.result.instructions ||
-                    'Complete Google sign-in in the browser opened by Gemini CLI, then check sign-in here.'
-                  : 'Complete sign-in on OpenAI, then return to this room. Choose the account you want this agent to use.'}
-              </p>
-            </HelpDetails>
-            {modal.result.userCode && (
-              <div className="device-code">
-                <span>YOUR ONE-TIME CODE</span>
-                <code>{modal.result.userCode}</code>
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    navigator.clipboard
-                      .writeText(modal.result.userCode || '')
-                      .then(() => setToast({ text: 'Code copied.' }))
-                      .catch(() =>
-                        setToast({ text: 'Select and copy the code above.', error: true }),
-                      )
-                  }
-                >
-                  <Copy size={13} /> Copy code
-                </button>
-              </div>
-            )}
-            {modal.result.type === 'geminiGoogle' ? null : validAuthUrl(
-                modal.result.authUrl || modal.result.verificationUrl,
-              ) ? (
-              <a
-                className="button primary"
-                href={validAuthUrl(modal.result.authUrl || modal.result.verificationUrl)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Continue to OpenAI
-                <ExternalLink size={15} />
-              </a>
-            ) : (
-              <p className="error-text">
-                No valid OpenAI sign-in URL was returned. Close this dialog and try again.
-              </p>
-            )}
-            <div className="modal-footer">
-              <Button disabled={pending} onClick={() => void dismissSignIn()}>
-                Cancel sign-in
-              </Button>
-              <Button
-                onClick={async () => {
-                  const result = await perform<Member>(
-                    'login-refresh',
-                    `/members/${modal.memberId}/refresh`,
-                    {},
-                  );
-                  if (result?.account) {
-                    closeModal();
-                    setToast({ text: 'Account connected. Welcome to the room.' });
-                  } else if (result)
-                    setToast({
-                      text: `Sign-in is not complete yet. Finish on ${modal.result.type === 'geminiGoogle' ? 'Google' : 'OpenAI'} and check again.`,
-                    });
-                }}
-                disabled={pending}
-              >
-                <RefreshCw size={14} /> Check sign-in
-              </Button>
-            </div>
-          </div>
+          <ProviderSignIn
+            memberId={modal.memberId}
+            member={members.find((m) => m.id === modal.memberId)}
+            result={modal.result}
+            close={closeModal}
+            cancel={dismissSignIn}
+          />
         </Modal>
       )}
 
@@ -2165,8 +2126,16 @@ function MemberCard({
       >
         <span>
           <Layers3 size={14} />
-          {member.skills.length} skills<span className="divider-dot">·</span>
-          {member.plugins.length} plugins
+          {member.capabilitiesLoading ? (
+            <>
+              <Loader2 size={13} className="spin" /> Loading skills & plugins…
+            </>
+          ) : (
+            <>
+              {member.skills.length} skills<span className="divider-dot">·</span>
+              {member.plugins.length} plugins
+            </>
+          )}
         </span>
         <ChevronDown size={14} className={expanded ? 'rotated' : ''} />
       </button>
@@ -2225,7 +2194,7 @@ function MemberCard({
           <>
             <Button
               primary
-              onClick={() => login(provider === 'codex' ? 'device' : 'browser')}
+              onClick={() => login(member.runnerId ? 'device' : 'browser')}
               disabled={busy || (cloud && provider === 'gemini')}
               title={
                 cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined

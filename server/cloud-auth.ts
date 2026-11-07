@@ -127,6 +127,18 @@ export async function createCloudIdentity(options: {
       }
     },
     currentUser,
+    findUser(account: string): CloudUser | null {
+      const row = database
+        .prepare('SELECT id, name, email FROM user WHERE id=? OR email=?')
+        .get(account === 'workspace-owner' ? String(owner.id) : account, account.toLowerCase());
+      return row
+        ? {
+            id: row.id === owner.id ? 'workspace-owner' : String(row.id),
+            name: String(row.name),
+            email: String(row.email),
+          }
+        : null;
+    },
     async authorized(headers: IncomingHttpHeaders) {
       return (await currentUser(headers))?.id === 'workspace-owner';
     },

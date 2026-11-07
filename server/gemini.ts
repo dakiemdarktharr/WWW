@@ -198,7 +198,7 @@ export class GeminiClient extends CodexClient {
     try {
       const response = await this.rpc('initialize', {
         protocolVersion: 1,
-        clientInfo: { name: 'kivuno', version: '0.6.1' },
+        clientInfo: { name: 'kivuno', version: '0.7.0' },
         clientCapabilities: {},
       });
       if (
@@ -314,6 +314,9 @@ export class GeminiClient extends CodexClient {
   }
   private async authenticateCached() {
     if (this.authenticated) return true;
+    // A status probe must not start a second OAuth operation while the browser
+    // flow already owns authenticate.
+    if (this.loggingIn) return false;
     if (!(await exists(path.join(this.settings.home, '.gemini', 'oauth_creds.json')))) return false;
     await this.rpc('authenticate', { methodId: 'oauth-personal' });
     this.authenticated = true;

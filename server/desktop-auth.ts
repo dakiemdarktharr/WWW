@@ -77,7 +77,7 @@ export class DesktopIdentity {
       userCode,
       verificationUri: `${this.origin}/?activate=${userCode}`,
       expiresAt: new Date(expires).toISOString(),
-      interval: 3,
+      interval: 1,
     };
   }
   request(code: string, owner?: DesktopOwner) {
@@ -106,7 +106,7 @@ export class DesktopIdentity {
     if (!safeEqual(challenge, grant.challenge))
       throw new DomainError('The desktop proof does not match this request.', 403);
     if (!grant.approved) {
-      if (Date.now() - grant.lastPoll < 2000)
+      if (Date.now() - grant.lastPoll < 750)
         throw new DomainError('Wait before polling again.', 429);
       this.store.put('desktopGrant', { ...grant, lastPoll: Date.now() });
       return null;

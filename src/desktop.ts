@@ -48,7 +48,10 @@ declare global {
       platform: string;
       version: string;
       getStatus(): Promise<DesktopStatus>;
+      onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;
+      cancelSignIn(): Promise<DesktopStatus>;
+      groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
       signOut(): Promise<void>;
       openExternal(url: string): Promise<void>;
       openPreview(url: string): Promise<void>;

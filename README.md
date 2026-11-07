@@ -3,7 +3,9 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.6.2** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno **0.7.0** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+
+Bản 0.7 thêm tiến trình đăng nhập, tải skills/plugins sau khi xác nhận, workspace riêng cho từng tài khoản Kivuno và group chat có lời mời. Xem [thay đổi và giới hạn 0.7](docs/RELEASE-0.7.md).
 
 Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.6.2 đơn giản hóa Team, tạo profile riêng cho mỗi tài khoản và thêm xóa thành viên an toàn; [ghi chú kiểm chứng 0.6.2](docs/RELEASE-0.6.2.md) phân biệt kết quả runtime thật với phần hội thoại cần bạn đăng nhập thử. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [nhận diện](docs/BRAND.md) mô tả cách cài, kết nối máy và giới hạn. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
 
