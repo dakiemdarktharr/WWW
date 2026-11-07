@@ -70,7 +70,7 @@ async function routePortal(context: BrowserContext, available = false) {
       // An unpublished release must render honestly, never as a working download.
       await route.fulfill({
         json: {
-          version: '0.6.1',
+          version: '0.6.2',
           available,
           platform: 'win32-x64',
           signed: false,

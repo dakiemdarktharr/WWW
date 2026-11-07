@@ -81,7 +81,9 @@ export class Mesh {
     return this.store.get<Project>('project', projectId);
   }
   private member(memberId: string) {
-    return this.store.get<Member>('member', memberId);
+    const member = this.store.get<Member>('member', memberId);
+    if (member.removedAt) throw new DomainError('This teammate was removed.', 410);
+    return member;
   }
   private messages(projectId: string): RoomMessage[] {
     // Record order provides a read-compatible view of databases written before sequences existed.

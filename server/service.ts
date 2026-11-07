@@ -3,7 +3,15 @@ import path from 'node:path';
 import os from 'node:os';
 import { cp, mkdir, readdir, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import type { Activity, Approval, Member, Project, Task, WorkspaceState } from '../shared/types.ts';
+import type {
+  Activity,
+  Approval,
+  Member,
+  Project,
+  Task,
+  WorkspaceState,
+  Handoff,
+} from '../shared/types.ts';
 import {
   CodexClient,
   probeCodex,
@@ -60,12 +68,13 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.6.1',
+    version: '0.6.2',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
   };
   loginOwner: string | null = null;
+  private loginId: string | null = null;
   closing = false;
   mergeBusy = new Set<string>();
   externalOperations = new Set<string>();
@@ -230,6 +239,8 @@ export class Workspace {
   }
   async client(id: string): Promise<CodexClient> {
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
+    if (this.store.get<Member>('member', id).removedAt)
+      throw new DomainError('This teammate was removed. Add a new account in Team.', 410);
     const existing = this.clients.get(id);
     if (existing) return existing;
     const pending = this.connecting.get(id);
@@ -261,7 +272,10 @@ export class Workspace {
       });
       client.on('exit', () => {
         this.clients.delete(id);
-        if (this.loginOwner === id) this.loginOwner = null;
+        if (this.loginOwner === id) {
+          this.loginOwner = null;
+          this.loginId = null;
+        }
         const run = this.running.get(id);
         if (run && !run.finished && !run.stopping)
           this.finish(run, false, 'Codex process exited before completing its turn.');
@@ -288,6 +302,7 @@ export class Workspace {
   }
   async refresh(id: string) {
     const profile = this.store.get<Member>('member', id);
+    if (profile.removedAt) throw new DomainError('This teammate was removed.', 410);
     if (isExternalMember(profile)) return profile;
     const client = await this.client(id);
     const account = await readAccount(client);
@@ -296,11 +311,14 @@ export class Workspace {
     if (account)
       try {
         rateLimits = await readRateLimits(client);
+        this.quota.ingest(id, rateLimits);
       } catch (e) {
         error = redact((e as Error).message);
       }
     const cwd = this.store.projects()[0]?.path || this.defaultCwd;
     const caps = await readCapabilities(client, cwd);
+    if (this.store.get<Member>('member', id).removedAt)
+      throw new DomainError('This teammate was removed.', 410);
     const updated = this.store.updateMember(id, {
       account,
       ...(account
@@ -332,6 +350,7 @@ export class Workspace {
   }
   async login(id: string, method: 'browser' | 'device') {
     const profile = this.store.get<Member>('member', id);
+    if (profile.removedAt) throw new DomainError('This teammate was removed.', 410);
     if (isExternalMember(profile))
       throw new DomainError('Connect this teammate using the external MESH bridge.');
     if (this.running.has(id) || this.sessions.hasLive(id))
@@ -342,9 +361,14 @@ export class Workspace {
       );
     this.loginOwner = id;
     try {
-      return await loginAccount(await this.client(id), method);
+      const result = await loginAccount(await this.client(id), method);
+      if (this.loginOwner === id) this.loginId = result.loginId || null;
+      return result;
     } catch (error) {
-      if (this.loginOwner === id) this.loginOwner = null;
+      if (this.loginOwner === id) {
+        this.loginOwner = null;
+        this.loginId = null;
+      }
       throw error;
     }
   }
@@ -353,13 +377,118 @@ export class Workspace {
       throw new DomainError('Stop this teammate’s task before signing out.');
     const client = await this.client(id);
     await client.request('account/logout');
-    this.loginOwner = null;
+    if (this.loginOwner === id) {
+      this.loginOwner = null;
+      this.loginId = null;
+    }
+    this.store.remove('quota', id);
+    this.store.remove('quotaSource', id);
     return this.store.updateMember(id, {
       status: 'offline',
       account: null,
       rateLimits: null,
       error: null,
     });
+  }
+  async cancelLogin(id: string, loginId: string) {
+    // Completion and cancellation may race. Never cancel or unlock another account.
+    if (this.loginOwner !== id || (this.loginId && this.loginId !== loginId)) return { ok: true };
+    const attempt = this.loginId;
+    await (await this.client(id)).request('account/login/cancel', { loginId });
+    if (this.loginOwner === id && this.loginId === attempt) {
+      this.loginOwner = null;
+      this.loginId = null;
+    }
+    return { ok: true };
+  }
+  async removeMember(id: string) {
+    const member = this.store.get<Member>('member', id);
+    if (member.removedAt) return { removed: true };
+    const sessions = this.store.sessions().filter((session) => session.memberId === id);
+    const sessionIds = new Set(sessions.map((session) => session.id));
+    if (this.loginOwner === id || this.connecting.has(id))
+      throw new DomainError('Finish or cancel this account’s sign-in before removing it.');
+    if (
+      this.running.has(id) ||
+      this.store.leases().some((lease) => lease.memberId === id) ||
+      sessions.some((session) =>
+        ['starting', 'running', 'interrupted', 'handoff'].includes(session.status),
+      ) ||
+      this.store
+        .workflows()
+        .some(
+          (workflow) =>
+            workflow.memberIds.includes(id) &&
+            !['completed', 'cancelled'].includes(workflow.status),
+        ) ||
+      this.store
+        .all<Handoff>('handoff')
+        .some(
+          (handoff) =>
+            (handoff.toMemberId === id || sessionIds.has(handoff.fromSessionId)) &&
+            !['accepted', 'cancelled'].includes(handoff.status),
+        ) ||
+      this.store
+        .all<{ id: string; status: string }>('conversationQueue')
+        .some(
+          (entry) => sessionIds.has(entry.id) && ['queued', 'starting'].includes(entry.status),
+        ) ||
+      this.store
+        .tasks()
+        .some((task) => task.assignedTo === id && this.externalOperations.has(task.id))
+    )
+      throw new DomainError(
+        'Stop or hand off this teammate’s work, resolve recovery and finish active workflows before removing it.',
+      );
+
+    // Fence new work before awaiting transport shutdown. Keep the tombstone so old
+    // sessions and messages still have an author, without retaining an active account.
+    const connection = isExternalMember(member)
+      ? undefined
+      : this.clients.get(id) ||
+        (member.connectedAt || member.account ? this.client(id) : undefined);
+    this.store.updateMember(id, { removedAt: new Date().toISOString() });
+    try {
+      for (const session of sessions)
+        if (this.sessions.clients.has(session.id)) await this.sessions.stop(session.id);
+      const client = await connection;
+      if (client) {
+        await client.request('account/logout');
+        await client.stop();
+        this.clients.delete(id);
+      }
+      this.store.transaction(() => {
+        for (const project of this.store.projects())
+          this.store.put('project', {
+            ...project,
+            memberIds: (project.memberIds || this.store.members().map((entry) => entry.id)).filter(
+              (entry) => entry !== id,
+            ),
+            ...(project.ownerMemberId === id ? { ownerMemberId: undefined } : {}),
+          });
+        for (const kind of ['quotaGrant', 'providerTurnGrant'])
+          for (const grant of this.store.all<{ id: string; memberId: string }>(kind))
+            if (grant.memberId === id)
+              this.store.put(kind, { ...grant, revokedAt: new Date().toISOString() });
+        this.store.updateMember(id, {
+          status: 'offline',
+          account: null,
+          rateLimits: null,
+          externalLastSeen: undefined,
+          error: null,
+        });
+        this.log(
+          `Removed ${member.name} from the team. Project history and files were preserved.`,
+          null,
+          id,
+          'member',
+        );
+      });
+      return { removed: true };
+    } catch (error) {
+      this.store.updateMember(id, { removedAt: undefined });
+      throw error;
+    }
   }
   async addProject(input: { name: string; path: string; goal: string; memberIds?: string[] }) {
     for (const id of input.memberIds || []) this.store.get<Member>('member', id);
@@ -628,16 +757,32 @@ export class Workspace {
     return { started, skipped };
   }
   async notification(memberId: string, method: string, params: any) {
+    if (this.store.get<Member>('member', memberId).removedAt) return;
     if (method === 'account/login/completed') {
-      if (this.loginOwner === memberId) this.loginOwner = null;
-      if (params.success) {
-        await this.refresh(memberId);
-        await this.autonomy.ready(memberId);
-      } else
-        this.store.updateMember(memberId, {
-          status: 'offline',
-          error: redact(params.error || 'Sign-in was cancelled.'),
-        });
+      if (this.loginOwner !== memberId) return;
+      const attempt = this.loginId;
+      if (
+        this.loginOwner === memberId &&
+        this.loginId &&
+        params.loginId &&
+        params.loginId !== this.loginId
+      )
+        return;
+      try {
+        if (params.success) {
+          await this.refresh(memberId);
+          await this.autonomy.ready(memberId);
+        } else
+          this.store.updateMember(memberId, {
+            status: 'offline',
+            error: redact(params.error || 'Sign-in was cancelled.'),
+          });
+      } finally {
+        if (this.loginOwner === memberId && this.loginId === attempt) {
+          this.loginOwner = null;
+          this.loginId = null;
+        }
+      }
       return;
     }
     if (method === 'account/rateLimits/updated') {

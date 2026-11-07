@@ -2,6 +2,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
   gap: 16px;
+  align-items: start;
 }
 .team-grid > .compact-empty {
   grid-column: 1/-1;
@@ -16,6 +17,67 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 10px;
+}
+.member-identity {
+  flex: 1;
+  min-width: 0;
+}
+.member-identity h2 {
+  font-size: 15px;
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.member-identity .role-label {
+  font-size: 10px;
+}
+.member-quota {
+  margin-top: 17px;
+  display: grid;
+  gap: 8px;
+  font-size: 11px;
+}
+.member-quota-title {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+}
+.member-quota-window {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.member-quota-window > span {
+  min-width: 36px;
+  color: var(--muted);
+}
+.member-quota-window meter {
+  flex: 1;
+  min-width: 35px;
+  height: 6px;
+  accent-color: var(--mint, #8ce8cf);
+}
+.member-quota-window strong {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.member-remove {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.member-remove:hover {
+  color: #efaaa2;
+}
+.member-settings {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+  margin-top: 14px;
+}
+.member-settings > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
 }
 .member-card > h2 {
   font-size: 16px;

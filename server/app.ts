@@ -434,18 +434,7 @@ export async function buildApp(
       );
     if (input.runnerId) workspace.runners.assertReady(input.runnerId);
     if (workspace.loginOwner) throw new DomainError('Finish the pending Codex sign-in first.');
-    let member =
-      workspace.store
-        .members()
-        .find(
-          (member) =>
-            member.managed &&
-            (member.provider || 'codex') === input.provider &&
-            member.runnerId === input.runnerId &&
-            !member.connectedAt &&
-            !member.account &&
-            !workspace.sessions.hasLive(member.id),
-        ) || workspace.autonomy.addAccount(input.provider);
+    let member = workspace.autonomy.addAccount(input.provider);
     if (isExternalProvider(input.provider))
       return {
         member,
@@ -504,6 +493,7 @@ export async function buildApp(
       .parse(request.body);
     return workspace.store.updateMember(memberId, patch);
   });
+  app.delete('/api/members/:id', async (request) => workspace.removeMember(params(request)));
   app.post('/api/members/:id/quota/refresh', async (request) =>
     workspace.quota.refresh(params(request)),
   );
@@ -820,12 +810,8 @@ export async function buildApp(
   });
   app.post('/api/members/:id/login/cancel', async (request) => {
     const memberId = params(request);
-    if (workspace.loginOwner !== memberId)
-      throw new DomainError('This profile has no pending sign-in.');
     const input = z.object({ loginId: z.string().min(1) }).parse(request.body);
-    await (await workspace.client(memberId)).request('account/login/cancel', input);
-    workspace.loginOwner = null;
-    return { ok: true };
+    return workspace.cancelLogin(memberId, input.loginId);
   });
   app.post('/api/members/:id/refresh', async (request) => workspace.refresh(params(request)));
   app.post('/api/members/:id/logout', async (request) => workspace.logout(params(request)));

@@ -71,6 +71,8 @@ export interface Member {
   maxSessions?: number;
   managed?: boolean;
   connectedAt?: string;
+  /** Removed from the team; retained only for historical task/message attribution. */
+  removedAt?: string;
   runnerId?: string;
   runnerName?: string;
 }

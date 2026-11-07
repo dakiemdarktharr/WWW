@@ -124,7 +124,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.6.1',
+      version: '0.6.2',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -354,6 +354,7 @@ try {
       .check();
   await page.getByRole('button', { name: 'Save members', exact: true }).click();
   await nav('Team').click();
+  await geminiCard.locator('.member-settings > summary').click();
   await geminiCard
     .getByRole('checkbox', { name: 'I understand remaining quota cannot be checked' })
     .check();
@@ -381,6 +382,67 @@ try {
   await providerSession.getByRole('checkbox', { name: 'Automatic model', exact: true }).uncheck();
   await expect(providerSession.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await nav('Team').click();
+  for (let i = 0; i < 3; i++) {
+    await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Connect Codex', exact: true }).click();
+    await page.getByText('TEST-ONLY', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  }
+  const codexTeam = store.members().filter((member) => member.provider === 'codex');
+  assert.equal(codexTeam.length, 4);
+  for (const [index, member] of codexTeam.entries()) {
+    store.updateMember(member.id, {
+      account: { email: `profile-${index}@example.test`, planType: 'plus' },
+      skills: ['research', 'testing'],
+      plugins: ['fixture-plugin'],
+    });
+    workspace.quota.ingest(member.id, {
+      primary: { usedPercent: 10 + index * 10, windowDurationMins: 300 },
+    });
+  }
+  await page.reload();
+  for (const [index, member] of codexTeam.entries()) {
+    const card = page
+      .locator('.account-card-group')
+      .filter({ has: page.getByRole('heading', { name: member.name, exact: true }) });
+    await expect(card.getByText(`profile-${index}@example.test`, { exact: true })).toBeVisible();
+    await expect(card.locator('.capability-toggle')).toHaveText('2 skills·1 plugins');
+    await expect(card.locator('.member-quota strong')).toHaveText(`${90 - index * 10}% left`);
+    await expect(card.locator('.member-settings')).not.toHaveAttribute('open');
+    await expect(
+      card.getByRole('button', { name: `Remove ${member.name} from team` }),
+    ).toBeVisible();
+  }
+  await page.screenshot({
+    path: path.join(screenshots, 'team-compact-dark.png'),
+    animations: 'disabled',
+  });
+  await page.getByRole('button', { name: 'Use light mode', exact: true }).click();
+  await page.screenshot({
+    path: path.join(screenshots, 'team-compact-light.png'),
+    animations: 'disabled',
+  });
+  await page.getByRole('button', { name: 'Use dark mode', exact: true }).click();
+  // This fixture has no actual provider login; removal must not need a model call.
+  const disposable = codexTeam[3];
+  store.updateMember(disposable.id, { account: null });
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: `Remove ${disposable.name} from team` }).click();
+  assert.ok(store.members().some((member) => member.id === disposable.id));
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: `Remove ${disposable.name} from team` }).click();
+  await expect(page.getByRole('heading', { name: disposable.name, exact: true })).toHaveCount(0);
+  assert.equal(store.members().filter((member) => member.provider === 'codex').length, 3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    .toBe(true);
+  await page.screenshot({
+    path: path.join(screenshots, 'team-compact-mobile.png'),
+    animations: 'disabled',
+  });
+  await page.setViewportSize({ width: 1400, height: 1000 });
   await advanced('AEGIS');
   await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Refresh AEGIS', exact: true }).click();

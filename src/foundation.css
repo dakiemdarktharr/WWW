@@ -660,15 +660,8 @@
 .account-card-group {
   min-width: 0;
 }
-.account-card-group > .member-card {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  border-bottom: 0;
-}
 .account-control-panel {
-  padding: 13px 17px;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+  padding: 8px 0;
 }
 .account-control-panel .quota-card {
   padding-top: 8px;

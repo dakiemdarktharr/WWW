@@ -116,7 +116,7 @@ export class Store extends EventEmitter {
     }
   }
   members() {
-    return this.all<Member>('member');
+    return this.all<Member>('member').filter((member) => !member.removedAt);
   }
   tasks() {
     return this.all<Task>('task');
@@ -277,6 +277,7 @@ export class Store extends EventEmitter {
     return this.transaction(() => {
       const task = this.get<Task>('task', taskId),
         member = this.get<Member>('member', memberId);
+      if (member.removedAt) throw new DomainError('This teammate was removed.', 410);
       const session = sessionId ? this.get<CodexSession>('session', sessionId) : null;
       const project = this.get<Project>('project', task.projectId);
       if (project.memberIds && !project.memberIds.includes(memberId))

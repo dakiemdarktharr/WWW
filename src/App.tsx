@@ -41,6 +41,7 @@ import {
   Palette,
   FlaskConical,
   PanelLeftClose,
+  Trash2,
 } from 'lucide-react';
 import type {
   Approval,
@@ -53,6 +54,7 @@ import type {
   WorkspaceState,
   Workflow,
   ProviderId,
+  AccountQuota,
 } from '../shared/types';
 import { api } from './api';
 import Workroom from './Workroom';
@@ -544,6 +546,16 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       );
     }
   }
+  async function dismissSignIn() {
+    if (modal?.type !== 'login') return;
+    if (modal.result.loginId) {
+      const result = await perform('cancel-login', `/members/${modal.memberId}/login/cancel`, {
+        loginId: modal.result.loginId,
+      });
+      if (!result) return;
+    }
+    closeModal();
+  }
   async function openSetup(member: Member) {
     try {
       const result = await api<{ home: string; instructions: string }>(
@@ -867,9 +879,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <div className="team-grid">
                 {members.map((member) => (
                   <div className="account-card-group" key={member.id}>
-                    <span className="muted">{member.runnerName}</span>
                     <MemberCard
                       member={member}
+                      quota={state?.quotas.find((entry) => entry.memberId === member.id)}
                       task={tasks.find(
                         (t) =>
                           t.assignedTo === member.id && ['running', 'review'].includes(t.status),
@@ -904,28 +916,47 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       openTask={openDetail}
                       setup={() => void openSetup(member)}
                       external={() => setModal({ type: 'external', memberId: member.id })}
-                    />
-                    <div className="account-control-panel panel" data-usage="account-controls">
-                      {providerOf(member) === 'gemini' ? (
-                        <ProviderTurnAllowance
+                      remove={() => {
+                        if (
+                          window.confirm(
+                            `Remove ${member.name} from your team and project groups? This signs the account out. Project files and history are kept.`,
+                          )
+                        )
+                          void perform(
+                            `remove-${member.id}`,
+                            `/members/${member.id}`,
+                            {},
+                            'Teammate removed.',
+                            'DELETE',
+                          );
+                      }}
+                    >
+                      <div className="account-control-panel" data-usage="account-controls">
+                        {providerOf(member) === 'gemini' ? (
+                          <ProviderTurnAllowance
+                            member={member}
+                            state={state!}
+                            busy={pending}
+                            request={foundationRequest}
+                          />
+                        ) : providerOf(member) === 'codex' ? (
+                          <QuotaCard
+                            member={member}
+                            project={project}
+                            state={state!}
+                            busy={pending}
+                            request={foundationRequest}
+                          />
+                        ) : (
+                          <span className="provider-tag">Quota unknown</span>
+                        )}
+                        <AccountSettings
                           member={member}
-                          state={state!}
                           busy={pending}
                           request={foundationRequest}
                         />
-                      ) : providerOf(member) === 'codex' ? (
-                        <QuotaCard
-                          member={member}
-                          project={project}
-                          state={state!}
-                          busy={pending}
-                          request={foundationRequest}
-                        />
-                      ) : (
-                        <span className="provider-tag">Quota unknown</span>
-                      )}
-                      <AccountSettings member={member} busy={pending} request={foundationRequest} />
-                    </div>
+                      </div>
+                    </MemberCard>
                   </div>
                 ))}
                 {!members.length && (
@@ -1622,7 +1653,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         <Modal
           title={modal.result.type === 'geminiGoogle' ? 'Google sign-in' : 'OpenAI sign-in'}
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
-          close={closeModal}
+          close={() => void dismissSignIn()}
         >
           <div className="login-content">
             <span className="login-symbol">
@@ -1673,15 +1704,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               </p>
             )}
             <div className="modal-footer">
-              <Button
-                onClick={async () => {
-                  if (modal.result.loginId)
-                    await perform('cancel-login', `/members/${modal.memberId}/login/cancel`, {
-                      loginId: modal.result.loginId,
-                    });
-                  closeModal();
-                }}
-              >
+              <Button disabled={pending} onClick={() => void dismissSignIn()}>
                 Cancel sign-in
               </Button>
               <Button
@@ -2042,6 +2065,7 @@ function PriorityDot({ priority }: { priority: string }) {
 
 function MemberCard({
   member,
+  quota,
   task,
   busy,
   login,
@@ -2052,8 +2076,11 @@ function MemberCard({
   setup,
   external,
   cloud,
+  remove,
+  children,
 }: {
   member: Member;
+  quota?: AccountQuota;
   task?: Task;
   busy: boolean;
   login: (method: 'browser' | 'device') => void;
@@ -2064,6 +2091,8 @@ function MemberCard({
   setup: () => void;
   external: () => void;
   cloud: boolean;
+  remove: () => void;
+  children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const provider = providerOf(member);
@@ -2071,22 +2100,50 @@ function MemberCard({
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
         <Avatar member={member} size="large" />
+        <div className="member-identity">
+          <h2>{member.name}</h2>
+          <span className="role-label">
+            {providerLabels[provider]} · {member.runnerName}
+          </span>
+        </div>
         <span className={`member-presence ${member.presence || 'offline'}`}>
           <i />
           {member.presence || 'offline'}
         </span>
       </div>
-      <h2>{member.name}</h2>
-      <span className="role-label">
-        {member.role} ·{' '}
-        <span className="provider-tag">
-          {providerLabels[provider]}
-          {isExternalProvider(provider) ? ' · external' : ''}
-        </span>
-      </span>
       <div className="member-account">
-        <span>{member.account?.email || 'Not connected'}</span>
+        <span>
+          {member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
+        </span>
         {member.account?.planType && <span className="plan-tag">{member.account.planType}</span>}
+      </div>
+      <div className="member-quota" aria-label={`${member.name} usage`}>
+        <div className="member-quota-title">
+          <span>Usage</span>
+          {quota && ['stale', 'unknown'].includes(quota.status) && quota.windows.length > 0 && (
+            <span className={`quota-state ${quota.status}`}>
+              {quota.status === 'stale' ? 'Stale' : 'Unverified'}
+            </span>
+          )}
+        </div>
+        {member.account && quota?.windows.length ? (
+          quota.windows.map((window) => (
+            <div className="member-quota-window" key={window.id}>
+              <span>{window.label}</span>
+              <meter
+                min={0}
+                max={100}
+                low={50}
+                optimum={100}
+                value={window.remainingPercent}
+                aria-label={`${member.name} ${window.label} quota remaining`}
+              />
+              <strong>{Math.round(window.remainingPercent)}% left</strong>
+            </div>
+          ))
+        ) : (
+          <span className="quota-unknown">Unavailable</span>
+        )}
       </div>
       {member.error && (
         <p className="member-error">
@@ -2163,28 +2220,12 @@ function MemberCard({
             <Button onClick={refresh} disabled={busy}>
               <RefreshCw size={14} /> Refresh
             </Button>
-            <button
-              className="icon-button"
-              disabled={busy || member.status === 'working'}
-              aria-label={`Sign ${member.name} out`}
-              title="Sign out"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Sign ${member.name} out of its ${providerLabels[provider]} account?`,
-                  )
-                )
-                  logout();
-              }}
-            >
-              <LogOut size={16} />
-            </button>
           </>
         ) : (
           <>
             <Button
               primary
-              onClick={() => login('browser')}
+              onClick={() => login(provider === 'codex' ? 'device' : 'browser')}
               disabled={busy || (cloud && provider === 'gemini')}
               title={
                 cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
@@ -2193,13 +2234,37 @@ function MemberCard({
               <ArrowUpRight size={15} /> Sign in with {provider === 'gemini' ? 'Google' : 'OpenAI'}
             </Button>
             {provider === 'codex' && (
-              <button className="text-button" disabled={busy} onClick={() => login('device')}>
-                Use a code
+              <button className="text-button" disabled={busy} onClick={() => login('browser')}>
+                Browser sign-in
               </button>
             )}
           </>
         )}
+        <button
+          className="icon-button member-remove"
+          aria-label={`Remove ${member.name} from team`}
+          title="Remove from team"
+          disabled={busy}
+          onClick={remove}
+        >
+          <Trash2 size={15} />
+        </button>
       </div>
+      <details className="member-settings">
+        <summary>Settings</summary>
+        {children}
+        {member.account && !isExternalProvider(provider) && (
+          <button
+            className="text-button"
+            disabled={busy || member.status === 'working'}
+            onClick={() => {
+              if (window.confirm(`Sign ${member.name} out?`)) logout();
+            }}
+          >
+            <LogOut size={14} /> Sign out
+          </button>
+        )}
+      </details>
     </section>
   );
 }

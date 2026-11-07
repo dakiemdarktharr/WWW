@@ -3,9 +3,9 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.6.1** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno **0.6.2** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Neralu là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
-Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.6.1 sửa bộ cài khác ổ đĩa, thiết lập sandbox Windows cho Codex và phục hồi coordinator; [ghi chú kiểm chứng 0.6.1](docs/RELEASE-0.6.1.md) phân biệt kết quả runtime thật với phần hội thoại cần bạn đăng nhập thử. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [nhận diện](docs/BRAND.md) mô tả cách cài, kết nối máy và giới hạn. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
+Từ bản 0.4, RELAY mang tên Kivuno và MESH mang tên Neralu. Bản 0.6.2 đơn giản hóa Team, tạo profile riêng cho mỗi tài khoản và thêm xóa thành viên an toàn; [ghi chú kiểm chứng 0.6.2](docs/RELEASE-0.6.2.md) phân biệt kết quả runtime thật với phần hội thoại cần bạn đăng nhập thử. [Hướng dẫn desktop](docs/DESKTOP.md), [AEGIS](docs/AEGIS.md) và [nhận diện](docs/BRAND.md) mô tả cách cài, kết nối máy và giới hạn. Tên giao thức, đường dẫn dữ liệu và appId cũ được giữ để không làm mất tài khoản hay workspace khi cập nhật.
 
 Mở [NoSleepClub Kivuno](https://nosleepclub-relay.vercel.app) để tải bản Windows hoặc Linux x64. App mở trang đăng nhập trên trình duyệt; kiểm tra và xác nhận mã hiển thị rồi quay lại app. Không gửi token đăng nhập qua URL. Nút **Hướng dẫn** trong desktop có hướng dẫn tiếng Việt theo từng khu vực. Xem [bản 0.4](docs/RELEASE-0.4.md) và [nghiên cứu coin gas riêng](docs/CUSTOM-L1.md); coin hiện chưa được triển khai.
 

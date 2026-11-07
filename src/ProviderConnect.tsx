@@ -79,7 +79,7 @@ export default function ProviderConnect({
       <HelpDetails title="Connection help">
         <p>
           {provider === 'codex'
-            ? 'Use your ChatGPT account with real Codex sessions.'
+            ? 'Add each ChatGPT account separately on this computer. Each has its own sign-in, usage, skills and plugins. Finish one sign-in before adding the next; choose the intended account on OpenAI.'
             : provider === 'gemini'
               ? 'Google sign-in on this computer. File tools and limited prompts; no shell or reasoning controls.'
               : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
