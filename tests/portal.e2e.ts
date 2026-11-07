@@ -139,7 +139,14 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await routePortal(context);
   const page = await context.newPage();
-  await page.goto(origin);
+  await page.goto(origin + '/#updates');
+  await expect
+    .poll(() => page.locator('#updates').evaluate((section) => section.getBoundingClientRect().top))
+    .toBeGreaterThanOrEqual(0);
+  await expect
+    .poll(() => page.locator('#updates').evaluate((section) => section.getBoundingClientRect().top))
+    .toBeLessThan(200);
+  await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
   const heading = page.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(heading).toBeVisible();
   await expect(page.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();

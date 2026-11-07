@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { usePortalLocale } from './PortalLocale';
 
 // Newest first. Add verified bug fixes here when publishing a release.
@@ -8,6 +9,10 @@ const patches = [
     version: '0.6.2',
     date: '2026-11-07',
     fixes: [
+      {
+        vi: 'Link Update patches mở đúng vị trí ngay lần truy cập đầu tiên.',
+        en: 'Update patches links open at the right section on the first visit.',
+      },
       {
         vi: 'Thêm tài khoản Codex luôn tạo profile riêng, không dùng lại profile chưa đăng nhập xong.',
         en: 'Adding a Codex account creates a separate profile instead of reusing an unfinished sign-in.',
@@ -60,12 +65,22 @@ const patches = [
 
 export default function UpdatePatches() {
   const { locale } = usePortalLocale();
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (location.hash !== '#updates') return;
+    // The portal is lazy-loaded, so the browser may resolve the fragment before
+    // this section exists. Resolve it once after the actual content mounts.
+    const frame = requestAnimationFrame(() =>
+      section.current?.scrollIntoView({ behavior: 'instant' }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, []);
   const dateFormat = new Intl.DateTimeFormat(locale === 'vi' ? 'vi-VN' : 'en-US', {
     dateStyle: 'medium',
     timeZone: 'Asia/Ho_Chi_Minh',
   });
   return (
-    <section id="updates" className="kp-updates" aria-labelledby="updates-heading">
+    <section id="updates" ref={section} className="kp-updates" aria-labelledby="updates-heading">
       <h2 id="updates-heading">Update patches</h2>
       <div className="kp-patch-list">
         {patches.map((patch, index) => (
