@@ -1104,15 +1104,113 @@
 .kp-footer-bottom > span:nth-child(2) {
   opacity: 0.65;
 }
-.kp-footer-bottom button {
+.kp-footer-bottom button,
+.kp-footer-bottom a {
   background: transparent;
   border: 0;
   padding: 8px 0;
   color: inherit;
   font-size: inherit;
+  text-decoration: none;
 }
-.kp-footer-bottom button:first-of-type {
+.kp-footer-bottom a {
   margin-left: auto;
+}
+.kp-updates {
+  padding: 90px 0 120px;
+  scroll-margin-top: 100px;
+}
+.kp-updates h2 {
+  font-size: clamp(30px, 3.6vw, 46px);
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  margin: 0 0 30px;
+}
+.kp-patch-list {
+  display: grid;
+  gap: 14px;
+}
+.kp-patch {
+  border-radius: 24px;
+  overflow: hidden;
+}
+.kp-patch summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  list-style: none;
+  cursor: pointer;
+}
+.kp-patch summary::-webkit-details-marker {
+  display: none;
+}
+.kp-patch summary:focus-visible {
+  outline: 2px solid #8ce8cf;
+  outline-offset: -4px;
+  border-radius: 24px;
+}
+.kp-patch summary strong {
+  font-size: 19px;
+  font-weight: 500;
+}
+.kp-patch-latest {
+  color: #a7efd9;
+  background: #8ce8cf12;
+  border: 1px solid #8ce8cf25;
+  border-radius: 20px;
+  padding: 4px 9px;
+  font-size: 11px;
+}
+.kp-patch time {
+  margin-left: auto;
+  color: #a9c0c8;
+  font-size: 12px;
+}
+.kp-patch summary > svg {
+  color: #a7efd9;
+  flex-shrink: 0;
+}
+.kp-patch[open] summary > svg {
+  transform: rotate(180deg);
+}
+.kp-patch ul {
+  margin: 0 24px 24px;
+  padding: 0 0 0 19px;
+  display: grid;
+  gap: 13px;
+  max-width: 820px;
+}
+.kp-patch li {
+  color: #c9dade;
+  font-size: 14px;
+  line-height: 1.65;
+  padding-left: 5px;
+}
+.kp-patch li::marker {
+  color: #8ce8cf;
+}
+@media (max-width: 600px) {
+  .kp-updates {
+    padding: 60px 0 80px;
+  }
+  .kp-patch summary {
+    padding: 20px 16px;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .kp-patch time {
+    font-size: 11px;
+  }
+  .kp-patch ul {
+    margin: 0 16px 20px;
+  }
+  .kp-patch li {
+    font-size: 13px;
+  }
+  .kp-footer-bottom {
+    flex-wrap: wrap;
+  }
 }
 .kp-modal-backdrop {
   position: fixed;

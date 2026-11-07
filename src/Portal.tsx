@@ -32,6 +32,7 @@ import {
   X,
 } from 'lucide-react';
 import PortalAuth from './PortalAuth';
+import UpdatePatches from './UpdatePatches';
 import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
 
@@ -862,6 +863,7 @@ function PortalContent() {
                 </article>
               </section>
               <WorkspaceDemo />
+              <UpdatePatches />
             </div>
           </main>
           <footer className="kp-footer" ref={footer}>
@@ -900,6 +902,7 @@ function PortalContent() {
               <div className="kp-footer-bottom">
                 <span>Kivuno · NoSleepClub</span>
                 <span>{release?.version || '0.6.2'}</span>
+                <a href="#updates">Update patches</a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
                 <button onClick={home}>{t('Về đầu trang')}</button>
               </div>
