@@ -42,7 +42,7 @@ class ProfileClient extends CodexClient {
         rateLimits: { primary: { usedPercent: this.used, windowDurationMins: 300 } },
       },
       'skills/list': { data: [{ skills: [{ name: 'profile-skill', enabled: true }] }] },
-      'plugin/list': { data: [] },
+      'plugin/installed': { marketplaces: [] },
     };
     if (method === 'account/logout') this.signedIn = false;
     return (responses[method] || {}) as T;
@@ -170,6 +170,34 @@ test('logging out one account and cancelling an old dialog never unlock another 
   assert.equal(f.workspace.loginOwner, null);
 });
 
+test('restart restores identity and usage for both accounts without reading the marketplace catalog', async (t) => {
+  const f = await fixture(t);
+  const members = [f.workspace.autonomy.addAccount(), f.workspace.autonomy.addAccount()];
+  for (const member of members) {
+    const client = (await f.workspace.client(member.id)) as ProfileClient;
+    client.signedIn = true;
+    await f.workspace.refresh(member.id);
+  }
+  f.store.orphanAll();
+  assert.ok(f.store.members().every((member) => !member.account));
+  await f.workspace.restoreAccounts();
+  for (const member of members) {
+    const client = f.workspace.clients.get(member.id) as ProfileClient;
+    const restored = f.store.get<Member>('member', member.id);
+    assert.equal(restored.status, 'ready');
+    assert.equal(restored.account?.email, client.email);
+    assert.deepEqual(restored.skills, ['profile-skill']);
+    assert.equal(
+      f.workspace.quota.current(member.id).windows[0].remainingPercent,
+      100 - client.used,
+    );
+    assert.ok(client.calls.includes('plugin/installed'));
+    assert.ok(!client.calls.includes('plugin/list'));
+    assert.ok(!client.calls.includes('account/login/start'));
+    assert.ok(!client.calls.includes('turn/start'));
+  }
+});
+
 test('provider confirmation publishes connected and unlocks the next sign-in before slow plugins finish', async (t) => {
   const f = await fixture(t);
   const member = f.workspace.autonomy.addAccount();
@@ -182,7 +210,7 @@ test('provider confirmation publishes connected and unlocks the next sign-in bef
     release = resolve;
   });
   client.request = async (method: string) => {
-    if (method === 'plugin/list') await plugins;
+    if (method === 'plugin/installed') await plugins;
     return original(method);
   };
   t.after(() => release());

@@ -30,6 +30,12 @@ try {
   const work = path.join(directory, 'work');
   await mkdir(work);
   await writeFile(path.join(work, 'input.txt'), 'Kivuno real Codex harness');
+  const sharedSkills = path.join(directory, 'machine-skills');
+  await mkdir(path.join(sharedSkills, 'shared-local-skill'), { recursive: true });
+  await writeFile(
+    path.join(sharedSkills, 'shared-local-skill', 'SKILL.md'),
+    skill('shared-local-skill'),
+  );
   for (let i = 0; i < 4; i++) {
     const home = path.join(directory, `account-${i}`);
     await mkdir(path.join(home, 'skills', `native-skill-${i}`), { recursive: true });
@@ -37,7 +43,7 @@ try {
       path.join(home, 'skills', `native-skill-${i}`, 'SKILL.md'),
       skill(`native-skill-${i}`),
     );
-    clients.push(new CodexClient({ home, cwd: work, command }));
+    clients.push(new CodexClient({ home, cwd: work, command, skillRoots: [sharedSkills] }));
   }
   const marketplace = path.join(directory, 'marketplace');
   const plugin = path.join(marketplace, 'plugins', 'harness-plugin');
@@ -92,6 +98,7 @@ try {
   const caps = await Promise.all(clients.map((client) => readCapabilities(client, work)));
   for (let i = 0; i < 4; i++) {
     assert.ok(caps[i].skills.includes(`native-skill-${i}`));
+    assert.ok(caps[i].skills.includes('shared-local-skill'));
     for (let other = 0; other < 4; other++)
       if (other !== i) assert.ok(!caps[i].skills.includes(`native-skill-${other}`));
   }

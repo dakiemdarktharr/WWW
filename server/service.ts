@@ -68,7 +68,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.7.0',
+    version: '0.7.1',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,

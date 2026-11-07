@@ -3,6 +3,7 @@ import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child
 import { access, mkdir, readdir, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import type { CodexModel, LoginResult, Member, ProviderId } from '../shared/types.ts';
 
@@ -16,6 +17,14 @@ type Pending = {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 };
+
+/** Same-machine skill libraries only; authentication and plugin authorization stay per profile. */
+export function localSkillRoots(): string[] {
+  return [
+    path.join(os.homedir(), '.codex', 'skills'),
+    path.join(os.homedir(), '.agents', 'skills'),
+  ];
+}
 
 /** Hide likely credentials even when a provider puts them in an error message. */
 export function redactCodexError(value: unknown): string {
@@ -191,7 +200,14 @@ export class CodexClient extends EventEmitter {
   private internalRestart = false;
   private launchEpoch = 0;
 
-  constructor(private readonly options: { home: string; cwd: string; command?: string }) {
+  constructor(
+    private readonly options: {
+      home: string;
+      cwd: string;
+      command?: string;
+      skillRoots?: string[];
+    },
+  ) {
     super();
     // EventEmitter's special error event must not crash the host before its owner attaches a listener.
     this.on('error', () => {});
@@ -309,6 +325,18 @@ export class CodexClient extends EventEmitter {
           );
       }
       this.assertStarting(epoch);
+      if (this.options.skillRoots?.length) {
+        const extraRoots: string[] = [];
+        for (const root of this.options.skillRoots)
+          if (
+            await stat(root)
+              .then((info) => info.isDirectory())
+              .catch(() => false)
+          )
+            extraRoots.push(path.resolve(root));
+        await this.request('skills/extraRoots/set', { extraRoots });
+        this.assertStarting(epoch);
+      }
       this.initialized = true;
     } catch (error) {
       await this.stop();
@@ -597,9 +625,15 @@ export async function readCapabilities(
   cwd: string,
 ): Promise<{ skills: string[]; plugins: string[]; errors: string[] }> {
   await client.start();
-  const [skillResult, pluginResult] = await Promise.allSettled([
+  // Installed plugins can materialize their skill files. Scan after that completes
+  // so a newly restored account has its plugin skills on the first refresh.
+  const [pluginResult] = await Promise.allSettled([
+    // Team needs installed capabilities, not the full remote marketplace catalog.
+    // The catalog can exceed the bounded stdio frame and disconnect a healthy account.
+    client.request('plugin/installed', { cwds: [cwd] }),
+  ]);
+  const [skillResult] = await Promise.allSettled([
     client.request('skills/list', { cwds: [cwd], forceReload: true }),
-    client.request('plugin/list', { cwds: [cwd] }),
   ]);
   const skills = new Set<string>(),
     plugins = new Set<string>(),

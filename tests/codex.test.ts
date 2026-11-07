@@ -34,7 +34,8 @@ const fixture = [
   "case 'account/read': result={account:{type:'chatgpt',email:'fixture@example.test',planType:'plus',accessToken:'must-not-leak'}}; break;",
   "case 'account/rateLimits/read': result={rateLimits:{primary:{usedPercent:23}},rateLimitsByLimitId:null,ordinaryUsageAllowed:true,accountId:'private-id',rateLimitUpsell:{extra:'not-needed'}}; break;",
   "case 'skills/list': result={data:[{skills:[{name:'enabled-skill',enabled:true},{name:'disabled-skill',enabled:false}],errors:[]}]}; break;",
-  "case 'plugin/list': result={marketplaces:[{plugins:[{name:'enabled-plugin',enabled:true,installed:true,disabledReason:null},{name:'not-installed',enabled:true,installed:false},{name:'blocked-plugin',enabled:true,installed:true,disabledReason:'policy'}]}],marketplaceLoadErrors:[]}; break;",
+  "case 'plugin/list': process.stdout.write('x'.repeat(9*1024*1024)); return;",
+  "case 'plugin/installed': result={marketplaces:[{plugins:[{name:'enabled-plugin',enabled:true,installed:true,disabledReason:null},{name:'not-installed',enabled:true,installed:false},{name:'blocked-plugin',enabled:true,installed:true,disabledReason:'policy'}]}],marketplaceLoadErrors:[]}; break;",
   "case 'thread/start': result={thread:{id:'thread-fixture'},sandbox:{type:'workspaceWrite'},approvalPolicy:'on-request',approvalsReviewer:'user'}; send({method:'fixture/threadParams',params:p}); break;",
   "case 'turn/start': result={turn:{id:'turn-fixture'}}; send({method:'turn/completed',params:{threadId:p.threadId,turn:{id:'turn-fixture',status:'completed',error:null,items:[]}}}); break;",
   "case 'request-client': send({id:'server-1',method:'item/tool/call',params:{threadId:'thread-fixture',turnId:'turn-fixture',tool:'relay_read_room',arguments:{}}}); break;",
@@ -249,11 +250,46 @@ test('account/capability views include only active capabilities and exclude priv
   assert.deepEqual(capabilities.skills, ['enabled-skill']);
   assert.deepEqual(capabilities.plugins, ['enabled-plugin']);
   assert.match(capabilities.errors[0], /blocked-plugin.*policy/);
+  assert.deepEqual(
+    await readAccount(client),
+    account,
+    'large marketplace must not disconnect an account',
+  );
   assert.deepEqual(await readRateLimits(client), {
     rateLimits: { primary: { usedPercent: 23 } },
     rateLimitsByLimitId: null,
     ordinaryUsageAllowed: true,
   });
+});
+
+test('installed plugins materialize before the first skill scan; marketplace failure does not block skills', async (t) => {
+  const source =
+    'let installed = false;\n' +
+    fixture
+      .replace(
+        "case 'plugin/installed': result=",
+        "case 'plugin/installed': installed=true; result=",
+      )
+      .replace(
+        "case 'skills/list': result=",
+        "case 'skills/list': if(!installed) throw Error('scanned too early'); result=",
+      );
+  const client = await clientFor(t, source);
+  const caps = await readCapabilities(client, process.cwd());
+  assert.ok(caps.skills.includes('enabled-skill'));
+  assert.ok(caps.plugins.includes('enabled-plugin'));
+  const failed = await clientFor(
+    t,
+    fixture.replace(
+      "case 'plugin/installed': result=",
+      "case 'plugin/installed': send({id:m.id,error:{message:'inventory unavailable'}}); return; result=",
+    ),
+  );
+  const partial = await readCapabilities(failed, process.cwd());
+  assert.deepEqual(partial.plugins, []);
+  assert.ok(partial.skills.includes('enabled-skill'));
+  assert.match(partial.errors[0], /inventory unavailable/);
+  assert.ok(await readAccount(failed));
 });
 
 test('startTask requests human approvals, workspace sandbox and room tools; early completion stays observable', async (t) => {

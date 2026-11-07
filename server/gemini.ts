@@ -198,7 +198,7 @@ export class GeminiClient extends CodexClient {
     try {
       const response = await this.rpc('initialize', {
         protocolVersion: 1,
-        clientInfo: { name: 'kivuno', version: '0.7.0' },
+        clientInfo: { name: 'kivuno', version: '0.7.1' },
         clientCapabilities: {},
       });
       if (
@@ -472,7 +472,7 @@ export class GeminiClient extends CodexClient {
     } else if (method === 'account/rateLimits/read')
       result = { ordinaryUsageAllowed: null, rateLimits: null };
     else if (method === 'skills/list') result = { data: [{ skills: [], errors: [] }] };
-    else if (method === 'plugin/list') result = { marketplaces: [] };
+    else if (method === 'plugin/installed') result = { marketplaces: [] };
     else if (method === 'model/list') {
       if (!this.models.length) await this.newAcpSession(this.settings.home);
       result = {

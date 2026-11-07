@@ -29,7 +29,7 @@ class LoginClient extends CodexClient {
     this.release();
   }
   override async request<T = any>(method: string): Promise<T> {
-    if (method === 'plugin/list') {
+    if (method === 'plugin/installed') {
       await this.catalog;
       return { marketplaces: [] } as T;
     }
@@ -101,7 +101,7 @@ const fixture = async (index: number) => {
   await context.addInitScript(`
     sessionStorage.setItem('kivuno-guide-v3', 'seen');
     window.relayDesktop = {
-      platform: 'win32', version: '0.7.0', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: ${JSON.stringify(user)}, cloudOrigin: location.origin }),
+      platform: 'win32', version: '0.7.1', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: ${JSON.stringify(user)}, cloudOrigin: location.origin }),
       onStatus: () => () => {}, getWindowState: async () => ({ maximized: false, fullscreen: false }), onWindowState: () => () => {}, controlWindow: async () => ({}),
       groups: async (input) => {
         const response = await fetch('/__groups', { method: 'POST', body: JSON.stringify(input) });

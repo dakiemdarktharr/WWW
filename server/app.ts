@@ -254,7 +254,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.7.0', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.7.1', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)

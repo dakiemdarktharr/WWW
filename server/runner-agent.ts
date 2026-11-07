@@ -3,7 +3,7 @@ import os from 'node:os';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { CodexClient, probeCodex } from './codex.ts';
+import { CodexClient, probeCodex, localSkillRoots } from './codex.ts';
 import { privateDirectory, redact } from './security.ts';
 import {
   applyRunnerFiles,
@@ -46,7 +46,8 @@ export class MachineAgent {
   epoch = '';
   constructor(
     readonly config: RunnerConfig,
-    private factory = (home: string, cwd: string) => new CodexClient({ home, cwd }),
+    private factory = (home: string, cwd: string) =>
+      new CodexClient({ home, cwd, skillRoots: localSkillRoots() }),
   ) {}
   get busy() {
     return (
@@ -222,7 +223,7 @@ export class MachineAgent {
             peer.files = files;
             params.cwd = root;
           } else if (command.method === 'skills/list') params.cwds = peer.root ? [peer.root] : [];
-          else if (command.method === 'plugin/list') params.cwds = [];
+          else if (command.method === 'plugin/installed') params.cwds = [];
           if (command.method === 'turn/start') {
             if (
               this.busy ||

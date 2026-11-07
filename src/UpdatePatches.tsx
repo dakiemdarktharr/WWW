@@ -3,8 +3,30 @@ import { useEffect, useRef } from 'react';
 import { usePortalLocale } from './PortalLocale';
 
 // Newest first. Add verified bug fixes here when publishing a release.
-// Sources: docs/RELEASE-0.6.2.md and docs/RELEASE-0.6.1.md.
+// Sources: docs/RELEASE-*.md.
 const patches = [
+  {
+    version: '0.7.1',
+    date: '2026-11-07',
+    fixes: [
+      {
+        vi: 'Sửa lỗi đã đăng nhập và có usage nhưng vẫn hiện Not signed in khi tải plugins.',
+        en: 'Fixed signed-in accounts showing Not signed in after loading plugins despite available usage.',
+      },
+      {
+        vi: 'Chỉ tải plugins đã cài, tránh danh mục marketplace quá lớn làm ngắt kết nối Codex.',
+        en: 'Load installed plugins without downloading the full marketplace catalog that disconnected Codex.',
+      },
+      {
+        vi: 'Các Codex trên cùng máy dùng chung thư mục skills cục bộ, giữ đăng nhập riêng cho từng tài khoản.',
+        en: 'Codex profiles on the same machine share local skill folders while retaining separate sign-ins.',
+      },
+      {
+        vi: 'Nạp plugins trước khi quét skills để hiện đầy đủ ngay lần làm mới đầu tiên.',
+        en: 'Load plugins before scanning skills so the first refresh includes their skills.',
+      },
+    ],
+  },
   {
     version: '0.7.0',
     date: '2026-11-07',

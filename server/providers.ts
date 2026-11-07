@@ -1,6 +1,6 @@
 import type { Member, ProviderCapability } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
-import { CodexClient, resolveCodexCommand } from './codex.ts';
+import { CodexClient, resolveCodexCommand, localSkillRoots } from './codex.ts';
 import { GeminiClient, resolveGeminiCommand } from './gemini.ts';
 import { DomainError } from './store.ts';
 
@@ -11,7 +11,7 @@ export function nativeProviderClient(member: Member, home: string, cwd: string):
     );
   return member.provider === 'gemini'
     ? new GeminiClient({ home, cwd })
-    : new CodexClient({ home, cwd });
+    : new CodexClient({ home, cwd, skillRoots: localSkillRoots() });
 }
 export async function providerCapabilities(): Promise<ProviderCapability[]> {
   const [codex, gemini] = await Promise.allSettled([resolveCodexCommand(), resolveGeminiCommand()]);
