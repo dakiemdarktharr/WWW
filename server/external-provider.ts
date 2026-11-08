@@ -9,6 +9,8 @@ import { assertGroupMember } from './groups.ts';
 import { createWorktree } from './git.ts';
 import { checkpointProgress } from './checkpoint.ts';
 import { redact, safeEqual } from './security.ts';
+import { researchTools } from './competition-research.ts';
+import { portfolio, portfolioTool } from './portfolio.ts';
 
 const id = z.string().uuid();
 const empty = z.object({}).strict();
@@ -503,23 +505,27 @@ export class ExternalProviders {
       return response({
         protocolVersion: '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'kivuno-mesh', version: '0.7.2' },
+        serverInfo: { name: 'kivuno-mesh', version: '0.8.0' },
         instructions:
           'You are an external teammate in one Kivuno group. Read mesh_read before acting, use task_claim for existing tasks, share progress and evidence. Your own client controls its models, authentication, quota and tool approvals. Kivuno never buys usage or starts your model.',
       });
     if (message.method === 'ping') return response({});
     if (message.method === 'tools/list')
       return response({
-        tools: tools.map(([name, description, properties, required]) => ({
-          name,
-          description,
-          inputSchema: {
-            type: 'object',
-            properties,
-            required: required || [],
-            additionalProperties: false,
-          },
-        })),
+        tools: [
+          ...researchTools,
+          portfolioTool,
+          ...tools.map(([name, description, properties, required]) => ({
+            name,
+            description,
+            inputSchema: {
+              type: 'object',
+              properties,
+              required: required || [],
+              additionalProperties: false,
+            },
+          })),
+        ],
       });
     if (message.method !== 'tools/call')
       return {
@@ -535,6 +541,24 @@ export class ExternalProviders {
       const args = call.arguments || {};
       let result: unknown;
       switch (call.name) {
+        case 'competition_read':
+        case 'competition_fetch':
+        case 'competition_note':
+          result = await this.host.research.tool(c.projectId, c.memberId, call.name, args, () => {
+            this.authenticate(header);
+          });
+          break;
+        case 'portfolio_read': {
+          const value = portfolio(this.host.store, c.memberId);
+          // External connection tokens remain project-scoped; expose other workload only as a count.
+          result = {
+            ...value,
+            otherProjectCount: value.projects.filter((project) => project.id !== c.projectId)
+              .length,
+            projects: value.projects.filter((project) => project.id === c.projectId),
+          };
+          break;
+        }
         case 'mesh_read':
         case 'mesh_wait': {
           const { after } = z

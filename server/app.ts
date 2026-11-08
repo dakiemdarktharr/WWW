@@ -255,7 +255,7 @@ export async function buildApp(
       );
       return manifest;
     } catch {
-      return { version: '0.7.2', available: false, platform: 'win32-x64', signed: false };
+      return { version: '0.8.0', available: false, platform: 'win32-x64', signed: false };
     }
   });
   if (options.desktopSecret)
@@ -686,6 +686,14 @@ export async function buildApp(
       .dispatch(message.projectId)
       .catch((error) => workspace.log(redact(error), null, null, 'error', message.projectId));
     return message;
+  });
+  app.post('/api/projects/:id/research/refresh', async (request) => {
+    const projectId = params(request);
+    const item = workspace.research.refresh(projectId);
+    void workspace.research
+      .prepare(projectId)
+      .catch((error) => workspace.log(redact(error), null, null, 'error', projectId));
+    return item;
   });
   app.patch('/api/projects/:id/members', async (request) => {
     const input = z

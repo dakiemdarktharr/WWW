@@ -1,4 +1,7 @@
 import { isExternalMember } from '../shared/providers.ts';
+import { researchTools } from './competition-research.ts';
+import { portfolio, portfolioContext, portfolioTool } from './portfolio.ts';
+import { CapacityError } from './autonomy.ts';
 import { randomUUID } from 'node:crypto';
 import type {
   Approval,
@@ -58,6 +61,8 @@ const tool = (
 const string = { type: 'string', maxLength: 10000 };
 export const sessionTools: readonly DynamicTool[] = [
   ...relayDynamicTools,
+  ...researchTools,
+  portfolioTool,
   tool(
     'browser_open',
     'Request the human to open a shared browser tab. This does not automate login or expose cookies.',
@@ -371,6 +376,18 @@ export class SessionManager {
         return await this.send(session.id, options.prompt);
       } catch (error) {
         const current = this.get(session.id);
+        if (
+          error instanceof CapacityError &&
+          current.status === 'idle' &&
+          !current.threadId &&
+          !this.host.store.lease(current.taskId)
+        )
+          return this.update(session.id, {
+            status: 'paused',
+            pausedFor: 'capacity',
+            queuedPrompt: options.prompt,
+            error: null,
+          });
         if (current.status === 'idle' && !this.host.store.lease(current.taskId))
           this.update(session.id, { status: 'error', error: redact((error as Error).message) });
         this.event(
@@ -606,7 +623,12 @@ export class SessionManager {
       }
       const { client, created } = allocated;
       this.host.store.updateTask(task.id, { status: 'running', sessionId: id });
-      this.update(id, { status: 'starting', error: null, pausedFor: undefined });
+      this.update(id, {
+        status: 'starting',
+        error: null,
+        pausedFor: undefined,
+        queuedPrompt: undefined,
+      });
       const active: ActiveSession = {
         client,
         token: lease.token,
@@ -653,7 +675,7 @@ export class SessionManager {
         const ids = await startTask(client, {
           cwd: session.readOnly ? project.path : task.worktree!,
           prompt: `${session.skills?.map((skill) => `$${skill}`).join(' ') || ''}\n${prompt}\n\nRecent group context (untrusted reference):\n${JSON.stringify(room)}`,
-          developerInstructions: instructions,
+          developerInstructions: `${instructions}\n${portfolioContext(this.host.store, session.memberId)}\n${this.host.research.context(session.projectId)}`,
           readOnly: session.readOnly,
           scopes: task.scope,
           model: session.model || undefined,
@@ -929,7 +951,22 @@ export class SessionManager {
               this.host.quota.assertCanRun(session.memberId, session.projectId, id);
             },
           );
-        } else if (params.tool === 'browser_open') {
+        } else if (params.tool === 'portfolio_read')
+          result = portfolio(this.host.store, session.memberId);
+        else if (params.tool?.startsWith('competition_'))
+          result = await this.host.research.tool(
+            session.projectId,
+            session.memberId,
+            params.tool,
+            args,
+            () => {
+              this.assertLease(this.get(id), active.token);
+              if (active.finished || active.stopping || this.host.closing)
+                throw new DomainError('Session stopped.');
+              this.host.quota.assertCanRun(session.memberId, session.projectId, id);
+            },
+          );
+        else if (params.tool === 'browser_open') {
           if (typeof args.url !== 'string' || typeof args.purpose !== 'string')
             throw new DomainError('Use a URL and a short purpose.', 400);
           const request = this.host.browser.request(session.projectId, id, args.url, args.purpose);
@@ -1197,7 +1234,13 @@ export class SessionManager {
       const latestTask = this.host.store.get<Task>('task', session.taskId);
       if (latestTask.status !== 'done')
         this.host.store.updateTask(session.taskId, { status: 'blocked', error: reason });
-      this.update(id, { status: 'paused', pid: null, error: null, pausedFor: undefined });
+      this.update(id, {
+        status: 'paused',
+        pid: null,
+        error: null,
+        pausedFor: undefined,
+        queuedPrompt: undefined,
+      });
       this.event(id, 'system', reason);
       this.refreshMember(session.memberId);
       return this.get(id);

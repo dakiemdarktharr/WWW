@@ -291,14 +291,6 @@ export class Store extends EventEmitter {
         )
       )
         throw new DomainError('This task is reserved by a pending handoff.');
-      const reservation = this.workflows().find(
-        (workflow) =>
-          workflow.status !== 'completed' &&
-          workflow.status !== 'cancelled' &&
-          workflow.memberIds.includes(memberId),
-      );
-      if (reservation && reservation.id !== task.workflowId)
-        throw new DomainError('This teammate is reserved by an active team workflow.');
       if (task.workflowId) {
         const workflow = this.get<Workflow>('workflow', task.workflowId);
         if (!['planning', 'running', 'review'].includes(workflow.status))

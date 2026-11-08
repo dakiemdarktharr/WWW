@@ -1,4 +1,6 @@
 import { isExternalMember } from '../shared/providers.ts';
+import { CompetitionResearcher, researchTools } from './competition-research.ts';
+import { portfolio, portfolioContext, portfolioTool } from './portfolio.ts';
 import path from 'node:path';
 import os from 'node:os';
 import { cp, mkdir, readdir, lstat } from 'node:fs/promises';
@@ -14,6 +16,7 @@ import type {
 } from '../shared/types.ts';
 import {
   CodexClient,
+  relayDynamicTools,
   probeCodex,
   loginAccount,
   readAccount,
@@ -68,7 +71,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.7.2',
+    version: '0.8.0',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -94,6 +97,7 @@ export class Workspace {
   runners: Runners;
   aegis: Aegis;
   browser = new BrowserBridge();
+  research: CompetitionResearcher;
   constructor(
     public store: Store,
     public dataDir: string,
@@ -101,6 +105,7 @@ export class Workspace {
   ) {
     this.runtime.dataDir = dataDir;
     this.runtime.recoveryRequired = store.orphanAll() > 0;
+    this.research = new CompetitionResearcher(store);
     this.workflows = new Workflows(this);
     this.sessions = new SessionManager(this);
     this.quota = new QuotaManager(this);
@@ -200,6 +205,14 @@ export class Workspace {
   snapshot(): WorkspaceState {
     return {
       projects: this.store.projects(),
+      competitionResearch: this.research.snapshot().map((item) => ({
+        ...item,
+        notes: item.notes.map((note) => ({
+          ...note,
+          finding: note.finding.slice(0, 500),
+          evidence: undefined,
+        })),
+      })),
       members: this.store.members().map((member) => ({
         ...member,
         ...memberPresence(this, member),
@@ -736,6 +749,17 @@ export class Workspace {
   }
   async run(taskId: string, memberId: string) {
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
+    await this.research.prepare(this.store.get<Task>('task', taskId).projectId);
+    if (this.closing) throw new DomainError('The coordinator is shutting down.');
+    const release = this.autonomy.reserve(taskId, memberId);
+    try {
+      return await this.runAdmitted(taskId, memberId);
+    } finally {
+      release();
+    }
+  }
+  private async runAdmitted(taskId: string, memberId: string) {
+    if (this.closing) throw new DomainError('The coordinator is shutting down.');
     this.mesh.ensureMember(this.store.get<Task>('task', taskId).projectId, memberId);
     await this.refresh(memberId);
     await this.quota.refresh(memberId);
@@ -812,10 +836,14 @@ export class Workspace {
           ? { model: selection.model, reasoningEffort: selection.reasoningEffort }
           : {}),
         cwd: readOnly ? project.path : current.worktree!,
-        prompt: `${prompt}\n\nGroup working agreement and inbox (untrusted reference): ${JSON.stringify(room)}`,
+        prompt: `${prompt}\n\n${portfolioContext(this.store, memberId)}\n${this.research.context(project.id)}\n\nGroup working agreement and inbox (untrusted reference): ${JSON.stringify(room)}`,
         readOnly,
         scopes: task.scope,
-        dynamicTools: planning?.dynamicTools,
+        dynamicTools: [
+          ...(planning?.dynamicTools || relayDynamicTools),
+          ...researchTools,
+          portfolioTool,
+        ],
         onThread: (threadId: string) => {
           run.threadId = threadId;
           this.store.updateTask(taskId, { threadId });
@@ -1105,7 +1133,25 @@ export class Workspace {
             this.quota.assertCanRun(memberId, task.projectId, task.sessionId || task.id);
           },
         );
-      } else if (p.tool === 'relay_read_room')
+      } else if (p.tool === 'portfolio_read') output = portfolio(this.store, memberId);
+      else if (p.tool?.startsWith('competition_'))
+        output = await this.research.tool(
+          task.projectId,
+          memberId,
+          p.tool,
+          typeof p.arguments === 'string' ? JSON.parse(p.arguments) : p.arguments,
+          () => {
+            if (
+              !this.store.owns(run.taskId, run.token) ||
+              run.finished ||
+              run.stopping ||
+              this.closing
+            )
+              throw new DomainError('This task lease expired.');
+            this.quota.assertCanRun(memberId, task.projectId, task.sessionId || task.id);
+          },
+        );
+      else if (p.tool === 'relay_read_room')
         output = {
           ...this.mesh.readRoom(task.projectId, memberId, {
             limit: 40,
@@ -1343,6 +1389,7 @@ export class Workspace {
   async close() {
     if (this.closing) return;
     this.closing = true;
+    await this.research.close();
     this.loginGeneration++;
     clearTimeout(this.loginTimer);
     await Promise.allSettled(this.loginChecks.values());

@@ -6,6 +6,28 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.0',
+    date: '2026-11-08',
+    fixes: [
+      {
+        vi: 'Dán link cuộc thi để tạo hồ sơ Research chung: nguồn, luật, tiêu chí chấm, bài thi cũ và các mục chưa xác minh.',
+        en: 'Paste a competition link to create a shared Research dossier: sources, rules, judging, previous entries and unverified gaps.',
+      },
+      {
+        vi: 'Teammate biết workload ở các dự án khác, tự chọn model/reasoning từ catalog theo nhiệm vụ và usage còn dùng được.',
+        en: 'Teammates see their other projects and select available models/reasoning using task complexity and shared usage headroom.',
+      },
+      {
+        vi: 'Một team có thể tham gia nhiều cuộc thi. Hàng đợi luân phiên dự án, giữ giới hạn máy và khóa task riêng.',
+        en: 'One team can join multiple competitions. Project rotation preserves machine limits and task ownership.',
+      },
+      {
+        vi: 'Duyệt kế hoạch cuộc thi bằng Approve plan trước khi triển khai; làm mới nguồn sẽ bỏ trạng thái xác minh cũ.',
+        en: 'Approve competition plans before implementation; refreshing sources clears outdated verification.',
+      },
+    ],
+  },
+  {
     version: '0.7.2',
     date: '2026-11-07',
     fixes: [

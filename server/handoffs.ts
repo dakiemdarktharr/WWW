@@ -1,6 +1,6 @@
 import { isExternalMember } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
-import type { CodexSession, Handoff, Member, Task, Workflow } from '../shared/types.ts';
+import type { CodexSession, Handoff, Member, Task } from '../shared/types.ts';
 import { Store, DomainError } from './store.ts';
 import { redact } from './security.ts';
 import { checkpointProgress } from './checkpoint.ts';
@@ -230,15 +230,7 @@ export class Handoffs {
           throw new DomainError('Recipient concurrency limit reached.');
         const task = this.host.store.get<Task>('task', handoff.taskId),
           lease = this.host.store.lease(task.id);
-        const reservation = this.host.store
-          .workflows()
-          .find(
-            (workflow: Workflow) =>
-              !['completed', 'cancelled'].includes(workflow.status) &&
-              workflow.memberIds.includes(member.id) &&
-              workflow.id !== task.workflowId,
-          );
-        if (reservation) throw new DomainError('The recipient is reserved for another workflow.');
+        // Project memberships can overlap. Actual session/lease capacity gates transfer.
         if (!source.readOnly && (!lease || lease.orphaned || lease.memberId !== source.memberId))
           throw new DomainError('Source ownership changed. Recover before accepting.');
         const now = new Date().toISOString();

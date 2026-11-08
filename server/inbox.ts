@@ -16,6 +16,7 @@ interface DispatchRecord {
 interface Host extends PresenceHost {
   store: Store;
   closing: boolean;
+  research?: { prepare(projectId: string): Promise<void> };
   canStart?(memberId?: string): boolean;
   validateChatConfig?(memberId: string, config: ChatConfig): Promise<void>;
   quota: {
@@ -96,7 +97,7 @@ export class InboxDispatcher {
       if (
         !session ||
         ['running', 'starting', 'handoff'].includes(session.status) ||
-        session.pausedFor === 'quota'
+        session.pausedFor
       )
         continue;
       const success = session.status === 'idle' || session.status === 'review';
@@ -154,17 +155,6 @@ export class InboxDispatcher {
         (member.maxSessions || 2)
       )
         continue;
-      // A roster reserved for another workflow must not be pulled into this chat.
-      if (
-        this.host.store
-          .workflows()
-          .some(
-            (workflow) =>
-              !['completed', 'cancelled'].includes(workflow.status) &&
-              workflow.memberIds.includes(member.id),
-          )
-      )
-        continue;
       try {
         await this.host.validateChatConfig?.(member.id, message.effectiveConfig || {});
         await this.host.quota.refresh(member.id);
@@ -204,13 +194,13 @@ export class InboxDispatcher {
       return active[0];
   }
   private async run(projectId: string) {
+    await this.host.research?.prepare(projectId);
     // Resume only quota-paused work. A human pause or an uncertain process exit
     // must never be mistaken for permission to retry.
     for (const session of this.host.store
       .sessions()
       .filter(
-        (entry) =>
-          entry.projectId === projectId && entry.status === 'paused' && entry.pausedFor === 'quota',
+        (entry) => entry.projectId === projectId && entry.status === 'paused' && !!entry.pausedFor,
       )) {
       if (this.closed || this.host.closing) return;
       const task = this.host.store.tasks().find((entry) => entry.id === session.taskId);
@@ -234,12 +224,7 @@ export class InboxDispatcher {
         /* Try an eligible teammate below. */
       }
       const current = this.host.store.sessions().find((entry) => entry.id === session.id);
-      if (
-        this.closed ||
-        this.host.closing ||
-        current?.status !== 'paused' ||
-        current.pausedFor !== 'quota'
-      )
+      if (this.closed || this.host.closing || current?.status !== 'paused' || !current.pausedFor)
         continue;
       if (
         task?.workflowId &&
@@ -253,8 +238,10 @@ export class InboxDispatcher {
       )
         continue;
       try {
-        if (allowed) await this.host.sessions.resume?.(session.id);
-        else await this.host.handoffs?.automatic(session.id);
+        if (allowed && current.pausedFor === 'capacity' && current.queuedPrompt)
+          await this.host.sessions.send?.(session.id, current.queuedPrompt);
+        else if (allowed) await this.host.sessions.resume?.(session.id);
+        else if (current.pausedFor === 'quota') await this.host.handoffs?.automatic(session.id);
       } catch {
         /* Retain the paused session and its ownership for inspection. */
       }

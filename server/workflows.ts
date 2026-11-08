@@ -84,20 +84,6 @@ export class Workflows {
         const active = this.store.workflows().filter((entry) => !terminal(entry));
         if (active.some((entry) => entry.projectId === projectId))
           throw new DomainError('Finish or cancel this project’s active workflow first.');
-        if (
-          active.some((entry) =>
-            entry.memberIds.some((id) => members.some((member) => member.id === id)),
-          )
-        )
-          throw new DomainError('A teammate is reserved by another workflow.');
-        if (
-          members.some(
-            (member) =>
-              member.status !== 'ready' ||
-              this.store.leases().some((lease) => lease.memberId === member.id),
-          )
-        )
-          throw new DomainError('Finish current tasks and reviews before starting the whole team.');
         const previous = this.store.workflows();
         const led = (id: string) => previous.filter((entry) => entry.leadId === id).length;
         const lead = [...members].sort(
@@ -260,7 +246,12 @@ export class Workflows {
           { memberId: task.assignedTo!, taskId: task.id, proposal: submission.value as Proposal },
         ],
       });
-    else this.store.updateWorkflow(workflow.id, { plan: submission.value as TeamPlan });
+    else
+      this.store.updateWorkflow(workflow.id, {
+        plan: submission.value as TeamPlan,
+        competitionApprovedAt: undefined,
+        awaitingCompetitionApproval: false,
+      });
     return null;
   }
   wake(id?: string) {
@@ -340,6 +331,29 @@ export class Workflows {
       tasks.find((task) => task.phase === 'plan')?.status === 'done'
     ) {
       if (!workflow.plan) throw new DomainError('The lead did not submit a plan.');
+      if (
+        !workflow.competitionApprovedAt &&
+        (this.store.get<Project>('project', workflow.projectId).competition ||
+          this.store
+            .all<any>('competitionResearch')
+            .some((item) => item.projectId === workflow.projectId))
+      ) {
+        this.store.updateWorkflow(id, {
+          status: 'paused',
+          awaitingCompetitionApproval: true,
+          error:
+            'Review the competition dossier, missing evidence and proposed plan. Approve the plan to begin implementation.',
+        });
+        this.store.message({
+          projectId: workflow.projectId,
+          taskId: null,
+          authorId: null,
+          kind: 'system',
+          content:
+            'Competition plan ready for your approval in Workroom. Review Research, unresolved rules and the deadline/timezone before starting implementation.',
+        });
+        return;
+      }
       const plan = parseTeamPlan(workflow.plan);
       const allocation = new Map(
         allocatePlan(
@@ -449,6 +463,7 @@ export class Workflows {
       )
         continue;
       const member = this.store.get<Member>('member', task.assignedTo!);
+      if (member.status === 'working') continue;
       if (!member.account || member.status !== 'ready') {
         this.store.updateWorkflow(id, {
           status: 'blocked',
@@ -547,6 +562,9 @@ export class Workflows {
         status: workflow.phase === 'execution' ? 'running' : 'planning',
         error: null,
         controlVersion: (workflow.controlVersion || 0) + 1,
+        ...(workflow.awaitingCompetitionApproval
+          ? { awaitingCompetitionApproval: false, competitionApprovedAt: new Date().toISOString() }
+          : {}),
       });
     });
     this.wake(id);

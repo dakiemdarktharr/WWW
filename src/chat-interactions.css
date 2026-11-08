@@ -62,3 +62,28 @@
     animation: none;
   }
 }
+.research-dossier {
+  display: grid;
+  gap: 16px;
+  overflow-wrap: anywhere;
+}
+.research-dossier section {
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.research-coverage {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-transform: capitalize;
+}
+.research-coverage span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.research-dossier p {
+  font-size: 12px;
+  line-height: 1.6;
+}

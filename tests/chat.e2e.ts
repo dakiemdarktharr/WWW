@@ -123,7 +123,7 @@ const browser = await chromium.launch();
 const context = await browser.newContext();
 await context.addInitScript(`
   sessionStorage.setItem('kivuno-guide-v3', 'seen');
-  window.relayDesktop = { platform: 'win32', version: '0.7.2', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({}), onWindowState: () => () => {}, controlWindow: async () => ({}), openExternal: async () => {} };
+  window.relayDesktop = { platform: 'win32', version: '0.8.0', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({}), onWindowState: () => () => {}, controlWindow: async () => ({}), openExternal: async () => {} };
 `);
 const page = await context.newPage();
 const errors: string[] = [];
@@ -171,7 +171,9 @@ try {
     kind: 'message',
     content: 'Installer finding: recovery is verified.',
   });
-  await expect(page.getByText(answer.content, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('log', { name: 'Project messages' }).getByText(answer.content, { exact: true }),
+  ).toBeVisible();
   const bubble = page.locator('article').filter({ hasText: answer.content });
   await bubble.getByRole('button', { name: /react/i }).click();
   await bubble.getByRole('button', { name: 'Agree', exact: true }).click();
@@ -193,8 +195,22 @@ try {
     .toBe(true);
   assert.equal(starts, 1);
   await page.getByPlaceholder('Search this chat').fill('Installer finding');
-  await expect(page.getByText(answer.content, { exact: true })).toBeVisible();
-  await page.screenshot({ path: '.local/kivuno-072-chat.png', fullPage: true });
+  await expect(
+    page.getByRole('log', { name: 'Project messages' }).getByText(answer.content, { exact: true }),
+  ).toBeVisible();
+  workspace.research.reader = async (url) => ({
+    url,
+    type: 'text/html',
+    html: url.endsWith('/rules')
+      ? '<p>Submit code and a three minute video before the published deadline.</p>'
+      : '<h1>Competition research fixture with public resources</h1><a href="/rules">Rules</a>',
+  });
+  await input.fill('https://contest.example.org/');
+  await input.press('Enter');
+  await page.getByRole('button', { name: 'Competition research', exact: true }).click();
+  await expect(page.getByLabel('research panel')).toContainText('2 sources');
+  await expect(page.getByLabel('research panel')).toContainText('unknown');
+  await page.screenshot({ path: '.local/kivuno-080-chat.png', fullPage: true });
   assert.deepEqual(errors, []);
   console.log(
     'Chat UI passed: mention keyboard, quota allowance, pending prompt, activity, auto Sessions, live model settings, reaction, reply, search; no model turns.',

@@ -104,6 +104,7 @@ export async function createHackathonProject(
     } satisfies Project);
     host.log(`Created ${repositoryName} for ${member.name}.`, null, member.id, 'project', id);
     host.autonomy.join(undefined, id);
+    host.research.ensure(id, input.competitionUrl);
     host.mesh.post({
       projectId: id,
       authorId: member.id,

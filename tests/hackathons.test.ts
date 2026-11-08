@@ -44,6 +44,7 @@ test('created repositories and stored project metadata preserve no deadline and 
       dataDir,
       log() {},
       autonomy: { join() {} },
+      research: { ensure() {} },
       mesh: { post() {} },
     } as unknown as Workspace;
     for (const [name, deadline, expected] of [

@@ -3,6 +3,7 @@ import type { CodexModel, HumanRequest, RoomMessage, QuotaGrant } from '../share
 import { groupMembers } from './groups.ts';
 import { chatRecipients, reserveIntent } from './chat-intent.ts';
 import { DomainError } from './store.ts';
+import { competitionLink } from './competition-research.ts';
 
 /** Only the authenticated human route calls this; agent tools never grant usage. */
 export function postHumanChat(
@@ -72,7 +73,24 @@ export function postHumanChat(
     );
     if (input.clientRequestId)
       message = host.store.put('message', { ...message, clientRequestId: input.clientRequestId });
-    if (!intent) return message;
+    if (!intent) {
+      if (!message.command) {
+        const project = host.store.get<any>('project', input.projectId);
+        const url = competitionLink(input.content, project.competition?.url);
+        if (url) {
+          const dossier = host.research.ensure(input.projectId, url);
+          if (dossier.status === 'queued')
+            host.mesh.post({
+              projectId: input.projectId,
+              authorId: null,
+              kind: 'system',
+              content:
+                'Researching competition sources. Rules, judging, submission requirements and prior entries will be shared in Research.',
+            });
+        }
+      }
+      return message;
+    }
     message = host.store.put('message', { ...message, command: 'quota', requestStatus: 'done' });
     const member = members.find((entry) => entry.id === targets[0]);
     let error = intent.error;

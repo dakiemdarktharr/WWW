@@ -259,7 +259,7 @@ export default function Workroom({
                   {['paused', 'blocked'].includes(workflow.status) ? (
                     <>
                       <Play size={13} />
-                      Resume
+                      {workflow.awaitingCompetitionApproval ? 'Approve plan' : 'Resume'}
                     </>
                   ) : (
                     <>

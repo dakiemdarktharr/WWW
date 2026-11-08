@@ -614,7 +614,7 @@ test('pause during asynchronous preflight fences every late claim', async (t) =>
   assert.equal(f.turnCount(), 4);
 });
 
-test('concurrent starts create one workflow and reserved members cannot be stolen by other work', async (t) => {
+test('concurrent starts deduplicate a project while the same team can queue another project without stealing active tasks', async (t) => {
   const f = await fixture(t);
   const results = await Promise.allSettled([
     f.workspace.workflows.start(f.project.id, 'Coordinate a bounded team workflow.'),
@@ -635,17 +635,66 @@ test('concurrent starts create one workflow and reserved members cannot be stole
     dependsOn: [],
     acceptance: 'The manual artifact exists.',
   });
-  assert.throws(() => f.store.claim(manual.id, f.members[0].id), /reserved/);
+  assert.throws(() => f.store.claim(manual.id, f.members[0].id), /ready|owns another/);
   const secondProject = f.store.put('project', {
     ...f.project,
     id: randomUUID(),
     name: 'Other project',
   });
-  await assert.rejects(
-    f.workspace.workflows.start(secondProject.id, 'Try to reserve the same team twice.'),
-    /reserved/,
+  await f.workspace.workflows.start(secondProject.id, 'Queue another competition for this team.');
+  await f.workspace.workflows.idle();
+  assert.equal(f.store.workflows().length, 2);
+  assert.equal(f.turnCount(), 4);
+});
+
+test('ten competitions share four profiles with bounded concurrent turns, fair progress and no cross-project leases', async (t) => {
+  const f = await fixture(t);
+  const projects = Array.from({ length: 10 }, (_, i) =>
+    f.store.put('project', {
+      ...f.project,
+      id: randomUUID(),
+      name: `Competition ${i}`,
+      memberIds: f.members.map((m) => m.id),
+      competition: {
+        name: `Competition ${i}`,
+        url: `https://contest-${i}.example.org`,
+        deadline: i === 9 ? new Date(Date.now() + 3600000).toISOString() : null,
+      },
+    }),
   );
-  assert.equal(f.store.workflows().length, 1);
+  await Promise.all(
+    projects.map((project) =>
+      f.workspace.workflows.start(project.id, 'Research the brief and propose a bounded solution.'),
+    ),
+  );
+  await f.workspace.workflows.idle();
+  assert.equal(f.store.workflows().length, 10);
+  const visited = new Set<string>();
+  for (let round = 0; round < 20 && visited.size < 10; round++) {
+    const running = f.store.tasks().filter((task) => task.status === 'running');
+    assert.ok(running.length <= 4);
+    assert.equal(
+      new Set(f.store.leases().map((lease) => lease.memberId)).size,
+      f.store.leases().length,
+    );
+    assert.ok(
+      running.length > 0,
+      JSON.stringify(f.store.workflows().map((w) => ({ status: w.status, error: w.error }))),
+    );
+    const ids = [...new Set(running.map((task) => task.workflowId!))];
+    for (const id of ids) f.workspace.workflows.pause(id);
+    for (const task of running) {
+      visited.add(task.projectId);
+      if (task.phase === 'proposal')
+        await f.submit(task, 'relay_submit_proposal', proposal(task.assignedTo!));
+      await f.finish(task);
+    }
+    for (const id of ids) await f.workspace.workflows.cancel(id);
+    for (const project of projects) f.workspace.workflows.wakeProject(project.id);
+    await f.workspace.workflows.idle();
+  }
+  assert.equal(visited.size, 10);
+  assert.ok(f.turnCount() <= 40);
 });
 
 test('cancelling stops current turns and permits a fresh workflow with the same team', async (t) => {
@@ -661,6 +710,25 @@ test('cancelling stops current turns and permits a fresh workflow with the same 
   assert.notEqual(replacement.id, workflow.id);
   assert.equal(f.tasks(replacement.id, 'proposal').length, 4);
   assert.equal(f.workspace.running.size, 4);
+});
+
+test('competition implementation waits for an authenticated human plan approval', async (t) => {
+  const f = await fixture(t);
+  f.store.put('project', {
+    ...f.project,
+    competition: { name: 'Contest', url: 'https://contest.example.org', deadline: null },
+  });
+  const workflow = await f.start();
+  const planning = await f.synthesize(workflow.id);
+  assert.equal((await f.submit(planning, 'relay_submit_plan', plan())).result.success, true);
+  await f.finish(planning);
+  assert.equal(f.workflow(workflow.id).status, 'paused');
+  assert.equal(f.workflow(workflow.id).awaitingCompetitionApproval, true);
+  assert.equal(f.tasks(workflow.id, 'execution').length, 0);
+  await f.workspace.workflows.resume(workflow.id);
+  await f.workspace.workflows.idle();
+  assert.equal(f.tasks(workflow.id, 'execution').length, 4);
+  assert.ok(f.workflow(workflow.id).competitionApprovedAt);
 });
 
 test('cancellation cannot be resumed or paused while a worker is still stopping', async (t) => {

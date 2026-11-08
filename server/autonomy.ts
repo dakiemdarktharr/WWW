@@ -11,6 +11,7 @@ import { redact } from './security.ts';
 import { availableParallelism } from 'node:os';
 import { scopesOverlap } from './security.ts';
 import { exportSkills, installSkills } from './skill-sharing.ts';
+import { FairTurns, portfolio } from './portfolio.ts';
 
 interface QueuedConversation {
   id: string;
@@ -45,16 +46,19 @@ export class CapacityError extends DomainError {}
 export function chooseModel(
   models: CodexModel[],
   task: Pick<Task, 'kind' | 'title' | 'description' | 'effort' | 'phase'>,
+  budget?: { projects: number; remaining: number | null; headroom: number | null },
 ) {
   if (!models.length) throw new DomainError('Codex returned no available models.');
   const complex =
     task.phase === 'plan' ||
     (task.effort || 0) >= 3 ||
-    /architect|security|migrat|debug|kiến trúc|bảo mật|phân tích|research/i.test(
+    /architect|security|migrat|debug|kiến trúc|bảo mật|threat model|trade.?off/i.test(
       `${task.title} ${task.description}`,
     );
   const lightweight =
-    !complex && /summar|format|rename|tóm tắt|đổi tên/i.test(`${task.title} ${task.description}`);
+    !complex &&
+    (/summar|format|rename|tóm tắt|đổi tên/i.test(`${task.title} ${task.description}`) ||
+      (!!budget && (budget.projects >= 3 || (budget.headroom !== null && budget.headroom < 20))));
   const standard = models.find((model) => model.isDefault) || models[0];
   const model = lightweight
     ? models.find((model) => /mini|small|fast/i.test(`${model.model} ${model.displayName}`)) ||
@@ -80,7 +84,7 @@ export function chooseModel(
   return {
     model: model.model,
     reasoningEffort: effort,
-    selectionReason: `${lightweight ? 'Light task' : complex ? 'Complex task' : task.kind}: account catalog → ${model.displayName} / ${effort}.`,
+    selectionReason: `${lightweight ? 'Economy task' : complex ? 'Complex task' : task.kind}: account catalog → ${model.displayName} / ${effort}.${budget ? ` Portfolio: ${budget.projects} pending projects, ${budget.remaining ?? 'unknown'}% remaining, ${budget.headroom ?? 'unknown'}% usable headroom. These are policy signals, not predicted token costs.` : ''}`,
   };
 }
 
@@ -91,9 +95,11 @@ export class Autonomy {
   private pluginChecked = new Map<string, number>();
   private onboarding = new Map<string, Promise<void>>();
   private reservations = new Map<string, string>();
+  private fair: FairTurns;
   private dispatching: Promise<void> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   constructor(private host: Workspace) {
+    this.fair = new FairTurns(host.store);
     for (const item of host.store.all<QueuedConversation>('conversationQueue'))
       if (['starting', 'queued'].includes(item.status))
         host.store.put('conversationQueue', {
@@ -134,11 +140,89 @@ export class Autonomy {
     );
     for (const [reserved, location] of this.reservations)
       if (location === machine) active.add(reserved);
+    const projectId =
+      this.host.store.tasks().find((task) => task.id === id)?.projectId ||
+      this.host.store.sessions().find((session) => session.id === id)?.projectId;
+    if (projectId && memberId && !active.has(id)) {
+      this.fair.ticket(id, projectId, memberId);
+      const task = this.host.store.tasks().find((entry) => entry.id === id);
+      if (
+        task &&
+        (this.host.store
+          .leases()
+          .some((lease) => lease.memberId === memberId && lease.taskId !== id) ||
+          [...this.reservations.keys()].some(
+            (key) =>
+              key !== id &&
+              this.host.store
+                .tasks()
+                .some((entry) => entry.id === key && entry.assignedTo === memberId),
+          ))
+      )
+        throw new CapacityError(
+          'This account is finishing another project task. Work remains queued.',
+        );
+      const preferred = this.fair.preferred((ticket) => {
+        const peer = this.host.store.members().find((entry) => entry.id === ticket.memberId);
+        if (!peer?.account || (peer.runnerId || 'cloud') !== machine) return false;
+        if (['offline', 'connecting', 'error'].includes(peer.status)) return false;
+        if (
+          [...this.reservations.keys()].some(
+            (key) =>
+              key !== ticket.id &&
+              this.host.store
+                .tasks()
+                .some((entry) => entry.id === key && entry.assignedTo === peer.id),
+          )
+        )
+          return false;
+        const task =
+          this.host.store.tasks().find((entry) => entry.id === ticket.id) ||
+          this.host.store
+            .tasks()
+            .find(
+              (entry) =>
+                entry.id ===
+                this.host.store.sessions().find((session) => session.id === ticket.id)?.taskId,
+            );
+        if (
+          !task ||
+          task.status === 'done' ||
+          (task.workflowId &&
+            !['planning', 'running', 'review'].includes(
+              this.host.store.get<any>('workflow', task.workflowId).status,
+            ))
+        )
+          return false;
+        if (
+          this.host.store
+            .leases()
+            .some(
+              (lease) =>
+                lease.memberId === peer.id &&
+                lease.sessionId !== ticket.id &&
+                lease.taskId !== task.id,
+            )
+        )
+          return false;
+        try {
+          this.host.quota.assertCanRun(peer.id, ticket.projectId, ticket.id);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (preferred && preferred.projectId !== projectId)
+        throw new CapacityError(
+          'Another project is next in the shared usage queue. This request remains queued.',
+        );
+    }
     if (!active.has(id) && active.size >= capacity)
       throw new CapacityError(
         `Machine capacity reached (${capacity} active turns). This work must wait for a slot.`,
       );
     this.reservations.set(id, machine);
+    if (projectId) this.fair.granted(id, projectId);
     return () => this.reservations.delete(id);
   }
   start() {
@@ -288,7 +372,28 @@ export class Autonomy {
   }
   async model(memberId: string, task: Task) {
     await this.plugins(memberId);
-    return chooseModel(await readModels(await this.host.client(memberId)), task);
+    const context = portfolio(this.host.store, memberId);
+    const quota = this.host.quota.current(memberId);
+    const remaining = quota.windows.length
+      ? Math.min(...quota.windows.map((window) => window.remainingPercent))
+      : null;
+    const grant = this.host.store
+      .all<any>('quotaGrant')
+      .filter(
+        (item) =>
+          item.projectId === task.projectId &&
+          item.memberId === memberId &&
+          !item.revokedAt &&
+          Date.parse(item.expiresAt) > Date.now(),
+      );
+    const floor = grant.length ? Math.min(...grant.map((item) => item.floor)) : 50;
+    return chooseModel(await readModels(await this.host.client(memberId)), task, {
+      projects: context.projects.filter(
+        (project) => project.assigned.length || project.pendingHumanRequests || project.workflow,
+      ).length,
+      remaining,
+      headroom: remaining === null ? null : Math.max(0, remaining - floor),
+    });
   }
   private plugins(memberId: string): Promise<void> {
     const existing = this.pluginSync.get(memberId);

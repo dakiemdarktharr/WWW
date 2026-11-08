@@ -39,7 +39,7 @@ import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
 import './chat-interactions.css';
 
-type Context = 'sessions' | 'team' | 'usage' | 'needs' | 'handoffs' | 'browser' | null;
+type Context = 'sessions' | 'team' | 'usage' | 'needs' | 'handoffs' | 'browser' | 'research' | null;
 const feedback = [
   { emoji: 'heart', label: 'Understood', Icon: Heart },
   { emoji: 'up', label: 'Agree', Icon: ThumbsUp },
@@ -106,6 +106,9 @@ export default function ProjectChat({
   const memberIds = project?.memberIds || [];
   const members = state.members.filter((member) => memberIds.includes(member.id));
   const projectSessions = state.sessions.filter((session) => session.projectId === project?.id);
+  const dossier = state.competitionResearch
+    ?.filter((item) => item.projectId === project?.id)
+    .at(-1);
   const session = projectSessions.find((entry) => entry.id === selectedSession);
   const activeSessions = projectSessions.filter((entry) =>
     ['starting', 'running'].includes(entry.status),
@@ -274,6 +277,16 @@ export default function ProjectChat({
             </button>
           </div>
           <div className="chat-header-actions">
+            {dossier && (
+              <button
+                className={`button compact ${panel === 'research' ? 'selected' : ''}`}
+                onClick={() => toggle('research')}
+                aria-label="Competition research"
+              >
+                <Globe size={14} />
+                Research <span className="count-pill">{dossier.sourceCount}</span>
+              </button>
+            )}
             <button
               className="button compact primary"
               aria-label="Plan project"
@@ -767,13 +780,15 @@ export default function ProjectChat({
                 ? 'Group members'
                 : panel === 'needs'
                   ? 'Needs you'
-                  : panel === 'sessions'
-                    ? 'Session view'
-                    : panel === 'browser'
-                      ? 'Browser'
-                      : panel === 'usage'
-                        ? 'Usage'
-                        : 'Handoffs'}
+                  : panel === 'research'
+                    ? 'Competition research'
+                    : panel === 'sessions'
+                      ? 'Session view'
+                      : panel === 'browser'
+                        ? 'Browser'
+                        : panel === 'usage'
+                          ? 'Usage'
+                          : 'Handoffs'}
             </strong>
             <button
               className="icon-button"
@@ -831,6 +846,66 @@ export default function ProjectChat({
               sessionId={session?.id}
               onClose={() => setPanel('sessions')}
             />
+          )}
+          {panel === 'research' && dossier && (
+            <div className="context-body research-dossier">
+              <div className="context-toolbar">
+                <button
+                  className="button compact"
+                  disabled={busy || ['queued', 'fetching'].includes(dossier.status)}
+                  onClick={() => void request(`/projects/${project!.id}/research/refresh`, {})}
+                >
+                  Refresh sources
+                </button>
+                <button className="button compact" onClick={() => setPanel('browser')}>
+                  Browser
+                </button>
+              </div>
+              <a href={dossier.url} target="_blank" rel="noreferrer">
+                {new URL(dossier.url).hostname}
+              </a>
+              <strong>
+                {dossier.status} · {dossier.sourceCount} sources
+              </strong>
+              {[
+                'brief',
+                'eligibility',
+                'rules',
+                'judging',
+                'tracks',
+                'deliverables',
+                'deadline',
+                'submission',
+                'history',
+                'resources',
+                'prizes',
+                'constraints',
+              ].map((category) => {
+                const note = dossier.notes.findLast((entry) => entry.category === category);
+                return (
+                  <section key={category}>
+                    <div className="research-coverage">
+                      <strong>{category}</strong>
+                      <span>{note?.status || 'unknown'}</span>
+                    </div>
+                    {note && <p>{note.finding}</p>}
+                    {note?.sourceUrl && (
+                      <a href={note.sourceUrl} target="_blank" rel="noreferrer">
+                        Source ↗
+                      </a>
+                    )}
+                  </section>
+                );
+              })}
+              {!!dossier.blocked.length && (
+                <details>
+                  <summary>{dossier.blocked.length} unavailable sources</summary>
+                  {dossier.blocked.map((item) => (
+                    <p key={item}>{item}</p>
+                  ))}
+                </details>
+              )}
+            </div>
           )}
           {panel === 'team' && (
             <div className="context-body">

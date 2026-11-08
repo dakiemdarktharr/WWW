@@ -159,6 +159,8 @@ export interface Proposal {
   }[];
 }
 export interface Workflow {
+  awaitingCompetitionApproval?: boolean;
+  competitionApprovedAt?: string;
   id: string;
   controlVersion: number;
   projectId: string;
@@ -203,7 +205,8 @@ export interface RoomMessage {
   claimedBy?: string | null;
 }
 export interface CodexSession {
-  pausedFor?: 'quota';
+  pausedFor?: 'quota' | 'capacity';
+  queuedPrompt?: string;
   provider?: ProviderId;
   external?: boolean;
   externalConnectionId?: string;
@@ -325,6 +328,15 @@ export interface Activity {
   createdAt: string;
 }
 export interface WorkspaceState {
+  competitionResearch?: {
+    id: string;
+    projectId: string;
+    url: string;
+    status: string;
+    sourceCount: number;
+    blocked: string[];
+    notes: { category: string; status: string; sourceUrl?: string; finding: string }[];
+  }[];
   providerTurnGrants?: ProviderTurnGrant[];
   groupIntroductions?: GroupIntroduction[];
   humanPresence?: HumanPresence[];
