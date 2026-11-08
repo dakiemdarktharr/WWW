@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld(
   'relayDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.8.0',
+    version: '0.8.1',
     getStatus: () => ipcRenderer.invoke('relay:status'),
     onStatus: (callback) => {
       const listener = (_event, value) => callback(value);

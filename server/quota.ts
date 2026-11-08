@@ -341,6 +341,17 @@ export class QuotaManager {
     if (this.store.all<any>('providerTurnReservation').some((entry) => entry.id === sessionId))
       this.store.remove('providerTurnReservation', sessionId);
   }
+  grantIssue(memberId: string, floor: number) {
+    const quota = this.current(memberId),
+      name = this.store.get<Member>('member', memberId).name;
+    if (quota.status === 'blocked' || quota.windows.some((window) => window.remainingPercent === 0))
+      return `${name} is blocked by the provider or has no usage left. A permission cannot override this. Wait for verified recovery or choose another teammate.`;
+    if (['available', 'reserve'].includes(quota.status) && quota.windows.length) {
+      const remaining = Math.min(...quota.windows.map((window) => window.remainingPercent));
+      if (remaining <= floor)
+        return `${name} has ${remaining}% remaining, already at or below your ${floor}% stop limit. Work remains paused. Explicitly choose a stop limit below ${remaining}% remaining, or wait for usage to reset.`;
+    }
+  }
   grant(memberId: string, input: { projectId: string; floor: number; expiresAt: string }) {
     this.store.get<Member>('member', memberId);
     this.store.get('project', input.projectId);
@@ -357,6 +368,13 @@ export class QuotaManager {
       throw new DomainError(
         'Grant a reserve floor from 0–49% for a future time within seven days.',
       );
+    for (const previous of this.store.all<QuotaGrant>('quotaGrant'))
+      if (
+        previous.memberId === memberId &&
+        previous.projectId === input.projectId &&
+        !previous.revokedAt
+      )
+        this.store.put('quotaGrant', { ...previous, revokedAt: new Date().toISOString() });
     const grant = this.store.put('quotaGrant', {
       id: randomUUID(),
       memberId,
@@ -371,8 +389,16 @@ export class QuotaManager {
       'quota',
       input.projectId,
     );
+    let runnable = false;
+    try {
+      this.assertCanRun(memberId, input.projectId);
+      runnable = true;
+    } catch {
+      /* Keep the decision open until provider usage is verified. */
+    }
     for (const request of this.store.all<HumanRequest>('humanRequest'))
       if (
+        runnable &&
         request.projectId === input.projectId &&
         request.kind === 'quota' &&
         request.status === 'open'

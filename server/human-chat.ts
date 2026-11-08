@@ -129,12 +129,29 @@ export function postHumanChat(
         (!entry.mentions?.length || entry.mentions.includes(member.id)),
     );
     if (pending) host.store.put('message', { ...pending, mentions: [member.id] });
+    let runnable = false;
+    try {
+      host.quota.assertCanRun(member.id, input.projectId);
+      runnable = true;
+    } catch {
+      /* Permission is not proof that usage is available. */
+    }
+    const waitingWork =
+      pending ||
+      host.store
+        .sessions()
+        .some(
+          (session) =>
+            session.projectId === input.projectId &&
+            session.memberId === member.id &&
+            session.pausedFor === 'quota',
+        );
     host.mesh.post({
       projectId: input.projectId,
       authorId: null,
       kind: 'system',
       replyTo: message.id,
-      content: `@${member.name}: reserve usage allowed until ${intent.floor}% remaining for ${intent.minutes} minutes (expires ${grant.expiresAt}). Continuing eligible queued work. Provider exhaustion and unknown usage still pause work.`,
+      content: `@${member.name}: permission saved until ${intent.floor}% remaining for ${intent.minutes} minutes (expires ${grant.expiresAt}). ${!runnable ? host.quota.grantIssue(member.id, intent.floor) || 'Work remains paused until provider usage is verified.' : waitingWork ? 'Eligible queued work can now be dispatched.' : 'No queued request found. Send a task to this teammate.'}`,
     });
     return message;
   });

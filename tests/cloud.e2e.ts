@@ -208,6 +208,7 @@ try {
   assert.equal(store.projects()[0].repositoryName, 'NoSleepClub_Browser-challenge_Cloud-project');
   assert.equal(store.projects()[0].competition?.deadline, null);
   await nav('Neralu').click();
+  await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByLabel('Message the project team').fill('Shared across devices');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByText('Shared across devices', { exact: true }).waitFor();

@@ -61,9 +61,28 @@ export class SharedGroups {
       if (input.action === 'list')
         return {
           owner,
-          groups: all.filter((group) =>
-            group.people.some((person) => person.id === owner.id && person.state === 'active'),
-          ),
+          groups: all
+            .filter((group) =>
+              group.people.some((person) => person.id === owner.id && person.state === 'active'),
+            )
+            .map((group) => {
+              const row = this.store.db
+                .prepare(
+                  "SELECT data FROM records WHERE kind='sharedMessage' AND json_extract(data,'$.groupId')=? ORDER BY json_extract(data,'$.sequence') DESC LIMIT 1",
+                )
+                .get(group.id);
+              const latest = row ? (JSON.parse(String(row.data)) as SharedMessage) : undefined;
+              return {
+                ...group,
+                lastMessageAt: latest?.createdAt,
+                lastMessagePreview: latest?.content.slice(0, 180),
+              };
+            })
+            .sort(
+              (a, b) =>
+                Date.parse(b.lastMessageAt || b.updatedAt || b.createdAt) -
+                Date.parse(a.lastMessageAt || a.updatedAt || a.createdAt),
+            ),
           invitations: all
             .filter((group) =>
               group.people.some((person) => person.id === owner.id && person.state === 'invited'),
@@ -93,12 +112,12 @@ export class SharedGroups {
       if (input.action === 'accept') {
         person.state = 'active';
         person.name = owner.name;
-        return this.store.put('sharedGroup', group);
+        return this.store.put('sharedGroup', { ...group, updatedAt: new Date().toISOString() });
       }
       if (input.action === 'decline') {
         if (person.state !== 'invited') throw new DomainError('Invitation unavailable.', 409);
         group.people = group.people.filter((person) => person.id !== owner.id);
-        this.store.put('sharedGroup', group);
+        this.store.put('sharedGroup', { ...group, updatedAt: new Date().toISOString() });
         return { declined: true };
       }
       if (person.state !== 'active')
@@ -170,7 +189,7 @@ export class SharedGroups {
           sequence: count + 1,
         } satisfies SharedMessage);
       }
-      return this.store.put('sharedGroup', group);
+      return this.store.put('sharedGroup', { ...group, updatedAt: new Date().toISOString() });
     });
   }
 }

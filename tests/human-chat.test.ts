@@ -161,3 +161,59 @@ test('ambiguous allowance asks in chat, agents cannot grant, and an outsider can
     /teammate/,
   );
 });
+
+test('9% remaining with a 20% floor stays paused without repeatedly resolving and reopening the quota decision', async (t) => {
+  const store = new Store(':memory:'),
+    host = new Workspace(store, process.cwd(), process.cwd());
+  t.after(async () => {
+    await host.close();
+    store.close();
+  });
+  const member = host.autonomy.addAccount();
+  store.updateMember(member.id, { name: 'Vega', account: { type: 'chatgpt' }, status: 'ready' });
+  const project = store.put('project', {
+    id: randomUUID(),
+    name: 'Screenshot regression',
+    path: process.cwd(),
+    goal: 'Controlled test',
+    createdAt: new Date().toISOString(),
+    memberIds: [member.id],
+  } satisfies Project);
+  host.quota.ingest(member.id, {
+    rateLimits: { primary: { usedPercent: 91, windowDurationMins: 10080 } },
+  });
+  const queued = host.mesh.post({
+    projectId: project.id,
+    authorId: null,
+    kind: 'message',
+    content: 'Review this project',
+  });
+  await host.quota.enforce();
+  const decision = store.all<any>('humanRequest')[0];
+  for (const content of ['vega work on it', 'i allow you to work on this vega']) {
+    postHumanChat(host, { projectId: project.id, content }, []);
+    await host.quota.enforce();
+    assert.equal(store.get<any>('humanRequest', decision.id).status, 'open');
+    assert.equal(store.all('humanRequest').length, 1);
+    const reply = store.all<RoomMessage>('message').at(-1)!;
+    assert.match(reply.content, /9% remaining.*20% stop limit/);
+    assert.doesNotMatch(reply.content, /Continuing eligible|can now be dispatched/);
+    assert.equal(store.get<RoomMessage>('message', queued.id).requestStatus, 'open');
+    assert.throws(() => host.quota.assertCanRun(member.id, project.id));
+  }
+  postHumanChat(
+    host,
+    { projectId: project.id, content: '@Vega I allow you to continue until 5% remaining' },
+    [],
+  );
+  assert.doesNotThrow(() => host.quota.assertCanRun(member.id, project.id));
+  assert.equal(store.get<any>('humanRequest', decision.id).status, 'resolved');
+  // A newer, stricter permission must stop work; it cannot leave the old 5% grant effective.
+  postHumanChat(
+    host,
+    { projectId: project.id, content: '@Vega I allow reserve usage until 20%' },
+    [],
+  );
+  assert.equal(store.all<QuotaGrant>('quotaGrant').filter((item) => !item.revokedAt).length, 1);
+  assert.throws(() => host.quota.assertCanRun(member.id, project.id));
+});

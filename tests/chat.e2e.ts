@@ -40,7 +40,7 @@ class Client extends CodexClient {
       return {
         rateLimits: {
           limitId: 'codex',
-          primary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: 2_000_000_000 },
+          primary: { usedPercent: 91, windowDurationMins: 10080, resetsAt: 2_000_000_000 },
         },
       } as T;
     throw new Error(`Unexpected provider call: ${method}`);
@@ -70,7 +70,7 @@ for (const member of members) {
   workspace.quota.ingest(member.id, {
     rateLimits: {
       limitId: 'codex',
-      primary: { usedPercent: 61, windowDurationMins: 10080, resetsAt: 2_000_000_000 },
+      primary: { usedPercent: 91, windowDurationMins: 10080, resetsAt: 2_000_000_000 },
     },
   });
 }
@@ -79,7 +79,7 @@ workspace.sessions.create = async (options) => {
   starts++;
   const task = store.addTask({
     projectId: project.id,
-    title: 'Chat request',
+    title: options.title || `Chat request ${starts}`,
     description: options.prompt || '',
     kind: 'research',
     priority: 'medium',
@@ -123,7 +123,7 @@ const browser = await chromium.launch();
 const context = await browser.newContext();
 await context.addInitScript(`
   sessionStorage.setItem('kivuno-guide-v3', 'seen');
-  window.relayDesktop = { platform: 'win32', version: '0.8.0', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({}), onWindowState: () => () => {}, controlWindow: async () => ({}), openExternal: async () => {} };
+  window.relayDesktop = { platform: 'win32', version: '0.8.1', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({maximized:false,fullscreen:false}), onWindowState: () => () => {}, controlWindow: async () => ({}), openExternal: async () => {} };
 `);
 const page = await context.newPage();
 const errors: string[] = [];
@@ -132,6 +132,9 @@ try {
   await page.goto(`${origin}/#mesh`);
   const guide = page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true });
   if (await guide.isVisible()) await guide.click();
+  await expect(page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  await expect(page.getByLabel('Message the project team', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open project Chat interactions', exact: true }).click();
   const input = page.getByLabel('Message the project team', { exact: true });
   await input.fill('@');
   await expect(page.getByRole('listbox', { name: 'Group teammates' })).toBeVisible();
@@ -149,11 +152,17 @@ try {
   await expect(input).toHaveValue('/rea');
   await input.fill('Tôi cho phép Vega tiếp tục');
   await input.press('Enter');
+  await expect(page.getByRole('log', { name: 'Project messages' })).toContainText(
+    '9% remaining, already at or below your 20% stop limit',
+  );
+  assert.equal(starts, 0);
+  await input.fill('@Vega I allow you to continue until 5% remaining');
+  await input.press('Enter');
   await expect(page.getByLabel('sessions panel')).toBeVisible();
   await expect(page.getByLabel('Vega is working', { exact: true })).toBeVisible();
   assert.equal(starts, 1);
-  const grant = store.all<any>('quotaGrant')[0];
-  assert.equal(grant.floor, 20);
+  const grant = store.all<any>('quotaGrant').find((item) => !item.revokedAt);
+  assert.equal(grant.floor, 5);
   assert.ok(Date.parse(grant.expiresAt) - Date.now() <= 3600000);
   await page.getByRole('button', { name: 'Model settings', exact: true }).click();
   await page.getByLabel('Automatic model and reasoning', { exact: true }).uncheck();
@@ -210,7 +219,13 @@ try {
   await page.getByRole('button', { name: 'Competition research', exact: true }).click();
   await expect(page.getByLabel('research panel')).toContainText('2 sources');
   await expect(page.getByLabel('research panel')).toContainText('unknown');
-  await page.screenshot({ path: '.local/kivuno-080-chat.png', fullPage: true });
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  await page.screenshot({
+    path: '.local/kivuno-081-home.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
   assert.deepEqual(errors, []);
   console.log(
     'Chat UI passed: mention keyboard, quota allowance, pending prompt, activity, auto Sessions, live model settings, reaction, reply, search; no model turns.',

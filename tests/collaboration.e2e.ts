@@ -101,7 +101,7 @@ const fixture = async (index: number) => {
   await context.addInitScript(`
     sessionStorage.setItem('kivuno-guide-v3', 'seen');
     window.relayDesktop = {
-      platform: 'win32', version: '0.8.0', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: ${JSON.stringify(user)}, cloudOrigin: location.origin }),
+      platform: 'win32', version: '0.8.1', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: ${JSON.stringify(user)}, cloudOrigin: location.origin }),
       onStatus: () => () => {}, getWindowState: async () => ({ maximized: false, fullscreen: false }), onWindowState: () => () => {}, controlWindow: async () => ({}),
       groups: async (input) => {
         const response = await fetch('/__groups', { method: 'POST', body: JSON.stringify(input) });
@@ -201,6 +201,10 @@ try {
   );
   await b.page.getByLabel('Message group', { exact: true }).fill('Reply from Bob');
   await b.page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(a.page.getByRole('log', { name: 'Group messages' })).toContainText('Reply from Bob');
+  await a.page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await expect(a.page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  await a.page.getByRole('button', { name: 'Open group Shared research', exact: true }).click();
   await expect(a.page.getByRole('log', { name: 'Group messages' })).toContainText('Reply from Bob');
   await a.page.screenshot({ path: '.local/kivuno-07-groups.png' });
   await b.page.reload();

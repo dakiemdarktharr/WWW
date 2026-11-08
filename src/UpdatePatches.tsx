@@ -6,6 +6,24 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.1',
+    date: '2026-11-08',
+    fixes: [
+      {
+        vi: 'Trang Chats hiển thị tất cả chat dự án và nhóm đã tham gia, xếp theo cập nhật mới nhất; chat chưa hoạt động nằm cuối.',
+        en: 'Chats home lists project and joined shared chats by latest activity, with inactive chats last.',
+      },
+      {
+        vi: 'Sửa thông báo cho phép usage khi số còn lại đã thấp hơn mức dừng. Công việc vẫn tạm dừng và câu hỏi quota không bị giải quyết rồi tạo lại liên tục.',
+        en: 'Fixed misleading usage approval below the stop limit. Work stays paused and the quota decision is no longer repeatedly resolved and recreated.',
+      },
+      {
+        vi: 'Quyền mới thay thế quyền cũ của cùng tài khoản và dự án; giữ nguyên giới hạn 20% trong 1 giờ nếu không nêu rõ.',
+        en: 'A new permission replaces previous limits for the same account/project. The default remains a 20% floor for one hour.',
+      },
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-11-08',
     fixes: [

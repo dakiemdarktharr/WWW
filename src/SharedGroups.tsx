@@ -12,12 +12,14 @@ const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(inpu
 export default function SharedGroups({
   members,
   addTeammate,
+  initialGroupId = '',
 }: {
   members: Member[];
   addTeammate: () => void;
+  initialGroupId?: string;
 }) {
   const [listing, setListing] = useState<GroupListing>();
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(initialGroupId);
   const [room, setRoom] = useState<SharedGroup>();
   const [messages, setMessages] = useState<SharedMessage[]>([]);
   const [name, setName] = useState('');
@@ -27,7 +29,7 @@ export default function SharedGroups({
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
-  const selectedRef = useRef('');
+  const selectedRef = useRef(initialGroupId);
   const messageDraft = useRef<{ id: string; content: string; groupId: string } | null>(null);
   const refreshList = async () => {
     const next = await request<GroupListing>({ action: 'list' });

@@ -12,6 +12,9 @@ export interface SharedTeammate {
   ownerId: string;
 }
 export interface SharedGroup {
+  updatedAt?: string;
+  lastMessageAt?: string;
+  lastMessagePreview?: string;
   id: string;
   name: string;
   ownerId: string;

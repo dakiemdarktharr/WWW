@@ -1,5 +1,6 @@
 import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
+import ChatHome from './ChatHome';
 import { isExternalProvider } from '../shared/providers';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -316,7 +317,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         : 'mesh',
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
-  const [neraluMode, setNeraluMode] = useState<'projects' | 'groups'>('projects');
+  const [neraluMode, setNeraluMode] = useState<'home' | 'projects' | 'groups'>('home');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [selectedShared, setSelectedShared] = useState('');
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedMachine, setSelectedMachine] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -380,6 +383,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     setFeedback('');
   }, []);
   const navigate = useCallback((next: View) => {
+    if (next === 'mesh') {
+      setNeraluMode('home');
+      setChatOpen(false);
+    }
     setView(next);
     window.location.hash = next;
     setSidebar(false);
@@ -660,7 +667,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <select
               id="workspace-choice"
               value={project?.id || ''}
-              onChange={(e) => setSelectedProject(e.target.value)}
+              onChange={(e) => {
+                setSelectedProject(e.target.value);
+                setChatOpen(true);
+                if (view === 'mesh') setNeraluMode('projects');
+              }}
             >
               {state?.projects.length ? (
                 state.projects.map((p) => (
@@ -737,7 +748,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             >
               <Menu size={20} />
             </button>
-            <span className="breadcrumb-project">{project?.name || 'Workspace'}</span>
+            <span className="breadcrumb-project">
+              {view === 'mesh' && neraluMode === 'home' ? 'Home' : project?.name || 'Workspace'}
+            </span>
             <span className="breadcrumb-slash">/</span>
             <strong>{pageTitle}</strong>
           </div>
@@ -817,15 +830,31 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <div className="neralu-mode" aria-label="Neralu view">
               <button
                 className="button compact"
+                aria-pressed={neraluMode === 'home'}
+                onClick={() => {
+                  setNeraluMode('home');
+                  setChatOpen(false);
+                }}
+              >
+                Chats
+              </button>
+              <button
+                className="button compact"
                 aria-pressed={neraluMode === 'projects'}
-                onClick={() => setNeraluMode('projects')}
+                onClick={() => {
+                  setNeraluMode('projects');
+                  setChatOpen(false);
+                }}
               >
                 Projects
               </button>
               <button
                 className="button compact"
                 aria-pressed={neraluMode === 'groups'}
-                onClick={() => setNeraluMode('groups')}
+                onClick={() => {
+                  setSelectedShared('');
+                  setNeraluMode('groups');
+                }}
               >
                 Groups
               </button>
@@ -835,9 +864,33 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <SharedGroups
               members={state.members}
               addTeammate={() => setModal({ type: 'connect' })}
+              initialGroupId={selectedShared}
             />
           )}
-          {view === 'mesh' && state && neraluMode === 'projects' && (
+          {view === 'mesh' &&
+            state &&
+            (neraluMode === 'home' || (neraluMode === 'projects' && !chatOpen)) && (
+              <ChatHome
+                state={state}
+                projectsOnly={neraluMode === 'projects'}
+                create={() => setModal({ type: 'project' })}
+                groups={() => {
+                  setSelectedShared('');
+                  setNeraluMode('groups');
+                }}
+                open={(item) => {
+                  if (item.kind === 'project') {
+                    setSelectedProject(item.id);
+                    setChatOpen(true);
+                    setNeraluMode('projects');
+                  } else {
+                    setSelectedShared(item.id);
+                    setNeraluMode('groups');
+                  }
+                }}
+              />
+            )}
+          {view === 'mesh' && state && neraluMode === 'projects' && chatOpen && (
             <MeshPage
               key={project?.id || 'empty-mesh'}
               state={state}
@@ -1444,6 +1497,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               );
               if (result) {
                 setSelectedProject(result.id);
+                setChatOpen(true);
+                setNeraluMode('projects');
                 closeModal();
               }
             }}

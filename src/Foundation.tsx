@@ -260,6 +260,12 @@ export function QuotaCard({
             Minimum remaining %
             <input name="floor" type="number" required min={0} max={49} defaultValue={20} />
           </label>
+          {quota?.windows.length && (
+            <p role="status">
+              {Math.min(...quota.windows.map((window) => window.remainingPercent))}% remaining · the
+              stop limit must be lower.
+            </p>
+          )}
           <label>
             Allow until
             <input

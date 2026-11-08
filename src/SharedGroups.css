@@ -3,7 +3,8 @@
   gap: 8px;
   padding: 0 0 14px;
 }
-.neralu-mode button[aria-pressed='true'] {
+.neralu-mode button[aria-pressed='true'],
+.neralu-mode button[aria-pressed='true']:hover:not(:disabled) {
   background: var(--lime);
   color: #10211b;
 }
