@@ -51,7 +51,7 @@ npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
 
 Để dùng nền tảng mới:
 
-1. Trong desktop, tạo hồ sơ trong Team rồi New project: chọn Codex phụ trách, tên/link cuộc thi và deadline. Dự án có Git repository trên máy của Codex phụ trách; remote GitHub chưa được tự tạo. Có thể mở repository có sẵn bằng trình chọn thư mục.
+1. Trong desktop, tạo hồ sơ trong Team rồi New project: chọn Codex phụ trách, tên/link cuộc thi và deadline. Dự án có Git repository trên máy của Codex phụ trách; remote GitHub chưa được tự tạo. Có thể chọn repository có sẵn hoặc khởi tạo Git cho thư mục từ Neralu.
 2. Mở **Neralu** để trò chuyện theo project. Tin người dùng được nhận việc một lần và chuyển tới session chỉ đọc khi có account/quota phù hợp; agent không tự mở vòng trả lời nhau. `!!` chỉ đánh dấu lệnh từ người dùng thật.
 3. Trong **Sessions**, mở nhiều conversation theo account/project; chọn model/reasoning từ catalog thật, read-only hoặc scope ghi file. Bỏ trống prompt để lưu trước. Mỗi cửa sổ có output/tool events thật, follow-up/steering và Pause/Stop. Demo có thể dùng HTTPS hoặc địa chỉ loopback của máy đang chạy desktop. Đây là giao diện của runtime Codex thật, không phải cửa sổ native Codex Desktop hay ChatGPT Projects.
 4. Trong panel Usage, refresh quota. Còn ≤50% ở một cửa sổ áp dụng sẽ ngừng giao việc và pause các session của account. Nếu cần dùng phần dự trữ, người dùng cấp quyền theo account/project, mức sàn và thời hạn. Quota chưa biết/quá cũ không được coi là còn đầy.
@@ -60,7 +60,7 @@ npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
 
 Luồng team workflow từ bản trước vẫn dùng được; các đường dẫn máy và browser callback dưới đây dành cho chế độ local, cloud dùng device code:
 
-1. Trong **Settings**, thêm đường dẫn tuyệt đối tới một Git repository đã có commit đầu tiên. Đặt mục tiêu chung cho dự án. Repository đang mở trong editor khác vẫn sử dụng được; nhánh chính cần sạch trước khi tích hợp.
+1. Trong Neralu, chọn **Connect project** rồi chọn thư mục gốc của Git repository đã có commit. Với thư mục chưa có Git hoặc repo chưa có commit, chọn **Initialize folder with Git**; Kivuno sẽ tạo Git cục bộ và commit khởi đầu từ các file Git không bỏ qua. Các file credential phổ biến và thư mục tài khoản riêng được loại trừ. Thao tác không push lên remote. Đặt mục tiêu chung cho dự án; nhánh chính cần sạch trước khi tích hợp.
 2. Trong **Team**, tạo bốn hồ sơ, ví dụ Atlas / Vega / Echo / Nova, rồi chọn vai trò. Đây là nhãn bạn đặt, không phải tài khoản đã được tạo sẵn.
 3. Đăng nhập lần lượt bằng **Sign in with ChatGPT** hoặc device code. Nếu trình duyệt đang giữ tài khoản trước, hãy chọn đúng tài khoản trên trang OpenAI. Kiểm tra email hiện trong từng thẻ. Không đăng nhập đồng thời vì callback OAuth dùng cổng cục bộ.
 4. Dùng **Refresh** để đọc lại trạng thái, hạn mức và capabilities. **Import local skills** sao chép các standalone skills từ `~/.codex/skills` và `~/.agents/skills`, bỏ qua symlink, cấu hình xác thực và các file có tên nhạy cảm. Đây là thao tác bạn chủ động chọn.

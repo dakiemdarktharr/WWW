@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -56,6 +56,45 @@ async function fixture() {
     },
   };
 }
+
+test('project endpoint initializes a selected plain folder only when explicitly requested', async (t) => {
+  const f = await fixture();
+  const projectPath = await mkdtemp(path.join(os.tmpdir(), 'kivuno-api-project-'));
+  const privatePath = path.join(f.dir, 'selected-private-folder');
+  await mkdir(privatePath);
+  await writeFile(path.join(projectPath, 'README.md'), 'Project files stay local.\n');
+  t.after(async () => {
+    await f.close();
+    await rm(projectPath, { recursive: true, force: true });
+  });
+
+  const rejected = await f.request('POST', '/api/projects', {
+    name: 'Plain folder',
+    path: projectPath,
+    goal: 'Work safely',
+  });
+  assert.equal(rejected.statusCode, 400);
+  assert.match(rejected.json().error, /Initialize folder with Git/);
+
+  const privateFolder = await f.request('POST', '/api/projects', {
+    name: 'Private folder',
+    path: privatePath,
+    goal: 'Stay private',
+    initializeGit: true,
+  });
+  assert.equal(privateFolder.statusCode, 400);
+  await assert.rejects(lstat(path.join(privatePath, '.git')), { code: 'ENOENT' });
+
+  const initialized = await f.request('POST', '/api/projects', {
+    name: 'Plain folder',
+    path: projectPath,
+    goal: 'Work safely',
+    initializeGit: true,
+  });
+  assert.equal(initialized.statusCode, 200);
+  assert.equal(initialized.json().path, projectPath);
+  assert.equal(f.store.projects().length, 1);
+});
 
 test('group mutation endpoints bind human identity and browser sharing continues only the same session once', async () => {
   const f = await fixture();

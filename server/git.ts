@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, realpath, lstat, readFile } from 'node:fs/promises';
+import { mkdir, realpath, lstat, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { TaskDiff } from '../shared/types.ts';
 import { DomainError } from './store.ts';
 import { inside } from './security.ts';
 const exec = promisify(execFile);
+const MAX_INITIAL_PROJECT_FILES = 20_000;
+const MAX_INITIAL_PROJECT_BYTES = 512 * 1024 * 1024;
 export async function git(
   cwd: string,
   args: string[],
@@ -35,15 +37,202 @@ export async function git(
   }
 }
 export async function validateRepo(input: string): Promise<string> {
+  return prepareProjectRepo(input);
+}
+const projectInitializations = new Map<
+  string,
+  { promise: Promise<string>; initializeGit: boolean }
+>();
+export async function prepareProjectRepo(input: string, initializeGit = false): Promise<string> {
   if (!path.isAbsolute(input))
-    throw new DomainError('Choose an absolute path to an existing Git repository.', 400);
-  const resolved = await realpath(input);
-  const root = await git(resolved, ['rev-parse', '--show-toplevel']);
+    throw new DomainError('Choose an absolute path to a project folder.', 400);
+  let resolved: string;
+  try {
+    resolved = await realpath(input);
+  } catch {
+    throw new DomainError('Choose a folder that exists on this computer.', 400);
+  }
+  if (!(await lstat(resolved)).isDirectory())
+    throw new DomainError('Choose a folder, not a file.', 400);
+  const key =
+    process.platform === 'win32'
+      ? path.normalize(resolved).toLowerCase()
+      : path.normalize(resolved);
+  const pending = projectInitializations.get(key);
+  if (pending) {
+    if (!initializeGit && pending.initializeGit)
+      return pending.promise.then(() => {
+        throw new DomainError(
+          'This folder is being initialized. Retry connecting when it finishes.',
+        );
+      });
+    if (!initializeGit || pending.initializeGit) return pending.promise;
+    return pending.promise.catch(() => undefined).then(() => prepareProjectRepo(input, true));
+  }
+  const operation = prepareResolvedProjectRepo(resolved, initializeGit).finally(() => {
+    if (projectInitializations.get(key)?.promise === operation) projectInitializations.delete(key);
+  });
+  projectInitializations.set(key, { promise: operation, initializeGit });
+  return operation;
+}
+async function prepareResolvedProjectRepo(input: string, initializeGit: boolean): Promise<string> {
+  let root: string;
+  try {
+    root = await git(input, ['rev-parse', '--show-toplevel']);
+  } catch (error) {
+    if (!/not a git repository/i.test((error as Error).message)) throw error;
+    if (!initializeGit)
+      throw new DomainError(
+        'This folder is not a Git repository. Choose “Initialize folder with Git” to prepare it.',
+        400,
+      );
+    await git(input, ['init', '--initial-branch=main']);
+    root = await git(input, ['rev-parse', '--show-toplevel']);
+  }
   const actual = await realpath(root);
-  if (path.normalize(resolved).toLowerCase() !== path.normalize(actual).toLowerCase())
+  if (path.normalize(input).toLowerCase() !== path.normalize(actual).toLowerCase())
     throw new DomainError('Select the repository root, not a subfolder.', 400);
-  await git(actual, ['rev-parse', '--verify', 'HEAD']);
+  try {
+    await git(actual, ['rev-parse', '--verify', 'HEAD']);
+  } catch (error) {
+    if (!/needed a single revision|ambiguous argument ['"]HEAD['"]/i.test((error as Error).message))
+      throw error;
+    if (!initializeGit)
+      throw new DomainError(
+        'This Git repository has no commits yet. Choose “Initialize folder with Git” to create its starting commit.',
+        400,
+      );
+    await createInitialProjectCommit(actual);
+    await git(actual, ['rev-parse', '--verify', 'HEAD']);
+  }
   return actual;
+}
+async function createInitialProjectCommit(root: string) {
+  const excludePath = path.resolve(
+    root,
+    await git(root, ['rev-parse', '--git-path', 'info/exclude']),
+  );
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  let exclusions = '';
+  try {
+    const info = await lstat(excludePath);
+    if (!info.isFile() || info.isSymbolicLink())
+      throw new DomainError('Git’s local exclude file must be a regular file.', 400);
+    exclusions = await readFile(excludePath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const marker = '# Kivuno initial project snapshot safety rules';
+  if (!exclusions.includes(marker)) {
+    const privatePatterns = [
+      marker,
+      '**/.env',
+      '**/.env.*',
+      '**/auth.json',
+      '**/oauth_creds.json',
+      '**/google_accounts.json',
+      '**/mcp_config.json',
+      '**/.mcp.json',
+      '**/.claude.json',
+      '**/credentials',
+      '**/credentials.*',
+      '**/.credentials',
+      '**/.credentials.*',
+      '**/credentials/',
+      '**/.relay/',
+      '**/.aws/',
+      '**/.ssh/',
+      '**/.codex/',
+      '**/.gemini/',
+      '**/.claude/',
+      '**/.antigravity/',
+      '**/id_rsa',
+      '**/id_ed25519',
+      '**/*.pem',
+      '**/*.p12',
+      '**/*.pfx',
+      '**/*.key',
+    ].join('\n');
+    await writeFile(
+      excludePath,
+      exclusions + (exclusions && !exclusions.endsWith('\n') ? '\n' : '') + privatePatterns + '\n',
+      'utf8',
+    );
+  }
+  const stagedPaths = (await git(root, ['ls-files', '-z'])).split('\0').filter(Boolean);
+  const untrackedPaths = (await git(root, ['ls-files', '--others', '--exclude-standard', '-z']))
+    .split('\0')
+    .filter(Boolean);
+  const privatePaths = stagedPaths.filter(isPrivateInitialPath);
+  for (let index = 0; index < privatePaths.length; index += 100)
+    await git(root, [
+      '--literal-pathspecs',
+      'rm',
+      '--cached',
+      '--force',
+      '--ignore-unmatch',
+      '-r',
+      '--',
+      ...privatePaths.slice(index, index + 100),
+    ]);
+  const safePaths = [
+    ...new Set([...stagedPaths, ...untrackedPaths].filter((file) => !isPrivateInitialPath(file))),
+  ];
+  if (safePaths.length > MAX_INITIAL_PROJECT_FILES)
+    throw new DomainError(
+      'This folder has more than 20,000 files to snapshot. Add generated files or datasets to .gitignore, then try again.',
+      400,
+    );
+  let totalBytes = 0;
+  for (const file of safePaths) {
+    try {
+      const info = await lstat(path.resolve(root, file));
+      if (info.isFile() && !info.isSymbolicLink()) totalBytes += info.size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (totalBytes > MAX_INITIAL_PROJECT_BYTES)
+      throw new DomainError(
+        'This folder has more than 512 MB to snapshot. Add generated files or datasets to .gitignore, then try again.',
+        400,
+      );
+  }
+  for (let index = 0; index < safePaths.length; index += 100)
+    await git(root, [
+      '--literal-pathspecs',
+      'add',
+      '--all',
+      '--',
+      ...safePaths.slice(index, index + 100),
+    ]);
+  await git(root, [
+    '-c',
+    'user.name=Kivuno',
+    '-c',
+    'user.email=kivuno@localhost',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--allow-empty',
+    '-m',
+    'Initial project snapshot for Kivuno',
+  ]);
+}
+function isPrivateInitialPath(file: string) {
+  const parts = file.replaceAll('\\', '/').split('/');
+  const basename = parts.at(-1) || '';
+  return (
+    parts.some((part) =>
+      /^(?:\.relay|\.aws|\.ssh|\.codex|\.gemini|\.claude|\.antigravity|\.credentials|credentials)$/i.test(
+        part,
+      ),
+    ) ||
+    /^\.env(?:\.|$)/i.test(basename) ||
+    /^(?:auth\.json|oauth_creds\.json|google_accounts\.json|mcp_config\.json|\.mcp\.json|\.claude\.json|\.?credentials(?:\.[^/]+)?|id_rsa|id_ed25519)$/i.test(
+      basename,
+    ) ||
+    /\.(?:pem|p12|pfx|key)$/i.test(basename)
+  );
 }
 export async function createWorktree(repo: string, storage: string, taskId: string) {
   const target = path.resolve(storage, 'worktrees', taskId);

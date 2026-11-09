@@ -3,7 +3,7 @@ import { CompetitionResearcher, researchTools } from './competition-research.ts'
 import { portfolio, portfolioContext, portfolioTool } from './portfolio.ts';
 import path from 'node:path';
 import os from 'node:os';
-import { cp, mkdir, readdir, lstat } from 'node:fs/promises';
+import { cp, mkdir, readdir, lstat, realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type {
   Activity,
@@ -26,7 +26,7 @@ import {
   startTask,
 } from './codex.ts';
 import { Store, DomainError } from './store.ts';
-import { createWorktree, git, integrate, taskDiff, validateRepo } from './git.ts';
+import { createWorktree, git, integrate, taskDiff, prepareProjectRepo } from './git.ts';
 import { inside, privateDirectory, redact, safeDetails } from './security.ts';
 import { Workflows, planningTask } from './workflows.ts';
 import { SessionManager } from './sessions.ts';
@@ -649,15 +649,26 @@ export class Workspace {
       throw error;
     }
   }
-  async addProject(input: { name: string; path: string; goal: string; memberIds?: string[] }) {
+  async addProject(input: {
+    name: string;
+    path: string;
+    goal: string;
+    memberIds?: string[];
+    initializeGit?: boolean;
+  }) {
     for (const id of input.memberIds || []) this.store.get<Member>('member', id);
-    const repo = await validateRepo(input.path);
-    if (inside(this.dataDir, repo))
-      throw new DomainError('Choose a source repository outside RELAY’s private storage.');
+    const selectedPath = await realpath(input.path).catch(() => null);
+    const privatePath = await realpath(this.dataDir).catch(() => path.resolve(this.dataDir));
+    if (selectedPath && inside(privatePath, selectedPath))
+      throw new DomainError('Choose a source repository outside Kivuno’s private storage.', 400);
+    const repo = await prepareProjectRepo(input.path, input.initializeGit);
+    if (inside(privatePath, repo))
+      throw new DomainError('Choose a source repository outside Kivuno’s private storage.', 400);
     if (this.store.projects().some((p) => p.path.toLowerCase() === repo.toLowerCase()))
       throw new DomainError('This repository is already in the room.');
     const project = this.store.put('project', {
-      ...input,
+      name: input.name,
+      goal: input.goal,
       memberIds: input.memberIds || [],
       path: repo,
       id: randomUUID(),

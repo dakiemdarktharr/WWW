@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
-import { readFile, appendFile } from 'node:fs/promises';
+import { access, readFile, appendFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 const sessions = new Map();
 let authenticated = false;
@@ -38,6 +38,18 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       };
     } else if (rpc.method === 'authenticate') {
       if (params.methodId !== 'oauth-personal') throw new Error('Paid authentication is forbidden');
+      const hangOnce = path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'fixture-hang-first-auth');
+      try {
+        await access(hangOnce);
+        await unlink(hangOnce);
+        await writeFile(
+          path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'oauth_creds.json'),
+          JSON.stringify({ refresh_token: 'controlled-fixture-token' }),
+        );
+        return;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
       authenticated = true;
     } else if (rpc.method === 'session/new' || rpc.method === 'session/load') {
       if (!authenticated) throw new Error('Not authenticated');

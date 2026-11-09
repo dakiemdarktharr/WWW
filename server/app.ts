@@ -874,6 +874,7 @@ export async function buildApp(
           path: z.string().min(1).max(2000),
           goal: z.string().max(16000).default(''),
           memberIds: z.array(id).max(16).optional(),
+          initializeGit: z.boolean().default(false),
         })
         .strict()
         .parse(request.body),

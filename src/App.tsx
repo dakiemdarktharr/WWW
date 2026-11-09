@@ -354,7 +354,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [feedback, setFeedback] = useState('');
   const [quickSearch, setQuickSearch] = useState('');
   const [repositoryPath, setRepositoryPath] = useState('');
-  const [projectMode, setProjectMode] = useState<'existing' | 'hackathon'>(
+  const [projectMode, setProjectMode] = useState<'existing' | 'initialize' | 'hackathon'>(
     cloud ? 'hackathon' : 'existing',
   );
   const [profileProvider, setProfileProvider] = useState<ProviderId>('codex');
@@ -1492,8 +1492,15 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       deadline,
                       goal: data.get('goal'),
                     }
-                  : { name: data.get('name'), path: data.get('path'), goal: data.get('goal') },
-                'Project connected. Your room is ready.',
+                  : {
+                      name: data.get('name'),
+                      path: data.get('path'),
+                      goal: data.get('goal'),
+                      initializeGit: projectMode === 'initialize',
+                    },
+                projectMode === 'initialize'
+                  ? 'Folder initialized and connected. Nothing was pushed.'
+                  : 'Project connected. Your room is ready.',
               );
               if (result) {
                 setSelectedProject(result.id);
@@ -1510,13 +1517,21 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   aria-label="Project type"
                   value={projectMode}
                   onChange={(event) =>
-                    setProjectMode(event.target.value as 'existing' | 'hackathon')
+                    setProjectMode(event.target.value as 'existing' | 'initialize' | 'hackathon')
                   }
                 >
                   <option value="existing">Existing repository</option>
+                  <option value="initialize">Initialize folder with Git</option>
                   <option value="hackathon">New hackathon project</option>
                 </select>
               </label>
+            )}
+            {projectMode === 'initialize' && (
+              <p className="form-note" role="note">
+                Kivuno will create local Git data and an initial commit from files that Git does not
+                ignore. Common credential files and private account folders are excluded. This
+                changes the selected folder; nothing is pushed.
+              </p>
             )}
             <label>
               Project name
@@ -1588,7 +1603,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <Button onClick={closeModal}>Cancel</Button>
               <Button primary type="submit" disabled={pending}>
                 <FolderGit2 size={15} />{' '}
-                {projectMode === 'hackathon' ? 'Create project' : 'Connect project'}
+                {projectMode === 'hackathon'
+                  ? 'Create project'
+                  : projectMode === 'initialize'
+                    ? 'Initialize and connect'
+                    : 'Connect project'}
               </Button>
             </div>
           </form>

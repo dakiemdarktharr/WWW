@@ -3,7 +3,14 @@ import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { createWorktree, git, integrate, taskDiff, validateRepo } from '../server/git.ts';
+import {
+  createWorktree,
+  git,
+  integrate,
+  prepareProjectRepo,
+  taskDiff,
+  validateRepo,
+} from '../server/git.ts';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'relay-git-test-'));
@@ -35,6 +42,59 @@ test('repository validation accepts a root with spaces and rejects a subdirector
   await mkdir(subdirectory);
   await assert.rejects(validateRepo(subdirectory), /repository root/);
   await assert.rejects(validateRepo('relative/repo'), /absolute path/);
+});
+
+test('ordinary folders and unborn repositories can be prepared safely for project worktrees', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-project-folder-'));
+  const plain = path.join(root, 'plain folder');
+  const unborn = path.join(root, 'unborn repo');
+  await mkdir(path.join(plain, 'src'), { recursive: true });
+  await mkdir(path.join(plain, '.gemini'), { recursive: true });
+  await mkdir(unborn);
+  await git(unborn, ['init', '--initial-branch=main']);
+  await writeFile(path.join(plain, 'src', 'main.ts'), 'export const ready = true;\n');
+  await writeFile(path.join(plain, '.env'), 'TOKEN=not-for-git\n');
+  await writeFile(path.join(plain, '.env.example'), 'TOKEN=\n');
+  await writeFile(path.join(plain, 'auth.json'), '{"access_token":"private"}\n');
+  await writeFile(path.join(plain, '.gemini', 'oauth_creds.json'), '{"refresh_token":"private"}\n');
+  await writeFile(path.join(unborn, 'README.md'), 'An empty repository still has no HEAD.\n');
+  t.after(async () => {
+    const actual = await realpath(root);
+    const tempRoot = await realpath(os.tmpdir());
+    assert.equal(path.dirname(actual), tempRoot);
+    assert.ok(path.basename(actual).startsWith('kivuno-project-folder-'));
+    await rm(actual, { recursive: true, force: true });
+  });
+
+  const [existingOnly, initialize] = await Promise.allSettled([
+    prepareProjectRepo(plain),
+    prepareProjectRepo(plain, true),
+  ]);
+  assert.equal(existingOnly.status, 'rejected');
+  assert.match(
+    String(existingOnly.status === 'rejected' && existingOnly.reason),
+    /not a Git repository.*Initialize folder with Git|folder is being initialized/,
+  );
+  assert.equal(initialize.status, 'fulfilled');
+  await assert.rejects(prepareProjectRepo(unborn), /no commits yet.*Initialize folder with Git/);
+
+  assert.equal(initialize.status === 'fulfilled' && initialize.value, await realpath(plain));
+  assert.equal(await prepareProjectRepo(unborn, true), await realpath(unborn));
+  assert.deepEqual(
+    (await git(plain, ['ls-tree', '-r', '--name-only', 'HEAD'])).split('\n'),
+    ['src/main.ts'],
+    'credentials and env files are excluded from the initial snapshot',
+  );
+  assert.deepEqual((await git(unborn, ['ls-tree', '-r', '--name-only', 'HEAD'])).split('\n'), [
+    'README.md',
+  ]);
+  assert.equal(await git(plain, ['status', '--porcelain']), '');
+  assert.equal(await readFile(path.join(plain, '.env'), 'utf8'), 'TOKEN=not-for-git\n');
+  assert.equal(
+    await readFile(path.join(plain, '.gemini', 'oauth_creds.json'), 'utf8'),
+    '{"refresh_token":"private"}\n',
+  );
+  assert.equal(await prepareProjectRepo(plain), await realpath(plain));
 });
 
 test('two real worktrees isolate edits to the same file and leave the project untouched', async (t) => {

@@ -107,6 +107,41 @@ test('Gemini restarts do not request login or launch a browser; only explicit si
   assert.equal((await calls()).filter((entry) => entry.method === 'session/prompt').length, 0);
 });
 
+test('Gemini sign-in recovers from newly saved OAuth credentials when the ACP response stalls', async (t) => {
+  const f = await fixture(t);
+  const credentials = path.join(f.home, '.gemini', 'oauth_creds.json');
+  await unlink(credentials);
+  await writeFile(path.join(f.home, '.gemini', 'fixture-hang-first-auth'), '');
+  const completed = new Promise<void>((resolve) =>
+    f.client.on('notification', (method, params) => {
+      if (method === 'account/login/completed' && params.success) resolve();
+    }),
+  );
+  let profileExits = 0;
+  f.client.on('exit', () => profileExits++);
+  const login = await f.client.request('account/login/start');
+  assert.equal(login.type, 'geminiGoogle');
+
+  let account;
+  for (let attempt = 0; attempt < 10 && !account; attempt++) {
+    account = await readAccount(f.client);
+    if (!account) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  assert.equal(account?.type, 'gemini-google');
+  await completed;
+  assert.equal(profileExits, 0, 'credential recovery keeps the owning Workspace client alive');
+  const calls = (await readFile(path.join(f.home, 'peer-calls.jsonl'), 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    calls.map((entry) => entry.method),
+    ['initialize', 'authenticate', 'initialize', 'authenticate'],
+  );
+  assert.equal(calls[1].noBrowser, '');
+  assert.equal(calls[3].noBrowser, '1', 'cached verification must not launch another browser');
+});
+
 test('official ACP wire contract translates real process streams and model selection without inventing reasoning', async (t) => {
   const f = await fixture(t);
   await f.client.start();

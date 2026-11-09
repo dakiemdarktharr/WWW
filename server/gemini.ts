@@ -2,7 +2,7 @@ import path from 'node:path';
 import { access, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { CodexClient, codexEnvironment, redactCodexError, type DynamicTool } from './codex.ts';
 import { GeminiTools } from './gemini-tools.ts';
 import { providerFileTools } from './provider-files.ts';
@@ -14,6 +14,23 @@ const exists = (file: string) =>
     () => true,
     () => false,
   );
+async function oauthCredentialFingerprint(home: string) {
+  try {
+    const file = await readFile(path.join(home, '.gemini', 'oauth_creds.json'));
+    const credentials = JSON.parse(file.toString('utf8'));
+    if (
+      !credentials ||
+      typeof credentials !== 'object' ||
+      Array.isArray(credentials) ||
+      (typeof credentials.refresh_token !== 'string' &&
+        typeof credentials.access_token !== 'string')
+    )
+      return null;
+    return createHash('sha256').update(file).digest('hex');
+  } catch {
+    return null;
+  }
+}
 export async function resolveGeminiCommand() {
   const configured = process.env.RELAY_GEMINI_COMMAND;
   if (configured) {
@@ -120,6 +137,11 @@ export class GeminiClient extends CodexClient {
   >();
   private authenticated = false;
   private loggingIn = false;
+  private loginId: string | null = null;
+  private loginCredentialFingerprint: string | null = null;
+  private loginRecovery: Promise<boolean> | null = null;
+  private loginRecoveryInProgress = false;
+  private geminiStopPromise: Promise<void> | null = null;
   private allowLoginBrowser = false;
   private restartingForLogin = false;
   private stopped = false;
@@ -193,7 +215,7 @@ export class GeminiClient extends CodexClient {
         ),
       );
       this.resolveTerminated?.();
-      if (!this.restartingForLogin) this.emit('exit', { code, signal });
+      if (!this.restartingForLogin && !this.loggingIn) this.emit('exit', { code, signal });
     });
     try {
       const response = await this.rpc('initialize', {
@@ -314,13 +336,61 @@ export class GeminiClient extends CodexClient {
   }
   private async authenticateCached() {
     if (this.authenticated) return true;
-    // A status probe must not start a second OAuth operation while the browser
-    // flow already owns authenticate.
-    if (this.loggingIn) return false;
+    if (this.loggingIn) {
+      const fingerprint = await oauthCredentialFingerprint(this.settings.home);
+      if (!fingerprint || fingerprint === this.loginCredentialFingerprint) return false;
+      return this.recoverLoginFromCachedCredentials(fingerprint);
+    }
     if (!(await exists(path.join(this.settings.home, '.gemini', 'oauth_creds.json')))) return false;
     await this.rpc('authenticate', { methodId: 'oauth-personal' });
     this.authenticated = true;
     return true;
+  }
+  private recoverLoginFromCachedCredentials(fingerprint: string): Promise<boolean> {
+    if (this.loginRecovery) return this.loginRecovery;
+    const loginId = this.loginId;
+    if (!loginId) return Promise.resolve(false);
+    const recovery = (async () => {
+      // Let the original ACP response win when it is just finishing after the
+      // OAuth file write. If it remains pending, authenticate from the saved token.
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      if (!this.loggingIn || this.loginId !== loginId || this.authenticated)
+        return this.authenticated;
+      this.loginRecoveryInProgress = true;
+      this.restartingForLogin = true;
+      try {
+        await this.stop();
+        if (!this.loggingIn || this.loginId !== loginId) return false;
+        await this.start();
+        await this.rpc('authenticate', { methodId: 'oauth-personal' }, 60_000);
+        if (!this.loggingIn || this.loginId !== loginId) return false;
+        this.authenticated = true;
+        this.loginCredentialFingerprint = fingerprint;
+        this.loggingIn = false;
+        this.loginId = null;
+        this.loginCredentialFingerprint = null;
+        this.emit('notification', 'account/login/completed', { loginId, success: true });
+        return true;
+      } catch (error) {
+        if (this.loginId === loginId && this.loggingIn) {
+          await this.stop().catch(() => {});
+          this.loggingIn = false;
+          this.loginId = null;
+          this.emit('notification', 'account/login/completed', {
+            loginId,
+            success: false,
+            error: redactCodexError(error),
+          });
+        }
+        return false;
+      } finally {
+        this.restartingForLogin = false;
+        this.loginRecoveryInProgress = false;
+        this.loginRecovery = null;
+      }
+    })();
+    this.loginRecovery = recovery;
+    return recovery;
   }
   private async newAcpSession(cwd: string, existingId?: string, tools = false) {
     if (!(await this.authenticateCached()))
@@ -412,6 +482,7 @@ export class GeminiClient extends CodexClient {
     if (method === 'account/login/start') {
       if (this.loggingIn) throw new Error('A Gemini sign-in is already pending.');
       if (this.turn) throw new Error('Stop this profile’s active turn before signing in.');
+      this.loginCredentialFingerprint = await oauthCredentialFingerprint(this.settings.home);
       this.restartingForLogin = true;
       try {
         await this.stop();
@@ -432,14 +503,29 @@ export class GeminiClient extends CodexClient {
       if (this.loggingIn) throw new Error('A Gemini sign-in is already pending.');
       this.loggingIn = true;
       const loginId = randomUUID();
-      void this.rpc('authenticate', { methodId: 'oauth-personal' }, 180_000)
+      this.loginId = loginId;
+      // Gemini CLI's own browser OAuth flow waits up to five minutes.
+      void this.rpc('authenticate', { methodId: 'oauth-personal' }, 6 * 60_000)
         .then(
           () => {
+            if (this.loginId !== loginId || this.loginRecoveryInProgress) return;
             this.authenticated = true;
+            this.loggingIn = false;
+            this.loginId = null;
+            this.loginCredentialFingerprint = null;
             this.emit('notification', 'account/login/completed', { loginId, success: true });
           },
           async (error) => {
-            await this.stop();
+            if (this.loginId !== loginId || this.loginRecoveryInProgress) return;
+            this.restartingForLogin = true;
+            try {
+              await this.stop();
+            } finally {
+              this.restartingForLogin = false;
+            }
+            if (this.loginId !== loginId) return;
+            this.loggingIn = false;
+            this.loginId = null;
             this.emit('notification', 'account/login/completed', {
               loginId,
               success: false,
@@ -448,16 +534,24 @@ export class GeminiClient extends CodexClient {
           },
         )
         .finally(() => {
-          this.loggingIn = false;
+          if (this.loginId === loginId && !this.loginRecoveryInProgress) this.loggingIn = false;
         });
       result = {
         type: 'geminiGoogle',
         loginId,
         instructions:
-          'Complete Google sign-in in the browser opened by Gemini CLI. Refresh this profile after sign-in. No API key or Vertex fallback is enabled.',
+          'Complete Google sign-in in the browser opened by Gemini CLI. Kivuno will verify the saved profile automatically. No API key or Vertex fallback is enabled.',
       };
     } else if (method === 'account/login/cancel') {
-      await this.stop();
+      this.loginId = null;
+      this.loggingIn = false;
+      this.loginCredentialFingerprint = null;
+      this.restartingForLogin = true;
+      try {
+        await this.stop();
+      } finally {
+        this.restartingForLogin = false;
+      }
       result = {};
     } else if (method === 'account/logout') {
       await this.stop();
@@ -468,6 +562,9 @@ export class GeminiClient extends CodexClient {
           },
         );
       this.authenticated = false;
+      this.loggingIn = false;
+      this.loginId = null;
+      this.loginCredentialFingerprint = null;
       result = {};
     } else if (method === 'account/rateLimits/read')
       result = { ordinaryUsageAllowed: null, rateLimits: null };
@@ -570,7 +667,15 @@ export class GeminiClient extends CodexClient {
     } else throw new Error(`Unsupported Gemini capability: ${method}`);
     return result as T;
   }
-  override async stop() {
+  override stop(): Promise<void> {
+    if (this.geminiStopPromise) return this.geminiStopPromise;
+    const stopping = this.stopProcess().finally(() => {
+      if (this.geminiStopPromise === stopping) this.geminiStopPromise = null;
+    });
+    this.geminiStopPromise = stopping;
+    return stopping;
+  }
+  private async stopProcess() {
     this.stopped = true;
     this.failAcp(new Error('Gemini was stopped.'));
     await this.toolBridge?.close();

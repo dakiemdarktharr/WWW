@@ -7,7 +7,7 @@ Local-only React/Vite + Fastify + node:sqlite. API listens on 127.0.0.1:4317; Vi
 - POST /api/members/:id/refresh {} => Member; POST /logout {}
 - POST /api/members/:id/skills/import {} => imports local standalone skills, excludes auth/config/plugin secrets
 - GET /api/members/:id/capabilities => {skills,plugins,errors}; POST /api/members/:id/terminal {} is NOT planned
-- POST /api/projects {name,path,goal} => Project (existing local git repo required)
+- POST /api/projects {name,path,goal,initializeGit?} => Project (existing local Git repo required unless `initializeGit: true` explicitly requests local Git initialization and a credential-filtered starting commit; nothing is pushed)
 - PATCH /api/projects/:id {name?,goal?} => Project
 - POST /api/tasks {projectId,title,description,kind,priority,scope:string[],dependsOn:string[],acceptance,assignedTo?:string|null,status?:'ready'|'backlog'} => Task
 - PATCH /api/tasks/:id {title?,description?,status?:'backlog'|'ready',assignedTo?,scope?,dependsOn?,acceptance?,priority?} => Task (only idle manual tasks; workflow structure is coordinator-owned)

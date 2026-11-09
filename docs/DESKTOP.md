@@ -10,6 +10,10 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 4. Return to Kivuno. The short-lived activation request is bound to a random proof verifier held only by the app. A consumed activation cannot issue another session.
 5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. Gemini uses its own Google sign-in. Claude Code and Antigravity use your separately installed, signed-in client with the scoped [MESH MCP configuration](EXTERNAL-MESH.md); adding a profile does not sign that client in.
 
+## Connect a project folder
+
+In Neralu, choose **Connect project** and select the repository root. Existing repositories need at least one commit so Kivuno can create isolated Git worktrees. For a normal folder or an empty repository, choose **Initialize folder with Git**. Kivuno creates local Git metadata and an initial commit from files Git does not ignore; common credential files and private account folders are excluded. This action changes the selected folder and does not push to a remote.
+
 On Windows, a fresh Codex profile needs the official limited sandbox before write tasks can run. Kivuno 0.6.1 performs the official unelevated setup when that profile is not configured, then restarts its App Server. It does not downgrade an existing sandbox. A failed setup blocks execution and reports the error. Skills/plugins are account-specific; credentials and trusted-tool permissions are never automatically copied between accounts/providers.
 
 ## Recheck a download
