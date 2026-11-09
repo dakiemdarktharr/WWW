@@ -15,6 +15,42 @@ const staged = path.join(root, '.desktop-build');
 const manifest = JSON.parse(await readFile(path.join(staged, 'manifest.json'), 'utf8'));
 const rootPackage = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const output = path.join(root, 'release');
+const macosUrl = process.env.KIVUNO_MACOS_URL?.trim() || '';
+const macosSha256 = process.env.KIVUNO_MACOS_SHA256?.trim() || '';
+const macosSizeValue = process.env.KIVUNO_MACOS_SIZE?.trim() || '';
+const hasMacosRelease = Boolean(macosUrl || macosSha256 || macosSizeValue);
+/** @type {{ available: boolean; url?: string; sha256?: string; size?: number; platform: string; signed: boolean; notarized: boolean }} */
+let macosRelease = {
+  available: false,
+  platform: 'darwin-arm64',
+  signed: false,
+  notarized: false,
+};
+if (hasMacosRelease) {
+  if (!macosUrl || !/^[a-f0-9]{64}$/i.test(macosSha256))
+    throw new Error('Configure the macOS public URL and SHA256 together.');
+  const url = new URL(macosUrl);
+  const size = Number(macosSizeValue);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !Number.isSafeInteger(size) ||
+    size <= 0
+  )
+    throw new Error('Configure macOS with a stable HTTPS URL and a positive byte size.');
+  macosRelease = {
+    available: true,
+    url: url.href,
+    sha256: macosSha256.toLowerCase(),
+    size,
+    platform: 'darwin-arm64',
+    signed: false,
+    notarized: false,
+  };
+}
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 const toolsets = process.platform === 'linux' ? { nsis: '1.2.1' } : undefined;
 if (toolsets) {
@@ -158,7 +194,7 @@ await writeFile(
           signed: false,
         },
         linux: { available: false, platform: 'linux-x64', signed: false },
-        macos: { available: false, platform: 'darwin', signed: false },
+        macos: macosRelease,
       },
     },
     null,

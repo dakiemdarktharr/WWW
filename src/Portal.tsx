@@ -36,7 +36,7 @@ import UpdatePatches from './UpdatePatches';
 import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
 
-type Platform = 'windows' | 'linux';
+type Platform = 'windows' | 'linux' | 'macos';
 interface Download {
   available: boolean;
   url?: string;
@@ -49,7 +49,11 @@ interface Release extends Download {
   version: string;
   platforms?: { windows?: Download; linux?: Download; macos?: Download };
 }
-const platformNames = { windows: 'Windows', linux: 'Linux' };
+const platformNames: Record<Platform, string> = {
+  windows: 'Windows',
+  linux: 'Linux',
+  macos: 'macOS',
+};
 const initialCode = new URLSearchParams(location.search).get('activate') || '';
 const spring = { type: 'spring' as const, stiffness: 420, damping: 30 };
 
@@ -575,9 +579,20 @@ function PortalContent() {
         const value = (await response.json()) as Release;
         if (typeof value.version !== 'string' || typeof value.available !== 'boolean')
           throw new Error(t('Bản cài chưa sẵn sàng.'));
-        for (const item of [value, ...Object.values(value.platforms || {})])
-          if (item?.url && new URL(item.url, location.origin).origin !== location.origin)
+        const downloads: [Platform | null, Download | Release][] = [[null, value]];
+        for (const [platform, item] of Object.entries(value.platforms || {}))
+          downloads.push([platform as Platform, item as Download]);
+        for (const [platform, item] of downloads) {
+          if (!item?.url) continue;
+          const url = new URL(item.url, location.origin);
+          if (
+            url.username ||
+            url.password ||
+            (url.origin !== location.origin &&
+              (platform !== 'macos' || url.protocol !== 'https:' || url.search || url.hash))
+          )
             throw new Error(t('Đường tải bản cài không hợp lệ.'));
+        }
         setRelease(value);
       })
       .catch((error) => {
@@ -654,6 +669,8 @@ function PortalContent() {
               <i />
               <i />
             </span>
+          ) : platform === 'macos' ? (
+            <Laptop size={18} />
           ) : (
             <Server size={18} />
           )}
@@ -762,6 +779,7 @@ function PortalContent() {
                 <div className="kp-hero-downloads">
                   {downloadLink('windows', true)}
                   {downloadLink('linux', true)}
+                  {downloadLink('macos', true)}
                 </div>
                 {releaseError && (
                   <p className="kp-error" role="status">
@@ -953,11 +971,19 @@ function PortalContent() {
                 </div>
                 {downloadLink('windows')}
                 {downloadLink('linux')}
+                {downloadLink('macos')}
                 <details>
                   <summary>{t('Thông tin bản cài')}</summary>
                   <p>{t('Windows x64 · Chưa ký chứng chỉ')}</p>
                   <p>{t('Linux x64 · Cần Git, keyring và desktop Linux hỗ trợ sandbox.')}</p>
-                  {(['windows', 'linux'] as Platform[]).map(
+                  <p>
+                    {t(
+                      download('macos')?.available
+                        ? 'macOS Apple Silicon · Chưa ký, chưa notarize'
+                        : 'macOS Apple Silicon · Chưa có bản tải',
+                    )}
+                  </p>
+                  {(['windows', 'linux', 'macos'] as Platform[]).map(
                     (platform) =>
                       download(platform)?.sha256 && (
                         <div key={platform}>

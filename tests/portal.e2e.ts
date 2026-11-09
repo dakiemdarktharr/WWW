@@ -151,8 +151,10 @@ try {
   await expect(heading).toBeVisible();
   await expect(page.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Linux chưa có bản tải' })).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
+  ).toBeDisabled();
   await expect(page.getByRole('link', { name: /Tải Kivuno/ })).toHaveCount(0);
-  await expect(page.getByText(/macos/i)).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' })).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
   const cdp = await context.newCDPSession(page);
@@ -301,7 +303,9 @@ try {
   await downloadOpener.click();
   const downloads = page.getByRole('dialog', { name: 'Tải Kivuno' });
   await expect(downloads.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();
-  await expect(downloads.getByText(/macos/i)).toHaveCount(0);
+  await expect(
+    downloads.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
+  ).toBeDisabled();
   await downloads.getByText('Thông tin bản cài', { exact: true }).click();
   await expect(downloads.getByText('Windows x64 · Chưa ký chứng chỉ')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -451,7 +455,9 @@ try {
     'href',
     '/downloads/Kivuno.AppImage',
   );
-  await expect(accountPage.getByText(/macos/i)).toHaveCount(0);
+  await expect(
+    accountPage.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
+  ).toBeDisabled();
   await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
   await accountPage.getByRole('button', { name: 'Kivuno — về màn hình đầu' }).click();
   await expect.poll(() => accountPage.evaluate(() => scrollY)).toBe(0);
@@ -470,7 +476,7 @@ try {
       responsive: true,
       honestReleaseState: true,
       platformDownloads: true,
-      hiddenMacOS: true,
+      macOSUnavailableShown: true,
       interactiveDemos: true,
       noDecorativeSubtext: true,
       separateScrollStories: true,
