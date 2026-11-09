@@ -1,4 +1,4 @@
-// Keep legacy uninstall rollback on the old installation drive, including 0.6 uninstallers.
+// Keep legacy uninstall rollback on the install volume when possible, including 0.6 uninstallers.
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { nsisTemplatesDir } from 'app-builder-lib/out/targets/nsis/nsisUtil.js';
@@ -21,7 +21,43 @@ Var /GLOBAL kivunoUpgradeResult
 `;
 
 const helpers = String.raw`
+Function kivuno.tryUpgradeTemp
+  Push $R9
+  StrCpy $kivunoUpgradeReady "0"
+  StrCpy $kivunoUpgradeTemp ""
+  ClearErrors
+  GetTempFileName $kivunoUpgradeTemp "$R7"
+  IfErrors kivunoTryUpgradeTempFailed
+  ClearErrors
+  Delete "$kivunoUpgradeTemp"
+  IfErrors kivunoTryUpgradeTempDeleteFailed
+  ClearErrors
+  CreateDirectory "$kivunoUpgradeTemp"
+  IfErrors kivunoTryUpgradeTempFailed
+  StrCpy $kivunoUpgradeEnvChanged "1"
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TEMP", w "$kivunoUpgradeTemp") i .R9'
+  StrCmp $R9 0 kivunoTryUpgradeTempEnvironmentFailed
+  System::Call 'kernel32::SetEnvironmentVariableW(w "TMP", w "$kivunoUpgradeTemp") i .R9'
+  StrCmp $R9 0 kivunoTryUpgradeTempEnvironmentFailed
+  StrCpy $kivunoUpgradeReady "1"
+  Goto kivunoTryUpgradeTempDone
+  kivunoTryUpgradeTempEnvironmentFailed:
+    Call kivuno.restoreUpgradeEnvironment
+    RMDir "$kivunoUpgradeTemp"
+    Goto kivunoTryUpgradeTempFailed
+  kivunoTryUpgradeTempDeleteFailed:
+    Delete "$kivunoUpgradeTemp"
+  kivunoTryUpgradeTempFailed:
+    StrCpy $kivunoUpgradeTemp ""
+    StrCpy $kivunoUpgradeReady "0"
+  kivunoTryUpgradeTempDone:
+  ClearErrors
+  Pop $R9
+FunctionEnd
+
 Function kivuno.prepareUpgradeTemp
+  Push $R7
+  Push $R8
   Push $R9
   StrCpy $kivunoUpgradeReady "-1"
   GetFullPathName $kivunoUpgradeOldInstall "$installationDir"
@@ -36,22 +72,45 @@ Function kivuno.prepareUpgradeTemp
   StrCmp $kivunoUpgradeParent "" kivunoUpgradePrepareFailed
   # GetFileParent returns D: for D:\Kivuno; append slash to avoid drive-relative paths.
   GetFullPathName $kivunoUpgradeParent "$kivunoUpgradeParent\"
-  ClearErrors
-  GetTempFileName $kivunoUpgradeTemp "$kivunoUpgradeParent"
-  IfErrors kivunoUpgradePrepareFailed
-  Delete "$kivunoUpgradeTemp"
-  CreateDirectory "$kivunoUpgradeTemp"
-  IfErrors kivunoUpgradePrepareFailed
   ReadEnvStr $kivunoUpgradeOriginalTemp TEMP
   ReadEnvStr $kivunoUpgradeOriginalTmp TMP
-  StrCpy $kivunoUpgradeEnvChanged "1"
-  System::Call 'kernel32::SetEnvironmentVariableW(w "TEMP", w "$kivunoUpgradeTemp") i .R9'
-  StrCmp $R9 0 kivunoUpgradePrepareFailed
-  System::Call 'kernel32::SetEnvironmentVariableW(w "TMP", w "$kivunoUpgradeTemp") i .R9'
-  StrCmp $R9 0 kivunoUpgradePrepareFailed
-  StrCpy $kivunoUpgradeReady "1"
+  StrCpy $kivunoUpgradeEnvChanged "0"
+  # Avoid synced/protected install parents when user TEMP is on the same volume.
+  StrCpy $R8 $kivunoUpgradeOldInstall 1
+  StrCmp $R8 "\\" kivunoUpgradeTryParentFirst
+  StrCpy $R8 $kivunoUpgradeOldInstall 2
+  StrCpy $R9 $kivunoUpgradeOriginalTemp 2
+  StrCmp $R8 $R9 kivunoUpgradeTryTempFirst kivunoUpgradeTryParentFirst
+
+  kivunoUpgradeTryTempFirst:
+    StrCmp $kivunoUpgradeOriginalTemp "" kivunoUpgradeTryParentFirst
+    StrCpy $R7 $kivunoUpgradeOriginalTemp
+    Call kivuno.tryUpgradeTemp
+    StrCmp $kivunoUpgradeReady "1" kivunoUpgradePrepareDone
+    StrCpy $R7 $kivunoUpgradeParent
+    Call kivuno.tryUpgradeTemp
+    StrCmp $kivunoUpgradeReady "1" kivunoUpgradePrepareDone
+    Goto kivunoUpgradePrepareFailed
+
+  kivunoUpgradeTryParentFirst:
+    StrCpy $R7 $kivunoUpgradeParent
+    Call kivuno.tryUpgradeTemp
+    StrCmp $kivunoUpgradeReady "1" kivunoUpgradePrepareDone
+    StrCmp $kivunoUpgradeOriginalTemp "" kivunoUpgradePrepareFailed
+    StrCpy $R7 $kivunoUpgradeOriginalTemp
+    Call kivuno.tryUpgradeTemp
+    StrCmp $kivunoUpgradeReady "1" kivunoUpgradePrepareDone
+    Goto kivunoUpgradePrepareFailed
+
+  kivunoUpgradePrepareDone:
+    StrCpy $kivunoUpgradeReady "1"
+    Goto kivunoUpgradePreparationFinished
   kivunoUpgradePrepareFailed:
+  StrCpy $kivunoUpgradeReady "-1"
+  kivunoUpgradePreparationFinished:
   Pop $R9
+  Pop $R8
+  Pop $R7
 FunctionEnd
 
 Function kivuno.restoreUpgradeEnvironment
@@ -99,7 +158,7 @@ Function uninstallOldVersion
     StrCmp $kivunoUpgradeTemp "" +3
       Delete "$kivunoUpgradeTemp"
       RMDir "$kivunoUpgradeTemp"
-    MessageBox MB_OK|MB_ICONSTOP "Kivuno cannot prepare the upgrade on the existing installation drive. Check that its parent folder is writable and has free space, then try again." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Kivuno could not prepare the upgrade. Check that the installation drive and Windows TEMP folder are writable and have free space, then try again." /SD IDOK
     SetErrorLevel 2
     Quit
   kivunoUpgradeFinished:
@@ -120,11 +179,18 @@ export function patchUpgradeStaging(source) {
   source = replaceOnce(
     source,
     '  StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-uninstaller.exe"',
-    `  Call kivuno.prepareUpgradeTemp
+    `  IfFileExists "$uninstallerFileName" 0 kivunoUpgradeSkipMissingUninstaller
+  Call kivuno.prepareUpgradeTemp
   StrCmp $kivunoUpgradeReady "1" +3
     StrCpy $R0 1
     Return
-  StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-uninstaller.exe"`,
+  StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-uninstaller.exe"
+  Goto kivunoUpgradeHasOldUninstaller
+  kivunoUpgradeSkipMissingUninstaller:
+    DetailPrint "Previous Kivuno uninstaller was not found; continuing with the installation."
+    ClearErrors
+    Return
+  kivunoUpgradeHasOldUninstaller:`,
   );
   // Forward references allow these helpers to use globals declared by upstream's inner function.
   return declarations + '\n' + source + '\n' + helpers;

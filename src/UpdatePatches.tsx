@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.2',
+    date: '2026-11-09',
+    fixes: [
+      {
+        vi: 'Sửa nâng cấp Windows khi thư mục cài cũ đã mất nhưng registry còn lưu dấu vết; bộ cài dùng TEMP cùng ổ khi phù hợp và bỏ qua bộ gỡ cài đặt không còn tồn tại.',
+        en: 'Fixed Windows upgrades after an older install was removed but registry metadata remained; staging now prefers same-volume TEMP and skips a missing uninstaller.',
+      },
+    ],
+  },
+  {
     version: '0.8.1',
     date: '2026-11-08',
     fixes: [
