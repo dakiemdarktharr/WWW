@@ -1,12 +1,13 @@
 'use strict';
 
 const { contextBridge, ipcRenderer } = require('electron');
+const versionArgument = process.argv.find((argument) => argument.startsWith('--kivuno-version='));
 
 contextBridge.exposeInMainWorld(
   'relayDesktop',
   Object.freeze({
     platform: process.platform,
-    version: '0.8.1',
+    version: versionArgument?.slice('--kivuno-version='.length) || '0.0.0',
     getStatus: () => ipcRenderer.invoke('relay:status'),
     onStatus: (callback) => {
       const listener = (_event, value) => callback(value);

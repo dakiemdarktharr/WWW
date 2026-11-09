@@ -848,6 +848,7 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: [`--kivuno-version=${app.getVersion()}`],
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
