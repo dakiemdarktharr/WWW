@@ -35,7 +35,7 @@ export default async function handler(
       return;
     }
     if (url.pathname === '/api/desktop/release' && method === 'GET') {
-      let release = { version: '0.8.1', available: false, platform: 'win32-x64', signed: false };
+      let release = { version: '0.8.2', available: false, platform: 'win32-x64', signed: false };
       try {
         release = JSON.parse(
           await readFile(path.join(process.cwd(), '.cloud', 'release.json'), 'utf8'),
