@@ -246,7 +246,7 @@ await build({
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
         'workspace/node_modules/@esbuild/darwin-arm64/bin/esbuild',
-        path.relative(resources, codex),
+        path.join('workspace', path.relative(workspace, codex)),
       ]) {
         if (!(await stat(path.join(resources, required))).isFile())
           throw new Error(`The packaged macOS app is missing ${required}.`);

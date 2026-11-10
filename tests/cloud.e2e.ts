@@ -253,6 +253,7 @@ try {
   );
   await nav('Neralu').click();
   const other = await login(second);
+  await other.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await other.getByText('Shared across devices', { exact: true }).waitFor();
   await advanced('Sessions');
   await page.getByRole('button', { name: 'New session', exact: true }).first().click();
@@ -275,6 +276,7 @@ try {
     .click();
   await other.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
   await nav('Neralu').click();
+  await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByRole('button', { name: 'Session view', exact: true }).click();
   await expect(page.locator('.session-node')).toHaveCount(2);
   const researchNode = page.getByRole('button', {
@@ -346,6 +348,7 @@ try {
     geminiCard.getByRole('button', { name: 'Sign in with OpenAI', exact: true }),
   ).toHaveCount(0);
   await nav('Neralu').click();
+  await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByRole('button', { name: 'Group team', exact: true }).click();
   await page.getByRole('button', { name: /Edit group members/ }).click();
   for (const name of [claude.name, gemini.name, antigravity.name])
