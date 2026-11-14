@@ -18,7 +18,7 @@ const output = path.join(root, 'release');
 const macosUrl = process.env.KIVUNO_MACOS_URL?.trim() || '';
 const macosSha256 = process.env.KIVUNO_MACOS_SHA256?.trim() || '';
 const macosSizeValue = process.env.KIVUNO_MACOS_SIZE?.trim() || '';
-const hasMacosRelease = Boolean(macosUrl || macosSha256 || macosSizeValue);
+const hasMacosOverride = Boolean(macosUrl || macosSha256 || macosSizeValue);
 /** @type {{ available: boolean; url?: string; sha256?: string; size?: number; platform: string; signed: boolean; notarized: boolean }} */
 let macosRelease = {
   available: false,
@@ -26,11 +26,37 @@ let macosRelease = {
   signed: false,
   notarized: false,
 };
-if (hasMacosRelease) {
-  if (!macosUrl || !/^[a-f0-9]{64}$/i.test(macosSha256))
-    throw new Error('Configure the macOS public URL and SHA256 together.');
-  const url = new URL(macosUrl);
-  const size = Number(macosSizeValue);
+let macosArtifact;
+if (hasMacosOverride) {
+  if (!macosUrl || !macosSha256 || !macosSizeValue)
+    throw new Error('Configure the macOS public URL, SHA256 and byte size together.');
+  macosArtifact = {
+    version: manifest.version,
+    url: macosUrl,
+    sha256: macosSha256,
+    size: Number(macosSizeValue),
+  };
+} else {
+  try {
+    macosArtifact = JSON.parse(
+      await readFile(
+        path.join(root, 'release-artifacts', `macos-${manifest.version}.json`),
+        'utf8',
+      ),
+    );
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+if (macosArtifact) {
+  if (
+    macosArtifact.version !== manifest.version ||
+    !/^[a-f0-9]{64}$/i.test(macosArtifact.sha256) ||
+    typeof macosArtifact.url !== 'string'
+  )
+    throw new Error('The macOS release metadata is incomplete or does not match this version.');
+  const url = new URL(macosArtifact.url);
+  const size = Number(macosArtifact.size);
   if (
     url.protocol !== 'https:' ||
     url.username ||
@@ -44,7 +70,7 @@ if (hasMacosRelease) {
   macosRelease = {
     available: true,
     url: url.href,
-    sha256: macosSha256.toLowerCase(),
+    sha256: macosArtifact.sha256.toLowerCase(),
     size,
     platform: 'darwin-arm64',
     signed: false,
