@@ -265,6 +265,26 @@ function validatedReleaseUrl(item, suffix, identityOrigin) {
   return url.href;
 }
 
+function validatedMacAutoUpdate(item, expectedVersion, identityOrigin) {
+  const artifact = item?.autoUpdate;
+  if (artifact === undefined) return null;
+  if (
+    !artifact ||
+    typeof artifact.url !== 'string' ||
+    artifact.version !== expectedVersion ||
+    artifact.platform !== 'darwin-arm64' ||
+    artifact.format !== 'zip' ||
+    typeof artifact.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/i.test(artifact.sha256) ||
+    !Number.isSafeInteger(artifact.size) ||
+    artifact.size <= 0 ||
+    artifact.size > 4 * 1024 * 1024 * 1024
+  )
+    throw new Error('Kivuno returned invalid macOS update metadata.');
+  const url = validatedReleaseUrl({ available: true, url: artifact.url }, '.zip', identityOrigin);
+  return { url, sha256: artifact.sha256.toLowerCase(), size: artifact.size };
+}
+
 function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
   const platformRelease = releaseForThisPlatform(body, platform, arch);
   const latestVersion = platformRelease?.item?.version || body.version;
@@ -284,8 +304,14 @@ function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
         compareVersions(version, latestVersion) <= 0,
     ),
   ).size;
+  const macAutoUpdate =
+    hasUpdate && platformRelease?.key === 'macos'
+      ? validatedMacAutoUpdate(platformRelease.item, latestVersion, identityOrigin)
+      : null;
   const downloadUrl = hasUpdate
-    ? validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
+    ? platformRelease?.key === 'macos'
+      ? macAutoUpdate?.url || ''
+      : validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
     : '';
   return {
     status: {
@@ -297,6 +323,7 @@ function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
       required: Boolean(downloadUrl) && newerReleaseCount >= 3,
     },
     downloadUrl,
+    updateArtifact: macAutoUpdate,
   };
 }
 

@@ -11,6 +11,7 @@
 - Added demo scenarios and draft Vietnamese terms/privacy documents with a dated Vietnam/EU/US security review. Drafts are not published as binding terms.
 - Windows/web/cloud version is 0.8.5. Preserve the previously published macOS 0.8.4 artifact with its actual version and checksum; this Windows environment does not produce a new macOS binary.
 - Integrated the concurrent 0.8.3/0.8.4 desktop-update and Antigravity login commits. Fixed update comparisons to use each platform's published version and exclude future versions from mandatory-update counts. Replaced recursive temporary-login cleanup with deletion of the exact generated file and its empty directory.
+- macOS updates now download a SHA256-verified ZIP, replace the installed Kivuno app bundle and reopen it. The DMG remains for new installations.
 
 ## Limits that must remain visible
 
@@ -18,6 +19,6 @@ Sade is currently connected to local project workflows, including native Codex/G
 
 Automatic review is limited to complete text diffs of at most 12,000 characters. Binary/large/private-file changes require restructuring the task before Sade can complete its automatic review. Review completion means a second AI returned findings, not that it guaranteed the change safe or approved publication. Read the findings and request fixes when needed.
 
-The macOS 0.8.4 installer predates these fixes. Its existing updater can still display the global website version; the platform-aware updater and login cleanup changes require a newly built Mac release before Mac users receive them.
+The macOS 0.8.4 installer predates these fixes. Its existing updater can still display the global website version and open a DMG; the platform-aware updater and in-app ZIP update require a newly built Mac release. Existing installs need one manual DMG install of that release before later updates can replace the app in place.
 
 See `sade-demo.md`, `password-recovery.md` and `legal/privacy-security-review-2026-11-17.md` for acceptance criteria, operational blockers and legal readiness gaps.

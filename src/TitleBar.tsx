@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Copy, Download, Loader2, Minus, Square, X } from 'lucide-react';
+import { Copy, Download, Loader2, Minus, RefreshCw, Square, X } from 'lucide-react';
 import type { DesktopUpdateStatus, DesktopWindowState } from './desktop';
 import './TitleBar.css';
 
 export default function DesktopTitleBar({
   update,
   downloading,
-  onDownload,
+  onUpdate,
 }: {
   update: DesktopUpdateStatus | null;
   downloading: boolean;
-  onDownload: () => void;
+  onUpdate: () => void;
 }) {
   const [state, setState] = useState<DesktopWindowState>({ maximized: false, fullscreen: false });
   const [revealed, setRevealed] = useState(false);
@@ -86,6 +86,7 @@ export default function DesktopTitleBar({
       .catch(() => {});
   };
   if (!window.relayDesktop) return null;
+  const inAppUpdate = window.relayDesktop.platform === 'darwin';
   return (
     <header
       className={`desktop-titlebar${state.fullscreen ? ' fullscreen' : ''}${revealed ? ' revealed' : ''}`}
@@ -103,12 +104,18 @@ export default function DesktopTitleBar({
         {update?.hasUpdate && update.downloadAvailable && (
           <button
             className={`desktop-update-button${update.required ? ' required' : ''}`}
-            aria-label={`Tải Kivuno phiên bản ${update.latestVersion}`}
-            title={`Tải phiên bản mới nhất v${update.latestVersion}`}
+            aria-label={`Cập nhật Kivuno phiên bản ${update.latestVersion}`}
+            title={`${inAppUpdate ? 'Cập nhật trong ứng dụng' : 'Tải bản cập nhật'} v${update.latestVersion}`}
             disabled={downloading}
-            onClick={onDownload}
+            onClick={onUpdate}
           >
-            {downloading ? <Loader2 className="spin" size={14} /> : <Download size={14} />}
+            {downloading ? (
+              <Loader2 className="spin" size={14} />
+            ) : inAppUpdate ? (
+              <RefreshCw size={14} />
+            ) : (
+              <Download size={14} />
+            )}
             <span>v{update.latestVersion}</span>
           </button>
         )}

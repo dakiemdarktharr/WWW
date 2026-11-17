@@ -27,6 +27,12 @@ const macosUrl = process.env.KIVUNO_MACOS_URL?.trim() || '';
 const macosSha256 = process.env.KIVUNO_MACOS_SHA256?.trim() || '';
 const macosSizeValue = process.env.KIVUNO_MACOS_SIZE?.trim() || '';
 const hasMacosOverride = Boolean(macosUrl || macosSha256 || macosSizeValue);
+const macosUpdateUrl = process.env.KIVUNO_MACOS_UPDATE_URL?.trim() || '';
+const macosUpdateSha256 = process.env.KIVUNO_MACOS_UPDATE_SHA256?.trim() || '';
+const macosUpdateSizeValue = process.env.KIVUNO_MACOS_UPDATE_SIZE?.trim() || '';
+const hasMacosUpdateOverride = Boolean(macosUpdateUrl || macosUpdateSha256 || macosUpdateSizeValue);
+if (hasMacosUpdateOverride && (!macosUpdateUrl || !macosUpdateSha256 || !macosUpdateSizeValue))
+  throw new Error('Configure the macOS update ZIP URL, SHA256 and byte size together.');
 /** @type {{ available: boolean; version?: string; url?: string; sha256?: string; size?: number; platform: string; signed: boolean; notarized: boolean }} */
 let macosRelease = {
   available: false,
@@ -34,6 +40,7 @@ let macosRelease = {
   signed: false,
   notarized: false,
 };
+let macosAutoUpdate;
 let macosArtifact;
 if (hasMacosOverride) {
   if (!macosUrl || !macosSha256 || !macosSizeValue)
@@ -63,6 +70,16 @@ if (hasMacosOverride) {
       await readFile(path.join(root, 'release-artifacts', `macos-${stable.version}.json`), 'utf8'),
     );
   }
+}
+if (hasMacosUpdateOverride) {
+  macosArtifact.autoUpdate = {
+    version: macosArtifact.version,
+    url: macosUpdateUrl,
+    sha256: macosUpdateSha256,
+    size: Number(macosUpdateSizeValue),
+    platform: 'darwin-arm64',
+    format: 'zip',
+  };
 }
 if (macosArtifact) {
   if (
@@ -94,6 +111,41 @@ if (macosArtifact) {
     signed: false,
     notarized: false,
   };
+  if (macosArtifact.autoUpdate !== undefined) {
+    const update = macosArtifact.autoUpdate;
+    if (!update || typeof update.url !== 'string')
+      throw new Error('The macOS in-app update metadata is incomplete.');
+    const updateUrl = new URL(update.url);
+    const updateSize = Number(update.size);
+    const trustedUpdateOrigin =
+      updateUrl.origin === 'https://kivuno.vercel.app' ||
+      updateUrl.hostname.endsWith('.public.blob.vercel-storage.com');
+    if (
+      update.version !== macosArtifact.version ||
+      update.platform !== 'darwin-arm64' ||
+      update.format !== 'zip' ||
+      !/^[a-f0-9]{64}$/i.test(update.sha256 || '') ||
+      !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+\.zip$/i.test(updateUrl.pathname) ||
+      updateUrl.protocol !== 'https:' ||
+      updateUrl.port ||
+      updateUrl.username ||
+      updateUrl.password ||
+      updateUrl.search ||
+      updateUrl.hash ||
+      !trustedUpdateOrigin ||
+      !Number.isSafeInteger(updateSize) ||
+      updateSize <= 0 ||
+      updateSize > 4 * 1024 * 1024 * 1024
+    )
+      throw new Error('The macOS in-app update metadata is invalid.');
+    macosAutoUpdate = {
+      url: updateUrl.href,
+      sha256: update.sha256.toLowerCase(),
+      size: updateSize,
+      platform: update.platform,
+      format: update.format,
+    };
+  }
 }
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 const toolsets = process.platform === 'linux' ? { nsis: '1.2.1' } : undefined;
@@ -243,7 +295,10 @@ await writeFile(
           signed: false,
         },
         linux: { available: false, platform: 'linux-x64', signed: false },
-        macos: macosRelease,
+        macos: {
+          ...macosRelease,
+          ...(macosAutoUpdate ? { autoUpdate: macosAutoUpdate } : {}),
+        },
       },
     },
     null,

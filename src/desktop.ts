@@ -56,7 +56,7 @@ declare global {
       platform: string;
       version: string;
       checkForUpdates(): Promise<DesktopUpdateStatus>;
-      downloadUpdate(): Promise<void>;
+      installUpdate(): Promise<void>;
       getStatus(): Promise<DesktopStatus>;
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;

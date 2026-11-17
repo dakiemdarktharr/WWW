@@ -11,10 +11,15 @@ const {
   dialog,
   safeStorage,
 } = require('electron');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn, spawnSync, execFile } = require('node:child_process');
 const { createServer } = require('node:net');
-const { randomBytes } = require('node:crypto');
+const { createHash, randomBytes } = require('node:crypto');
+const { constants: fsConstants, createWriteStream } = require('node:fs');
+const { Readable, Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
+const { promisify } = require('node:util');
 const {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -27,6 +32,7 @@ const {
 const { existsSync } = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
@@ -149,6 +155,163 @@ async function inspectDesktopUpdate() {
   if (!response.ok || !body || typeof body.version !== 'string')
     throw new Error('Could not check for Kivuno updates. Try again later.');
   return desktopUpdate(body, app.getVersion(), process.platform, process.arch, identityOrigin);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function appleScriptQuote(value) {
+  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+async function canWriteDirectory(directory) {
+  const probe = path.join(
+    directory,
+    `.kivuno-update-write-${process.pid}-${randomBytes(6).toString('hex')}`,
+  );
+  try {
+    await writeFile(probe, '', { flag: 'wx', mode: 0o600 });
+    await unlink(probe);
+    return true;
+  } catch {
+    await unlink(probe).catch(() => {});
+    return false;
+  }
+}
+
+async function prepareMacUpdate(artifact, latestVersion) {
+  if (!app.isPackaged || process.platform !== 'darwin' || process.arch !== 'arm64')
+    throw new Error('In-app updates are available only in the installed Kivuno macOS app.');
+  const updateDirectory = await mkdtemp(path.join(os.tmpdir(), 'kivuno-update-'));
+  const archive = path.join(updateDirectory, 'Kivuno-update.zip');
+  const extractDirectory = path.join(updateDirectory, 'unpacked');
+  try {
+    const response = await fetch(artifact.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(30 * 60 * 1000),
+    });
+    if (!response.ok || !response.body)
+      throw new Error(`Could not download the Kivuno update (${response.status}).`);
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && Number(contentLength) !== artifact.size)
+      throw new Error('The Kivuno update size does not match its release metadata.');
+    const digest = createHash('sha256');
+    let bytes = 0;
+    const meter = new Transform({
+      transform(chunk, _encoding, callback) {
+        bytes += chunk.length;
+        if (bytes > artifact.size)
+          return callback(new Error('The Kivuno update is larger than expected.'));
+        digest.update(chunk);
+        callback(null, chunk);
+      },
+    });
+    await pipeline(
+      Readable.fromWeb(response.body),
+      meter,
+      createWriteStream(archive, { flags: 'wx', mode: 0o600 }),
+    );
+    if (bytes !== artifact.size || digest.digest('hex') !== artifact.sha256)
+      throw new Error('The downloaded Kivuno update failed its SHA-256 check.');
+
+    await mkdir(extractDirectory, { mode: 0o700 });
+    await execFileAsync('/usr/bin/ditto', ['-x', '-k', archive, extractDirectory], {
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 1024 * 1024,
+    });
+    const candidate = path.join(extractDirectory, 'Kivuno.app');
+    const candidateInfo = await lstat(candidate);
+    if (!candidateInfo.isDirectory() || candidateInfo.isSymbolicLink())
+      throw new Error('The Kivuno update archive does not contain the expected app.');
+    const infoPlist = path.join(candidate, 'Contents', 'Info.plist');
+    const { stdout: bundleId } = await execFileAsync(
+      '/usr/libexec/PlistBuddy',
+      ['-c', 'Print :CFBundleIdentifier', infoPlist],
+      { timeout: 10000, maxBuffer: 4096 },
+    );
+    const { stdout: bundleVersion } = await execFileAsync(
+      '/usr/libexec/PlistBuddy',
+      ['-c', 'Print :CFBundleShortVersionString', infoPlist],
+      { timeout: 10000, maxBuffer: 4096 },
+    );
+    if (bundleId.trim() !== 'club.nosleep.relay' || bundleVersion.trim() !== latestVersion)
+      throw new Error('The downloaded Kivuno app identity or version is incorrect.');
+    await rm(extractDirectory, { recursive: true, force: true });
+    return { updateDirectory, archive };
+  } catch (error) {
+    await rm(updateDirectory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function startMacUpdateHelper(artifact, latestVersion, updateDirectory, archive) {
+  const appPath = path.resolve(path.dirname(process.execPath), '..', '..');
+  const appInfo = await lstat(appPath);
+  if (path.basename(appPath) !== 'Kivuno.app' || !appInfo.isDirectory() || appInfo.isSymbolicLink())
+    throw new Error('Could not find the installed Kivuno app to update.');
+  const helperPath = path.join(process.resourcesPath, 'mac-update-helper.sh');
+  const helperInfo = await lstat(helperPath);
+  if (!helperInfo.isFile() || helperInfo.isSymbolicLink())
+    throw new Error('The macOS update helper is missing from this Kivuno app.');
+  const { stdout: installedBundleId } = await execFileAsync(
+    '/usr/libexec/PlistBuddy',
+    ['-c', 'Print :CFBundleIdentifier', path.join(appPath, 'Contents', 'Info.plist')],
+    { timeout: 10000, maxBuffer: 4096 },
+  );
+  if (installedBundleId.trim() !== 'club.nosleep.relay')
+    throw new Error('The installed application is not a Kivuno app.');
+  const args = [
+    appPath,
+    archive,
+    updateDirectory,
+    String(process.pid),
+    latestVersion,
+    artifact.sha256,
+    String(artifact.size),
+  ];
+  const writable = await canWriteDirectory(path.dirname(appPath));
+  if (writable) {
+    const child = spawn('/bin/sh', [helperPath, ...args], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
+    });
+    child.unref();
+    return;
+  }
+
+  let helperIsWritable = false;
+  try {
+    await access(helperPath, fsConstants.W_OK);
+    helperIsWritable = true;
+  } catch (error) {
+    if (!['EACCES', 'EPERM'].includes(error.code)) throw error;
+  }
+  if (helperIsWritable || (await canWriteDirectory(path.dirname(helperPath))))
+    throw new Error('The macOS update helper is not protected from modification.');
+  const shellCommand = ['/bin/sh', helperPath, ...args].map(shellQuote).join(' ');
+  const launchCommand = `/bin/sh -c ${shellQuote(`${shellCommand} >/dev/null 2>&1 < /dev/null & echo $!`)}`;
+  const appleScript = `do shell script ${appleScriptQuote(launchCommand)} with administrator privileges`;
+  const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', appleScript], {
+    timeout: 120000,
+    maxBuffer: 4096,
+  });
+  if (!/^\d+\s*$/.test(stdout)) throw new Error('Could not start the macOS update helper.');
+}
+
+async function installMacUpdate(artifact, latestVersion) {
+  const prepared = await prepareMacUpdate(artifact, latestVersion);
+  try {
+    await startMacUpdateHelper(artifact, latestVersion, prepared.updateDirectory, prepared.archive);
+  } catch (error) {
+    await rm(prepared.updateDirectory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  app.quit();
 }
 
 async function persistIdentity(value) {
@@ -467,11 +630,17 @@ function registerIpc() {
     const { status: update } = await inspectDesktopUpdate();
     return update;
   });
-  ipcMain.handle('relay:update-download', async (event) => {
+  ipcMain.handle('relay:update-install', async (event) => {
     trusted(event);
-    const { status: update, downloadUrl } = await inspectDesktopUpdate();
+    const { status: update, downloadUrl, updateArtifact } = await inspectDesktopUpdate();
     if (!update.hasUpdate || !downloadUrl)
       throw new Error('No Kivuno update is available for this computer.');
+    if (process.platform === 'darwin') {
+      if (!updateArtifact)
+        throw new Error('This Kivuno release has no in-app macOS update package.');
+      await installMacUpdate(updateArtifact, update.latestVersion);
+      return;
+    }
     await shell.openExternal(downloadUrl);
   });
   ipcMain.handle('relay:prepare-provider', async (event, provider) => {

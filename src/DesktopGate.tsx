@@ -11,7 +11,7 @@ export default function DesktopGate() {
   const [update, setUpdate] = useState<DesktopUpdateStatus | null>(null);
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
   const [updateError, setUpdateError] = useState('');
-  const updateDownloadButton = useRef<HTMLButtonElement>(null);
+  const updateActionButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     let current = true;
     const check = async () => {
@@ -30,13 +30,13 @@ export default function DesktopGate() {
     };
   }, []);
   useEffect(() => {
-    if (update?.required) updateDownloadButton.current?.focus();
+    if (update?.required) updateActionButton.current?.focus();
   }, [update?.required]);
-  const downloadUpdate = async () => {
+  const installUpdate = async () => {
     setDownloadingUpdate(true);
     setUpdateError('');
     try {
-      await window.relayDesktop!.downloadUpdate();
+      await window.relayDesktop!.installUpdate();
     } catch (cause) {
       setUpdateError((cause as Error).message || 'Không thể tải bản cập nhật. Hãy thử lại.');
     } finally {
@@ -48,7 +48,7 @@ export default function DesktopGate() {
       <DesktopTitleBar
         update={update}
         downloading={downloadingUpdate}
-        onDownload={() => void downloadUpdate()}
+        onUpdate={() => void installUpdate()}
       />
       <div className="desktop-frame-content">
         <div className="desktop-workspace-layer" inert={Boolean(update?.required)}>
@@ -65,31 +65,44 @@ export default function DesktopGate() {
               onKeyDown={(event) => {
                 if (event.key === 'Tab') {
                   event.preventDefault();
-                  updateDownloadButton.current?.focus();
+                  updateActionButton.current?.focus();
                 }
               }}
             >
               <span className="desktop-update-icon">
-                <Download size={22} />
+                {window.relayDesktop?.platform === 'darwin' ? (
+                  <RefreshCw size={22} />
+                ) : (
+                  <Download size={22} />
+                )}
               </span>
               <h2 id="desktop-update-title">Cần cập nhật Kivuno để tiếp tục</h2>
               <p id="desktop-update-description">
-                Đã có {update.newerReleaseCount} phiên bản mới hơn. Hãy tải và cài đặt phiên bản mới
-                nhất, sau đó mở lại Kivuno.
+                {window.relayDesktop?.platform === 'darwin'
+                  ? 'Kivuno sẽ tải gói đã xác minh, thay ứng dụng hiện tại và tự mở lại sau khi cập nhật.'
+                  : `Đã có ${update.newerReleaseCount} phiên bản mới hơn. Hãy tải và cài đặt phiên bản mới nhất, sau đó mở lại Kivuno.`}
               </p>
               <span className="desktop-update-version">v{update.latestVersion}</span>
               <button
-                ref={updateDownloadButton}
+                ref={updateActionButton}
                 className="desktop-update-download"
                 disabled={downloadingUpdate}
-                onClick={() => void downloadUpdate()}
+                onClick={() => void installUpdate()}
               >
                 {downloadingUpdate ? (
                   <Loader2 className="spin" size={17} />
+                ) : window.relayDesktop?.platform === 'darwin' ? (
+                  <RefreshCw size={17} />
                 ) : (
                   <Download size={17} />
                 )}
-                {downloadingUpdate ? 'Đang mở bộ cài…' : 'Tải và cập nhật'}
+                {downloadingUpdate
+                  ? window.relayDesktop?.platform === 'darwin'
+                    ? 'Đang tải bản cập nhật…'
+                    : 'Đang mở bộ cài…'
+                  : window.relayDesktop?.platform === 'darwin'
+                    ? 'Cập nhật trong Kivuno'
+                    : 'Tải và cập nhật'}
               </button>
               {updateError && (
                 <p className="desktop-update-error" role="alert">

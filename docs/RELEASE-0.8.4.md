@@ -8,4 +8,4 @@ MESH MCP remains a separate connection that lets the signed-in Antigravity clien
 
 ## Desktop updates
 
-This release advances the desktop version to 0.8.4, publishes the macOS DMG, and adds its installer metadata to the website. Installs older than 0.8.3 still need one manual install from the website before using in-app updates.
+This release advances the desktop version to 0.8.4, publishes the macOS DMG, and adds its installer metadata to the website. The macOS DMG is opened externally by the earlier updater; those installs need one manual DMG install before receiving the in-app macOS updater.

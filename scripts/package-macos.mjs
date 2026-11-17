@@ -194,9 +194,10 @@ console.log('Verified the bundled macOS Node and Codex CLI binaries.');
 
 const icon = await replaceIcon();
 const artifactName = `Kivuno-${packageJson.version}-macOS-arm64.dmg`;
+const updateArtifactName = `Kivuno-${packageJson.version}-macOS-arm64.zip`;
 await build({
   projectDir: path.join(root, 'desktop'),
-  targets: Platform.MAC.createTarget(['dmg'], Arch.arm64),
+  targets: Platform.MAC.createTarget(['dmg', 'zip'], Arch.arm64),
   publish: 'never',
   config: {
     appId: 'club.nosleep.relay',
@@ -222,10 +223,11 @@ await build({
       { from: workspace, to: 'workspace' },
       { from: path.join(workspace, 'node_modules'), to: 'workspace/node_modules' },
       { from: runtime, to: 'runtime' },
+      { from: path.join(root, 'desktop', 'mac-update-helper.sh'), to: 'mac-update-helper.sh' },
     ],
     mac: {
-      target: ['dmg'],
-      artifactName,
+      target: ['dmg', 'zip'],
+      artifactName: `Kivuno-${packageJson.version}-macOS-arm64.\${ext}`,
       category: 'public.app-category.developer-tools',
       icon,
       identity: null,
@@ -249,6 +251,7 @@ await build({
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
         'workspace/node_modules/@esbuild/darwin-arm64/bin/esbuild',
+        'mac-update-helper.sh',
         path.join('workspace', path.relative(workspace, codex)),
       ]) {
         if (!(await stat(path.join(resources, required))).isFile())
@@ -264,6 +267,12 @@ for await (const chunk of createReadStream(artifact)) digest.update(chunk);
 const sha256 = digest.digest('hex');
 const info = await stat(artifact);
 await writeFile(`${artifact}.sha256`, `${sha256}  ${artifactName}\n`);
+const updateArtifact = path.join(output, updateArtifactName);
+const updateDigest = createHash('sha256');
+for await (const chunk of createReadStream(updateArtifact)) updateDigest.update(chunk);
+const updateSha256 = updateDigest.digest('hex');
+const updateInfo = await stat(updateArtifact);
+await writeFile(`${updateArtifact}.sha256`, `${updateSha256}  ${updateArtifactName}\n`);
 await writeFile(
   path.join(output, 'macos-arm64.json'),
   JSON.stringify(
@@ -275,11 +284,19 @@ await writeFile(
       platform: 'darwin-arm64',
       signed: false,
       notarized: false,
+      autoUpdate: {
+        version: packageJson.version,
+        filename: updateArtifactName,
+        sha256: updateSha256,
+        size: updateInfo.size,
+        platform: 'darwin-arm64',
+        format: 'zip',
+      },
     },
     null,
     2,
   ) + '\n',
 );
 console.log(
-  `macOS installer ready: ${artifactName} (${Math.round(info.size / 1024 / 1024)} MB). SHA256 manifest written.`,
+  `macOS DMG and in-app ZIP ready: ${artifactName} (${Math.round(info.size / 1024 / 1024)} MB) and ${updateArtifactName} (${Math.round(updateInfo.size / 1024 / 1024)} MB). SHA256 sidecars written.`,
 );
