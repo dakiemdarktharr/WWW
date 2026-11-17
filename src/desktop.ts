@@ -19,6 +19,14 @@ export interface DesktopWindowState {
   maximized: boolean;
   fullscreen: boolean;
 }
+export interface DesktopUpdateStatus {
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  downloadAvailable: boolean;
+  newerReleaseCount: number;
+  required: boolean;
+}
 export interface BrowserState {
   active: boolean;
   projectId: string;
@@ -47,6 +55,8 @@ declare global {
     relayDesktop?: {
       platform: string;
       version: string;
+      checkForUpdates(): Promise<DesktopUpdateStatus>;
+      downloadUpdate(): Promise<void>;
       getStatus(): Promise<DesktopStatus>;
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;

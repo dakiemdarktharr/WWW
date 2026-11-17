@@ -132,6 +132,84 @@ async function cloudRequest(route, body, token) {
   return { response, body: bodyValue };
 }
 
+function versionParts(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version || '');
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  if (!a || !b) return 0;
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+  }
+  return 0;
+}
+
+function releaseForThisPlatform(manifest) {
+  if (process.platform === 'win32' && process.arch === 'x64')
+    return { key: 'windows', suffix: '.exe', item: manifest.platforms?.windows || manifest };
+  if (process.platform === 'darwin' && process.arch === 'arm64')
+    return { key: 'macos', suffix: '.dmg', item: manifest.platforms?.macos };
+  if (process.platform === 'linux' && process.arch === 'x64')
+    return { key: 'linux', suffix: '.tar.gz', item: manifest.platforms?.linux };
+  return null;
+}
+
+function validatedReleaseUrl(item, suffix) {
+  if (!item || item.available !== true || typeof item.url !== 'string') return '';
+  const url = new URL(item.url, identityOrigin);
+  const trustedOrigin =
+    url.origin === identityOrigin ||
+    (url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com'));
+  if (
+    url.protocol !== 'https:' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !trustedOrigin ||
+    !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+$/.test(url.pathname) ||
+    !url.pathname.toLowerCase().endsWith(suffix)
+  )
+    throw new Error('Kivuno returned an invalid installer link.');
+  return url.href;
+}
+
+async function inspectDesktopUpdate() {
+  const { response, body } = await cloudRequest('/api/desktop/release');
+  if (!response.ok || !body || typeof body.version !== 'string')
+    throw new Error('Could not check for Kivuno updates. Try again later.');
+  const currentVersion = app.getVersion();
+  const latestVersion = body.version;
+  if (!versionParts(currentVersion) || !versionParts(latestVersion))
+    throw new Error('Kivuno returned an invalid release version.');
+  const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+  const versions = Array.isArray(body.releases) ? body.releases : [latestVersion];
+  const newerReleaseCount = new Set(
+    [latestVersion, ...versions].filter(
+      (version) => typeof version === 'string' && compareVersions(version, currentVersion) > 0,
+    ),
+  ).size;
+  const platformRelease = releaseForThisPlatform(body);
+  const downloadUrl = hasUpdate
+    ? validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix)
+    : '';
+  return {
+    status: {
+      currentVersion,
+      latestVersion,
+      hasUpdate,
+      downloadAvailable: Boolean(downloadUrl),
+      newerReleaseCount,
+      required: Boolean(downloadUrl) && newerReleaseCount >= 3,
+    },
+    downloadUrl,
+  };
+}
+
 async function persistIdentity(value) {
   const generation = signInGeneration;
   if (!secureCredentialStorage(safeStorage, process.platform))
@@ -435,6 +513,18 @@ function trusted(event, statusOnly = false) {
 }
 
 function registerIpc() {
+  ipcMain.handle('relay:update-status', async (event) => {
+    trusted(event);
+    const { status: update } = await inspectDesktopUpdate();
+    return update;
+  });
+  ipcMain.handle('relay:update-download', async (event) => {
+    trusted(event);
+    const { status: update, downloadUrl } = await inspectDesktopUpdate();
+    if (!update.hasUpdate || !downloadUrl)
+      throw new Error('No Kivuno update is available for this computer.');
+    await shell.openExternal(downloadUrl);
+  });
   ipcMain.handle('relay:window-state', (event) => {
     trusted(event);
     return windowState();

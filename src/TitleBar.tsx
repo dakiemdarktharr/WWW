@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Copy, Minus, Square, X } from 'lucide-react';
-import type { DesktopWindowState } from './desktop';
+import { Copy, Download, Loader2, Minus, Square, X } from 'lucide-react';
+import type { DesktopUpdateStatus, DesktopWindowState } from './desktop';
 import './TitleBar.css';
 
-export default function DesktopTitleBar() {
+export default function DesktopTitleBar({
+  update,
+  downloading,
+  onDownload,
+}: {
+  update: DesktopUpdateStatus | null;
+  downloading: boolean;
+  onDownload: () => void;
+}) {
   const [state, setState] = useState<DesktopWindowState>({ maximized: false, fullscreen: false });
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
@@ -91,23 +99,37 @@ export default function DesktopTitleBar() {
         <img src="/kivuno.svg" alt="" />
         <span>Kivuno</span>
       </div>
-      <div className="desktop-titlebar-controls">
-        <button aria-label="Thu nhỏ" onClick={() => control('minimize')}>
-          <Minus size={15} />
-        </button>
-        <button
-          aria-label={state.maximized || state.fullscreen ? 'Khôi phục cửa sổ' : 'Phóng to'}
-          onClick={() => control('maximize')}
-        >
-          {state.maximized || state.fullscreen ? <Copy size={12} /> : <Square size={12} />}
-        </button>
-        <button
-          className="desktop-titlebar-close"
-          aria-label="Ẩn xuống khay hệ thống"
-          onClick={() => control('close')}
-        >
-          <X size={16} />
-        </button>
+      <div className="desktop-titlebar-actions">
+        {update?.hasUpdate && update.downloadAvailable && (
+          <button
+            className={`desktop-update-button${update.required ? ' required' : ''}`}
+            aria-label={`Tải Kivuno phiên bản ${update.latestVersion}`}
+            title={`Tải phiên bản mới nhất v${update.latestVersion}`}
+            disabled={downloading}
+            onClick={onDownload}
+          >
+            {downloading ? <Loader2 className="spin" size={14} /> : <Download size={14} />}
+            <span>v{update.latestVersion}</span>
+          </button>
+        )}
+        <div className="desktop-titlebar-controls">
+          <button aria-label="Thu nhỏ" onClick={() => control('minimize')}>
+            <Minus size={15} />
+          </button>
+          <button
+            aria-label={state.maximized || state.fullscreen ? 'Khôi phục cửa sổ' : 'Phóng to'}
+            onClick={() => control('maximize')}
+          >
+            {state.maximized || state.fullscreen ? <Copy size={12} /> : <Square size={12} />}
+          </button>
+          <button
+            className="desktop-titlebar-close"
+            aria-label="Ẩn xuống khay hệ thống"
+            onClick={() => control('close')}
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
     </header>
   );

@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.3',
+    date: '2026-11-17',
+    fixes: [
+      {
+        vi: 'Thêm nút tải bản mới trong desktop. Sau ba phiên bản bị bỏ qua, Kivuno yêu cầu cập nhật trước khi tiếp tục.',
+        en: 'Added an in-app download button. Kivuno requires an update to continue after three newer releases are skipped.',
+      },
+    ],
+  },
+  {
     version: '0.8.2',
     date: '2026-11-09',
     fixes: [

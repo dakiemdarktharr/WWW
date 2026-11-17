@@ -27,6 +27,35 @@
   width: 19px;
   height: 19px;
 }
+.desktop-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-left: 8px;
+  -webkit-app-region: no-drag;
+}
+.desktop-update-button {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--lime) 36%, var(--line));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lime) 9%, transparent);
+  color: var(--lime);
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.desktop-update-button:hover {
+  background: color-mix(in srgb, var(--lime) 17%, transparent);
+}
+.desktop-update-button.required {
+  border-color: color-mix(in srgb, #e7c785 55%, var(--line));
+  color: #e7c785;
+}
 .desktop-titlebar-controls {
   display: flex;
   height: 100%;
@@ -64,6 +93,92 @@
   min-height: 0;
   overflow: auto;
   position: relative;
+  z-index: 1;
+}
+.desktop-workspace-layer {
+  min-height: 100%;
+}
+.desktop-update-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 88%, #000 12%);
+  backdrop-filter: blur(9px);
+}
+.desktop-update-dialog {
+  width: min(100%, 460px);
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 24px 100px #0008;
+  text-align: center;
+}
+.desktop-update-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 18px;
+  border: 1px solid color-mix(in srgb, var(--lime) 34%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--lime) 10%, transparent);
+  color: var(--lime);
+}
+.desktop-update-dialog h2 {
+  margin-bottom: 10px;
+  font-size: 20px;
+}
+.desktop-update-dialog p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.desktop-update-version {
+  display: inline-block;
+  margin: 16px 0;
+  color: var(--lime);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.desktop-update-download {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  border: 1px solid color-mix(in srgb, var(--lime) 55%, var(--line));
+  border-radius: 7px;
+  background: var(--lime);
+  color: #08211e;
+  font-weight: 700;
+}
+.desktop-update-download:hover {
+  background: color-mix(in srgb, var(--lime) 88%, white);
+}
+.desktop-update-error {
+  margin-top: 14px !important;
+  color: #ffadb4 !important;
+  font-size: 12px;
+}
+.desktop-update-error-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 400;
+  max-width: min(380px, calc(100vw - 36px));
+  padding: 12px 14px;
+  border: 1px solid #9d4853;
+  border-radius: 8px;
+  background: #301b23;
+  color: #ffd5d9;
+  box-shadow: 0 12px 40px #0006;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .desktop-frame.is-fullscreen {
   --desktop-titlebar-height: 0px;

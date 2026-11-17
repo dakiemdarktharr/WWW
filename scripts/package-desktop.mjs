@@ -14,6 +14,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
 const manifest = JSON.parse(await readFile(path.join(staged, 'manifest.json'), 'utf8'));
 const rootPackage = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const releases = JSON.parse(await readFile(path.join(root, 'release-history.json'), 'utf8'));
+if (
+  !Array.isArray(releases) ||
+  releases[0] !== manifest.version ||
+  releases.some((version) => typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) ||
+  new Set(releases).size !== releases.length
+)
+  throw new Error('Put each published Kivuno version in release-history.json, newest first.');
 const output = path.join(root, 'release');
 const macosUrl = process.env.KIVUNO_MACOS_URL?.trim() || '';
 const macosSha256 = process.env.KIVUNO_MACOS_SHA256?.trim() || '';
@@ -204,6 +212,7 @@ await writeFile(
   JSON.stringify(
     {
       version: manifest.version,
+      releases,
       available: true,
       url: `/downloads/${artifactName}`,
       sha256,

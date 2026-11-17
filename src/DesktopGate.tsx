@@ -1,19 +1,110 @@
-import { useEffect, useState } from 'react';
-import { ArrowUpRight, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowUpRight, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import App from './App';
 import { resetApiSession } from './api';
-import type { DesktopStatus } from './desktop';
+import type { DesktopStatus, DesktopUpdateStatus } from './desktop';
 import DesktopTitleBar from './TitleBar';
 import './portal.css';
 import ConnectionProgress from './ConnectionProgress';
 
 export default function DesktopGate() {
+  const [update, setUpdate] = useState<DesktopUpdateStatus | null>(null);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [updateError, setUpdateError] = useState('');
+  const updateDownloadButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    let current = true;
+    const check = async () => {
+      try {
+        const next = await window.relayDesktop!.checkForUpdates();
+        if (current) setUpdate(next);
+      } catch {
+        // Update checks are best-effort; keep the last successful result.
+      }
+    };
+    void check();
+    const timer = window.setInterval(check, 30 * 60 * 1000);
+    return () => {
+      current = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+  useEffect(() => {
+    if (update?.required) updateDownloadButton.current?.focus();
+  }, [update?.required]);
+  const downloadUpdate = async () => {
+    setDownloadingUpdate(true);
+    setUpdateError('');
+    try {
+      await window.relayDesktop!.downloadUpdate();
+    } catch (cause) {
+      setUpdateError((cause as Error).message || 'Không thể tải bản cập nhật. Hãy thử lại.');
+    } finally {
+      setDownloadingUpdate(false);
+    }
+  };
   return (
     <div className="desktop-frame">
-      <DesktopTitleBar />
+      <DesktopTitleBar
+        update={update}
+        downloading={downloadingUpdate}
+        onDownload={() => void downloadUpdate()}
+      />
       <div className="desktop-frame-content">
-        <DesktopWorkspace />
+        <div className="desktop-workspace-layer" inert={Boolean(update?.required)}>
+          <DesktopWorkspace />
+        </div>
+        {update?.required && (
+          <div className="desktop-update-backdrop">
+            <section
+              className="desktop-update-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="desktop-update-title"
+              aria-describedby="desktop-update-description"
+              onKeyDown={(event) => {
+                if (event.key === 'Tab') {
+                  event.preventDefault();
+                  updateDownloadButton.current?.focus();
+                }
+              }}
+            >
+              <span className="desktop-update-icon">
+                <Download size={22} />
+              </span>
+              <h2 id="desktop-update-title">Cần cập nhật Kivuno để tiếp tục</h2>
+              <p id="desktop-update-description">
+                Đã có {update.newerReleaseCount} phiên bản mới hơn. Hãy tải và cài đặt phiên bản mới
+                nhất, sau đó mở lại Kivuno.
+              </p>
+              <span className="desktop-update-version">v{update.latestVersion}</span>
+              <button
+                ref={updateDownloadButton}
+                className="desktop-update-download"
+                disabled={downloadingUpdate}
+                onClick={() => void downloadUpdate()}
+              >
+                {downloadingUpdate ? (
+                  <Loader2 className="spin" size={17} />
+                ) : (
+                  <Download size={17} />
+                )}
+                {downloadingUpdate ? 'Đang mở bộ cài…' : 'Tải và cập nhật'}
+              </button>
+              {updateError && (
+                <p className="desktop-update-error" role="alert">
+                  {updateError}
+                </p>
+              )}
+            </section>
+          </div>
+        )}
       </div>
+      {updateError && !update?.required && (
+        <div className="desktop-update-error-toast" role="alert">
+          {updateError}
+        </div>
+      )}
     </div>
   );
 }

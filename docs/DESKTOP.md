@@ -10,6 +10,12 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 4. Return to Kivuno. The short-lived activation request is bound to a random proof verifier held only by the app. A consumed activation cannot issue another session.
 5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. Gemini uses its own Google sign-in. Claude Code and Antigravity use your separately installed, signed-in client with the scoped [MESH MCP configuration](EXTERNAL-MESH.md); adding a profile does not sign that client in.
 
+## Desktop updates
+
+The title bar shows a small download button when a newer installer is available for the current platform. Downloading is optional until three newer releases exist; at that point Kivuno blocks workspace use until the latest installer is installed and the app is reopened. The updater checks the published release manifest and compares its version history with the installed version. Each release must be added to `release-history.json`, newest first, when the package version is advanced. Windows and Linux installers are opened through the system browser; macOS opens the published DMG.
+
+Existing installs older than 0.8.3 do not contain the updater. Users need to install 0.8.3 once from the website; later releases can be downloaded from inside the app. The 0.8.3 macOS installer must be built and uploaded before macOS users can receive it; the latest published DMG remains 0.8.2 until that is done.
+
 ## Connect a project folder
 
 In Neralu, choose **Connect project** and select the repository root. Existing repositories need at least one commit so Kivuno can create isolated Git worktrees. For a normal folder or an empty repository, choose **Initialize folder with Git**. Kivuno creates local Git metadata and an initial commit from files Git does not ignore; common credential files and private account folders are excluded. This action changes the selected folder and does not push to a remote.
