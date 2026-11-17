@@ -256,8 +256,8 @@ export async function buildApp(
       return manifest;
     } catch {
       return {
-        version: '0.8.3',
-        releases: ['0.8.3'],
+        version: '0.8.4',
+        releases: ['0.8.4'],
         available: false,
         platform: 'win32-x64',
         signed: false,
@@ -472,7 +472,9 @@ export async function buildApp(
         login: {
           type: 'external',
           instructions:
-            'Connect your own client through the local MESH MCP bridge. Kivuno does not manage its subscription login.',
+            input.provider === 'antigravity'
+              ? 'Use Sign in with Google to start the official Antigravity CLI login in Terminal, then connect the client through local MESH MCP.'
+              : 'Connect your own client through the local MESH MCP bridge. Sign in directly in Claude Code.',
         },
       };
     if (input.runnerId)

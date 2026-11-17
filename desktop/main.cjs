@@ -14,9 +14,19 @@ const {
 const { spawn } = require('node:child_process');
 const { createServer } = require('node:net');
 const { randomBytes } = require('node:crypto');
-const { mkdir, readFile, writeFile, unlink, rename, lstat } = require('node:fs/promises');
+const {
+  mkdir,
+  mkdtemp,
+  readFile,
+  writeFile,
+  unlink,
+  rename,
+  lstat,
+  rm,
+} = require('node:fs/promises');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { ProjectBrowser } = require('./browser.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const {
@@ -524,6 +534,91 @@ function registerIpc() {
     if (!update.hasUpdate || !downloadUrl)
       throw new Error('No Kivuno update is available for this computer.');
     await shell.openExternal(downloadUrl);
+  });
+  ipcMain.handle('relay:antigravity-google-sign-in', async (event) => {
+    trusted(event);
+    if (process.platform === 'darwin') {
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'kivuno-antigravity-login-'));
+      const script = path.join(directory, 'Sign in with Google.command');
+      const source = [
+        '#!/bin/zsh',
+        'if ! command -v agy >/dev/null 2>&1; then',
+        '  echo "Antigravity CLI is not installed. Install it from https://antigravity.google/download."',
+        '  printf "\\nPress Return to close this window..."',
+        '  read -r reply',
+        '  rm -rf -- "${0:h}"',
+        '  exit 127',
+        'fi',
+        'agy acp --login',
+        'result=$?',
+        'if [ "$result" -eq 0 ]; then',
+        '  echo "Google sign-in finished. Return to Kivuno."',
+        'else',
+        '  echo "Google sign-in did not finish. Check the message above and try again."',
+        'fi',
+        'printf "\\nPress Return to close this window..."',
+        'read -r reply',
+        'rm -rf -- "${0:h}"',
+        'exit "$result"',
+        '',
+      ].join('\n');
+      try {
+        await writeFile(script, source, { mode: 0o700, flag: 'wx' });
+        const child = spawn('open', ['-a', 'Terminal', script], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        await new Promise((resolve, reject) => {
+          child.once('error', reject);
+          child.once('spawn', resolve);
+        });
+        child.unref();
+      } catch (error) {
+        await rm(directory, { recursive: true, force: true });
+        throw new Error(`Could not open Terminal for Antigravity sign-in: ${error.message}`);
+      }
+      return;
+    }
+    if (process.platform === 'win32') {
+      const child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          'Start-Process -FilePath cmd.exe -ArgumentList "/k agy acp --login"',
+        ],
+        { detached: true, stdio: 'ignore', windowsHide: true },
+      );
+      await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('spawn', resolve);
+      });
+      child.unref();
+      return;
+    }
+    for (const terminal of ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xterm']) {
+      try {
+        const args =
+          terminal === 'gnome-terminal'
+            ? ['--', 'agy', 'acp', '--login']
+            : ['-e', 'agy', 'acp', '--login'];
+        const child = spawn(terminal, args, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        await new Promise((resolve, reject) => {
+          child.once('error', reject);
+          child.once('spawn', resolve);
+        });
+        child.unref();
+        return;
+      } catch {}
+    }
+    throw new Error(
+      'No terminal app was found. Run `agy acp --login` in a terminal to sign in with Google.',
+    );
   });
   ipcMain.handle('relay:window-state', (event) => {
     trusted(event);

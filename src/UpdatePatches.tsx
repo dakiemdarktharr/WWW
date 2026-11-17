@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.4',
+    date: '2026-11-17',
+    fixes: [
+      {
+        vi: 'Thêm đăng nhập Google cho Antigravity qua CLI chính thức; MESH vẫn dùng riêng để nối client với workspace.',
+        en: 'Added Google sign-in for Antigravity through its official CLI; MESH remains the separate client-to-workspace connection.',
+      },
+    ],
+  },
+  {
     version: '0.8.3',
     date: '2026-11-17',
     fixes: [

@@ -1,13 +1,13 @@
-# Providers trong Kivuno 0.6.1
+# Providers trong Kivuno
 
-Cập nhật ngày 2026-11-05. Một nhóm có thể chứa Codex, Gemini CLI, Claude Code và Antigravity, nhưng khả năng chạy của từng provider khác nhau. Nhóm dùng chung MESH, nhiệm vụ, worktree, quyền của người dùng và quy trình review; không chia sẻ credential giữa tài khoản.
+Cập nhật phiên bản 0.8.4, ngày 2026-11-17. Một nhóm có thể chứa Codex, Gemini CLI, Claude Code và Antigravity, nhưng khả năng chạy của từng provider khác nhau. Nhóm dùng chung MESH, nhiệm vụ, worktree, quyền của người dùng và quy trình review; không chia sẻ credential giữa tài khoản.
 
 | Provider    | Cách kết nối                                             | Phiên làm việc                                                                                           | Quota và quyền                                                                              |
 | ----------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Codex       | Codex App Server, profile riêng cho từng tài khoản       | Kivuno quản lý process, thread, model/reasoning, pause/resume, approvals                                 | Đọc quota provider; giữ ngưỡng dự phòng 50% trừ khi người dùng cho phép                     |
 | Gemini      | Gemini CLI **0.66.0**, ACP stdio, Google sign-in         | Kivuno quản lý process và ACP session; model từ catalog thực                                             | ACP chưa cung cấp phần trăm quota. Cần cấp số prompt có giới hạn; không fallback API/Vertex |
 | Claude      | MCP bridge nội bộ, người dùng tự kết nối client của mình | Client bên ngoài tự quản lý model, reasoning, đăng nhập và process; Kivuno ghi nhận task/session/tiến độ | Không quản lý claude.ai OAuth. Usage tự khai báo không được coi là telemetry đã xác minh    |
-| Antigravity | MCP bridge nội bộ, client Antigravity riêng              | Giữ harness/tools/skills/plugins trong client Antigravity; Kivuno chỉ cung cấp công cụ phối hợp          | Không dùng credential Gemini CLI thay thế; quota tự khai báo, nhận task phải được cho phép  |
+| Antigravity | Google OAuth qua `agy acp --login`; MESH MCP riêng       | Client Antigravity vẫn quản lý model/tools; Kivuno cung cấp công cụ phối hợp qua MESH                    | Không dùng credential Gemini CLI thay thế; quota tự khai báo, nhận task phải được cho phép  |
 
 ## Gemini: đăng nhập và sử dụng
 
@@ -61,7 +61,7 @@ Handoff khác provider dùng checkpoint Git + trạng thái/task/test/việc cò
 
 Các hướng dẫn Markdown độc lập với công cụ có thể chuyển đổi sau khi đọc license, đường dẫn, tên tool và quyền. Codex skill gọi `functions.exec`, `apply_patch` hoặc một plugin riêng không tự nhiên hoạt động trên Gemini hay Claude. Các connector OAuth, binary, hooks và MCP config là quyền thực thi; group chỉ chia sẻ inventory và tài liệu đã lọc, không chia sẻ token hoặc tự cài/chạy gói từ tin nhắn.
 
-Antigravity trong 0.6.1 là **external MCP**, không phải adapter native hoặc tên khác của Gemini CLI. Đăng nhập và chọn model diễn ra ở Antigravity. CLI chính thức hiện có ACP, nhưng Kivuno chưa dùng giao thức đó để điều phối Antigravity tự động. Xem [cấu hình và kiểm chứng client thật](EXTERNAL-MESH.md).
+Antigravity trong 0.8.4 vẫn là **external MCP**, không phải adapter native hoặc tên khác của Gemini CLI. Kivuno có nút mở luồng Google OAuth chính thức bằng `agy acp --login`; model và phiên vẫn do Antigravity quản lý. MESH MCP kết nối client với workspace. Xem [cấu hình và kiểm chứng client thật](EXTERNAL-MESH.md).
 
 ## Bằng chứng kiểm thử và phần cần người dùng kiểm chứng
 

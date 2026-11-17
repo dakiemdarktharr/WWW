@@ -1,17 +1,17 @@
 # Claude Code và Antigravity cộng tác trong Neralu
 
-Kivuno 0.6.1 cung cấp MCP server chạy trên máy bạn cho **Claude Code** và **Antigravity**. Bạn tự mở và đăng nhập client; Kivuno không thu thập OAuth, không gọi API trả phí và không khởi chạy model thay bạn. Đây là kết nối công cụ vào client, không phải một bản nhúng toàn bộ ứng dụng của provider. Antigravity là profile riêng, không phải tên khác của Gemini CLI.
+Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal; Google và Antigravity xử lý OAuth, Kivuno không nhận thông tin đăng nhập. Bạn vẫn tự mở client; Kivuno không gọi API trả phí và không khởi chạy model thay bạn. Đây là kết nối công cụ vào client, không phải một bản nhúng toàn bộ ứng dụng của provider. Antigravity là profile riêng, không phải tên khác của Gemini CLI.
 
 ## Kết nối
 
-1. Trong **Team → Add account**, chọn **Claude** hoặc **Antigravity**. Mỗi profile tương ứng một thành viên; nhiều profile có thể dùng những tài khoản/client riêng do bạn quản lý.
+1. Trong **Team → Add account**, chọn **Claude** hoặc **Antigravity**. Mỗi profile tương ứng một thành viên; nhiều profile có thể dùng những tài khoản/client riêng do bạn quản lý. Trên profile Antigravity, chọn **Sign in with Google** để mở đăng nhập chính thức trong Terminal. CLI, IDE và Antigravity App dùng chung thông tin đăng nhập cục bộ theo hướng dẫn Google.
 2. Mở nhóm dự án → **Members** → thêm thành viên vừa tạo. Team toàn cục và nhóm vẫn tách biệt.
 3. Mở **MESH connection** ở profile đó, chọn nhóm và thời hạn. Mặc định chỉ có quyền chat. Chỉ bật nhận task/checkpoint khi muốn cho client làm việc; quyền dùng khi quota chưa biết là một lựa chọn riêng, mặc định tắt.
 4. Tạo và sao chép cấu hình MCP. Thêm entry dưới `mcpServers` vào cấu hình client, giữ lại các entry hiện có. Với Claude Code, dùng local/user scope và kiểm tra `claude mcp list` hoặc `/mcp`. Không commit token vào `.mcp.json` của repo. [Hướng dẫn Claude MCP](https://code.claude.com/docs/en/mcp).
 5. Với Antigravity IDE, mở **MCP Servers → Manage MCP Servers → View raw config**. Với Antigravity App, mở **Customizations → Installed → MCP Servers**, lấy đường dẫn cấu hình từ menu của mục này. CLI hỗ trợ cùng cấu trúc `command`, `args`, `env`. Giữ cấu hình chứa token ở phạm vi cá nhân; không commit `.agents/mcp_config.json`. [Hướng dẫn Antigravity MCP](https://antigravity.google/docs/mcp).
 6. Yêu cầu agent: “Đọc `mesh_read`, trao đổi với nhóm; nhận một task có sẵn bằng `task_claim`, chỉ sửa trong worktree được trả về, báo tiến độ và dùng `task_submit` sau khi ngừng sửa file.”
 
-Kivuno không thay đổi cấu hình hay đăng nhập client tự động. Máy đang chạy app phải tiếp tục bật. Token chỉ dành cho một provider, một thành viên trong một nhóm, được hiển thị một lần, có thời hạn tối đa 8 giờ và mất hiệu lực khi Kivuno khởi động lại. Có thể thu hồi ngay trong Team. Không dán cấu hình vào chat nhóm hoặc Git; checkpoint từ chối các file cấu hình MCP và nội dung chứa `KIVUNO_MCP_TOKEN`.
+Kivuno không tự sửa cấu hình MCP của client. Máy đang chạy app phải tiếp tục bật. Token chỉ dành cho một provider, một thành viên trong một nhóm, được hiển thị một lần, có thời hạn tối đa 8 giờ và mất hiệu lực khi Kivuno khởi động lại. Có thể thu hồi ngay trong Team. Không dán cấu hình vào chat nhóm hoặc Git; checkpoint từ chối các file cấu hình MCP và nội dung chứa `KIVUNO_MCP_TOKEN`.
 
 ## Harness, tools, plugins, skills và thư mục
 

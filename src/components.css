@@ -228,6 +228,17 @@
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
+.member-provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.member-actions.antigravity-actions {
+  justify-content: flex-start;
+}
+.member-actions.antigravity-actions .member-remove {
+  margin-left: auto;
+}
 .task-toolbar {
   display: flex;
   align-items: center;

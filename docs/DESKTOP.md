@@ -8,13 +8,13 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 2. Install Kivuno for your Windows user. Choose a drive with enough free space; the installer displays its requirement, including temporary extraction space. If C: is nearly full, choose a folder such as `D:\Kivuno`. Version 0.6.1 keeps the large archive and extraction staging on that selected drive and does not cache another full installer in LocalAppData. A small writable Windows TEMP directory and space for your workspace data are still needed. This free alpha has no paid Authenticode certificate; Windows may show an unknown-publisher warning. A checksum detects a changed download but does not replace publisher signing.
 3. Open Kivuno and choose **Sign in on the web**. Complete the website login and approve the displayed device code.
 4. Return to Kivuno. The short-lived activation request is bound to a random proof verifier held only by the app. A consumed activation cannot issue another session.
-5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. Gemini uses its own Google sign-in. Claude Code and Antigravity use your separately installed, signed-in client with the scoped [MESH MCP configuration](EXTERNAL-MESH.md); adding a profile does not sign that client in.
+5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. Gemini uses its own Google sign-in. Antigravity’s **Sign in with Google** action opens the official CLI login in Terminal; Claude Code and Antigravity use the scoped [MESH MCP configuration](EXTERNAL-MESH.md) to connect their client to Kivuno.
 
 ## Desktop updates
 
 The title bar shows a small download button when a newer installer is available for the current platform. Downloading is optional until three newer releases exist; at that point Kivuno blocks workspace use until the latest installer is installed and the app is reopened. The updater checks the published release manifest and compares its version history with the installed version. Each release must be added to `release-history.json`, newest first, when the package version is advanced. Windows and Linux installers are opened through the system browser; macOS opens the published DMG.
 
-Existing installs older than 0.8.3 do not contain the updater. Users need to install 0.8.3 once from the website; later releases can be downloaded from inside the app. The 0.8.3 macOS installer must be built and uploaded before macOS users can receive it; the latest published DMG remains 0.8.2 until that is done.
+Installs older than 0.8.3 do not contain the updater and need one manual install from the website. Version 0.8.4 includes the Antigravity Google sign-in action and its macOS DMG must be published before Mac users can download it. Later versions can be downloaded from inside the app.
 
 ## Connect a project folder
 

@@ -538,6 +538,21 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     });
     if (result) setModal({ type: 'login', memberId: member.id, result });
   }
+  async function antigravityGoogleSignIn(member: Member) {
+    setBusy(`antigravity-google-${member.id}`);
+    try {
+      if (!window.relayDesktop)
+        throw new Error('Open this workspace in the Kivuno desktop app to sign in with Google.');
+      await window.relayDesktop.signInAntigravityWithGoogle();
+      setToast({
+        text: 'Antigravity sign-in opened in Terminal. Finish the Google flow there, then return to Kivuno.',
+      });
+    } catch (error) {
+      setToast({ text: (error as Error).message, error: true });
+    } finally {
+      setBusy('');
+    }
+  }
   async function connectAccount(provider: ProviderId) {
     const result = await perform<{ member: Member; login: LoginResult }>(
       'connect-account',
@@ -996,6 +1011,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       openTask={openDetail}
                       setup={() => void openSetup(member)}
                       external={() => setModal({ type: 'external', memberId: member.id })}
+                      googleSignIn={() => void antigravityGoogleSignIn(member)}
                       remove={() => {
                         if (
                           window.confirm(
@@ -1391,6 +1407,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           <ExternalConnection
             member={members.find((member) => member.id === modal.memberId)!}
             projects={state?.projects || []}
+            googleBusy={pending}
+            googleSignIn={() =>
+              void antigravityGoogleSignIn(members.find((member) => member.id === modal.memberId)!)
+            }
           />
         </Modal>
       )}
@@ -2110,6 +2130,7 @@ function MemberCard({
   openTask,
   setup,
   external,
+  googleSignIn,
   cloud,
   remove,
   children,
@@ -2125,6 +2146,7 @@ function MemberCard({
   openTask: (task: Task) => void;
   setup: () => void;
   external: () => void;
+  googleSignIn: () => void;
   cloud: boolean;
   remove: () => void;
   children: ReactNode;
@@ -2148,7 +2170,9 @@ function MemberCard({
       </div>
       <div className="member-account">
         <span>
-          {member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
+          {provider === 'antigravity'
+            ? 'Google sign-in is managed by Antigravity'
+            : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>
         {member.account?.planType && <span className="plan-tag">{member.account.planType}</span>}
       </div>
@@ -2252,8 +2276,22 @@ function MemberCard({
           )}
         </div>
       )}
-      <div className="member-actions">
-        {isExternalProvider(provider) ? (
+      <div className={`member-actions ${provider === 'antigravity' ? 'antigravity-actions' : ''}`}>
+        {provider === 'antigravity' ? (
+          <div className="member-provider-actions">
+            <Button
+              primary
+              onClick={googleSignIn}
+              disabled={busy}
+              title="Opens the official Antigravity Google sign-in in Terminal."
+            >
+              <ArrowUpRight size={15} /> Sign in with Google
+            </Button>
+            <Button onClick={external} disabled={busy}>
+              <ExternalLink size={15} /> MESH connection
+            </Button>
+          </div>
+        ) : isExternalProvider(provider) ? (
           <Button primary onClick={external} disabled={busy}>
             <ExternalLink size={15} />
             MESH connection

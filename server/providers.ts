@@ -58,12 +58,12 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       label: 'Antigravity',
       mode: 'external',
       available: true,
-      login: 'external',
+      login: 'google',
       quota: 'unknown',
       models: false,
       reasoning: false,
       reason:
-        'Connect your installed Antigravity client through local MESH MCP. This is not Gemini CLI; Kivuno does not start its model, manage Google sign-in or import its tools.',
+        'Sign in with the official Antigravity CLI from Kivuno, then connect the client through local MESH MCP. Antigravity is separate from Gemini CLI; Kivuno does not start its model or import its tools.',
     },
   ];
 }

@@ -61,6 +61,7 @@ declare global {
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;
       cancelSignIn(): Promise<DesktopStatus>;
+      signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
       signOut(): Promise<void>;
       openExternal(url: string): Promise<void>;

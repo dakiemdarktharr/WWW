@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Link2, Loader2, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Check, Copy, Link2, Loader2, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type {
   Member,
   Project,
@@ -128,7 +128,17 @@ interface ExternalMetadata {
   allowTaskClaims: boolean;
   allowUnknownQuota: boolean;
 }
-export function ExternalConnection({ member, projects }: { member: Member; projects: Project[] }) {
+export function ExternalConnection({
+  member,
+  projects,
+  googleSignIn,
+  googleBusy,
+}: {
+  member: Member;
+  projects: Project[];
+  googleSignIn: () => void;
+  googleBusy: boolean;
+}) {
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
   const [projectId, setProjectId] = useState(eligible[0]?.id || '');
   const [minutes, setMinutes] = useState('60');
@@ -207,6 +217,17 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
   }
   return (
     <div className="external-connection form">
+      {providerOf(member) === 'antigravity' && (
+        <>
+          <p>
+            Sign in to Google through the official Antigravity CLI. Kivuno opens Terminal; your
+            Google credentials stay with Antigravity.
+          </p>
+          <button className="button primary" disabled={busy || googleBusy} onClick={googleSignIn}>
+            <ArrowUpRight size={15} /> Sign in with Google
+          </button>
+        </>
+      )}
       {available && eligible.length ? (
         <>
           <GlassSelect
@@ -286,8 +307,9 @@ export function ExternalConnection({ member, projects }: { member: Member; proje
             ]}
           />
           <p>
-            Sign in inside your {providerLabels[providerOf(member)]} client, add this configuration,
-            then ask it to read the group. Kivuno confirms the connection automatically.
+            {providerOf(member) === 'antigravity'
+              ? 'Confirm you are signed into your Google account in Antigravity, add this configuration, then ask it to read the group. Kivuno confirms the MESH connection automatically.'
+              : `Sign in inside your ${providerLabels[providerOf(member)]} client, add this configuration, then ask it to read the group. Kivuno confirms the connection automatically.`}
           </p>
           <strong>MCP configuration</strong>
           <textarea
