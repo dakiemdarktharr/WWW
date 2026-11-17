@@ -114,6 +114,19 @@ export async function resolveCodexCommand(): Promise<string> {
     if (!(await isFile(configured))) throw new Error('Configured Codex executable does not exist.');
     return configured;
   }
+  const providerHome = process.env.RELAY_PROVIDER_HOME;
+  if (providerHome && path.isAbsolute(providerHome)) {
+    const candidate = path.join(
+      providerHome,
+      'codex',
+      'node_modules',
+      '@openai',
+      'codex',
+      'bin',
+      'codex.js',
+    );
+    if (await isFile(candidate)) return candidate;
+  }
   const envPath = process.env.PATH ?? process.env.Path ?? '';
   for (const segment of envPath.split(path.delimiter)) {
     const directory = segment.replace(/^"|"$/g, '');
@@ -130,6 +143,10 @@ export async function resolveCodexCommand(): Promise<string> {
         if (await isFile(candidate)) return candidate;
       }
     }
+  }
+  for (const root of [process.cwd(), path.resolve(import.meta.dirname, '..')]) {
+    const candidate = path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+    if (await isFile(candidate)) return candidate;
   }
   // The desktop app adds its private CLI directory to its own PATH. A user
   // launching RELAY from Explorer may not have that injected PATH entry.

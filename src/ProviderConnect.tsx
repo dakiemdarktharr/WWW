@@ -74,6 +74,7 @@ export default function ProviderConnect({
   const capability = capabilities.find((entry) => entry.id === provider);
   const remoteGemini = Boolean(runnerId && provider === 'gemini');
   const available = capability?.available || (provider === 'codex' && runnerId);
+  const canPrepare = Boolean(window.relayDesktop);
   return (
     <div className="provider-connect form">
       <ProviderPicker value={provider} change={setProvider} />
@@ -86,12 +87,20 @@ export default function ProviderConnect({
               : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
+      {canPrepare && (
+        <p className="provider-summary">
+          {isExternalProvider(provider)
+            ? `Kivuno checks for the official ${providerLabels[provider]} CLI and installs it for your computer if it is missing. Sign-in and model use stay in that client.`
+            : `Kivuno checks its bundled ${providerLabels[provider]} runtime and repairs it in Kivuno's private storage if needed.`}
+        </p>
+      )}
       {remoteGemini ? (
         <p className="error-text">
           Choose This computer for Gemini. Remote Gemini sessions are not supported yet.
         </p>
       ) : (
         !loading &&
+        !canPrepare &&
         !available && (
           <p className="error-text">
             {capability?.reason || error || 'This provider is unavailable on this machine.'}
@@ -100,7 +109,7 @@ export default function ProviderConnect({
       )}
       <button
         className="button primary"
-        disabled={busy || loading || !available || remoteGemini}
+        disabled={busy || loading || (!available && !canPrepare) || remoteGemini}
         onClick={() => connect(provider)}
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}

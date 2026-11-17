@@ -529,7 +529,19 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       });
   }
   async function login(member: Member, method: 'browser' | 'device') {
-    if (isExternalProvider(providerOf(member))) {
+    const provider = providerOf(member);
+    if (window.relayDesktop && !member.runnerId) {
+      setBusy(`prepare-${provider}`);
+      try {
+        await window.relayDesktop.prepareProvider(provider);
+      } catch (error) {
+        setToast({ text: (error as Error).message, error: true });
+        return;
+      } finally {
+        setBusy('');
+      }
+    }
+    if (isExternalProvider(provider)) {
       setModal({ type: 'external', memberId: member.id });
       return;
     }
@@ -554,21 +566,27 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     }
   }
   async function connectAccount(provider: ProviderId) {
-    const result = await perform<{ member: Member; login: LoginResult }>(
-      'connect-account',
-      '/accounts/connect',
-      {
-        provider,
-        ...(selectedMachine && !isExternalProvider(provider) ? { runnerId: selectedMachine } : {}),
-      },
-    );
-    if (result) {
-      navigate('team');
-      setModal(
-        isExternalProvider(provider)
-          ? { type: 'external', memberId: result.member.id }
-          : { type: 'login', memberId: result.member.id, result: result.login },
+    const runnerId = selectedMachine && !isExternalProvider(provider) ? selectedMachine : '';
+    setBusy(`prepare-${provider}`);
+    try {
+      if (window.relayDesktop && !runnerId) await window.relayDesktop.prepareProvider(provider);
+      const result = await perform<{ member: Member; login: LoginResult }>(
+        'connect-account',
+        '/accounts/connect',
+        { provider, ...(runnerId ? { runnerId } : {}) },
       );
+      if (result) {
+        navigate('team');
+        setModal(
+          isExternalProvider(provider)
+            ? { type: 'external', memberId: result.member.id }
+            : { type: 'login', memberId: result.member.id, result: result.login },
+        );
+      }
+    } catch (error) {
+      setToast({ text: (error as Error).message, error: true });
+    } finally {
+      setBusy('');
     }
   }
   async function dismissSignIn() {

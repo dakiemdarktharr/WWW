@@ -207,6 +207,7 @@ await build({
     files: [
       'main.cjs',
       'preload.cjs',
+      'provider-tools.cjs',
       'security.cjs',
       'browser.cjs',
       'workspaces.cjs',
@@ -242,7 +243,9 @@ await build({
     async afterPack({ appOutDir }) {
       const resources = path.join(appOutDir, 'Kivuno.app', 'Contents', 'Resources');
       for (const required of [
+        'app.asar',
         'runtime/node',
+        'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
         'workspace/node_modules/@esbuild/darwin-arm64/bin/esbuild',

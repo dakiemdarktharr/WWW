@@ -48,6 +48,12 @@ Claude và Antigravity không nằm trong đội native tự dispatch brainstorm
 
 ## Contract phục vụ UI và tích hợp
 
+### Tự chuẩn bị runtime khi thêm account
+
+Trong desktop, nút **Add account** quét provider vừa chọn trước khi tạo hồ sơ. Nếu thiếu Claude Code hoặc Antigravity CLI, Kivuno tải và chạy [installer chính thức của Anthropic](https://code.claude.com/docs/en/getting-started) hoặc [hướng dẫn cài Antigravity CLI của Google](https://antigravity.google/docs/getting-started?tab=cli) cho tài khoản hệ điều hành hiện tại, không yêu cầu quyền quản trị; chỉ tạo account sau khi lệnh `--version` chạy được. Codex CLI `0.166.0` và Gemini CLI `0.66.0` được đóng gói sẵn. Nếu một trong hai runtime đóng gói bị thiếu/hỏng, Kivuno tự khôi phục đúng phiên bản vào `provider-runtimes` trong dữ liệu riêng của Kivuno bằng npm CLI đã đóng gói, chỉ từ npm registry qua HTTPS và tắt lifecycle scripts.
+
+Kivuno chỉ cài phần mềm khi người dùng bấm **Add account** hoặc mở bước kết nối cho account external đã có. Việc cài CLI không đăng nhập hoặc gửi prompt; Antigravity Google sign-in vẫn là thao tác riêng của người dùng. Claude và Antigravity vẫn là client external do người dùng khởi chạy, còn Kivuno cung cấp MESH MCP. Bản web không cài phần mềm trên máy.
+
 - `Member.provider`: `codex | gemini | claude | antigravity`; dữ liệu cũ được migrate thành `codex`. Session lưu provider; external session còn có `external` và `externalConnectionId`.
 - `GET /api/providers`: capability thực gồm `mode`, `available`, `login`, `quota`, `models`, `reasoning`, lý do nếu có. External không khả dụng trên cloud. `available` của external chỉ nói bridge sẵn sàng, không chứng minh client đã được cài hoặc đăng nhập.
 - `POST /api/accounts/connect {provider,runnerId?}`: Codex/Gemini trả profile và login instructions; Claude/Antigravity tạo external profile, không OAuth. Gemini/Claude/Antigravity trong bản này chỉ kết nối cục bộ; remote runner hiện vẫn dành cho Codex.

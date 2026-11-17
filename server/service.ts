@@ -308,6 +308,11 @@ export class Workspace {
       try {
         await client.start();
         if (this.closing) throw new DomainError('The coordinator is shutting down.');
+        if (client.provider === 'codex') {
+          const probe = await probeCodex();
+          this.runtime.codexAvailable = probe.available;
+          this.runtime.codexVersion = probe.version;
+        }
         this.clients.set(id, client);
         return client;
       } catch (error) {

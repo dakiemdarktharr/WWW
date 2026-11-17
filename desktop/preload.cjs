@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld(
     },
     beginSignIn: () => ipcRenderer.invoke('relay:sign-in'),
     cancelSignIn: () => ipcRenderer.invoke('relay:cancel-sign-in'),
+    prepareProvider: (provider) => ipcRenderer.invoke('relay:prepare-provider', provider),
     signInAntigravityWithGoogle: () => ipcRenderer.invoke('relay:antigravity-google-sign-in'),
     groups: (input) => ipcRenderer.invoke('relay:groups', input),
     signOut: () => ipcRenderer.invoke('relay:sign-out'),

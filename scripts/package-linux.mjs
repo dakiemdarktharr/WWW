@@ -194,6 +194,7 @@ await build({
     files: [
       'main.cjs',
       'preload.cjs',
+      'provider-tools.cjs',
       'security.cjs',
       'browser.cjs',
       'workspaces.cjs',
@@ -218,7 +219,9 @@ await build({
     async afterPack({ appOutDir }) {
       for (const required of [
         'kivuno',
+        'resources/app.asar',
         'resources/runtime/node',
+        'resources/workspace/node_modules/npm/bin/npm-cli.js',
         'resources/workspace/node_modules/tsx/dist/loader.mjs',
         'resources/workspace/node_modules/fastify/fastify.js',
         'resources/workspace/node_modules/@esbuild/linux-x64/bin/esbuild',

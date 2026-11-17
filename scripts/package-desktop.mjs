@@ -128,6 +128,7 @@ await build({
     files: [
       'main.cjs',
       'preload.cjs',
+      'provider-tools.cjs',
       'security.cjs',
       'browser.cjs',
       'workspaces.cjs',
@@ -153,8 +154,10 @@ await build({
       for (const required of [
         'runtime/node.exe',
         'runtime/git/cmd/git.exe',
+        'app.asar',
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
+        'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/@esbuild/win32-x64/esbuild.exe',
         'workspace/node_modules/@openai/codex/bin/codex.js',
         'workspace/node_modules/@google/gemini-cli/bundle/gemini.js',

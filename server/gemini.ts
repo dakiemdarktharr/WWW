@@ -48,6 +48,19 @@ export async function resolveGeminiCommand() {
     const file = path.join(root, 'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
     if (await exists(file)) return file;
   }
+  const providerHome = process.env.RELAY_PROVIDER_HOME;
+  if (providerHome && path.isAbsolute(providerHome)) {
+    const file = path.join(
+      providerHome,
+      'gemini',
+      'node_modules',
+      '@google',
+      'gemini-cli',
+      'bundle',
+      'gemini.js',
+    );
+    if (await exists(file)) return file;
+  }
   throw new Error('Gemini CLI 0.66.0 is not installed in this Kivuno build.');
 }
 const parts = (command: string, args: string[]) =>

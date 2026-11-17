@@ -61,6 +61,10 @@ declare global {
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;
       cancelSignIn(): Promise<DesktopStatus>;
+      prepareProvider(provider: import('../shared/types').ProviderId): Promise<{
+        provider: import('../shared/types').ProviderId;
+        installed: boolean;
+      }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
       signOut(): Promise<void>;

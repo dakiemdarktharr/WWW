@@ -11,7 +11,7 @@ const {
   dialog,
   safeStorage,
 } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { createServer } = require('node:net');
 const { randomBytes } = require('node:crypto');
 const {
@@ -29,6 +29,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { ProjectBrowser } = require('./browser.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
+const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
 const {
   desktopUpdate,
   cloudOrigin,
@@ -452,6 +453,14 @@ function trusted(event, statusOnly = false) {
     throw new Error('Untrusted desktop request.');
 }
 
+function posixQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function powershellQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
 function registerIpc() {
   ipcMain.handle('relay:update-status', async (event) => {
     trusted(event);
@@ -465,8 +474,28 @@ function registerIpc() {
       throw new Error('No Kivuno update is available for this computer.');
     await shell.openExternal(downloadUrl);
   });
+  ipcMain.handle('relay:prepare-provider', async (event, provider) => {
+    trusted(event);
+    if (!identity) throw new Error('Sign in to Kivuno before installing provider components.');
+    const runtime = runtimePaths();
+    return prepareProvider(provider, {
+      ...runtime,
+      providerHome: path.join(dataDirectory, 'provider-runtimes'),
+      environment: process.env,
+    });
+  });
   ipcMain.handle('relay:antigravity-google-sign-in', async (event) => {
     trusted(event);
+    if (!identity) throw new Error('Sign in to Kivuno first.');
+    const runtime = runtimePaths();
+    const providerContext = {
+      ...runtime,
+      providerHome: path.join(dataDirectory, 'provider-runtimes'),
+      environment: process.env,
+    };
+    await prepareProvider('antigravity', providerContext);
+    const agy = await findExecutable('antigravity', process.env);
+    if (!agy) throw new Error('Antigravity CLI is not available after installation. Try again.');
     if (process.platform === 'darwin') {
       const directory = await mkdtemp(path.join(os.tmpdir(), 'kivuno-antigravity-login-'));
       const script = path.join(directory, 'Sign in with Google.command');
@@ -474,14 +503,8 @@ function registerIpc() {
       const cleanup = `rm -f -- ${quote(script)}; rmdir -- ${quote(directory)}`;
       const source = [
         '#!/bin/zsh',
-        'if ! command -v agy >/dev/null 2>&1; then',
-        '  echo "Antigravity CLI is not installed. Install it from https://antigravity.google/download."',
-        '  printf "\\nPress Return to close this window..."',
-        '  read -r reply',
-        cleanup,
-        '  exit 127',
-        'fi',
-        'agy acp --login',
+        `agy=${posixQuote(agy)}`,
+        '"$agy" acp --login',
         'result=$?',
         'if [ "$result" -eq 0 ]; then',
         '  echo "Google sign-in finished. Return to Kivuno."',
@@ -518,7 +541,7 @@ function registerIpc() {
         [
           '-NoProfile',
           '-Command',
-          'Start-Process -FilePath cmd.exe -ArgumentList "/k agy acp --login"',
+          `Start-Process -FilePath $env:ComSpec -ArgumentList ${powershellQuote(`/k "${agy}" acp --login`)}`,
         ],
         { detached: true, stdio: 'ignore', windowsHide: true },
       );
@@ -533,8 +556,8 @@ function registerIpc() {
       try {
         const args =
           terminal === 'gnome-terminal'
-            ? ['--', 'agy', 'acp', '--login']
-            : ['-e', 'agy', 'acp', '--login'];
+            ? ['--', agy, 'acp', '--login']
+            : ['-e', agy, 'acp', '--login'];
         const child = spawn(terminal, args, {
           detached: true,
           stdio: 'ignore',
@@ -735,6 +758,23 @@ function runtimePaths() {
   return { root, node, binPath };
 }
 
+function providerRuntimeEnvironment(root, node) {
+  const codexCommand = path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const probe = existsSync(codexCommand)
+    ? spawnSync(node, [codexCommand, '--version'], {
+        env: process.env,
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+        timeout: 10000,
+      })
+    : null;
+  return {
+    RELAY_PROVIDER_HOME: path.join(dataDirectory, 'provider-runtimes'),
+    ...(probe && !probe.error && probe.status === 0 ? { RELAY_CODEX_COMMAND: codexCommand } : {}),
+  };
+}
+
 async function ensureMachineDirectory(id) {
   for (const directory of [
     path.join(dataDirectory, 'workspace'),
@@ -782,7 +822,7 @@ async function startMachine(entry) {
       env: runtimeEnvironment(process.env, {
         NODE_ENV: 'production',
         PATH: binPath,
-        RELAY_CODEX_COMMAND: path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
+        ...providerRuntimeEnvironment(root, node),
       }),
     },
   );
@@ -894,7 +934,7 @@ async function startBackend() {
       RELAY_PORT: String(port),
       RELAY_DESKTOP_SECRET: desktopSecret,
       RELAY_DESKTOP_LOCKED: identity ? '0' : '1',
-      RELAY_CODEX_COMMAND: path.join(root, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'),
+      ...providerRuntimeEnvironment(root, node),
     }),
   });
   const started = backend;
