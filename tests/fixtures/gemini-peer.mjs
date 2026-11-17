@@ -38,6 +38,12 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       };
     } else if (rpc.method === 'authenticate') {
       if (params.methodId !== 'oauth-personal') throw new Error('Paid authentication is forbidden');
+      try {
+        await access(path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'fixture-wait-auth'));
+        return; // Leave the official sign-in request pending until the client cancels it.
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
       const hangOnce = path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'fixture-hang-first-auth');
       try {
         await access(hangOnce);

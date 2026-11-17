@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, lstat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -59,7 +59,7 @@ async function fixture() {
 
 test('project endpoint initializes a selected plain folder only when explicitly requested', async (t) => {
   const f = await fixture();
-  const projectPath = await mkdtemp(path.join(os.tmpdir(), 'kivuno-api-project-'));
+  const projectPath = await mkdtemp(path.join(os.tmpdir(), 'Kivuno project thử nghiệm-'));
   const privatePath = path.join(f.dir, 'selected-private-folder');
   await mkdir(privatePath);
   await writeFile(path.join(projectPath, 'README.md'), 'Project files stay local.\n');
@@ -92,7 +92,7 @@ test('project endpoint initializes a selected plain folder only when explicitly 
     initializeGit: true,
   });
   assert.equal(initialized.statusCode, 200);
-  assert.equal(initialized.json().path, projectPath);
+  assert.equal(initialized.json().path, await realpath(projectPath));
   assert.equal(f.store.projects().length, 1);
 });
 

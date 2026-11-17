@@ -90,6 +90,7 @@ export default function DesktopTitleBar({
   return (
     <header
       className={`desktop-titlebar${state.fullscreen ? ' fullscreen' : ''}${revealed ? ' revealed' : ''}`}
+      role="banner"
       aria-label="Điều khiển cửa sổ"
       onFocus={() => setRevealed(true)}
       onBlur={(event) => {

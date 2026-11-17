@@ -142,6 +142,59 @@ test('Gemini sign-in recovers from newly saved OAuth credentials when the ACP re
   assert.equal(calls[3].noBrowser, '1', 'cached verification must not launch another browser');
 });
 
+test('Gemini login cancellation stops the pending browser flow without creating credentials', async (t) => {
+  const f = await fixture(t);
+  const credentials = path.join(f.home, '.gemini', 'oauth_creds.json');
+  await unlink(credentials);
+  await writeFile(path.join(f.home, '.gemini', 'fixture-wait-auth'), '');
+
+  const login = await f.client.request('account/login/start');
+  assert.equal(login.type, 'geminiGoogle');
+  const callsFile = path.join(f.home, 'peer-calls.jsonl');
+  let calls: any[] = [];
+  for (let attempt = 0; attempt < 20; attempt++) {
+    calls = (await readFile(callsFile, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    if (calls.some((entry) => entry.method === 'authenticate')) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(
+    calls.some((entry) => entry.method === 'authenticate'),
+    true,
+  );
+  assert.equal(calls.find((entry) => entry.method === 'authenticate')?.noBrowser, '');
+
+  await f.client.request('account/login/cancel');
+  assert.equal(await readAccount(f.client), null);
+  await assert.rejects(readFile(credentials), { code: 'ENOENT' });
+  calls = (await readFile(callsFile, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.equal(calls.at(-1)?.method, 'initialize');
+  assert.equal(calls.at(-1)?.noBrowser, '1');
+  assert.equal(
+    calls.some((entry) => entry.method === 'session/prompt'),
+    false,
+  );
+});
+
+test('Gemini logout deletes only its isolated OAuth profile and cannot restore it', async (t) => {
+  const f = await fixture(t);
+  const credentials = path.join(f.home, '.gemini', 'oauth_creds.json');
+  assert.equal((await readAccount(f.client))?.type, 'gemini-google');
+
+  await f.client.request('account/logout');
+  assert.equal(await readAccount(f.client), null);
+  await assert.rejects(readFile(credentials), { code: 'ENOENT' });
+  assert.equal(
+    (await readFile(path.join(f.home, 'peer-calls.jsonl'), 'utf8')).includes('session/prompt'),
+    false,
+  );
+});
+
 test('official ACP wire contract translates real process streams and model selection without inventing reasoning', async (t) => {
   const f = await fixture(t);
   await f.client.start();
