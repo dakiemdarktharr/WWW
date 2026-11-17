@@ -14,7 +14,39 @@ const {
   machineConfiguration,
   previewUrl,
   secureCredentialStorage,
+  desktopUpdate,
 } = require('../desktop/security.cjs');
+
+test('desktop updates use the published platform version and do not count future releases', () => {
+  const manifest = {
+    version: '0.8.5',
+    releases: ['99.0.0', '0.8.5', '0.8.4', '0.8.3', '0.8.2'],
+    platforms: {
+      windows: { available: true, version: '0.8.5', url: '/downloads/Kivuno-0.8.5-Setup.exe' },
+      macos: {
+        available: true,
+        version: '0.8.4',
+        url: 'https://test.public.blob.vercel-storage.com/downloads/Kivuno-0.8.4-macOS-arm64.dmg',
+      },
+    },
+  };
+  const mac = desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app');
+  assert.equal(mac.status.hasUpdate, false);
+  assert.equal(mac.status.latestVersion, '0.8.4');
+  assert.equal(mac.downloadUrl, '');
+  const windows = desktopUpdate(manifest, '0.8.2', 'win32', 'x64', 'https://kivuno.vercel.app');
+  assert.equal(windows.status.newerReleaseCount, 3);
+  assert.equal(windows.status.required, true);
+  assert.match(windows.downloadUrl, /0\.8\.5-Setup\.exe$/);
+  const olderMac = desktopUpdate(manifest, '0.8.2', 'darwin', 'arm64', 'https://kivuno.vercel.app');
+  assert.equal(olderMac.status.newerReleaseCount, 2);
+  assert.equal(olderMac.status.required, false);
+  manifest.platforms.windows.url = 'https://attacker.test/downloads/Kivuno-0.8.5-Setup.exe';
+  assert.throws(
+    () => desktopUpdate(manifest, '0.8.2', 'win32', 'x64', 'https://kivuno.vercel.app'),
+    /invalid installer/,
+  );
+});
 
 test('Linux credentials require an OS keyring for both reading and writing sessions', () => {
   const storage = (available: boolean, backend: string) => ({

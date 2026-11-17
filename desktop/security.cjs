@@ -219,7 +219,89 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
   };
 }
 
+function versionParts(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version || '');
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function compareVersions(left, right) {
+  const a = versionParts(left);
+  const b = versionParts(right);
+  if (!a || !b) return 0;
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) return a[index] > b[index] ? 1 : -1;
+  }
+  return 0;
+}
+
+function releaseForThisPlatform(manifest, platform, arch) {
+  if (platform === 'win32' && arch === 'x64')
+    return { key: 'windows', suffix: '.exe', item: manifest.platforms?.windows || manifest };
+  if (platform === 'darwin' && arch === 'arm64')
+    return { key: 'macos', suffix: '.dmg', item: manifest.platforms?.macos };
+  if (platform === 'linux' && arch === 'x64')
+    return { key: 'linux', suffix: '.tar.gz', item: manifest.platforms?.linux };
+  return null;
+}
+
+function validatedReleaseUrl(item, suffix, identityOrigin) {
+  if (!item || item.available !== true || typeof item.url !== 'string') return '';
+  const url = new URL(item.url, identityOrigin);
+  const trustedOrigin =
+    url.origin === identityOrigin ||
+    (url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com'));
+  if (
+    url.protocol !== 'https:' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !trustedOrigin ||
+    !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+$/.test(url.pathname) ||
+    !url.pathname.toLowerCase().endsWith(suffix)
+  )
+    throw new Error('Kivuno returned an invalid installer link.');
+  return url.href;
+}
+
+function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
+  const platformRelease = releaseForThisPlatform(body, platform, arch);
+  const latestVersion = platformRelease?.item?.version || body.version;
+  if (!versionParts(currentVersion) || !versionParts(latestVersion))
+    throw new Error('Kivuno returned an invalid release version.');
+  const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
+  const versions = Array.isArray(platformRelease?.item?.releases)
+    ? platformRelease.item.releases
+    : Array.isArray(body.releases)
+      ? body.releases
+      : [latestVersion];
+  const newerReleaseCount = new Set(
+    [latestVersion, ...versions].filter(
+      (version) =>
+        typeof version === 'string' &&
+        compareVersions(version, currentVersion) > 0 &&
+        compareVersions(version, latestVersion) <= 0,
+    ),
+  ).size;
+  const downloadUrl = hasUpdate
+    ? validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
+    : '';
+  return {
+    status: {
+      currentVersion,
+      latestVersion,
+      hasUpdate,
+      downloadAvailable: Boolean(downloadUrl),
+      newerReleaseCount,
+      required: Boolean(downloadUrl) && newerReleaseCount >= 3,
+    },
+    downloadUrl,
+  };
+}
+
 module.exports = {
+  desktopUpdate,
   cloudOrigin,
   sameOrigin,
   externalUrl,
