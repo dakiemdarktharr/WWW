@@ -210,6 +210,7 @@ await build({
       'preload.cjs',
       'provider-tools.cjs',
       'security.cjs',
+      'release-download.cjs',
       'browser.cjs',
       'workspaces.cjs',
       'package.json',

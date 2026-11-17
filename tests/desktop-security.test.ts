@@ -15,7 +15,10 @@ const {
   previewUrl,
   secureCredentialStorage,
   desktopUpdate,
+  githubMacReleaseAsset,
+  trustedMacUpdateRedirect,
 } = require('../desktop/security.cjs');
+const { fetchMacUpdate } = require('../desktop/release-download.cjs');
 
 test('desktop updates use the published platform version and do not count future releases', () => {
   const manifest = {
@@ -45,6 +48,103 @@ test('desktop updates use the published platform version and do not count future
   assert.throws(
     () => desktopUpdate(manifest, '0.8.2', 'win32', 'x64', 'https://kivuno.vercel.app'),
     /invalid installer/,
+  );
+});
+
+test('macOS updates accept only version-matched GitHub release assets and trusted redirects', () => {
+  const manifest = {
+    version: '0.8.5',
+    platforms: {
+      macos: {
+        available: true,
+        version: '0.8.5',
+        url: 'https://kivuno.vercel.app/downloads/Kivuno-0.8.5-macOS-arm64.dmg',
+        autoUpdate: {
+          version: '0.8.5',
+          url: 'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.5/Kivuno-0.8.5-macOS-arm64.zip',
+          sha256: 'a'.repeat(64),
+          size: 1024,
+          platform: 'darwin-arm64',
+          format: 'zip',
+        },
+      },
+    },
+  };
+  const update = desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app');
+  assert.equal(update.status.downloadAvailable, true);
+  assert.equal(update.downloadUrl, manifest.platforms.macos.autoUpdate.url);
+  assert.equal(update.updateArtifact.size, 1024);
+  const { autoUpdate: _autoUpdate, ...macosWithoutZip } = manifest.platforms.macos;
+  const dmgFallback = {
+    ...manifest,
+    platforms: { ...manifest.platforms, macos: macosWithoutZip },
+  };
+  assert.equal(
+    desktopUpdate(dmgFallback, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app').downloadUrl,
+    'https://kivuno.vercel.app/downloads/Kivuno-0.8.5-macOS-arm64.dmg',
+  );
+  assert.equal(githubMacReleaseAsset(manifest.platforms.macos.autoUpdate.url, '.zip'), true);
+  assert.equal(
+    githubMacReleaseAsset(
+      'https://github.com/other/repo/releases/download/v0.8.5/Kivuno-0.8.5-macOS-arm64.zip',
+      '.zip',
+    ),
+    false,
+  );
+  assert.equal(
+    githubMacReleaseAsset(
+      'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.4/Kivuno-0.8.5-macOS-arm64.zip',
+      '.zip',
+    ),
+    false,
+  );
+  assert.equal(
+    trustedMacUpdateRedirect(
+      'https://release-assets.githubusercontent.com/github-production-release-asset/1/file?sig=x',
+    ),
+    true,
+  );
+  assert.equal(
+    trustedMacUpdateRedirect('https://release-assets.githubusercontent.com.evil.test/file'),
+    false,
+  );
+  manifest.platforms.macos.autoUpdate.url =
+    'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.4/Kivuno-0.8.5-macOS-arm64.zip';
+  assert.throws(
+    () => desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app'),
+    /invalid installer link/,
+  );
+});
+
+test('macOS updater follows GitHub asset redirects and rejects untrusted hosts', async () => {
+  const releaseUrl =
+    'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.5/Kivuno-0.8.5-macOS-arm64.zip';
+  const assetUrl =
+    'https://release-assets.githubusercontent.com/github-production-release-asset/1/file?sig=test';
+  const requests: Array<{ url: string; redirect: string }> = [];
+  const response = await fetchMacUpdate(releaseUrl, {
+    fetchImpl: async (url: string | URL, options: { redirect: string }) => {
+      requests.push({ url: String(url), redirect: options.redirect });
+      return requests.length === 1
+        ? new Response(null, { status: 302, headers: { location: assetUrl } })
+        : new Response('verified artifact', { status: 200 });
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(requests, [
+    { url: releaseUrl, redirect: 'manual' },
+    { url: assetUrl, redirect: 'manual' },
+  ]);
+
+  await assert.rejects(
+    fetchMacUpdate(releaseUrl, {
+      fetchImpl: async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://attacker.test/Kivuno.zip' },
+        }),
+    }),
+    /unapproved download host/,
   );
 });
 

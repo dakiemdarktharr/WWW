@@ -117,15 +117,22 @@ if (macosArtifact) {
       throw new Error('The macOS in-app update metadata is incomplete.');
     const updateUrl = new URL(update.url);
     const updateSize = Number(update.size);
+    const expectedGitHubUpdateUrl =
+      `https://github.com/dakiemdarktharr/WWW/releases/download/v${update.version}/` +
+      `Kivuno-${update.version}-macOS-arm64.zip`;
+    const isGitHubUpdate = updateUrl.href === expectedGitHubUpdateUrl;
+    const validUpdatePath =
+      /^\/downloads\/Kivuno-[a-zA-Z0-9._-]+\.zip$/i.test(updateUrl.pathname) || isGitHubUpdate;
     const trustedUpdateOrigin =
       updateUrl.origin === 'https://kivuno.vercel.app' ||
-      updateUrl.hostname.endsWith('.public.blob.vercel-storage.com');
+      updateUrl.hostname.endsWith('.public.blob.vercel-storage.com') ||
+      isGitHubUpdate;
     if (
       update.version !== macosArtifact.version ||
       update.platform !== 'darwin-arm64' ||
       update.format !== 'zip' ||
       !/^[a-f0-9]{64}$/i.test(update.sha256 || '') ||
-      !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+\.zip$/i.test(updateUrl.pathname) ||
+      !validUpdatePath ||
       updateUrl.protocol !== 'https:' ||
       updateUrl.port ||
       updateUrl.username ||

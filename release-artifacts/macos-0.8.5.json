@@ -1,16 +1,16 @@
 {
   "version": "0.8.5",
-  "url": "https://b42qbyq8gad5gspx.public.blob.vercel-storage.com/downloads/Kivuno-0.8.5-macOS-arm64.dmg",
-  "sha256": "218fd74e14e19a63a60615d1d5e73e6b4084fd532100dc80ec0e4810de57aa16",
-  "size": 358586115,
+  "url": "https://kivuno.vercel.app/downloads/Kivuno-0.8.5-macOS-arm64.dmg",
+  "sha256": "53857b67e2e7929c968f12c47df94d7ffb354d959ca3f73348e5a428239588d3",
+  "size": 358583981,
   "platform": "darwin-arm64",
   "signed": false,
   "notarized": false,
   "autoUpdate": {
     "version": "0.8.5",
-    "url": "https://b42qbyq8gad5gspx.public.blob.vercel-storage.com/downloads/Kivuno-0.8.5-macOS-arm64.zip",
-    "sha256": "d6b14a3d394e12867412e776c27d22aec377af471fabba2befccbd034da077c9",
-    "size": 357281503,
+    "url": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.5/Kivuno-0.8.5-macOS-arm64.zip",
+    "sha256": "0bbef096234a470b666b213a0942a0c9c05c05d6041b69a66e3fd3e5c7ad9a19",
+    "size": 357282039,
     "platform": "darwin-arm64",
     "format": "zip"
   }

@@ -35,6 +35,7 @@ const os = require('node:os');
 const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
+const { fetchMacUpdate } = require('./release-download.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
 const {
   desktopUpdate,
@@ -187,10 +188,8 @@ async function prepareMacUpdate(artifact, latestVersion) {
   const archive = path.join(updateDirectory, 'Kivuno-update.zip');
   const extractDirectory = path.join(updateDirectory, 'unpacked');
   try {
-    const response = await fetch(artifact.url, {
-      redirect: 'error',
-      signal: AbortSignal.timeout(30 * 60 * 1000),
-    });
+    const signal = AbortSignal.timeout(30 * 60 * 1000);
+    const response = await fetchMacUpdate(artifact.url, { signal });
     if (!response.ok || !response.body)
       throw new Error(`Could not download the Kivuno update (${response.status}).`);
     const contentLength = response.headers.get('content-length');
