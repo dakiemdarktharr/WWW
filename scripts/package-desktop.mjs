@@ -139,6 +139,7 @@ if (macosArtifact) {
     )
       throw new Error('The macOS in-app update metadata is invalid.');
     macosAutoUpdate = {
+      version: update.version,
       url: updateUrl.href,
       sha256: update.sha256.toLowerCase(),
       size: updateSize,
