@@ -280,6 +280,17 @@ export class Store extends EventEmitter {
       if (member.removedAt) throw new DomainError('This teammate was removed.', 410);
       const session = sessionId ? this.get<CodexSession>('session', sessionId) : null;
       const project = this.get<Project>('project', task.projectId);
+      if (task.reviewOfTaskId) {
+        const source = this.get<Task>('task', task.reviewOfTaskId);
+        if (
+          source.status !== 'review' ||
+          !source.workflowId ||
+          !['running', 'review'].includes(this.get<Workflow>('workflow', source.workflowId).status)
+        )
+          throw new DomainError(
+            'Resume the source workflow before starting its independent review.',
+          );
+      }
       if (project.memberIds && !project.memberIds.includes(memberId))
         throw new DomainError('Add this teammate to the project group first.', 403);
       const scopes = session?.readOnly ? [] : task.scope;

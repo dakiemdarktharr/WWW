@@ -331,6 +331,40 @@ test('workflow HTTP controls validate prompts and expose the coordinated lifecyc
   }
 });
 
+test('one human Sade chat request starts a workflow once and network retries do not consume more turns', async (t) => {
+  const f = await fixture(t),
+    api = await apiFor(f.workspace);
+  try {
+    const payload = {
+      projectId: f.project.id,
+      content: 'Gemini plans the structure, Astra implements the interface. Coordinate the rest.',
+      clientRequestId: randomUUID(),
+      orchestrate: true,
+    };
+    const first = await api.post('/api/mesh/messages', payload);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().orchestrator, 'sade');
+    await f.workspace.workflows.idle();
+    const turns = f.turnCount();
+    const retry = await api.post('/api/mesh/messages', payload);
+    assert.equal(retry.statusCode, 200, retry.body);
+    assert.equal(retry.json().id, first.json().id);
+    assert.equal(f.store.workflows().length, 1);
+    assert.equal(f.turnCount(), turns);
+    assert.equal(
+      (
+        await api.post('/api/mesh/messages', {
+          ...payload,
+          content: 'Changed request with reused ID.',
+        })
+      ).statusCode,
+      409,
+    );
+  } finally {
+    await api.app.close();
+  }
+});
+
 test('review feedback cannot release a task lease while its project is integrating', async (t) => {
   const f = await fixture(t),
     workflow = await f.start();

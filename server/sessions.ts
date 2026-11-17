@@ -304,6 +304,7 @@ export class SessionManager {
     taskId?: string;
     title?: string;
     scope?: string[];
+    kind?: 'review';
     readOnly?: boolean;
     prompt?: string;
     model?: string | null;
@@ -348,7 +349,7 @@ export class SessionManager {
         title: options.title?.trim() || `Session ${this.all().length + 1}`,
         description:
           'Interactive Codex session. Stay within the task scope and report evidence in MESH.',
-        kind: readOnly ? 'research' : 'code',
+        kind: readOnly ? options.kind || 'research' : 'code',
         priority: 'medium',
         scope: options.scope?.length ? options.scope : ['.'],
         dependsOn: [],
@@ -577,7 +578,10 @@ export class SessionManager {
         await this.host.autonomy.shareSkills(session.memberId);
         const selection = await this.host.autonomy.model(session.memberId, {
           ...originalTask,
-          description: `${originalTask.description}\n${prompt}`,
+          description:
+            originalTask.kind === 'review'
+              ? originalTask.description
+              : `${originalTask.description}\n${prompt}`,
         });
         if (this.cancelling.has(id) || this.host.closing)
           throw new DomainError('Session was stopped during model selection.');
@@ -665,6 +669,20 @@ export class SessionManager {
         this.assertLease(session, lease.token);
         if (active.stopping || this.host.closing)
           throw new DomainError('Session was stopped before starting.');
+        if (task.reviewOfTaskId) {
+          const source = this.host.store.get<Task>('task', task.reviewOfTaskId);
+          const workflow = source.workflowId
+            ? this.host.store.workflows().find((entry) => entry.id === source.workflowId)
+            : undefined;
+          if (
+            source.status !== 'review' ||
+            !workflow ||
+            !['running', 'review'].includes(workflow.status)
+          )
+            throw new DomainError(
+              'The source workflow was paused or changed before review startup.',
+            );
+        }
         const room = this.host.mesh.readRoom(session.projectId, session.memberId, {
           limit: 40,
           sessionId: id,
@@ -863,6 +881,9 @@ export class SessionManager {
     });
     this.host.workflows.wakeProject(session.projectId);
     this.refreshMember(session.memberId);
+    this.host.sade.observe(this.get(id), success);
+    if (success && !session.readOnly)
+      void this.host.sade.schedule(this.host.store.get<Task>('task', session.taskId));
     void this.host.inbox
       ?.dispatch(session.projectId)
       .catch((error) => this.host.log(redact(error), session.taskId, session.memberId, 'error'));
@@ -1021,6 +1042,8 @@ export class SessionManager {
             mentions: args.mentions,
           });
         } else if (params.tool === 'mesh_create_conversation') {
+          if (this.host.store.get<Task>('task', session.taskId).reviewOfTaskId)
+            throw new DomainError('Independent review cannot start additional conversations.');
           if (
             typeof args.title !== 'string' ||
             !args.title.trim() ||

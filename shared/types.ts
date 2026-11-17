@@ -104,6 +104,7 @@ export interface CodexModel {
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 }
 export interface Task {
+  reviewOfTaskId?: string;
   id: string;
   projectId: string;
   title: string;
@@ -133,6 +134,7 @@ export interface Task {
   sessionId?: string;
 }
 export interface PlanTask {
+  preferredMemberId?: string;
   key: string;
   title: string;
   description: string;
@@ -159,6 +161,8 @@ export interface Proposal {
   }[];
 }
 export interface Workflow {
+  orchestrator?: 'sade';
+  requestId?: string;
   awaitingCompetitionApproval?: boolean;
   competitionApprovedAt?: string;
   id: string;

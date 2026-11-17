@@ -1442,8 +1442,7 @@ export function SessionConsole({
       {external && (
         <HelpDetails title="Session help">
           <p>
-            Continue in your own {providerLabels[provider]} client. Shared progress appears in
-            Neralu.
+            Continue in your own {providerLabels[provider]} client. Shared progress appears in Chat.
           </p>
         </HelpDetails>
       )}

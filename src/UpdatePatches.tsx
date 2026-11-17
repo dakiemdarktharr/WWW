@@ -6,6 +6,20 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.8.5',
+    date: '2026-11-17',
+    fixes: [
+      {
+        vi: 'Đổi tên khu vực trò chuyện thành Chat, đơn giản hóa bước chọn thư mục và mục tiêu dự án.',
+        en: 'Renamed the conversation area to Chat and simplified project folder and goal setup.',
+      },
+      {
+        vi: 'Thêm Sade trong Chat: chia việc theo yêu cầu, kiểm tra chéo bằng AI khác và yêu cầu review lại khi code thay đổi. Bản macOS hiện vẫn là 0.8.4.',
+        en: 'Added Sade in Chat: coordinated assignments, independent AI review, and renewed review when code changes. The current macOS installer remains 0.8.4.',
+      },
+    ],
+  },
+  {
     version: '0.8.4',
     date: '2026-11-17',
     fixes: [

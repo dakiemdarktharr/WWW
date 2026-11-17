@@ -319,7 +319,7 @@ try {
   await page.reload();
   await page
     .getByRole('navigation', { name: 'Main navigation' })
-    .getByRole('button', { name: 'Neralu', exact: true })
+    .getByRole('button', { name: 'Chat', exact: true })
     .click();
   await page.getByRole('button', { name: 'Session view', exact: true }).click();
   await page

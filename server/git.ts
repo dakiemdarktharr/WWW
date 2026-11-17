@@ -83,7 +83,7 @@ async function prepareResolvedProjectRepo(input: string, initializeGit: boolean)
     if (!/not a git repository/i.test((error as Error).message)) throw error;
     if (!initializeGit)
       throw new DomainError(
-        'This folder is not a Git repository. Choose “Initialize folder with Git” to prepare it.',
+        'This folder is not a Git repository. Choose “Start from a folder” to prepare it.',
         400,
       );
     await git(input, ['init', '--initial-branch=main']);
@@ -99,7 +99,7 @@ async function prepareResolvedProjectRepo(input: string, initializeGit: boolean)
       throw error;
     if (!initializeGit)
       throw new DomainError(
-        'This Git repository has no commits yet. Choose “Initialize folder with Git” to create its starting commit.',
+        'This Git repository has no commits yet. Choose “Start from a folder” to create its starting commit.',
         400,
       );
     await createInitialProjectCommit(actual);

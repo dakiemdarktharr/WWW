@@ -88,6 +88,7 @@ export default function ProjectChat({
   const [mentionIndex, setMentionIndex] = useState(0);
   const [menuDismissed, setMenuDismissed] = useState(false);
   const [sending, setSending] = useState(false);
+  const [orchestrate, setOrchestrate] = useState(false);
   const sendLock = useRef(false);
   const retry = useRef<{ key: string; id: string } | null>(null);
   const currentProject = useRef(project?.id);
@@ -126,6 +127,7 @@ export default function ProjectChat({
   }, [project?.id, activeKey]);
   useEffect(() => {
     setContent('');
+    setOrchestrate(false);
     setReplyTo(null);
     setThread(null);
     setSearch('');
@@ -230,7 +232,7 @@ export default function ProjectChat({
     setSending(true);
     const sentContent = content;
     const sentProject = project.id;
-    const key = JSON.stringify([project.id, content.trim(), replyTo]);
+    const key = JSON.stringify([project.id, content.trim(), replyTo, orchestrate]);
     if (retry.current?.key !== key) retry.current = { key, id: crypto.randomUUID() };
     try {
       const result = await request<RoomMessage>('/mesh/messages', {
@@ -238,6 +240,7 @@ export default function ProjectChat({
         content: content.trim(),
         replyTo: replyTo || undefined,
         clientRequestId: retry.current.id,
+        orchestrate,
       });
       if (result && currentProject.current === sentProject) {
         setContent((current) => (current === sentContent ? '' : current));
@@ -258,7 +261,7 @@ export default function ProjectChat({
   const toggle = (next: Context) => setPanel(panel === next ? null : next);
   return (
     <div className={`chat-workspace ${panel ? 'with-context' : ''}`}>
-      <section className="project-chat" aria-label="Neralu project chat">
+      <section className="project-chat" aria-label="Chat project chat">
         <header className="chat-heading">
           <div className="chat-project-picker" data-usage="groups">
             <Hash size={18} />
@@ -595,6 +598,13 @@ export default function ProjectChat({
           )}
         </div>
         <form className="chat-composer" onSubmit={send}>
+          {orchestrate && (
+            <p className="composer-policy">
+              Sade uses the connected AI teammates to plan, edit project files and cross-check
+              changes. Relevant project content goes to their AI providers. You approve integration
+              and publishing separately.
+            </p>
+          )}
           {mentionSuggestions.length > 0 && (
             <div
               className="slash-menu mention-menu"
@@ -731,6 +741,18 @@ export default function ProjectChat({
             }}
           />
           <div className="chat-composer-toolbar">
+            <label
+              className="composer-policy"
+              title="Sade plans and assigns work to connected teammates, changes project files in isolated workspaces, and requests an independent review. You approve integration and publishing separately."
+            >
+              <input
+                type="checkbox"
+                checked={orchestrate}
+                disabled={sending}
+                onChange={(event) => setOrchestrate(event.target.checked)}
+              />
+              Sade · Plan and build
+            </label>
             <button
               type="button"
               className="text-button"
@@ -758,7 +780,8 @@ export default function ProjectChat({
               className="composer-policy"
               title="Chat sessions research and plan without changing files. Choose Plan project to start the shared build workflow."
             >
-              Read-only · {project?.chatConfig?.model || 'Auto model'} ·{' '}
+              {orchestrate ? 'Sade coordinates' : 'Read-only'} ·{' '}
+              {project?.chatConfig?.model || 'Auto model'} ·{' '}
               {project?.chatConfig?.reasoningEffort || 'Auto reasoning'}
             </span>
             <button

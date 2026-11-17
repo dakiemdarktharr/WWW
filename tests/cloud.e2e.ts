@@ -191,7 +191,7 @@ try {
     .getByLabel('Competition URL', { exact: true })
     .fill('https://example.com/challenge');
   await project
-    .getByLabel('Shared goal', { exact: true })
+    .getByLabel('What would you like to achieve?', { exact: true })
     .fill('Verify real cloud workspace interactions');
   await expect(project.getByRole('combobox', { name: 'Deadline', exact: true })).toHaveText(
     'No deadline',
@@ -207,7 +207,7 @@ try {
   await project.waitFor({ state: 'hidden' });
   assert.equal(store.projects()[0].repositoryName, 'NoSleepClub_Browser-challenge_Cloud-project');
   assert.equal(store.projects()[0].competition?.deadline, null);
-  await nav('Neralu').click();
+  await nav('Chat').click();
   await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByLabel('Message the project team').fill('Shared across devices');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -251,7 +251,7 @@ try {
   await expect(page.getByLabel('Team prompt', { exact: true })).toHaveValue(
     'Plan our next iteration',
   );
-  await nav('Neralu').click();
+  await nav('Chat').click();
   const other = await login(second);
   await other.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await other.getByText('Shared across devices', { exact: true }).waitFor();
@@ -275,7 +275,7 @@ try {
     .getByRole('button', { name: 'Sessions', exact: true })
     .click();
   await other.getByRole('heading', { name: 'Saved conversation', exact: true }).waitFor();
-  await nav('Neralu').click();
+  await nav('Chat').click();
   await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByRole('button', { name: 'Session view', exact: true }).click();
   await expect(page.locator('.session-node')).toHaveCount(2);
@@ -347,7 +347,7 @@ try {
   await expect(
     geminiCard.getByRole('button', { name: 'Sign in with OpenAI', exact: true }),
   ).toHaveCount(0);
-  await nav('Neralu').click();
+  await nav('Chat').click();
   await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByRole('button', { name: 'Group team', exact: true }).click();
   await page.getByRole('button', { name: /Edit group members/ }).click();

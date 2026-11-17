@@ -256,8 +256,8 @@ export async function buildApp(
       return manifest;
     } catch {
       return {
-        version: '0.8.4',
-        releases: ['0.8.4'],
+        version: '0.8.5',
+        releases: ['0.8.5'],
         available: false,
         platform: 'win32-x64',
         signed: false,
@@ -672,12 +672,20 @@ export async function buildApp(
         projectId: id,
         content: z.string().trim().min(1).max(10000),
         clientRequestId: id.optional(),
+        orchestrate: z.boolean().optional(),
         replyTo: id.nullable().optional(),
         mentions: z.array(id).max(16).optional(),
         taskId: id.nullable().optional(),
       })
       .strict()
       .parse(request.body);
+    if (input.orchestrate) {
+      if (!input.clientRequestId) throw new DomainError('Sade requires a stable request ID.', 400);
+      return workspace.workflows.start(input.projectId, input.content, {
+        requestId: input.clientRequestId,
+        orchestrator: 'sade',
+      });
+    }
     const needsCatalog = /^(?:!!\s*)?\/(?:model|reasoning)\s/i.test(input.content);
     const catalogs = needsCatalog
       ? await Promise.allSettled(
@@ -945,6 +953,7 @@ export async function buildApp(
   app.post('/api/tasks/:id/stop', async (request) => workspace.stop(params(request)));
   app.get('/api/tasks/:id/diff', async (request) => workspace.diff(params(request)));
   app.post('/api/tasks/:id/accept', async (request) => workspace.accept(params(request)));
+  app.post('/api/tasks/:id/sade-review', async (request) => workspace.sade.retry(params(request)));
   app.post('/api/tasks/:id/revise', async (request) => {
     const task = workspace.store.get<Task>('task', params(request));
     if (workspace.mergeBusy.has(task.projectId))

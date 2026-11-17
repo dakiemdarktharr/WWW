@@ -38,6 +38,7 @@ import './portal.css';
 
 type Platform = 'windows' | 'linux' | 'macos';
 interface Download {
+  version?: string;
   available: boolean;
   url?: string;
   sha256?: string;
@@ -414,7 +415,7 @@ function MessagingDemo() {
   return (
     <div className="kp-chat-section" id="neralu">
       <div className="kp-section-heading">
-        <h2>{t('Neralu · Chat dự án')}</h2>
+        <h2>{t('Chat · Chat dự án')}</h2>
       </div>
       {(['plan', 'handoff', 'review'] as Scenario[]).map((scenario, index) => (
         <ScrollStory key={scenario} scenario={scenario} index={index} />
@@ -675,7 +676,10 @@ function PortalContent() {
             <Server size={18} />
           )}
         </span>
-        <span>{platformNames[platform]}</span>
+        <span>
+          {platformNames[platform]}
+          {item?.version && item.version !== release?.version ? ` · ${item.version}` : ''}
+        </span>
         <ArrowDownToLine size={18} />
       </>
     );
@@ -787,7 +791,7 @@ function PortalContent() {
                   </p>
                 )}
               </motion.div>
-              <a className="kp-scroll-cue" href="#neralu" aria-label={t('Khám phá Neralu')}>
+              <a className="kp-scroll-cue" href="#neralu" aria-label={t('Khám phá Chat')}>
                 <ChevronDown size={21} />
               </a>
             </section>
@@ -919,7 +923,7 @@ function PortalContent() {
               </div>
               <div className="kp-footer-bottom">
                 <span>Kivuno · NoSleepClub</span>
-                <span>{release?.version || '0.8.4'}</span>
+                <span>{release?.version || '0.8.5'}</span>
                 <a href="#updates">Update patches</a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
                 <button onClick={home}>{t('Về đầu trang')}</button>
@@ -987,7 +991,10 @@ function PortalContent() {
                     (platform) =>
                       download(platform)?.sha256 && (
                         <div key={platform}>
-                          <strong>{platformNames[platform]}</strong>
+                          <strong>
+                            {platformNames[platform]} ·{' '}
+                            {download(platform)?.version || release?.version}
+                          </strong>
                           <code>{download(platform)!.sha256}</code>
                         </div>
                       ),

@@ -29,6 +29,7 @@ import { Store, DomainError } from './store.ts';
 import { createWorktree, git, integrate, taskDiff, prepareProjectRepo } from './git.ts';
 import { inside, privateDirectory, redact, safeDetails } from './security.ts';
 import { Workflows, planningTask } from './workflows.ts';
+import { Sade } from './sade.ts';
 import { SessionManager } from './sessions.ts';
 import { QuotaManager } from './quota.ts';
 import { Mesh } from './mesh.ts';
@@ -71,7 +72,7 @@ export class Workspace {
   runtime: WorkspaceState['runtime'] = {
     codexAvailable: false,
     codexVersion: 'Checking…',
-    version: '0.8.4',
+    version: '0.8.5',
     platform: process.platform,
     dataDir: '',
     recoveryRequired: false,
@@ -88,6 +89,7 @@ export class Workspace {
   mergeBusy = new Set<string>();
   externalOperations = new Set<string>();
   workflows: Workflows;
+  sade: Sade;
   sessions: SessionManager;
   quota: QuotaManager;
   mesh: Mesh;
@@ -115,6 +117,7 @@ export class Workspace {
     this.autonomy = new Autonomy(this);
     this.runners = new Runners(this);
     this.aegis = new Aegis(store, dataDir);
+    this.sade = new Sade(this);
   }
   async initialize() {
     await this.aegis.initialize();
@@ -1095,6 +1098,7 @@ export class Workspace {
       success ? 'handoff' : 'error',
     );
     this.workflows.wakeProject(task.projectId);
+    if (success && !readOnly) void this.sade.schedule(task);
   }
   async workerRequest(
     memberId: string,
@@ -1336,6 +1340,7 @@ export class Workspace {
         diff: Awaited<ReturnType<typeof taskDiff>>,
         context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
       ) => {
+        if (!context || context.phase === 'worker') await this.sade.assertReviewed(task, diff);
         await verifyApprovedSource(diff, context || { root: task.worktree!, phase: 'preview' });
         const outside = diff.files.filter(
           (file) =>
@@ -1408,6 +1413,7 @@ export class Workspace {
     await Promise.allSettled([...this.connecting.values()]);
     await this.autonomy.close();
     await this.inbox.close();
+    await this.sade.idle();
     await this.quota.close();
     await this.workflows.idle();
     await this.sessions.close();

@@ -135,6 +135,13 @@ try {
   await expect(page.getByRole('region', { name: 'All chats' })).toBeVisible();
   await expect(page.getByLabel('Message the project team', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open project Chat interactions', exact: true }).click();
+  const sade = page.getByRole('checkbox', { name: 'Sade · Plan and build' });
+  await expect(sade).not.toBeChecked();
+  await sade.check();
+  await expect(
+    page.getByText('Relevant project content goes to their AI providers.', { exact: false }),
+  ).toBeVisible();
+  await sade.uncheck();
   const input = page.getByLabel('Message the project team', { exact: true });
   await input.fill('@');
   await expect(page.getByRole('listbox', { name: 'Group teammates' })).toBeVisible();

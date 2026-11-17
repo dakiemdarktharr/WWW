@@ -52,17 +52,22 @@ export function chooseModel(
   const complex =
     task.phase === 'plan' ||
     (task.effort || 0) >= 3 ||
-    /architect|security|migrat|debug|kiến trúc|bảo mật|threat model|trade.?off/i.test(
+    /architect|security|migrat|debug|auth|password|credential|payment|permission|kiến trúc|bảo mật|mật khẩu|phân quyền|threat model|trade.?off/i.test(
       `${task.title} ${task.description}`,
     );
   const lightweight =
     !complex &&
-    (/summar|format|rename|tóm tắt|đổi tên/i.test(`${task.title} ${task.description}`) ||
+    (task.kind === 'review' ||
+      /summar|format|rename|tóm tắt|đổi tên/i.test(`${task.title} ${task.description}`) ||
       (!!budget && (budget.projects >= 3 || (budget.headroom !== null && budget.headroom < 20))));
   const standard = models.find((model) => model.isDefault) || models[0];
   const model = lightweight
-    ? models.find((model) => /mini|small|fast/i.test(`${model.model} ${model.displayName}`)) ||
-      standard
+    ? models.find(
+        (model) =>
+          /mini|small|fast/i.test(`${model.model} ${model.displayName}`) &&
+          (task.kind !== 'review' ||
+            model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === 'high')),
+      ) || standard
     : standard;
   const preferred =
     complex || task.kind === 'review'

@@ -1,6 +1,6 @@
 {
   "name": "relay-workspace",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "private": true,
   "overrides": {
     "zod": "$zod"
@@ -34,7 +34,8 @@
     "format:check": "prettier --check .",
     "verify:download": "node scripts/verify-download.mjs",
     "test:claude-native": "tsx tests/claude-native.e2e.ts",
-    "test:desktop-package": "tsx tests/desktop-package.e2e.ts"
+    "test:desktop-package": "tsx tests/desktop-package.e2e.ts",
+    "test:sade": "tsx --test tests/sade.test.ts tests/workflow-plan.test.ts tests/workflows.test.ts tests/store.test.ts tests/handoffs.test.ts tests/runners.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

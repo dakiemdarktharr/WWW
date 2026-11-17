@@ -101,8 +101,8 @@ export default function UsageGuide({
                 <div>
                   <h3>2. Gửi điều bạn muốn làm</h3>
                   <p>
-                    Neralu → Gửi prompt. <strong>Plan project</strong> → Lên kế hoạch.{' '}
-                    <code>/</code> → Lệnh nhanh.
+                    Chat → Gửi prompt. <strong>Plan project</strong> → Lên kế hoạch. <code>/</code>{' '}
+                    → Lệnh nhanh.
                   </p>
                 </div>
               </li>

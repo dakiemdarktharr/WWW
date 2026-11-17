@@ -26,6 +26,7 @@ const planTaskSchema = suggestion
     description: z.string().trim().min(10).max(6000),
     dependsOn: z.array(z.string().regex(keyPattern)).max(31),
     stage: z.string().trim().min(1).max(60),
+    preferredMemberId: z.string().min(1).max(100).optional(),
   })
   .strict();
 const planSchema = z.object({ summary, tasks: z.array(planTaskSchema).min(1).max(32) }).strict();
@@ -121,10 +122,27 @@ export function allocatePlan(
     throw new DomainError('The workflow roster contains a duplicate teammate.', 400);
   const load = new Map(members.map((member) => [member.id, 0]));
   const assignments = new Map<string, string>();
-  const byEffort = [...plan.tasks].sort((a, b) => b.effort - a.effort || compareKey(a.key, b.key));
+  // Allocate implementations first so reviews can exclude their authors.
+  const byEffort = [...plan.tasks].sort(
+    (a, b) =>
+      Number(a.kind === 'review') - Number(b.kind === 'review') ||
+      b.effort - a.effort ||
+      compareKey(a.key, b.key),
+  );
   for (const task of byEffort) {
-    const member = [...members].sort(
+    const authors = new Set(
+      task.kind === 'review' ? task.dependsOn.map((key) => assignments.get(key)) : [],
+    );
+    const eligible = members.filter((member) => !authors.has(member.id));
+    if (!eligible.length)
+      throw new DomainError('Independent review needs another connected teammate.');
+    if (task.preferredMemberId && !eligible.some((member) => member.id === task.preferredMemberId))
+      throw new DomainError(
+        'The requested teammate is unavailable or would review their own work.',
+      );
+    const member = [...eligible].sort(
       (a, b) =>
+        Number(b.id === task.preferredMemberId) - Number(a.id === task.preferredMemberId) ||
         load.get(a.id)! - load.get(b.id)! ||
         Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]) ||
         compareKey(a.id, b.id),
@@ -205,6 +223,13 @@ export const planTool = {
             description: { type: 'string', minLength: 10, maxLength: 6000 },
             dependsOn: { type: 'array', items: keyProperty, maxItems: 31 },
             stage: { type: 'string', minLength: 1, maxLength: 60 },
+            preferredMemberId: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 100,
+              description:
+                'Optional ID from the connected team, only when the human requested this teammate for this task.',
+            },
           },
           required: [
             'key',

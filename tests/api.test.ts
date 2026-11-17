@@ -74,7 +74,7 @@ test('project endpoint initializes a selected plain folder only when explicitly 
     goal: 'Work safely',
   });
   assert.equal(rejected.statusCode, 400);
-  assert.match(rejected.json().error, /Initialize folder with Git/);
+  assert.match(rejected.json().error, /Start from a folder/);
 
   const privateFolder = await f.request('POST', '/api/projects', {
     name: 'Private folder',

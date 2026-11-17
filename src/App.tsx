@@ -91,7 +91,7 @@ type ModalState =
   | { type: 'setup'; memberId: string; home: string; instructions: string }
   | null;
 const nav = [
-  { id: 'mesh', label: 'Neralu', icon: MessageSquare },
+  { id: 'mesh', label: 'Chat', icon: MessageSquare },
   { id: 'team', label: 'Team', icon: Users },
   { id: 'reviews', label: 'Reviews', icon: GitMerge },
 ] as const;
@@ -317,7 +317,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         : 'mesh',
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
-  const [neraluMode, setNeraluMode] = useState<'home' | 'projects' | 'groups'>('home');
+  const [chatMode, setChatMode] = useState<'home' | 'projects' | 'groups'>('home');
   const [chatOpen, setChatOpen] = useState(false);
   const [selectedShared, setSelectedShared] = useState('');
   const [selectedProject, setSelectedProject] = useState('');
@@ -355,7 +355,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [quickSearch, setQuickSearch] = useState('');
   const [repositoryPath, setRepositoryPath] = useState('');
   const [projectMode, setProjectMode] = useState<'existing' | 'initialize' | 'hackathon'>(
-    cloud ? 'hackathon' : 'existing',
+    cloud ? 'hackathon' : 'initialize',
   );
   const [profileProvider, setProfileProvider] = useState<ProviderId>('codex');
 
@@ -384,7 +384,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   }, []);
   const navigate = useCallback((next: View) => {
     if (next === 'mesh') {
-      setNeraluMode('home');
+      setChatMode('home');
       setChatOpen(false);
     }
     setView(next);
@@ -502,7 +502,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     const session = state?.sessions.find((entry) => entry.id === focusedSessionId);
     document.title = session
       ? `${session.title} · Kivuno`
-      : `${view === 'mesh' ? 'Neralu' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · Kivuno`;
+      : `${view === 'mesh' ? 'Chat' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · Kivuno`;
   }, [
     focusedSessionId,
     view,
@@ -609,7 +609,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
 
   const pageTitle =
     view === 'mesh'
-      ? 'Neralu'
+      ? 'Chat'
       : view === 'workroom'
         ? 'Workroom'
         : view[0].toUpperCase() + view.slice(1);
@@ -685,7 +685,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               onChange={(e) => {
                 setSelectedProject(e.target.value);
                 setChatOpen(true);
-                if (view === 'mesh') setNeraluMode('projects');
+                if (view === 'mesh') setChatMode('projects');
               }}
             >
               {state?.projects.length ? (
@@ -764,7 +764,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <Menu size={20} />
             </button>
             <span className="breadcrumb-project">
-              {view === 'mesh' && neraluMode === 'home' ? 'Home' : project?.name || 'Workspace'}
+              {view === 'mesh' && chatMode === 'home' ? 'Home' : project?.name || 'Workspace'}
             </span>
             <span className="breadcrumb-slash">/</span>
             <strong>{pageTitle}</strong>
@@ -842,12 +842,12 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           )}
 
           {view === 'mesh' && state && window.relayDesktop && (
-            <div className="neralu-mode" aria-label="Neralu view">
+            <div className="neralu-mode" aria-label="Chat view">
               <button
                 className="button compact"
-                aria-pressed={neraluMode === 'home'}
+                aria-pressed={chatMode === 'home'}
                 onClick={() => {
-                  setNeraluMode('home');
+                  setChatMode('home');
                   setChatOpen(false);
                 }}
               >
@@ -855,9 +855,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               </button>
               <button
                 className="button compact"
-                aria-pressed={neraluMode === 'projects'}
+                aria-pressed={chatMode === 'projects'}
                 onClick={() => {
-                  setNeraluMode('projects');
+                  setChatMode('projects');
                   setChatOpen(false);
                 }}
               >
@@ -865,17 +865,17 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               </button>
               <button
                 className="button compact"
-                aria-pressed={neraluMode === 'groups'}
+                aria-pressed={chatMode === 'groups'}
                 onClick={() => {
                   setSelectedShared('');
-                  setNeraluMode('groups');
+                  setChatMode('groups');
                 }}
               >
                 Groups
               </button>
             </div>
           )}
-          {view === 'mesh' && state && neraluMode === 'groups' && window.relayDesktop && (
+          {view === 'mesh' && state && chatMode === 'groups' && window.relayDesktop && (
             <SharedGroups
               members={state.members}
               addTeammate={() => setModal({ type: 'connect' })}
@@ -884,28 +884,28 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           )}
           {view === 'mesh' &&
             state &&
-            (neraluMode === 'home' || (neraluMode === 'projects' && !chatOpen)) && (
+            (chatMode === 'home' || (chatMode === 'projects' && !chatOpen)) && (
               <ChatHome
                 state={state}
-                projectsOnly={neraluMode === 'projects'}
+                projectsOnly={chatMode === 'projects'}
                 create={() => setModal({ type: 'project' })}
                 groups={() => {
                   setSelectedShared('');
-                  setNeraluMode('groups');
+                  setChatMode('groups');
                 }}
                 open={(item) => {
                   if (item.kind === 'project') {
                     setSelectedProject(item.id);
                     setChatOpen(true);
-                    setNeraluMode('projects');
+                    setChatMode('projects');
                   } else {
                     setSelectedShared(item.id);
-                    setNeraluMode('groups');
+                    setChatMode('groups');
                   }
                 }}
               />
             )}
-          {view === 'mesh' && state && neraluMode === 'projects' && chatOpen && (
+          {view === 'mesh' && state && chatMode === 'projects' && chatOpen && (
             <MeshPage
               key={project?.id || 'empty-mesh'}
               state={state}
@@ -1525,7 +1525,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               if (result) {
                 setSelectedProject(result.id);
                 setChatOpen(true);
-                setNeraluMode('projects');
+                setChatMode('projects');
                 closeModal();
               }
             }}
@@ -1540,17 +1540,17 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                     setProjectMode(event.target.value as 'existing' | 'initialize' | 'hackathon')
                   }
                 >
-                  <option value="existing">Existing repository</option>
-                  <option value="initialize">Initialize folder with Git</option>
+                  <option value="existing">Open an existing Git project</option>
+                  <option value="initialize">Start from a folder</option>
                   <option value="hackathon">New hackathon project</option>
                 </select>
               </label>
             )}
             {projectMode === 'initialize' && (
               <p className="form-note" role="note">
-                Kivuno will create local Git data and an initial commit from files that Git does not
-                ignore. Common credential files and private account folders are excluded. This
-                changes the selected folder; nothing is pushed.
+                Choose a folder for your work. Kivuno will save a starting version so changes can be
+                reviewed. Common credential files are excluded. Connecting a folder does not upload
+                it. When AI works, relevant content is sent to the AI providers you select.
               </p>
             )}
             <label>
@@ -1582,7 +1582,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               </>
             ) : (
               <label>
-                Repository path
+                Project folder
                 <input
                   name="path"
                   value={repositoryPath}
@@ -1610,7 +1610,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               </label>
             )}
             <label>
-              Shared goal
+              What would you like to achieve?
               <textarea
                 name="goal"
                 rows={3}
@@ -1626,7 +1626,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 {projectMode === 'hackathon'
                   ? 'Create project'
                   : projectMode === 'initialize'
-                    ? 'Initialize and connect'
+                    ? 'Start project'
                     : 'Connect project'}
               </Button>
             </div>
@@ -2034,6 +2034,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   )}
                 {selectedTask.status === 'review' && (
                   <>
+                    {state?.workflows.some(
+                      (workflow) =>
+                        workflow.id === selectedTask.workflowId && workflow.orchestrator === 'sade',
+                    ) && (
+                      <Button
+                        disabled={pending}
+                        onClick={() =>
+                          void perform(
+                            'sade-review',
+                            `/tasks/${selectedTask.id}/sade-review`,
+                            {},
+                            'Sade review checked. See the project chat for details.',
+                          )
+                        }
+                      >
+                        Retry Sade review
+                      </Button>
+                    )}
                     <Button
                       disabled={pending || !feedback.trim()}
                       onClick={async () => {

@@ -73,10 +73,10 @@ test('ordinary folders and unborn repositories can be prepared safely for projec
   assert.equal(existingOnly.status, 'rejected');
   assert.match(
     String(existingOnly.status === 'rejected' && existingOnly.reason),
-    /not a Git repository.*Initialize folder with Git|folder is being initialized/,
+    /not a Git repository.*Start from a folder|folder is being initialized/,
   );
   assert.equal(initialize.status, 'fulfilled');
-  await assert.rejects(prepareProjectRepo(unborn), /no commits yet.*Initialize folder with Git/);
+  await assert.rejects(prepareProjectRepo(unborn), /no commits yet.*Start from a folder/);
 
   assert.equal(initialize.status === 'fulfilled' && initialize.value, await realpath(plain));
   assert.equal(await prepareProjectRepo(unborn, true), await realpath(unborn));

@@ -277,7 +277,7 @@ export function ExternalConnection({
         <div>
           <span>No project membership</span>
           <HelpDetails title="Add to a group">
-            <p>Neralu → Group team → select {member.name}, then reopen this connection.</p>
+            <p>Chat → Group team → select {member.name}, then reopen this connection.</p>
           </HelpDetails>
         </div>
       ) : null}
@@ -477,7 +477,7 @@ export function ProviderTurnAllowance({
         <div>
           <span>No project membership</span>
           <HelpDetails title="Add to a group">
-            <p>Neralu → Group team → select {member.name}.</p>
+            <p>Chat → Group team → select {member.name}.</p>
           </HelpDetails>
         </div>
       )}

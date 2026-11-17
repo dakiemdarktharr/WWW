@@ -27,7 +27,7 @@ const macosUrl = process.env.KIVUNO_MACOS_URL?.trim() || '';
 const macosSha256 = process.env.KIVUNO_MACOS_SHA256?.trim() || '';
 const macosSizeValue = process.env.KIVUNO_MACOS_SIZE?.trim() || '';
 const hasMacosOverride = Boolean(macosUrl || macosSha256 || macosSizeValue);
-/** @type {{ available: boolean; url?: string; sha256?: string; size?: number; platform: string; signed: boolean; notarized: boolean }} */
+/** @type {{ available: boolean; version?: string; url?: string; sha256?: string; size?: number; platform: string; signed: boolean; notarized: boolean }} */
 let macosRelease = {
   available: false,
   platform: 'darwin-arm64',
@@ -54,11 +54,20 @@ if (hasMacosOverride) {
     );
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
+    // Keep the last published Mac installer available when only Windows is rebuilt.
+    const stable = JSON.parse(
+      await readFile(path.join(root, 'release-artifacts', 'macos-stable.json'), 'utf8'),
+    );
+    if (!/^\d+\.\d+\.\d+$/.test(stable.version)) throw new Error('Invalid stable macOS version.');
+    macosArtifact = JSON.parse(
+      await readFile(path.join(root, 'release-artifacts', `macos-${stable.version}.json`), 'utf8'),
+    );
   }
 }
 if (macosArtifact) {
   if (
-    macosArtifact.version !== manifest.version ||
+    !/^\d+\.\d+\.\d+$/.test(macosArtifact.version) ||
+    (hasMacosOverride && macosArtifact.version !== manifest.version) ||
     !/^[a-f0-9]{64}$/i.test(macosArtifact.sha256) ||
     typeof macosArtifact.url !== 'string'
   )
@@ -77,6 +86,7 @@ if (macosArtifact) {
     throw new Error('Configure macOS with a stable HTTPS URL and a positive byte size.');
   macosRelease = {
     available: true,
+    version: macosArtifact.version,
     url: url.href,
     sha256: macosArtifact.sha256.toLowerCase(),
     size,
@@ -222,6 +232,7 @@ await writeFile(
       platforms: {
         windows: {
           available: true,
+          version: manifest.version,
           url: `/downloads/${artifactName}`,
           sha256,
           size: info.size,
