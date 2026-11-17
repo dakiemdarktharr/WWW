@@ -14,7 +14,7 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 
 The title bar shows a small download button when a newer installer is available for the current platform. Downloading is optional until three newer releases exist; at that point Kivuno blocks workspace use until the latest installer is installed and the app is reopened. The updater checks the published release manifest and compares its version history with the installed version. Each release must be added to `release-history.json`, newest first, when the package version is advanced. Windows and Linux installers are opened through the system browser; macOS opens the published DMG.
 
-Installs older than 0.8.3 do not contain the updater and need one manual install from the website. Version 0.8.4 includes the Antigravity Google sign-in action and its macOS DMG must be published before Mac users can download it. Later versions can be downloaded from inside the app.
+Installs older than 0.8.3 do not contain the updater and need one manual install from the website. Version 0.8.4 includes the Antigravity Google sign-in action. Its macOS DMG is published as a GitHub Release asset and served through the Kivuno download URL, so existing updater versions keep using the first-party download path.
 
 ## Connect a project folder
 
@@ -58,7 +58,7 @@ State remains under `$XDG_CONFIG_HOME/RELAY` (normally `~/.config/RELAY`) so nam
 
 The Apple Silicon build is a drag-and-drop DMG. Open the DMG and drag **Kivuno** to **Applications**. Git must be available on the Mac; the app uses the system Git and does not change your PATH. Workspace data remains under `~/Library/Application Support/RELAY` after app updates or removal. This build is unsigned and not notarized, so macOS may ask you to confirm opening it in Privacy & Security.
 
-Build it on an Apple Silicon Mac with Node.js 24.22.1 through 24.x using `npm run macos:installer`. The build stages verified Node.js 24.22.1 and the macOS arm64 Codex CLI, then creates `release/Kivuno-<version>-macOS-arm64.dmg` and a SHA256 sidecar. Intel Macs are not supported by this arm64 build. The website uses a versioned `release-artifacts/macos-<version>.json` file containing the public HTTPS URL, SHA256 and byte size; it enables the download only when that metadata matches the app version. The DMG is hosted separately from the Vercel website deployment. The current 0.8.2 DMG is in the public Kivuno Vercel Blob store.
+Build it on an Apple Silicon Mac with Node.js 24.22.1 through 24.x using `npm run macos:installer`. The build stages verified Node.js 24.22.1 and the macOS arm64 Codex CLI, then creates `release/Kivuno-<version>-macOS-arm64.dmg` and a SHA256 sidecar. Intel Macs are not supported by this arm64 build. The website uses a versioned `release-artifacts/macos-<version>.json` file containing the public HTTPS URL, SHA256 and byte size; it enables the download only when that metadata matches the app version. The DMG is hosted separately from the Vercel website deployment. The 0.8.2 DMG is in the public Kivuno Vercel Blob store; 0.8.4 uses a GitHub Release asset with a versioned first-party Vercel redirect.
 
 ## Development and packaging
 

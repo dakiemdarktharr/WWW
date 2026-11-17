@@ -1,0 +1,9 @@
+{
+  "version": "0.8.4",
+  "url": "https://kivuno.vercel.app/downloads/Kivuno-0.8.4-macOS-arm64.dmg",
+  "sha256": "f6531f54b46b0244c710d3dc9da1cb3fb9c045a19ad03a223a66775dc90be94d",
+  "size": 355238125,
+  "platform": "darwin-arm64",
+  "signed": false,
+  "notarized": false
+}
