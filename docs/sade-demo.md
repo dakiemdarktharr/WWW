@@ -22,7 +22,7 @@ Tạo project mẫu trống, kết nối Gemini và một Codex profile tên Ast
 
 Kỳ vọng: một workflow, các bước có dependency; frontend nhận kết quả kiến trúc; `preferredMemberId` giữ lựa chọn được người dùng nêu. Việc chưa chỉ định được chia theo tải và vai trò. Aesthetic được hỏi một lần hoặc tự chọn khi được giao quyền. Prompt của Sade hướng dẫn hành vi này; chất lượng hiểu ngôn ngữ cần đo trên model thật, không thể suy từ schema test.
 
-Đo: số lần con người phải lặp lại yêu cầu (mục tiêu 0), số câu hỏi cần thiết, thời gian tới bản đầu tiên, scope xung đột, tỷ lệ đạt acceptance. Gemini native và Codex native được dùng trong workflow; Claude/Antigravity ở external bridge chưa được Sade tự chạy như native provider.
+Đo: số lần con người phải lặp lại yêu cầu (mục tiêu 0), số câu hỏi cần thiết, thời gian tới bản đầu tiên, scope xung đột, tỷ lệ đạt acceptance. Gemini native và Codex native được dùng trong workflow; Claude/Antigravity được chọn khi profile đã bật managed runtime, đăng nhập và được cấp prompt; profile external không tự chạy.
 
 ## Demo B — chống trùng và mâu thuẫn
 
@@ -46,7 +46,11 @@ Hai người A/B có Windows và Mac. A yêu cầu kiểm tra trên Mac của B;
 
 Chạy các ca: chưa cấp quyền; cấp quyền đúng máy/project; hết hạn/thu hồi; mất kết nối giữa lệnh; đường dẫn ngoài scope; yêu cầu mang theo token đăng nhập của A. Kỳ vọng an toàn: không thực thi khi không đủ quyền, không lộ token, không chạy lại một thao tác có trạng thái chưa rõ.
 
-**Chưa thể đánh dấu demo end-to-end này hoàn tất.** Runner/handoff có sẵn không đồng nghĩa có cơ chế cho một tài khoản AI của A thực thi tự động trên máy B không có tài khoản. Cần triển khai grant của chủ máy theo project/capability/thời hạn, giao thức thực thi giữ credential ở nguồn, và xác minh điều khoản provider. Không mô phỏng thành công rồi tuyên bố đã chạy trên Mac thật. `runners.test.ts` và `handoffs.test.ts` chỉ chứng minh các rào chắn hiện có.
+**Luồng cấp quyền và thực thi đã có trên nhánh Sade, chưa xác minh Windows → Mac end-to-end.** Trong Machines, nguồn chọn project và xuất cấu hình dùng máy để kiểm thử. Chủ máy đích mở Kivuno, nhập cấu hình và xác nhận native dialog: project, 30 phút, full access mặc định tắt. Chủ máy đích cần tài khoản Kivuno để mở ứng dụng nhưng không cần tài khoản ChatGPT/Claude/Gemini cho chế độ này. Không chuyển session AI: model ở nguồn, lệnh/file chạy trên máy đích.
+
+machine_list chỉ trả máy đang online có grant đúng project. machine_use hỗ trợ info/sync/read/write/run/pull. Lệnh tối đa 60 giây; snapshot tối đa 2 MB/2.000 file, 512 KB mỗi file; credential paths bị loại và các mẫu secret phổ biến bị chặn (không thay thế việc chủ repo kiểm tra dữ liệu). Full access cho phép thực thi với quyền OS của chủ máy, **cwd không phải sandbox**. Không bật full access thì không chạy lệnh hoặc sửa file. Stop trên máy đích thu hồi quyền; hết hạn dừng subprocess; mất liên lạc dừng sau cửa sổ giám sát, không phải tức thời. Kết quả chưa rõ không được tự chạy lại, kể cả khi process khởi động lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
+
+`machine-execution.test.ts` chạy tiến trình Node thật trên OS hiện tại và qua broker/MachineAgent có kiểm soát; chứng minh kiểm tra quyền, thu hồi, expiry, chống replay và giới hạn pull. Nó **không** chứng minh cloud transport hai máy hay OAuth/model thật trên Mac. Báo cáo Mac ở PR #2 kiểm thử code trước adapter/grant mới; cần chạy lại nhánh này trên Mac.
 
 ## Demo cho người không chuyên kỹ thuật
 

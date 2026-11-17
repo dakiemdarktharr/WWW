@@ -92,6 +92,29 @@ test('native machine import pins the HTTPS coordinator and owns its storage path
     bridgeKey: 'b'.repeat(64),
   };
   const config = machineConfiguration(input, 'https://relay.example', root);
+  const request = { projectId: '5fa318a2-aaf7-40fc-966d-13e69a1e0607', projectName: 'Demo' };
+  const toolOnly = machineConfiguration(
+    { ...input, executionRequest: request },
+    'https://relay.example',
+    root,
+  );
+  assert.deepEqual(toolOnly.executionRequest, request);
+  assert.equal(toolOnly.executionGrant, undefined);
+  assert.throws(() =>
+    machineConfiguration(
+      {
+        ...input,
+        executionGrant: {
+          ...request,
+          id,
+          fullAccess: true,
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+        },
+      },
+      'https://relay.example',
+      root,
+    ),
+  );
   assert.equal(config.dataDir, require('node:path').join(root, id, 'state'));
   assert.notEqual(config.dataDir, input.dataDir);
   assert.throws(() =>

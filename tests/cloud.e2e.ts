@@ -124,7 +124,7 @@ async function login(context: BrowserContext) {
   await context.addInitScript(`
     window.relayDesktop = {
       platform: 'win32',
-      version: '0.6.2',
+      version: '0.8.5',
       getStatus: async () => ({
         signedIn: true,
         runtime: 'ready',
@@ -133,6 +133,7 @@ async function login(context: BrowserContext) {
         machines: [],
       }),
       chooseDirectory: async () => null,
+      prepareProvider: async (provider) => ({ provider, available: true }),
       openExternal: async () => {},
       openPreview: async () => {},
       signOut: async () => {},

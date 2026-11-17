@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { git } from './git.ts';
 import { inside, normalizeScope, scopesOverlap } from './security.ts';
 import { DomainError } from './store.ts';
+import { isPrivateCredentialPath } from './checkpoint.ts';
 
 export interface RunnerFile {
   path: string;
@@ -13,6 +14,7 @@ export interface RunnerFile {
 const digest = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 function safeFile(name: string) {
   if (
+    isPrivateCredentialPath(name) ||
     name.includes('\\') ||
     name.startsWith('/') ||
     name

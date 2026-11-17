@@ -160,6 +160,7 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
     'minFreeMB',
     'exchangeUrl',
     'bridgeKey',
+    'executionRequest',
   ]);
   if (Object.keys(value).some((key) => !fields.has(key)))
     throw new Error('The machine configuration contains unsupported settings.');
@@ -206,6 +207,24 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
     throw new Error('Machine resource limits are outside the supported range.');
   if (!path.isAbsolute(privateRoot))
     throw new Error('Machine storage must use the desktop private directory.');
+  let executionRequest;
+  if (value.executionRequest !== undefined) {
+    const request = value.executionRequest;
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      Array.isArray(request) ||
+      Object.keys(request).some((key) => !['projectId', 'projectName'].includes(key)) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        request.projectId || '',
+      ) ||
+      typeof request.projectName !== 'string' ||
+      !request.projectName.trim() ||
+      request.projectName.length > 200
+    )
+      throw new Error('The project execution request is invalid.');
+    executionRequest = { projectId: request.projectId, projectName: request.projectName };
+  }
   return {
     id: value.id.toLowerCase(),
     origin,
@@ -216,6 +235,7 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
     minFreeMB,
     ...(value.exchangeUrl ? { exchangeUrl: exchange.href } : {}),
     ...(value.bridgeKey ? { bridgeKey: value.bridgeKey } : {}),
+    ...(executionRequest ? { executionRequest } : {}),
   };
 }
 

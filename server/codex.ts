@@ -626,9 +626,15 @@ export async function readAccount(client: CodexClient): Promise<Member['account'
   const result = await client.request('account/read', { refreshToken: false });
   const account = result?.account;
   if (!account) return null;
-  if (account.type !== (client.provider === 'gemini' ? 'gemini-google' : 'chatgpt'))
+  const expected = {
+    codex: 'chatgpt',
+    gemini: 'gemini-google',
+    claude: 'claude-subscription',
+    antigravity: 'antigravity-google',
+  }[client.provider];
+  if (account.type !== expected)
     throw new Error(
-      'RELAY requires ChatGPT subscription sign-in for this profile. API-key accounts are not used.',
+      'This profile requires its provider account sign-in. API-key accounts are not used.',
     );
   return {
     type: account.type,
@@ -771,7 +777,7 @@ export async function startTask(
   if (!(await readAccount(client)))
     throw new Error("Sign in to this member's ChatGPT account before running a task.");
   await verifyModelSettings(client, options);
-  if (client.provider === 'gemini')
+  if (client.provider !== 'codex')
     await client.request('kivuno/policy', {
       cwd: options.cwd,
       readOnly: !!options.readOnly,
@@ -789,12 +795,12 @@ export async function startTask(
     sandbox: options.readOnly ? 'read-only' : 'workspace-write',
     ...(!options.resumeThreadId ? { serviceName: 'relay_workspace' } : {}),
     developerInstructions: options.developerInstructions ?? null,
-    ...(!options.resumeThreadId || client.provider === 'gemini'
+    ...(!options.resumeThreadId || client.provider !== 'codex'
       ? { dynamicTools: options.dynamicTools ?? relayDynamicTools }
       : {}),
   });
   if (
-    (client.provider === 'gemini'
+    (client.provider !== 'codex'
       ? result.toolPolicy?.readOnly !== !!options.readOnly ||
         result.toolPolicy?.kind !== 'scoped-mcp'
       : result.sandbox?.type !== (options.readOnly ? 'readOnly' : 'workspaceWrite')) ||

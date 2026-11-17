@@ -207,7 +207,12 @@ export class QuotaManager {
   assertCanRun(memberId: string, projectId: string, sessionId?: string) {
     const quota = this.current(memberId);
     const member = this.store.get<Member>('member', memberId);
-    if (member.provider === 'gemini' && quota.status === 'unknown') {
+    if (
+      member.provider !== 'codex' &&
+      !!member.provider &&
+      !isExternalMember(member) &&
+      quota.status === 'unknown'
+    ) {
       const grants = this.store
         .all<ProviderTurnGrant>('providerTurnGrant')
         .filter(
@@ -277,10 +282,12 @@ export class QuotaManager {
   ) {
     const member = this.store.get<Member>('member', memberId);
     if (
-      member.provider !== 'gemini' ||
+      !member.provider ||
+      member.provider === 'codex' ||
+      isExternalMember(member) ||
       !groupMembers(this.store, input.projectId).some((entry) => entry.id === memberId)
     )
-      throw new DomainError('Choose a Gemini teammate in this project.');
+      throw new DomainError('Choose a managed provider teammate in this project.');
     if (
       input.acknowledgeUnknownQuota !== true ||
       !Number.isInteger(input.maxTurns) ||
@@ -312,7 +319,12 @@ export class QuotaManager {
     });
   }
   consumeTurn(memberId: string, projectId: string, sessionId: string) {
-    if (this.store.get<Member>('member', memberId).provider !== 'gemini') return;
+    if (
+      !this.store.get<Member>('member', memberId).provider ||
+      this.store.get<Member>('member', memberId).provider === 'codex' ||
+      isExternalMember(this.store.get<Member>('member', memberId))
+    )
+      return;
     this.store.transaction(() => {
       const grant = this.store
         .all<ProviderTurnGrant>('providerTurnGrant')
@@ -326,7 +338,7 @@ export class QuotaManager {
         );
       if (!grant)
         throw new DomainError(
-          'This Gemini prompt allowance is exhausted or expired. Ask the human for a new allowance.',
+          'This provider prompt allowance is exhausted or expired. Ask the human for a new allowance.',
         );
       this.store.put('providerTurnGrant', { ...grant, usedTurns: grant.usedTurns + 1 });
       this.store.put('providerTurnReservation', {

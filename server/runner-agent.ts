@@ -14,6 +14,8 @@ import {
 import { git } from './git.ts';
 import type { RunnerCommand, RunnerEvent } from './runners.ts';
 import { exportSkills, installSkills } from './skill-sharing.ts';
+import { MachineExecutor, type ExecutionGrant } from './machine-execution.ts';
+import { setTimeout as wait } from 'node:timers/promises';
 
 export interface RunnerConfig {
   origin: string;
@@ -25,6 +27,7 @@ export interface RunnerConfig {
   minFreeMB: number;
   exchangeUrl?: string;
   bridgeKey?: string;
+  executionGrant?: ExecutionGrant;
 }
 interface Peer {
   client: CodexClient;
@@ -38,6 +41,7 @@ interface Peer {
 const uuid = /^[a-f0-9-]{36}$/;
 
 export class MachineAgent {
+  executor: MachineExecutor;
   readonly events: RunnerEvent[] = [];
   private peers = new Map<string, Peer>();
   private commands = new Set<string>();
@@ -48,7 +52,9 @@ export class MachineAgent {
     readonly config: RunnerConfig,
     private factory = (home: string, cwd: string) =>
       new CodexClient({ home, cwd, skillRoots: localSkillRoots() }),
-  ) {}
+  ) {
+    this.executor = new MachineExecutor(config.dataDir, config.executionGrant);
+  }
   get busy() {
     return (
       os.freemem() / 1024 / 1024 < this.config.minFreeMB ||
@@ -108,6 +114,15 @@ export class MachineAgent {
   private async handle(command: RunnerCommand) {
     if (!uuid.test(command.clientId) || !uuid.test(command.memberId) || !uuid.test(command.id))
       throw new Error('Invalid machine command identity.');
+    if (command.action === 'execute') {
+      const result = await this.executor.perform(command.id, command.params);
+      this.push(command.clientId, { type: 'result', commandId: command.id, result });
+      return;
+    }
+    if (this.config.executionGrant)
+      throw new Error(
+        'This machine is paired for tools only; AI sign-in and model RPC are not permitted.',
+      );
     let peer = this.peers.get(command.clientId);
     let result: any = {};
     let files: RunnerFile[] | undefined;
@@ -257,6 +272,7 @@ export class MachineAgent {
     if (command.action === 'stop') this.peers.delete(command.clientId);
   }
   async reset(epoch: string) {
+    await this.executor.stop();
     // First stop owned processes; acknowledge a new coordinator only after this succeeds.
     await Promise.all(
       [...this.peers.values()].map(async (peer) => {
@@ -269,6 +285,7 @@ export class MachineAgent {
     this.commands.clear();
     this.events.length = 0;
     this.epoch = epoch;
+    this.executor = new MachineExecutor(this.config.dataDir, this.config.executionGrant);
   }
 }
 
@@ -306,7 +323,9 @@ export async function runMachine(config: RunnerConfig) {
   });
   process.env.RELAY_RUNNER_NO_GPU = '1';
   const agent = new MachineAgent(config),
-    probe = await probeCodex();
+    probe = config.executionGrant
+      ? { available: true, version: `Kivuno tools / Node ${process.version}` }
+      : await probeCodex();
   if (!probe.available) {
     await unlink(lock);
     throw new Error(probe.version);
@@ -315,16 +334,19 @@ export async function runMachine(config: RunnerConfig) {
     home: path.join(config.dataDir, 'diagnostic'),
     cwd: config.dataDir,
   });
-  try {
-    await diagnostic.start();
-    await diagnostic.request('account/read', {});
-  } finally {
-    await diagnostic.stop();
-  }
+  if (!config.executionGrant)
+    try {
+      await diagnostic.start();
+      await diagnostic.request('account/read', {});
+    } finally {
+      await diagnostic.stop();
+    }
   let stopping = false,
     lastContact = Date.now();
+  const shutdown = new AbortController();
   const stop = () => {
     stopping = true;
+    shutdown.abort();
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
@@ -355,9 +377,10 @@ export async function runMachine(config: RunnerConfig) {
             ready: true,
             busy: agent.busy,
             version: probe.version,
+            execution: agent.executor.metadata(),
             events: agent.batch(),
           }),
-          signal: AbortSignal.timeout(28_000),
+          signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(28_000)]),
           redirect: 'error',
         });
         if (response.status === 204) {
@@ -381,10 +404,14 @@ export async function runMachine(config: RunnerConfig) {
         if (Date.now() - lastContact > 45_000) await agent.reset('');
         delay = 15_000;
       }
-      if (!stopping) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (!stopping)
+        await wait(delay, undefined, { signal: shutdown.signal }).catch((error) => {
+          if (error.name !== 'AbortError') throw error;
+        });
     }
   } finally {
     await agent.reset('');
+    await agent.executor.stop();
     await unlink(lock);
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);

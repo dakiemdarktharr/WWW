@@ -1,4 +1,4 @@
-import { isExternalProvider } from '../shared/providers';
+import { isExternalMember } from '../shared/providers';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowRight,
@@ -176,10 +176,9 @@ export function QuotaCard({
       !entry.revokedAt &&
       new Date(entry.expiresAt).getTime() > Date.now(),
   );
-  if (providerOf(member) === 'gemini')
+  if (providerOf(member) !== 'codex' && !isExternalMember(member))
     return <ProviderTurnAllowance member={member} state={state} busy={busy} request={request} />;
-  if (isExternalProvider(providerOf(member)))
-    return <span className="provider-tag">Quota unknown</span>;
+  if (isExternalMember(member)) return <span className="provider-tag">Quota unknown</span>;
   return (
     <section className="quota-card">
       <div className="quota-card-heading">
@@ -453,7 +452,7 @@ export function HandoffForm({
               .filter(
                 (member) =>
                   member.id !== selected?.memberId &&
-                  !isExternalProvider(providerOf(member)) &&
+                  !isExternalMember(member) &&
                   project.memberIds?.includes(member.id),
               )
               .map((member) => (
@@ -678,9 +677,7 @@ export function SessionsPage({
                 !project ||
                 busy ||
                 !state.members.some(
-                  (member) =>
-                    project.memberIds?.includes(member.id) &&
-                    !isExternalProvider(providerOf(member)),
+                  (member) => project.memberIds?.includes(member.id) && !isExternalMember(member),
                 )
               }
               onClick={() => setCreating(true)}
@@ -812,9 +809,7 @@ export function SessionsPage({
               disabled={
                 !!project &&
                 !state.members.some(
-                  (member) =>
-                    project.memberIds?.includes(member.id) &&
-                    !isExternalProvider(providerOf(member)),
+                  (member) => project.memberIds?.includes(member.id) && !isExternalMember(member),
                 )
               }
             >
@@ -887,9 +882,7 @@ export function CreateSession({
   const [taskId, setTaskId] = useState('');
   const [memberId, setMemberId] = useState(
     project.memberIds?.includes(project.ownerMemberId || '') &&
-      !isExternalProvider(
-        providerOf(state.members.find((member) => member.id === project.ownerMemberId)),
-      )
+      !isExternalMember(state.members.find((member) => member.id === project.ownerMemberId))
       ? project.ownerMemberId || ''
       : '',
   );
@@ -941,8 +934,7 @@ export function CreateSession({
             <option value="">Choose agent account</option>
             {state.members
               .filter(
-                (member) =>
-                  project.memberIds?.includes(member.id) && !isExternalProvider(providerOf(member)),
+                (member) => project.memberIds?.includes(member.id) && !isExternalMember(member),
               )
               .map((member) => (
                 <option key={member.id} value={member.id}>
@@ -963,7 +955,7 @@ export function CreateSession({
         {!automatic && (
           <ModelFields
             memberId={memberId}
-            reasoning={provider === 'codex'}
+            reasoning={provider !== 'gemini'}
             model={model}
             effort={effort}
             change={(m, e) => {
@@ -1028,14 +1020,18 @@ export function CreateSession({
             placeholder="Optional — send a prompt when ready"
           />
         </label>
-        {provider === 'gemini' && (
+        {provider !== 'codex' && (
           <HelpDetails title="Usage help">
-            <p>Team → Gemini usage → grant a bounded prompt allowance.</p>
+            <p>Team → provider usage → grant a bounded prompt allowance.</p>
           </HelpDetails>
         )}
         <button
           className="button primary"
-          disabled={busy || !memberId || isExternalProvider(provider)}
+          disabled={
+            busy ||
+            !memberId ||
+            isExternalMember(state.members.find((member) => member.id === memberId))
+          }
         >
           <Play size={14} />
           Create session
@@ -1224,7 +1220,7 @@ export function SessionConsole({
   const output = useRef<HTMLDivElement>(null);
   const member = state.members.find((item) => item.id === session.memberId);
   const provider = session.provider || providerOf(member);
-  const external = isExternalProvider(provider) || session.external;
+  const external = Boolean(session.external);
   const task = state.tasks.find((item) => item.id === session.taskId);
   const approvals = state.approvals.filter((item) => item.taskId === session.taskId);
   const running = ['running', 'starting'].includes(session.status);

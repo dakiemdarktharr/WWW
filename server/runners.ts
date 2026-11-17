@@ -10,6 +10,7 @@ import {
   type RunnerFile,
 } from './runner-files.ts';
 import { redact, safeEqual } from './security.ts';
+import type { ExecutionGrant } from './machine-execution.ts';
 
 export interface RunnerNode {
   id: string;
@@ -23,12 +24,14 @@ export interface RunnerNode {
   ready?: boolean;
   busy?: boolean;
   version?: string;
+  executionProjectId?: string;
+  execution?: ExecutionGrant & { platform: string; arch: string };
 }
 export interface RunnerCommand {
   id: string;
   clientId: string;
   memberId: string;
-  action: 'start' | 'request' | 'respond' | 'reject' | 'stop';
+  action: 'start' | 'request' | 'respond' | 'reject' | 'stop' | 'execute';
   method?: string;
   params?: any;
   files?: RunnerFile[];
@@ -88,7 +91,7 @@ export class Runners {
       ready: node.ready && node.epoch === this.epoch,
     }));
   }
-  add(name: string, kind: RunnerNode['kind']) {
+  add(name: string, kind: RunnerNode['kind'], executionProjectId?: string) {
     if (this.host.store.all('runner').length >= 8)
       throw new DomainError('At most eight machines can be paired.');
     const token = randomBytes(32).toString('base64url');
@@ -99,6 +102,7 @@ export class Runners {
       slots: kind === 'ssh' ? 1 : 2,
       tokenHash: hash(token),
       createdAt: new Date().toISOString(),
+      ...(executionProjectId ? { executionProjectId } : {}),
     } satisfies RunnerNode);
     return { id: node.id, token };
   }
@@ -132,7 +136,10 @@ export class Runners {
     this.peers.set(peer.id, peer);
     return peer;
   }
-  call(peer: RemoteCodexClient, input: Omit<RunnerCommand, 'id' | 'clientId' | 'memberId'>) {
+  call(
+    peer: { id: string; nodeId: string; memberId: string; uncertain: (message: string) => void },
+    input: Omit<RunnerCommand, 'id' | 'clientId' | 'memberId'>,
+  ) {
     this.assertReady(peer.nodeId);
     if (this.pending.size >= 128) throw new DomainError('Machine command queue is full.');
     const command = { ...input, id: randomUUID(), clientId: peer.id, memberId: peer.memberId };
@@ -157,13 +164,22 @@ export class Runners {
   }
   async exchange(
     nodeId: string,
-    body: { epoch?: string; ready: boolean; busy: boolean; version: string; events: RunnerEvent[] },
+    body: {
+      epoch?: string;
+      ready: boolean;
+      busy: boolean;
+      version: string;
+      events: RunnerEvent[];
+      execution?: RunnerNode['execution'];
+    },
   ) {
     if (this.polling.has(nodeId))
       throw new DomainError('Machine exchange already in progress.', 409);
     this.polling.add(nodeId);
     try {
       const node = this.host.store.get<RunnerNode>('runner', nodeId);
+      if (body.execution && body.execution.projectId !== node.executionProjectId)
+        throw new DomainError('Machine execution grant does not match its paired project.', 403);
       if (body.epoch !== this.epoch) {
         this.host.store.put('runner', { ...node, ready: false, epoch: undefined });
         for (const peer of this.peers.values())
@@ -189,6 +205,7 @@ export class Runners {
         busy: body.busy,
         lastSeen: new Date().toISOString(),
         version: body.version.slice(0, 180),
+        execution: body.execution,
       });
       if (body.ready && (node.epoch !== this.epoch || !node.ready))
         void this.host.restoreAccounts(nodeId).catch(() => {});
@@ -198,6 +215,22 @@ export class Runners {
         const key = `${nodeId}:${event.id}`;
         if (this.seen.has(key)) {
           ack.push(event.id);
+          continue;
+        }
+        const command = event.commandId ? this.pending.get(event.commandId) : undefined;
+        if (
+          command?.command.action === 'execute' &&
+          command.nodeId === nodeId &&
+          command.command.clientId === event.clientId &&
+          event.type === 'result'
+        ) {
+          clearTimeout(command.timer);
+          this.pending.delete(command.command.id);
+          if (event.error) command.reject(new Error(redact(event.error)));
+          else command.resolve(event.result);
+          this.seen.add(key);
+          ack.push(event.id);
+          if (this.seen.size > 10000) this.seen.delete(this.seen.values().next().value!);
           continue;
         }
         const peer = this.peers.get(event.clientId);

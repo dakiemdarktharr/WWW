@@ -5,11 +5,13 @@ export interface ProviderCapability {
   label: string;
   mode: 'native' | 'external';
   available: boolean;
+  installable?: boolean;
   login: 'chatgpt' | 'google' | 'external';
   quota: 'provider' | 'unknown';
   models: boolean;
   reasoning: boolean;
   reason?: string;
+  managed?: { available: boolean; models: boolean; reasoning: boolean };
 }
 export interface ProviderTurnGrant {
   id: string;
@@ -57,6 +59,8 @@ export interface Member {
   };
   provider?: ProviderId;
   integration?: 'native' | 'external';
+  /** Explicit human opt-in to Kivuno starting the official local CLI. */
+  managedRuntime?: boolean;
   externalLastSeen?: string;
   presence?: 'online' | 'offline' | 'busy';
   activeSessions?: number;

@@ -13,7 +13,7 @@ const {
 } = require('electron');
 const { spawn, spawnSync, execFile } = require('node:child_process');
 const { createServer } = require('node:net');
-const { createHash, randomBytes } = require('node:crypto');
+const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const { constants: fsConstants, createWriteStream } = require('node:fs');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
@@ -871,7 +871,38 @@ function registerIpc() {
       throw new Error('This computer is already connected to that machine slot.');
     if (machines.size >= 8 && !machines.has(config.id))
       throw new Error('At most eight project machine connections are supported.');
+    const consent = await dialog.showMessageBox(window, {
+      type: 'question',
+      title: 'Allow this project to use your computer?',
+      message: config.executionRequest
+        ? `Project: ${config.executionRequest.projectName}`
+        : 'Connect this computer as an AI execution machine',
+      detail: config.executionRequest
+        ? 'Allow this project to copy source files into a separate workspace and read them for 30 minutes. AI sign-in stays on the other computer. Full access additionally permits programs to run with your OS user permissions, including access outside the workspace. Only allow full access for a project and people you trust. Stop connection revokes access.'
+        : 'This connection can run Codex profiles and project tasks on this computer. Sign-in stays in a separate profile. You can stop the connection at any time.',
+      buttons: ['Cancel', 'Allow connection'],
+      defaultId: 0,
+      cancelId: 0,
+      ...(config.executionRequest
+        ? {
+            checkboxLabel: 'Allow full-access commands and file changes for 30 minutes',
+            checkboxChecked: false,
+          }
+        : {}),
+    });
+    if (consent.response !== 1) return null;
     await ensureMachineDirectory(config.id);
+    if (config.executionRequest)
+      await writeFile(
+        path.join(machinesDirectory, config.id, 'execution-grant.local.json'),
+        JSON.stringify({
+          id: randomUUID(),
+          projectId: config.executionRequest.projectId,
+          expiresAt: new Date(Date.now() + 30 * 60000).toISOString(),
+          fullAccess: consent.checkboxChecked === true,
+        }),
+        { mode: 0o600 },
+      );
     const privateFile = path.join(machinesDirectory, config.id, 'config.private.json');
     await writeFile(privateFile, JSON.stringify(config, null, 2), { mode: 0o600 });
     const name =
@@ -896,6 +927,9 @@ function registerIpc() {
     const entry = machines.get(id);
     entry.enabled = false;
     await stopMachine(entry);
+    await unlink(path.join(machinesDirectory, id, 'execution-grant.local.json')).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
     await saveMachines();
   });
 }
@@ -981,9 +1015,32 @@ async function startMachine(entry) {
     return;
   }
   const { root, node, binPath } = runtimePaths();
+  let runtimeConfigFile = configFile;
+  if (config.executionRequest) {
+    const grant = JSON.parse(
+      await readFile(path.join(machinesDirectory, entry.id, 'execution-grant.local.json'), 'utf8'),
+    );
+    if (
+      grant.projectId !== config.executionRequest.projectId ||
+      typeof grant.fullAccess !== 'boolean' ||
+      !/^[a-f0-9-]{36}$/i.test(grant.id || '') ||
+      !Number.isFinite(Date.parse(grant.expiresAt)) ||
+      Date.parse(grant.expiresAt) <= Date.now()
+    )
+      throw new Error(
+        'This project’s machine permission expired or was revoked. Join again to review and grant access.',
+      );
+    runtimeConfigFile = path.join(machinesDirectory, entry.id, 'config.runtime.json');
+    const { executionRequest, ...runtimeConfig } = config;
+    await writeFile(
+      runtimeConfigFile,
+      JSON.stringify({ ...runtimeConfig, executionGrant: grant }),
+      { mode: 0o600 },
+    );
+  }
   const child = spawn(
     node,
-    ['--import', 'tsx', path.join(root, 'server', 'runner-agent.ts'), configFile],
+    ['--import', 'tsx', path.join(root, 'server', 'runner-agent.ts'), runtimeConfigFile],
     {
       cwd: root,
       windowsHide: true,

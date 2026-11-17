@@ -17,7 +17,7 @@
     "build": "tsc --noEmit && vite build && node scripts/build-cloud.mjs",
     "build:release": "node scripts/build-release.mjs",
     "start": "tsx server/index.ts",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test --test-concurrency=2 tests/*.test.ts",
     "test:cloud": "tsx tests/cloud.e2e.ts",
     "test:portal": "tsx tests/portal.e2e.ts",
     "test:desktop": "tsx tests/desktop.e2e.ts",
@@ -35,7 +35,7 @@
     "verify:download": "node scripts/verify-download.mjs",
     "test:claude-native": "tsx tests/claude-native.e2e.ts",
     "test:desktop-package": "tsx tests/desktop-package.e2e.ts",
-    "test:sade": "tsx --test tests/sade.test.ts tests/workflow-plan.test.ts tests/workflows.test.ts tests/store.test.ts tests/handoffs.test.ts tests/runners.test.ts"
+    "test:sade": "tsx --test --test-concurrency=2 tests/sade.test.ts tests/workflow-plan.test.ts tests/workflows.test.ts tests/store.test.ts tests/handoffs.test.ts tests/runners.test.ts tests/managed-providers.test.ts tests/machine-execution.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

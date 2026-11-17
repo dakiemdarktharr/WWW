@@ -3,18 +3,28 @@ import { isExternalMember } from '../shared/providers.ts';
 import { CodexClient, resolveCodexCommand, localSkillRoots } from './codex.ts';
 import { GeminiClient, resolveGeminiCommand } from './gemini.ts';
 import { DomainError } from './store.ts';
+import { ClaudeClient } from './claude.ts';
+import { AntigravityClient } from './antigravity.ts';
+import { resolveManagedCommand } from './managed-process.ts';
 
 export function nativeProviderClient(member: Member, home: string, cwd: string): CodexClient {
   if (isExternalMember(member))
     throw new DomainError(
       'This teammate uses the external MESH bridge. Kivuno does not manage its subscription sign-in or start its process.',
     );
+  if (member.provider === 'claude') return new ClaudeClient({ home, cwd });
+  if (member.provider === 'antigravity') return new AntigravityClient({ home, cwd });
   return member.provider === 'gemini'
     ? new GeminiClient({ home, cwd })
     : new CodexClient({ home, cwd, skillRoots: localSkillRoots() });
 }
 export async function providerCapabilities(): Promise<ProviderCapability[]> {
-  const [codex, gemini] = await Promise.allSettled([resolveCodexCommand(), resolveGeminiCommand()]);
+  const [codex, gemini, claude, antigravity] = await Promise.allSettled([
+    resolveCodexCommand(),
+    resolveGeminiCommand(),
+    resolveManagedCommand('claude'),
+    resolveManagedCommand('antigravity'),
+  ]);
   return [
     {
       id: 'codex',
@@ -43,6 +53,7 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
     },
     {
       id: 'claude',
+      managed: { available: claude.status === 'fulfilled', models: true, reasoning: true },
       label: 'Claude Code',
       mode: 'external',
       available: true,
@@ -51,10 +62,11 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       models: false,
       reasoning: false,
       reason:
-        'Connect your own client through the local MESH MCP bridge. Kivuno does not provide Claude subscription OAuth or a paid API fallback.',
+        'Enable Sade to run the official Claude CLI with a separate subscription sign-in, scoped tools and bounded prompts, or keep an external MESH connection. Models and effort come from the installed CLI. No paid API fallback.',
     },
     {
       id: 'antigravity',
+      managed: { available: antigravity.status === 'fulfilled', models: true, reasoning: true },
       label: 'Antigravity',
       mode: 'external',
       available: true,
@@ -63,7 +75,7 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       models: false,
       reasoning: false,
       reason:
-        'Sign in with the official Antigravity CLI from Kivuno, then connect the client through local MESH MCP. Antigravity is separate from Gemini CLI; Kivuno does not start its model or import its tools.',
+        'Enable Sade to run the official Antigravity CLI through ACP with a separate Google sign-in, or keep an external MESH connection. Models and thinking levels must be advertised by the CLI. No API-key or credit fallback.',
     },
   ];
 }

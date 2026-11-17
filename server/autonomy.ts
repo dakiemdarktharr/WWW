@@ -64,7 +64,7 @@ export function chooseModel(
   const model = lightweight
     ? models.find(
         (model) =>
-          /mini|small|fast/i.test(`${model.model} ${model.displayName}`) &&
+          /mini|small|fast|sonnet|haiku/i.test(`${model.model} ${model.displayName}`) &&
           (task.kind !== 'review' ||
             model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === 'high')),
       ) || standard

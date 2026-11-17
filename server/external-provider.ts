@@ -130,6 +130,11 @@ export class ExternalProviders {
   create(input: unknown) {
     const values = configuration.parse(input);
     const member = this.host.store.get<Member>('member', values.memberId);
+    if (member.managedRuntime)
+      throw new DomainError(
+        'This profile uses managed Sade execution; an external connection would duplicate its authority.',
+        403,
+      );
     if ((member.provider !== 'claude' && member.provider !== 'antigravity') || member.runnerId)
       throw new DomainError('Choose a local external Claude Code or Antigravity profile.', 400);
     assertGroupMember(this.host.store, values.projectId, member.id);
@@ -189,6 +194,8 @@ export class ExternalProviders {
       throw new DomainError('External connection expired or revoked. Reconnect in Team.', 401);
     assertGroupMember(this.host.store, connection.projectId, connection.memberId);
     const member = this.host.store.get<Member>('member', connection.memberId);
+    if (member.managedRuntime)
+      throw new DomainError('This profile now uses managed Sade execution.', 403);
     if (member.provider !== connection.provider)
       throw new DomainError('External profile changed. Create a new connection.', 403);
     return connection;

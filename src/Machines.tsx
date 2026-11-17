@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import type { JoinedMachine } from './desktop';
+import type { Project } from '../shared/types';
 type Machine = {
   id: string;
   name: string;
@@ -8,15 +9,19 @@ type Machine = {
   ready: boolean;
   busy: boolean;
   slots: number;
+  executionProjectId?: string;
+  execution?: { platform: string; fullAccess: boolean; expiresAt: string };
 };
 export default function Machines({
   selected,
   onSelect,
   cloud = false,
+  projects = [],
 }: {
   selected: string;
   onSelect: (id: string) => void;
   cloud?: boolean;
+  projects?: Project[];
 }) {
   const [machines, setMachines] = useState<Machine[]>([]),
     [expanded, setExpanded] = useState(false),
@@ -63,18 +68,32 @@ export default function Machines({
           onChange={(event) => onSelect(event.target.value)}
         >
           <option value="">{cloud ? 'Cloud' : 'This computer'}</option>
-          {machines.map((machine) => (
-            <option
-              key={machine.id}
-              value={machine.id}
-              disabled={!machine.online || !machine.ready}
-            >
-              {machine.name} ·{' '}
-              {!machine.online ? 'offline' : machine.busy ? 'busy' : `${machine.slots} slots`}
-            </option>
-          ))}
+          {machines
+            .filter((machine) => !machine.executionProjectId)
+            .map((machine) => (
+              <option
+                key={machine.id}
+                value={machine.id}
+                disabled={!machine.online || !machine.ready}
+              >
+                {machine.name} ·{' '}
+                {!machine.online ? 'offline' : machine.busy ? 'busy' : `${machine.slots} slots`}
+              </option>
+            ))}
         </select>
       </label>
+      {machines
+        .filter((machine) => machine.executionProjectId)
+        .map((machine) => (
+          <span key={machine.id} className="provider-tag">
+            {machine.name} ·{' '}
+            {machine.online &&
+            machine.execution &&
+            Date.parse(machine.execution.expiresAt) > Date.now()
+              ? `${machine.execution.platform} · ${machine.execution.fullAccess ? 'Full access' : 'Read access'} · until ${new Date(machine.execution.expiresAt).toLocaleTimeString()}`
+              : 'Waiting for machine owner'}
+          </span>
+        ))}
       <button className="button compact" onClick={() => setExpanded(!expanded)}>
         Pair machine
       </button>
@@ -164,9 +183,13 @@ export default function Machines({
                 id: string;
                 token: string;
                 connection?: { origin: string; exchangeUrl: string; bridgeKey: string };
+                executionRequest?: { projectId: string; projectName: string };
               }>('/runners', {
                 name: data.get('name'),
                 kind,
+                ...(data.get('executionProjectId')
+                  ? { executionProjectId: data.get('executionProjectId') }
+                  : {}),
               });
               const config = {
                 origin: result.connection?.origin || location.origin,
@@ -177,6 +200,8 @@ export default function Machines({
                     }
                   : {}),
                 id: result.id,
+                name: String(data.get('name')),
+                ...(result.executionRequest ? { executionRequest: result.executionRequest } : {}),
                 token: result.token,
                 dataDir: String(data.get('dataDir')),
                 slots: kind === 'ssh' ? 1 : 2,
@@ -228,6 +253,22 @@ export default function Machines({
               required
             />
           )}
+          <label>
+            Purpose
+            <select name="executionProjectId" aria-label="Machine project permission">
+              <option value="">Run an AI account on the other machine</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  Test {project.name} · AI stays here
+                </option>
+              ))}
+            </select>
+          </label>
+          <p>
+            For project testing, the other person approves access on their computer for 30 minutes.
+            They do not need a ChatGPT account. Commands require their full-access permission, which
+            they can revoke with Stop connection.
+          </p>
           <button className="button" disabled={pairing}>
             Download private configuration
           </button>

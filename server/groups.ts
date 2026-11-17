@@ -34,7 +34,7 @@ export function memberPresence(
     : null;
   const machineReady = isExternalMember(member)
     ? !!member.externalLastSeen && Date.now() - Date.parse(member.externalLastSeen) < 45_000
-    : member.provider === 'gemini'
+    : member.provider && member.provider !== 'codex'
       ? true
       : member.runnerId
         ? !!runner?.online && !!runner.ready

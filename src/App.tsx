@@ -1,7 +1,7 @@
 import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
 import ChatHome from './ChatHome';
-import { isExternalProvider } from '../shared/providers';
+import { isExternalProvider, isExternalMember } from '../shared/providers';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownLeft,
@@ -541,7 +541,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         setBusy('');
       }
     }
-    if (isExternalProvider(provider)) {
+    if (isExternalMember(member)) {
       setModal({ type: 'external', memberId: member.id });
       return;
     }
@@ -565,7 +565,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       setBusy('');
     }
   }
-  async function connectAccount(provider: ProviderId) {
+  async function connectAccount(provider: ProviderId, managedRuntime = false) {
     const runnerId = selectedMachine && !isExternalProvider(provider) ? selectedMachine : '';
     setBusy(`prepare-${provider}`);
     try {
@@ -573,12 +573,12 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       const result = await perform<{ member: Member; login: LoginResult }>(
         'connect-account',
         '/accounts/connect',
-        { provider, ...(runnerId ? { runnerId } : {}) },
+        { provider, managedRuntime, ...(runnerId ? { runnerId } : {}) },
       );
       if (result) {
         navigate('team');
         setModal(
-          isExternalProvider(provider)
+          isExternalMember(result.member)
             ? { type: 'external', memberId: result.member.id }
             : { type: 'login', memberId: result.member.id, result: result.login },
         );
@@ -988,7 +988,12 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   <Plus size={16} /> Add account
                 </Button>
               </section>
-              <Machines selected={selectedMachine} onSelect={setSelectedMachine} cloud={cloud} />
+              <Machines
+                selected={selectedMachine}
+                onSelect={setSelectedMachine}
+                cloud={cloud}
+                projects={state?.projects || []}
+              />
               <div className="team-grid">
                 {members.map((member) => (
                   <div className="account-card-group" key={member.id}>
@@ -1046,7 +1051,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                       }}
                     >
                       <div className="account-control-panel" data-usage="account-controls">
-                        {providerOf(member) === 'gemini' ? (
+                        {providerOf(member) !== 'codex' && !isExternalMember(member) ? (
                           <ProviderTurnAllowance
                             member={member}
                             state={state!}
@@ -1426,6 +1431,17 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             member={members.find((member) => member.id === modal.memberId)!}
             projects={state?.projects || []}
             googleBusy={pending}
+            enableManaged={async () => {
+              const existing = members.find((member) => member.id === modal.memberId);
+              if (existing && window.relayDesktop)
+                await window.relayDesktop.prepareProvider(providerOf(existing));
+              const member = await perform<Member>(
+                'enable-managed',
+                `/members/${modal.memberId}/managed-runtime`,
+                { acknowledgeLocalExecution: true },
+              );
+              if (member) await login(member, 'browser');
+            }}
             googleSignIn={() =>
               void antigravityGoogleSignIn(members.find((member) => member.id === modal.memberId)!)
             }
@@ -1790,7 +1806,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
 
       {modal?.type === 'login' && (
         <Modal
-          title={modal.result.type === 'geminiGoogle' ? 'Google sign-in' : 'OpenAI sign-in'}
+          title={
+            modal.result.type === 'claudeSubscription'
+              ? 'Claude sign-in'
+              : /Google/.test(modal.result.type)
+                ? 'Google sign-in'
+                : 'OpenAI sign-in'
+          }
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
           close={() => void dismissSignIn()}
         >
@@ -1979,8 +2001,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               <Button onClick={closeModal}>Close</Button>
               <div>
                 {selectedTask.status === 'running' &&
-                  !isExternalProvider(
-                    providerOf(members.find((member) => member.id === selectedTask.assignedTo)),
+                  !isExternalMember(
+                    members.find((member) => member.id === selectedTask.assignedTo),
                   ) && (
                     <Button
                       disabled={pending}
@@ -2009,7 +2031,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           .filter(
                             (m) =>
                               m.status === 'ready' &&
-                              !isExternalProvider(providerOf(m)) &&
+                              !isExternalMember(m) &&
                               project?.memberIds?.includes(m.id) &&
                               !tasks.some(
                                 (t) =>
@@ -2028,11 +2050,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                         disabled={
                           pending ||
                           !(detailMember || selectedTask.assignedTo) ||
-                          isExternalProvider(
-                            providerOf(
-                              members.find(
-                                (member) => member.id === (detailMember || selectedTask.assignedTo),
-                              ),
+                          isExternalMember(
+                            members.find(
+                              (member) => member.id === (detailMember || selectedTask.assignedTo),
                             ),
                           )
                         }
@@ -2313,7 +2333,7 @@ function MemberCard({
         </div>
       )}
       <div className={`member-actions ${provider === 'antigravity' ? 'antigravity-actions' : ''}`}>
-        {provider === 'antigravity' ? (
+        {provider === 'antigravity' && isExternalMember(member) ? (
           <div className="member-provider-actions">
             <Button
               primary
@@ -2327,7 +2347,7 @@ function MemberCard({
               <ExternalLink size={15} /> MESH connection
             </Button>
           </div>
-        ) : isExternalProvider(provider) ? (
+        ) : isExternalMember(member) ? (
           <Button primary onClick={external} disabled={busy}>
             <ExternalLink size={15} />
             MESH connection
@@ -2348,7 +2368,8 @@ function MemberCard({
                 cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
               }
             >
-              <ArrowUpRight size={15} /> Sign in with {provider === 'gemini' ? 'Google' : 'OpenAI'}
+              <ArrowUpRight size={15} /> Sign in with{' '}
+              {provider === 'claude' ? 'Claude' : provider === 'codex' ? 'OpenAI' : 'Google'}
             </Button>
             {provider === 'codex' && (
               <button className="text-button" disabled={busy} onClick={() => login('browser')}>
@@ -2370,7 +2391,7 @@ function MemberCard({
       <details className="member-settings">
         <summary>Settings</summary>
         {children}
-        {member.account && !isExternalProvider(provider) && (
+        {member.account && !isExternalMember(member) && (
           <button
             className="text-button"
             disabled={busy || member.status === 'working'}

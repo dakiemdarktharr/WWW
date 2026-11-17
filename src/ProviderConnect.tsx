@@ -48,10 +48,11 @@ export default function ProviderConnect({
 }: {
   busy: boolean;
   runnerId?: string;
-  connect: (provider: ProviderId) => void;
+  connect: (provider: ProviderId, managedRuntime?: boolean) => void;
   profile: () => void;
 }) {
   const [provider, setProvider] = useState<ProviderId>('codex');
+  const [managedRuntime, setManagedRuntime] = useState(true);
   const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -73,18 +74,34 @@ export default function ProviderConnect({
   }, []);
   const capability = capabilities.find((entry) => entry.id === provider);
   const remoteGemini = Boolean(runnerId && provider === 'gemini');
-  const available = capability?.available || (provider === 'codex' && runnerId);
-  const canPrepare = Boolean(window.relayDesktop);
+  const available =
+    isExternalProvider(provider) && managedRuntime
+      ? capability?.managed?.available
+      : capability?.available || (provider === 'codex' && runnerId);
+  const canPrepare =
+    typeof window.relayDesktop?.prepareProvider === 'function' && capability?.installable !== false;
   return (
     <div className="provider-connect form">
       <ProviderPicker value={provider} change={setProvider} />
+      {isExternalProvider(provider) && (
+        <label className="foundation-checkbox">
+          <input
+            type="checkbox"
+            checked={managedRuntime}
+            onChange={(event) => setManagedRuntime(event.target.checked)}
+          />
+          Let Sade run the official local CLI using a separate sign-in profile
+        </label>
+      )}
       <HelpDetails title="Connection help">
         <p>
           {provider === 'codex'
             ? 'Add each ChatGPT account separately on this computer. Each has its own sign-in, usage, skills and plugins. Finish one sign-in before adding the next; choose the intended account on OpenAI.'
             : provider === 'gemini'
               ? 'Google sign-in on this computer. File tools and limited prompts; no shell or reasoning controls.'
-              : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
+              : managedRuntime
+                ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Sign in separately, then choose a project and a limited number of prompts.`
+                : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
       {canPrepare && (
@@ -110,7 +127,7 @@ export default function ProviderConnect({
       <button
         className="button primary"
         disabled={busy || loading || (!available && !canPrepare) || remoteGemini}
-        onClick={() => connect(provider)}
+        onClick={() => connect(provider, isExternalProvider(provider) && managedRuntime)}
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
         {busy
@@ -142,11 +159,13 @@ export function ExternalConnection({
   projects,
   googleSignIn,
   googleBusy,
+  enableManaged,
 }: {
   member: Member;
   projects: Project[];
   googleSignIn: () => void;
   googleBusy: boolean;
+  enableManaged?: () => void;
 }) {
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
   const [projectId, setProjectId] = useState(eligible[0]?.id || '');
@@ -226,6 +245,17 @@ export function ExternalConnection({
   }
   return (
     <div className="external-connection form">
+      {enableManaged && (
+        <section>
+          <p>
+            Let Sade start and stop the official CLI, assign work and request independent reviews.
+            This uses a separate local sign-in and a bounded prompt allowance.
+          </p>
+          <button className="button" disabled={busy || googleBusy} onClick={enableManaged}>
+            Enable Sade execution
+          </button>
+        </section>
+      )}
       {providerOf(member) === 'antigravity' && (
         <>
           <p>
@@ -428,7 +458,7 @@ export function ProviderTurnAllowance({
   }, [projects.map((project) => project.id).join(',')]);
   return (
     <section className="provider-allowance">
-      <strong>Gemini usage</strong>
+      <strong>{providerLabels[providerOf(member)]} usage</strong>
       <span className="provider-tag">Quota unknown</span>
       {projects.length > 0 ? (
         <>

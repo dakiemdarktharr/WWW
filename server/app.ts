@@ -1,6 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { postHumanChat } from './human-chat.ts';
-import { isExternalProvider } from '../shared/providers.ts';
+import { isExternalProvider, isExternalMember } from '../shared/providers.ts';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,6 +19,8 @@ import { registerDesktopRoutes } from './desktop-routes.ts';
 import { registerAegisRoutes } from './aegis-routes.ts';
 import { ExternalProviders, registerExternalRoutes } from './external-provider.ts';
 import { providerCapabilities } from './providers.ts';
+import { resolveManagedCommand } from './managed-process.ts';
+import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
 
 const text = z.string().trim().min(1).max(200);
@@ -404,7 +406,7 @@ export async function buildApp(
   app.get('/api/runners', async () => workspace.runners.list());
   app.post('/api/runners', async (request) => {
     const input = z
-      .object({ name: text, kind: z.enum(['computer', 'ssh']) })
+      .object({ name: text, kind: z.enum(['computer', 'ssh']), executionProjectId: id.optional() })
       .strict()
       .parse(request.body);
     if (options.desktopSecret && !bridgeConnection)
@@ -412,8 +414,14 @@ export async function buildApp(
         'Sign in on the web and wait for the desktop connection before pairing a machine.',
         409,
       );
+    const project = input.executionProjectId
+      ? workspace.store.get<Project>('project', input.executionProjectId)
+      : null;
     return {
-      ...workspace.runners.add(input.name, input.kind),
+      ...workspace.runners.add(input.name, input.kind, project?.id),
+      ...(project
+        ? { executionRequest: { projectId: project.id, projectName: project.name } }
+        : {}),
       ...(bridgeConnection ? { connection: bridgeConnection } : {}),
     };
   });
@@ -427,6 +435,7 @@ export async function buildApp(
         ready: z.boolean(),
         busy: z.boolean(),
         version: z.string().max(180),
+        execution: executionMetadataSchema.optional(),
         events: z
           .array(
             z
@@ -454,6 +463,7 @@ export async function buildApp(
       .object({
         runnerId: id.optional(),
         provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
+        managedRuntime: z.boolean().default(false),
       })
       .strict()
       .parse(request.body);
@@ -465,8 +475,17 @@ export async function buildApp(
       );
     if (input.runnerId) workspace.runners.assertReady(input.runnerId);
     if (workspace.loginOwner) throw new DomainError('Finish or cancel the pending sign-in first.');
+    if (input.managedRuntime && isExternalProvider(input.provider)) {
+      await resolveManagedCommand(input.provider as 'claude' | 'antigravity');
+    }
     let member = workspace.autonomy.addAccount(input.provider);
-    if (isExternalProvider(input.provider))
+    if (input.managedRuntime && isExternalProvider(input.provider)) {
+      member = workspace.store.updateMember(member.id, {
+        integration: 'native',
+        managedRuntime: true,
+      });
+    }
+    if (isExternalMember(member))
       return {
         member,
         login: {
@@ -530,6 +549,52 @@ export async function buildApp(
     return workspace.store.updateMember(memberId, patch);
   });
   app.delete('/api/members/:id', async (request) => workspace.removeMember(params(request)));
+  app.post('/api/members/:id/managed-runtime', async (request) => {
+    z.object({ acknowledgeLocalExecution: z.literal(true) })
+      .strict()
+      .parse(request.body);
+    if (options.cloud)
+      throw new DomainError(
+        'Enable managed CLI execution from this computer’s desktop workspace.',
+        403,
+      );
+    const memberId = params(request);
+    const member = workspace.store.get<Member>('member', memberId);
+    if (!isExternalProvider(member.provider) || member.removedAt || member.runnerId)
+      throw new DomainError('Choose a local Claude or Antigravity profile.');
+    if (
+      workspace.running.has(memberId) ||
+      workspace.sessions.hasLive(memberId) ||
+      workspace.store
+        .sessions()
+        .some(
+          (session) =>
+            session.memberId === memberId &&
+            session.external &&
+            ['running', 'interrupted'].includes(session.status),
+        )
+    )
+      throw new DomainError(
+        'Stop and recover this profile’s existing work before switching runtimes.',
+      );
+    await resolveManagedCommand(member.provider as 'claude' | 'antigravity');
+    for (const connection of external.list())
+      if (connection.memberId === memberId && !connection.revokedAt) external.revoke(connection.id);
+    const updated = workspace.store.updateMember(memberId, {
+      integration: 'native',
+      managedRuntime: true,
+      account: null,
+      status: 'offline',
+      externalLastSeen: undefined,
+    });
+    workspace.log(
+      'Human enabled Sade execution through the official local CLI.',
+      null,
+      memberId,
+      'provider',
+    );
+    return updated;
+  });
   app.post('/api/members/:id/quota/refresh', async (request) =>
     workspace.quota.refresh(params(request)),
   );
@@ -539,6 +604,8 @@ export async function buildApp(
         ? {
             ...provider,
             available: false,
+            installable: false,
+            ...(provider.managed ? { managed: { ...provider.managed, available: false } } : {}),
             reason: 'This provider connects only in the desktop workspace on your computer.',
           }
         : provider,
@@ -847,10 +914,10 @@ export async function buildApp(
       .parse(request.body);
     if (
       options.cloud &&
-      workspace.store.get<Member>('member', params(request)).provider === 'gemini'
+      (workspace.store.get<Member>('member', params(request)).provider || 'codex') !== 'codex'
     )
       throw new DomainError(
-        'Connect Gemini from your desktop workspace. Cloud Google sign-in is not supported.',
+        'Connect this provider from your desktop workspace. Cloud provider sign-in is not supported.',
       );
     return workspace.login(params(request), options.cloud ? 'device' : method);
   });

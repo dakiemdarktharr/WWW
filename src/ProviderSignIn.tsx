@@ -38,7 +38,9 @@ export default function ProviderSignIn({
   const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
   const opened = useRef(false);
-  const google = result.type === 'geminiGoogle';
+  const google = result.type === 'geminiGoogle' || result.type === 'antigravityGoogle';
+  const claude = result.type === 'claudeSubscription';
+  const provider = google ? 'Google' : claude ? 'Claude' : 'OpenAI';
   const url = authUrl(result);
   useEffect(() => {
     if (member) setLive(member);
@@ -86,7 +88,7 @@ export default function ProviderSignIn({
     <div className="login-content">
       <ConnectionProgress
         step={connected ? 3 : live?.signIn?.state === 'verifying' ? 2 : 1}
-        labels={['Open sign-in', `Confirm on ${google ? 'Google' : 'OpenAI'}`, 'Verify account']}
+        labels={['Open sign-in', `Confirm on ${provider}`, 'Verify account']}
         error={
           error ||
           live?.signIn?.error ||
@@ -97,7 +99,11 @@ export default function ProviderSignIn({
         <>
           <strong>
             {live?.account?.email ||
-              (google ? 'Google account connected' : 'ChatGPT account connected')}
+              (google
+                ? 'Google account connected'
+                : claude
+                  ? 'Claude account connected'
+                  : 'ChatGPT account connected')}
           </strong>
           <button className="button primary" onClick={close}>
             Done
@@ -124,8 +130,11 @@ export default function ProviderSignIn({
             </div>
           )}
           {!failed &&
-            (google ? (
-              <p>Complete Google sign-in in the browser. This window updates automatically.</p>
+            (google || claude ? (
+              <p>
+                Complete {provider} sign-in in the browser opened by the official CLI. This window
+                updates automatically.
+              </p>
             ) : url ? (
               <button
                 className="button primary"
