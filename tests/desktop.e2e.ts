@@ -321,6 +321,9 @@ try {
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Chat', exact: true })
     .click();
+  await page
+    .getByRole('button', { name: 'Open project Browser test project', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Session view', exact: true }).click();
   await page
     .getByRole('button', { name: 'Browser review, Browser fixture, idle', exact: true })
