@@ -8,7 +8,8 @@ import { CodexClient } from '../server/codex.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
-import type { CodexSession, Member, Project } from '../shared/types.ts';
+import type { CodexSession, Member, Project, Task, Workflow } from '../shared/types.ts';
+import type { SadeReview } from '../server/sade.ts';
 
 /** In-memory protocol peer; no login, child process or billable turn. */
 class SessionPeer extends CodexClient {
@@ -36,6 +37,19 @@ class SessionPeer extends CodexClient {
     let response: unknown = {};
     if (method === 'account/read')
       response = { account: { type: 'chatgpt', email: 'session@example.test', planType: 'plus' } };
+    else if (method === 'model/list')
+      response = {
+        data: [
+          {
+            id: 'test-model',
+            model: 'test-model',
+            displayName: 'Controlled model',
+            isDefault: true,
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: [{ reasoningEffort: 'high', description: '' }],
+          },
+        ],
+      };
     else if (method === 'account/rateLimits/read')
       response = {
         rateLimits: {
@@ -50,6 +64,8 @@ class SessionPeer extends CodexClient {
     else if (method === 'thread/start' || method === 'thread/resume')
       response = {
         thread: { id: params.threadId || this.thread },
+        model: params.model,
+        reasoningEffort: params.config?.model_reasoning_effort,
         sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
         approvalPolicy: 'on-request',
         approvalsReviewer: 'user',
@@ -155,6 +171,72 @@ async function fixture(t: TestContext) {
   }
   return { root, repo, data, store, workspace, project, member, peers, control, create, complete };
 }
+
+test('Sade reviews a real isolated worktree through the session lifecycle while preserving the writer lease', async (t) => {
+  const f = await fixture(t);
+  const reviewer = f.store.addMember({ name: 'Astra', role: 'reviewer' });
+  f.store.updateMember(reviewer.id, { account: { type: 'chatgpt' }, status: 'ready' });
+  f.workspace.autonomy.shareSkills = async () => {};
+  f.workspace.autonomy.model = async () => ({
+    model: 'test-model',
+    reasoningEffort: 'high',
+    selectionReason: 'Controlled catalog for lifecycle verification.',
+  });
+  const source = await f.create('Add welcome text', ['welcome.txt']);
+  await f.workspace.sessions.send(source.id, 'Write a short welcome message.');
+  const task = f.store.get<Task>('task', source.taskId);
+  await writeFile(path.join(task.worktree!, 'welcome.txt'), 'Hello from Sade.\n');
+  const workflowId = randomUUID(),
+    now = new Date().toISOString();
+  f.store.put('workflow', {
+    id: workflowId,
+    orchestrator: 'sade',
+    projectId: f.project.id,
+    prompt: 'Build and review.',
+    status: 'paused',
+    phase: 'execution',
+    leadId: f.member.id,
+    memberIds: [f.member.id, reviewer.id],
+    controlVersion: 0,
+    contributions: [],
+    plan: null,
+    hierarchy: [],
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  } satisfies Workflow);
+  f.store.updateTask(task.id, { workflowId });
+  await f.complete(source);
+  assert.ok(f.store.lease(task.id));
+  f.store.updateWorkflow(workflowId, { status: 'running' });
+  await f.workspace.sade.schedule(f.store.get<Task>('task', task.id));
+  const record = f.store.get<SadeReview>('sadeReview', task.id);
+  assert.equal(record.status, 'running', record.reason || 'Sade did not start the reviewer.');
+  const session = f.workspace.sessions.get(record.sessionId!);
+  assert.equal(session.readOnly, true);
+  assert.equal(session.memberId, reviewer.id);
+  assert.equal(f.store.get<Task>('task', session.taskId).reviewOfTaskId, task.id);
+  assert.ok(f.store.lease(task.id));
+  await f.complete(
+    session,
+    'No findings in the supplied welcome text. No runtime behavior changed.',
+  );
+  await f.workspace.workflows.idle();
+  await f.workspace.sade.idle();
+  assert.equal(f.store.get<SadeReview>('sadeReview', task.id).status, 'completed');
+  await f.workspace.sade.assertReviewed(
+    f.store.get<Task>('task', task.id),
+    await f.workspace.diff(task.id),
+  );
+  await writeFile(path.join(task.worktree!, 'welcome.txt'), 'Changed after review.\n');
+  await assert.rejects(
+    f.workspace.sade.assertReviewed(
+      f.store.get<Task>('task', task.id),
+      await f.workspace.diff(task.id),
+    ),
+    /exact change/,
+  );
+});
 
 test('two writing sessions share an account but hold independent process, task and scope leases', async (t) => {
   const f = await fixture(t);

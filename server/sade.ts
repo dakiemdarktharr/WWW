@@ -102,7 +102,7 @@ export class Sade {
       .find((item) => item.id === task.id);
     if (previous?.digest === digest) return; // Never replay a possibly dispatched turn.
     if (previous?.status === 'running' || previous?.status === 'starting') return;
-    const reviewer = groupMembers(this.host.store, task.projectId)
+    const candidates = groupMembers(this.host.store, task.projectId)
       .filter(
         (member) =>
           member.id !== task.assignedTo &&
@@ -116,15 +116,22 @@ export class Sade {
       .sort(
         (a, b) =>
           Number(b.role === 'reviewer') - Number(a.role === 'reviewer') || a.id.localeCompare(b.id),
-      )
-      .find((member) => {
-        try {
-          this.host.quota.assertCanRun(member.id, task.projectId);
-          return this.host.canStart(member.id);
-        } catch {
-          return false;
+      );
+    let reviewer: (typeof candidates)[number] | undefined;
+    for (const member of candidates) {
+      if (this.host.closing) return;
+      try {
+        // Refresh metadata only: a newly connected reviewer may not have cached quota yet.
+        await this.host.quota.refresh(member.id);
+        this.host.quota.assertCanRun(member.id, task.projectId);
+        if (this.host.canStart(member.id)) {
+          reviewer = member;
+          break;
         }
-      });
+      } catch {
+        /* Another connected teammate may still be available. */
+      }
+    }
     if (!reviewer)
       throw new DomainError(
         'Connect another available teammate with usage allowance for independent review.',

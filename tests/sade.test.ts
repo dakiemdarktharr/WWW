@@ -56,7 +56,7 @@ function fixture(t: TestContext) {
     canStart: () => true,
     diff: async () => diff,
     mesh: new Mesh({ store }),
-    quota: { assertCanRun() {} },
+    quota: { assertCanRun() {}, async refresh() {} },
     sessions: {
       get: (id: string) => store.get<CodexSession>('session', id),
       async send(id: string, _prompt: string) {
