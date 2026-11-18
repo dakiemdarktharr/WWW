@@ -21,7 +21,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type { Member, RoomMessage } from '../shared/types';
+import type { CodexModel, Member, RoomMessage } from '../shared/types';
 import { api } from './api';
 import {
   CreateSession,
@@ -101,11 +101,17 @@ export default function ProjectChat({
   const [handoff, setHandoff] = useState<string | null>(null);
   const [reactionMenu, setReactionMenu] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [projectModels, setProjectModels] = useState<CodexModel[]>([]);
+  const [modelCatalogLoading, setModelCatalogLoading] = useState(false);
+  const [modelSaving, setModelSaving] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const nearBottom = useRef(true);
   const memberIds = project?.memberIds || [];
   const members = state.members.filter((member) => memberIds.includes(member.id));
+  const modelCatalogKey = `${project?.id || ''}:${members
+    .map((member) => `${member.id}:${providerOf(member)}:${member.account?.email || ''}`)
+    .join('|')}`;
   const projectSessions = state.sessions.filter((session) => session.projectId === project?.id);
   const dossier = state.competitionResearch
     ?.filter((item) => item.projectId === project?.id)
@@ -208,6 +214,28 @@ export default function ProjectChat({
       document.removeEventListener('visibilitychange', beat);
     };
   }, [project?.id]);
+  useEffect(() => {
+    let live = true;
+    setProjectModels([]);
+    if (!project) {
+      setModelCatalogLoading(false);
+      return;
+    }
+    setModelCatalogLoading(true);
+    api<CodexModel[]>(`/projects/${project.id}/models`)
+      .then((models) => {
+        if (live) setProjectModels(models);
+      })
+      .catch(() => {
+        if (live) setProjectModels([]);
+      })
+      .finally(() => {
+        if (live) setModelCatalogLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [modelCatalogKey]);
   function chooseCommand(value: string) {
     setContent(value);
     setCommandIndex(0);
@@ -252,6 +280,15 @@ export default function ProjectChat({
     } finally {
       sendLock.current = false;
       setSending(false);
+    }
+  }
+  async function changeChatModel(model: string) {
+    if (!project) return;
+    setModelSaving(true);
+    try {
+      await request(`/projects/${project.id}/chat-config`, { model: model || null }, 'PATCH');
+    } finally {
+      setModelSaving(false);
     }
   }
   const openRoster = () => {
@@ -768,20 +805,28 @@ export default function ProjectChat({
             >
               @
             </button>
-            <button
-              type="button"
-              className="text-button"
-              aria-label="Show chat commands"
-              onClick={() => chooseCommand('/')}
-            >
-              /
-            </button>
+            <GlassSelect
+              label="Chat model"
+              value={project?.chatConfig?.model || ''}
+              options={[
+                { value: '', label: 'Auto model' },
+                ...projectModels.map((model) => ({
+                  value: model.model,
+                  label: model.displayName,
+                })),
+                ...(project?.chatConfig?.model &&
+                !projectModels.some((model) => model.model === project.chatConfig?.model)
+                  ? [{ value: project.chatConfig.model, label: project.chatConfig.model }]
+                  : []),
+              ]}
+              disabled={!project || busy || sending || modelSaving || modelCatalogLoading}
+              onChange={(model) => void changeChatModel(model)}
+            />
             <span
               className="composer-policy"
               title="Chat sessions research and plan without changing files. Choose Plan project to start the shared build workflow."
             >
               {orchestrate ? 'Sade coordinates' : 'Read-only'} ·{' '}
-              {project?.chatConfig?.model || 'Auto model'} ·{' '}
               {project?.chatConfig?.reasoningEffort || 'Auto reasoning'}
             </span>
             <button

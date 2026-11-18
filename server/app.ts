@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { Activity, Member, Project, Task, Workflow } from '../shared/types.ts';
+import type { Activity, CodexModel, Member, Project, Task, Workflow } from '../shared/types.ts';
 import { DomainError } from './store.ts';
 import { Workspace } from './service.ts';
 import { inside, normalizeScope, redact, safeEqual, secret } from './security.ts';
@@ -47,6 +47,24 @@ const taskInput = z
     status: z.enum(['ready', 'backlog']).default('ready'),
   })
   .strict();
+
+async function projectModelCatalog(workspace: Workspace, projectId: string): Promise<CodexModel[]> {
+  const members = groupMembers(workspace.store, projectId).filter(
+    (member) => member.account && !isExternalProvider(member.provider || 'codex'),
+  );
+  const results = await Promise.allSettled(
+    members.map(async (member) => readModels(await workspace.client(member.id))),
+  );
+  const models = new Map<string, CodexModel>();
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+    for (const model of result.value) if (!models.has(model.model)) models.set(model.model, model);
+  }
+  return [...models.values()].sort(
+    (a, b) => a.displayName.localeCompare(b.displayName) || a.model.localeCompare(b.model),
+  );
+}
+
 type Session = { token: string; expires: number; ownerId?: string };
 export async function buildApp(
   workspace: Workspace,
@@ -905,6 +923,37 @@ export async function buildApp(
         .strict()
         .parse(request.body),
     });
+  });
+  app.get('/api/projects/:id/models', async (request) =>
+    projectModelCatalog(workspace, params(request)),
+  );
+  app.patch('/api/projects/:id/chat-config', async (request) => {
+    const projectId = params(request);
+    const input = z
+      .object({ model: z.string().min(1).max(200).nullable() })
+      .strict()
+      .parse(request.body);
+    const project = workspace.store.get<Project>('project', projectId);
+    const chatConfig = { ...project.chatConfig };
+    if (input.model === null) {
+      delete chatConfig.model;
+      delete chatConfig.reasoningEffort;
+    } else {
+      const model = (await projectModelCatalog(workspace, projectId)).find(
+        (candidate) => candidate.model === input.model,
+      );
+      if (!model)
+        throw new DomainError('This model is not available to a connected project teammate.', 400);
+      chatConfig.model = model.model;
+      if (
+        chatConfig.reasoningEffort &&
+        !model.supportedReasoningEfforts.some(
+          (effort) => effort.reasoningEffort === chatConfig.reasoningEffort,
+        )
+      )
+        delete chatConfig.reasoningEffort;
+    }
+    return workspace.store.put('project', { ...project, chatConfig });
   });
   app.post('/api/tasks', async (request) => {
     const task = workspace.store.addTask(taskInput.parse(request.body));

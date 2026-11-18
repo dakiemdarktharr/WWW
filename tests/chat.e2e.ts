@@ -28,6 +28,14 @@ const models = [
     ],
     defaultReasoningEffort: 'low',
   },
+  {
+    id: 'alternate-model-id',
+    model: 'alternate-model',
+    displayName: 'Controlled alternative',
+    isDefault: false,
+    supportedReasoningEfforts: [{ reasoningEffort: 'high', description: 'High' }],
+    defaultReasoningEffort: 'high',
+  },
 ];
 class Client extends CodexClient {
   override async start() {}
@@ -75,8 +83,10 @@ for (const member of members) {
   });
 }
 let starts = 0;
+const sessionStarts: any[] = [];
 workspace.sessions.create = async (options) => {
   starts++;
+  sessionStarts.push(options);
   const task = store.addTask({
     projectId: project.id,
     title: options.title || `Chat request ${starts}`,
@@ -178,6 +188,23 @@ try {
   await page.getByRole('button', { name: 'Save settings', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   assert.equal(store.sessions()[0].reasoningEffort, 'high');
+  const chatModel = page.getByRole('combobox', { name: 'Chat model', exact: true });
+  await expect(chatModel).toBeEnabled();
+  await chatModel.click();
+  await page.getByRole('option', { name: 'Controlled alternative', exact: true }).click();
+  await expect
+    .poll(() => store.get<any>('project', project.id).chatConfig?.model)
+    .toBe('alternate-model');
+  await expect(chatModel).toContainText('Controlled alternative');
+  await input.fill('Use the selected project model for this request');
+  await input.press('Enter');
+  await expect.poll(() => starts).toBe(2);
+  assert.equal(sessionStarts[1].model, 'alternate-model');
+  assert.equal(sessionStarts[1].modelPolicy, 'manual');
+  await chatModel.click();
+  await page.getByRole('option', { name: 'Auto model', exact: true }).click();
+  await expect.poll(() => store.get<any>('project', project.id).chatConfig?.model).toBeUndefined();
+  await expect(chatModel).toContainText('Auto model');
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
   const session = store.sessions()[0];
   const answer = workspace.mesh.post({
@@ -209,7 +236,7 @@ try {
         ),
     )
     .toBe(true);
-  assert.equal(starts, 1);
+  assert.equal(starts, 2);
   await page.getByPlaceholder('Search this chat').fill('Installer finding');
   await expect(
     page.getByRole('log', { name: 'Project messages' }).getByText(answer.content, { exact: true }),
