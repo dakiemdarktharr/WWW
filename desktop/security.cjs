@@ -264,12 +264,33 @@ function releaseForThisPlatform(manifest, platform, arch) {
   return null;
 }
 
+function githubMacReleaseAsset(value, suffix) {
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === 'https://github.com' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      new RegExp(
+        `^/dakiemdarktharr/WWW/releases/download/v(\\d+\\.\\d+\\.\\d+)/Kivuno-\\1-macOS-arm64\\.${suffix.slice(1)}$`,
+        'i',
+      ).test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function validatedReleaseUrl(item, suffix, identityOrigin) {
   if (!item || item.available !== true || typeof item.url !== 'string') return '';
   const url = new URL(item.url, identityOrigin);
+  const isGithubAsset = githubMacReleaseAsset(url.href, suffix);
   const trustedOrigin =
     url.origin === identityOrigin ||
-    (url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com'));
+    (url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com')) ||
+    isGithubAsset;
   if (
     url.protocol !== 'https:' ||
     url.port ||
@@ -278,11 +299,30 @@ function validatedReleaseUrl(item, suffix, identityOrigin) {
     url.search ||
     url.hash ||
     !trustedOrigin ||
-    !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+$/.test(url.pathname) ||
+    (!isGithubAsset && !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+$/.test(url.pathname)) ||
     !url.pathname.toLowerCase().endsWith(suffix)
   )
     throw new Error('Kivuno returned an invalid installer link.');
   return url.href;
+}
+
+function trustedMacUpdateRedirect(value) {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      !url.port &&
+      !url.username &&
+      !url.password &&
+      !url.hash &&
+      ['release-assets.githubusercontent.com', 'objects.githubusercontent.com'].includes(
+        url.hostname,
+      ) &&
+      url.pathname.startsWith('/github-production-release-asset/')
+    );
+  } catch {
+    return false;
+  }
 }
 
 function validatedMacAutoUpdate(item, expectedVersion, identityOrigin) {
@@ -330,7 +370,8 @@ function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
       : null;
   const downloadUrl = hasUpdate
     ? platformRelease?.key === 'macos'
-      ? macAutoUpdate?.url || ''
+      ? macAutoUpdate?.url ||
+        validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
       : validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
     : '';
   return {
@@ -349,6 +390,8 @@ function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
 
 module.exports = {
   desktopUpdate,
+  githubMacReleaseAsset,
+  trustedMacUpdateRedirect,
   cloudOrigin,
   sameOrigin,
   externalUrl,

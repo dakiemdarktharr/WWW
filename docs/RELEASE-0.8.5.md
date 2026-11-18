@@ -9,9 +9,9 @@
 - Sade automatically requests a read-only review of a bounded text diff from another connected native teammate. Integration requires a completed review for the same diff; human source approval remains required. Pause/startup recovery and retries do not silently authorize additional turns.
 - Added a password recovery email design and mobile/desktop preview generator. **Password reset delivery is not enabled**: Resend provisioning awaits a verified sender domain.
 - Added demo scenarios and draft Vietnamese terms/privacy documents with a dated Vietnam/EU/US security review. Drafts are not published as binding terms.
-- Windows/web/cloud version is 0.8.5. Preserve the previously published macOS 0.8.4 artifact with its actual version and checksum; this Windows environment does not produce a new macOS binary.
+- Windows, web, cloud and Apple Silicon macOS versions are 0.8.5. The macOS DMG and updater ZIP are published on GitHub Releases with SHA-256 checksums.
 - Integrated the concurrent 0.8.3/0.8.4 desktop-update and Antigravity login commits. Fixed update comparisons to use each platform's published version and exclude future versions from mandatory-update counts. Replaced recursive temporary-login cleanup with deletion of the exact generated file and its empty directory.
-- macOS updates now download a SHA256-verified ZIP, replace the installed Kivuno app bundle and reopen it. The DMG remains for new installations.
+- macOS updates follow only GitHub's release-asset redirects, verify the ZIP size and SHA-256, replace the installed Kivuno app bundle and reopen it. The DMG remains for new installations.
 
 ## Limits that must remain visible
 
