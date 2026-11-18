@@ -649,10 +649,22 @@ export class Mesh {
       return request;
     });
   }
-  resolve(id: string): HumanRequest {
+  resolve(id: string, answer?: string): HumanRequest {
     return this.store.transaction(() => {
       const request = this.store.get<HumanRequest>('humanRequest', id);
       if (request.status === 'resolved') return request;
+      if (answer?.trim()) {
+        if (request.kind !== 'question' || answer.length > 4000)
+          throw new DomainError('Answer a question in up to 4,000 characters.', 400);
+        this.store.message({
+          projectId: request.projectId,
+          taskId: null,
+          authorId: null,
+          kind: 'message',
+          content: `Answer to “${request.title}”\n${redact(answer.trim())}`,
+          humanCommand: false,
+        });
+      }
       const resolved = this.store.put('humanRequest', {
         ...request,
         status: 'resolved' as const,

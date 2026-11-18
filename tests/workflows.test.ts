@@ -8,6 +8,7 @@ import { CodexClient } from '../server/codex.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
+import { reviewDigest } from '../server/sade.ts';
 import { buildApp } from '../server/app.ts';
 import type { Project, Proposal, Task, TeamPlan, Workflow } from '../shared/types.ts';
 
@@ -44,9 +45,27 @@ class PlanningCodex extends CodexClient {
         },
         ordinaryUsageAllowed: true,
       };
+    else if (method === 'model/list')
+      result = {
+        data: [
+          {
+            id: 'fixture',
+            model: 'fixture',
+            displayName: 'Fixture model',
+            isDefault: true,
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'medium', description: '' },
+              { reasoningEffort: 'high', description: '' },
+            ],
+          },
+        ],
+      };
     else if (method === 'thread/start') {
       result = {
         thread: { id: `${this.memberId}-thread-${++this.sequence}` },
+        model: params.model,
+        reasoningEffort: params.config?.model_reasoning_effort,
         sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
         approvalPolicy: 'on-request',
         approvalsReviewer: 'user',
@@ -346,6 +365,8 @@ test('one human Sade chat request starts a workflow once and network retries do 
     assert.equal(first.json().orchestrator, 'sade');
     await f.workspace.workflows.idle();
     const turns = f.turnCount();
+    assert.equal(turns, 1, 'Sade plans once even with four connected teammates');
+    assert.equal(f.tasks(first.json().id, 'proposal').length, 0);
     const retry = await api.post('/api/mesh/messages', payload);
     assert.equal(retry.statusCode, 200, retry.body);
     assert.equal(retry.json().id, first.json().id);
@@ -364,6 +385,101 @@ test('one human Sade chat request starts a workflow once and network retries do 
     await api.app.close();
   }
 });
+
+test(
+  'Sade preserves named architecture and frontend owners, waits for the Git artifact and surfaces a style decision',
+  { timeout: 30000 },
+  async (t) => {
+    const f = await fixture(t);
+    const [gemini, , astra] = f.members;
+    f.store.updateMember(gemini.id, { name: 'Gemini' });
+    f.store.updateMember(astra.id, { name: 'Astra' });
+    const workflow = await f.workspace.workflows.start(
+      f.project.id,
+      'Tôi nhờ Gemini làm cấu trúc rồi Astra làm giao diện. Hỏi tôi về phong cách, Sade tự chia backend.',
+      { orchestrator: 'sade', requestId: randomUUID() },
+    );
+    await f.workspace.workflows.idle();
+    const planner = f.tasks(workflow.id, 'plan')[0];
+    const calls = f.clients.get(planner.assignedTo!)!.calls;
+    assert.ok(
+      calls.find((call) => call.method === 'thread/start' && call.params.model === 'fixture'),
+    );
+    assert.match(
+      JSON.stringify(calls.find((call) => call.method === 'turn/start')?.params),
+      /Initial fixture/,
+    );
+    const [arch, ui, backend] = plan().tasks;
+    const submitted: TeamPlan = {
+      summary: 'Kiến trúc trước giao diện và backend.',
+      tasks: [
+        { ...arch, preferredMemberId: gemini.id, title: 'Cấu trúc dự án' },
+        {
+          ...ui,
+          kind: 'design',
+          preferredMemberId: astra.id,
+          dependsOn: [arch.key],
+          title: 'Thiết kế giao diện',
+        },
+        { ...backend, kind: 'code', dependsOn: [arch.key], title: 'Xây dựng backend' },
+      ],
+    };
+    assert.equal((await f.submit(planner, 'relay_submit_plan', submitted)).result?.success, true);
+    await f.finish(planner);
+    const [architecture, frontend, implementation] = f.tasks(workflow.id, 'execution');
+    assert.equal(f.currentTask(architecture).status, 'running');
+    assert.equal(architecture.assignedTo, gemini.id);
+    assert.equal(frontend.assignedTo, astra.id);
+    assert.equal(f.currentTask(frontend).status, 'ready');
+    assert.equal(f.currentTask(implementation).status, 'ready');
+
+    // The fixture supplies review evidence and exercises the actual Git review gate.
+    f.workspace.sade.schedule = async () => {};
+    await f.artifact(architecture);
+    assert.equal(
+      f.currentTask(frontend).status,
+      'ready',
+      'a review-stage file has not been integrated',
+    );
+    await assert.rejects(f.workspace.accept(architecture.id), /independent review/);
+    f.store.put('sadeReview', {
+      id: architecture.id,
+      projectId: f.project.id,
+      reviewerId: astra.id,
+      status: 'completed',
+      digest: reviewDigest(await f.workspace.diff(architecture.id)),
+    });
+    await f.workspace.accept(architecture.id);
+    await f.workspace.workflows.idle();
+    const task = f.currentTask(frontend);
+    assert.equal(task.status, 'running');
+    assert.match(
+      await readFile(path.join(task.worktree!, architecture.scope[0]), 'utf8'),
+      /^Verified alpha\r?\n$/,
+    );
+    const ask = await f.submit(task, 'relay_ask', {
+      title: 'Phong cách giao diện',
+      content: 'Bạn muốn tối giản hay để Astra tự chọn?',
+    });
+    assert.equal(ask.result?.success, true);
+    await f.finish(task);
+    assert.equal(f.currentTask(task).status, 'blocked');
+    await assert.rejects(f.workspace.workflows.resume(workflow.id), /open question/);
+    f.workspace.mesh.resolve(f.currentTask(task).humanQuestionId!, 'Astra tự chọn phong cách.');
+    await f.workspace.workflows.resume(workflow.id);
+    await f.workspace.workflows.idle();
+    assert.equal(f.currentTask(task).status, 'running');
+    assert.match(
+      JSON.stringify(
+        f.clients
+          .get(astra.id)!
+          .calls.filter((call) => call.method === 'turn/start')
+          .at(-1)?.params,
+      ),
+      /Astra tự chọn phong cách/,
+    );
+  },
+);
 
 test('review feedback cannot release a task lease while its project is integrating', async (t) => {
   const f = await fixture(t),

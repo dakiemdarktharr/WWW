@@ -1075,6 +1075,29 @@ export default function ProjectChat({
                     <Bell size={16} />
                     <h3>{item.title}</h3>
                     <p>{item.content}</p>
+                    {item.kind === 'question' && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const answer = String(
+                            new FormData(event.currentTarget).get('answer') || '',
+                          ).trim();
+                          if (answer) void request(`/requests/${item.id}/resolve`, { answer });
+                        }}
+                      >
+                        <textarea
+                          name="answer"
+                          aria-label={`Answer ${item.title}`}
+                          placeholder="Your answer"
+                          required
+                          maxLength={4000}
+                          rows={2}
+                        />
+                        <button className="button compact" disabled={busy}>
+                          Send answer
+                        </button>
+                      </form>
+                    )}
                     <button
                       className="button compact"
                       disabled={busy}

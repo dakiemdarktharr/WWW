@@ -109,6 +109,7 @@ export interface CodexModel {
 }
 export interface Task {
   reviewOfTaskId?: string;
+  humanQuestionId?: string;
   id: string;
   projectId: string;
   title: string;

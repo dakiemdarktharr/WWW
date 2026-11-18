@@ -1,5 +1,5 @@
-import type { Member, Task } from '../shared/types.ts';
-import { git, taskDiff } from './git.ts';
+import type { Member, Task, TaskDiff } from '../shared/types.ts';
+import { git, stageReviewedTree, taskDiff } from './git.ts';
 import { DomainError } from './store.ts';
 
 export function isPrivateCredentialPath(file: string) {
@@ -24,7 +24,11 @@ function validateFiles(task: Task, files: string[]) {
     throw new DomainError('Checkpoint contains changes outside the task scope.');
 }
 /** Push only to the operator-configured origin. Hooks and owner attribution remain enabled. */
-export async function checkpointProgress(task: Task, owner: Member['owner']) {
+export async function checkpointProgress(
+  task: Task,
+  owner: Member['owner'],
+  verifyReview?: (diff: TaskDiff) => Promise<void>,
+) {
   if (!task.worktree || !task.branch || !task.baseCommit)
     throw new DomainError('This task has no worktree checkpoint to push.');
   if (
@@ -41,9 +45,10 @@ export async function checkpointProgress(task: Task, owner: Member['owner']) {
   if ((await git(task.worktree, ['branch', '--show-current'])) !== task.branch)
     throw new DomainError('The session branch changed. Inspect it before checkpointing.');
   await git(task.worktree, ['remote', 'get-url', 'origin']);
-  validateFiles(task, (await taskDiff(task.worktree, task.baseCommit)).files);
+  const diff = await taskDiff(task.worktree, task.baseCommit);
+  validateFiles(task, diff.files);
   await git(task.worktree, ['diff', '--check']);
-  await git(task.worktree, ['add', '--all']);
+  const reviewedTree = await stageReviewedTree(task.worktree, task.baseCommit, verifyReview);
   if (await git(task.worktree, ['diff', '--cached', '--name-only']))
     await git(task.worktree, [
       '-c',
@@ -88,7 +93,11 @@ export async function checkpointProgress(task: Task, owner: Member['owner']) {
   if (await git(task.worktree, ['status', '--porcelain']))
     throw new DomainError('A hook left additional changes. Inspect them before retrying handoff.');
   const sha = await git(task.worktree, ['rev-parse', 'HEAD']);
-  await git(task.worktree, ['push', 'origin', `HEAD:refs/heads/${task.branch}`]);
+  if (reviewedTree && (await git(task.worktree, ['rev-parse', `${sha}^{tree}`])) !== reviewedTree)
+    throw new DomainError(
+      'A hook changed the reviewed files. Inspect and review the checkpoint before pushing.',
+    );
+  await git(task.worktree, ['push', 'origin', `${sha}:refs/heads/${task.branch}`]);
   const remote = await git(task.worktree, ['ls-remote', 'origin', `refs/heads/${task.branch}`]);
   if (remote.split(/\s+/)[0] !== sha)
     throw new DomainError('Remote did not confirm the checkpoint SHA. Ownership was retained.');

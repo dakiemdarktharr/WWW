@@ -44,6 +44,18 @@ test('repository validation accepts a root with spaces and rejects a subdirector
   await assert.rejects(validateRepo('relative/repo'), /absolute path/);
 });
 
+test('a preview with omitted untracked files is marked incomplete', async (t) => {
+  const f = await fixture(t);
+  await Promise.all(
+    Array.from({ length: 101 }, (_, index) =>
+      writeFile(path.join(f.repo, `file-${index}.txt`), ''),
+    ),
+  );
+  const diff = await taskDiff(f.repo);
+  assert.equal(diff.files.length, 101);
+  assert.equal(diff.truncated, true);
+});
+
 test('ordinary folders and unborn repositories can be prepared safely for project worktrees', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-project-folder-'));
   const plain = path.join(root, 'plain folder');

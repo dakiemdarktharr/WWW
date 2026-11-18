@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { reviewDigest } from '../server/sade.ts';
 import { test, type TestContext } from 'node:test';
 import { mkdtemp, mkdir, writeFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import { Mesh } from '../server/mesh.ts';
 import { QuotaManager } from '../server/quota.ts';
 import { Handoffs } from '../server/handoffs.ts';
 import { Aegis } from '../server/aegis.ts';
-import { createWorktree, git } from '../server/git.ts';
+import { createWorktree, git, taskDiff } from '../server/git.ts';
 
 const identity = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test'];
 
@@ -209,6 +210,53 @@ test('a real owner-attributed checkpoint is confirmed on the remote before recip
   assert.match(f.task().description, /Read src\/result/);
   assert.equal(f.store.get<CodexSession>('session', accepted.toSessionId!).status, 'paused');
   await assert.rejects(f.handoffs.accept(handoff.id), /not ready/);
+});
+
+test('Sade Git checkpoint refuses unreviewed or changed output and publishes the approved snapshot', async (t) => {
+  const f = await fixture(t);
+  const workflowId = randomUUID();
+  f.store.put('workflow', {
+    id: workflowId,
+    projectId: f.project.id,
+    status: 'running',
+    orchestrator: 'sade',
+  });
+  f.store.updateTask(f.source.taskId, { status: 'review', workflowId });
+  let reviewed: string | undefined;
+  const handoffs = new Handoffs({
+    ...f.host,
+    sade: {
+      async assertReviewed(_task, diff) {
+        if (reviewed !== reviewDigest(diff))
+          throw new Error('Review required for this exact change');
+      },
+    },
+  });
+  const create = () =>
+    handoffs.create({
+      sessionId: f.source.id,
+      toMemberId: f.recipient.id,
+      summary: 'Reviewed output',
+      nextSteps: 'Continue the implementation',
+      testEvidence: 'Git test fixture',
+    });
+  await assert.rejects(create(), /Review required/);
+  assert.equal(f.interruptions, 0);
+  reviewed = reviewDigest(await taskDiff(f.worktree.worktree, f.worktree.baseCommit));
+  await writeFile(path.join(f.worktree.worktree, 'src', 'result.txt'), 'Changed after review\n');
+  await assert.rejects(create(), /Review required/);
+  assert.equal(await git(f.root, ['ls-remote', f.remote, `refs/heads/${f.worktree.branch}`]), '');
+  reviewed = reviewDigest(await taskDiff(f.worktree.worktree, f.worktree.baseCommit));
+  const result = await create();
+  assert.equal(
+    result.status,
+    'awaiting_ack',
+    result.error || 'The checkpoint should be published.',
+  );
+  assert.match(
+    await git(f.root, ['ls-remote', f.remote, `refs/heads/${f.worktree.branch}`]),
+    new RegExp(`^${result.commitSha}`),
+  );
 });
 
 test('failed push keeps the source lease and checkpoint, and an explicit retry can recover', async (t) => {

@@ -7,6 +7,9 @@ import { checkpointProgress } from './checkpoint.ts';
 import type { QuotaManager } from './quota.ts';
 import type { Mesh } from './mesh.ts';
 import type { Aegis } from './aegis.ts';
+import type { Sade } from './sade.ts';
+import { taskDiff } from './git.ts';
+import type { Workflow } from '../shared/types.ts';
 import { assertGroupMember, groupMembers, memberPresence, type PresenceHost } from './groups.ts';
 
 interface Host extends PresenceHost {
@@ -14,6 +17,7 @@ interface Host extends PresenceHost {
   quota: QuotaManager;
   mesh: Mesh;
   aegis: Pick<Aegis, 'recordHandoff' | 'assertHandoff' | 'assertCanRun'>;
+  sade?: Pick<Sade, 'assertReviewed'>;
   sessions: {
     interrupt(id: string, reason?: string): Promise<CodexSession>;
     resume(id: string): Promise<CodexSession>;
@@ -63,6 +67,16 @@ export class Handoffs {
       );
     return source;
   }
+  private reviewCheck(task: Task) {
+    if (
+      !task.workflowId ||
+      this.host.store.get<Workflow>('workflow', task.workflowId).orchestrator !== 'sade'
+    )
+      return undefined;
+    const sade = this.host.sade;
+    if (!sade) throw new DomainError('Sade review is unavailable.');
+    return (diff: Awaited<ReturnType<typeof taskDiff>>) => sade.assertReviewed(task, diff);
+  }
   async create(input: {
     sessionId: string;
     toMemberId: string;
@@ -86,6 +100,14 @@ export class Handoffs {
     assertGroupMember(this.host.store, source.projectId, input.toMemberId);
     if (source.memberId === input.toMemberId)
       throw new DomainError('Choose a different account for handoff.');
+    const verifyReview = source.readOnly ? undefined : this.reviewCheck(sourceTask);
+    if (verifyReview) {
+      if (sourceTask.status !== 'review' || !sourceTask.worktree)
+        throw new DomainError(
+          'Complete the independent Sade review before publishing a Git checkpoint.',
+        );
+      await verifyReview(await taskDiff(sourceTask.worktree, sourceTask.baseCommit || 'HEAD'));
+    }
     if (
       this.host.store
         .all<Handoff>('handoff')
@@ -157,7 +179,7 @@ export class Handoffs {
             remote: null,
             testEvidence: 'Read-only conversation checkpoint is persisted in MESH/session events.',
           }
-        : await checkpointProgress(task, owner);
+        : await checkpointProgress(task, owner, this.reviewCheck(task));
       this.fence(handoff);
       handoff = this.host.store.put('handoff', {
         ...handoff,

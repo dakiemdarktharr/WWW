@@ -729,6 +729,14 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
+.needs-card form {
+  display: grid;
+  gap: 8px;
+}
+.needs-card textarea {
+  width: 100%;
+  resize: vertical;
+}
 .roster-description {
   color: var(--muted);
   font-size: 12px;

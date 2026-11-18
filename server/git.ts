@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { mkdir, realpath, lstat, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -12,6 +13,7 @@ export async function git(
   cwd: string,
   args: string[],
   maxBuffer = 4 * 1024 * 1024,
+  options: { preserveOutput?: boolean } = {},
 ): Promise<string> {
   try {
     const { stdout } = await exec(
@@ -30,7 +32,7 @@ export async function git(
         },
       },
     );
-    return stdout.trimEnd();
+    return options.preserveOutput ? stdout : stdout.trimEnd();
   } catch (error) {
     const e = error as Error & { stderr?: string };
     throw new DomainError((e.stderr || e.message).slice(0, 2000));
@@ -247,7 +249,7 @@ export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<T
   if (baseCommit !== 'HEAD' && !/^[a-f0-9]{40,64}$/i.test(baseCommit))
     throw new DomainError('Invalid task base commit.');
   const stat = await git(worktree, ['diff', '--stat', baseCommit]);
-  const tracked = (await git(worktree, ['diff', '--name-only', '-z', baseCommit]))
+  const tracked = (await git(worktree, ['diff', '--name-only', '--no-renames', '-z', baseCommit]))
     .split('\0')
     .filter(Boolean);
   const untracked = (await git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']))
@@ -257,6 +259,7 @@ export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<T
     worktree,
     ['diff', '--no-ext-diff', '--no-textconv', baseCommit],
     8 * 1024 * 1024,
+    { preserveOutput: true },
   );
   let note = '';
   for (const file of untracked.slice(0, 100)) {
@@ -267,7 +270,7 @@ export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<T
       continue;
     }
     const stat = await lstat(target);
-    if (stat.isSymbolicLink() || stat.size > 100000) {
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 100000) {
       note += '[Binary, symlink or large file: inspect locally]\n';
       continue;
     }
@@ -285,11 +288,65 @@ export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<T
     diff: (diff + note).slice(0, 250000),
     files: [...tracked, ...untracked],
     stat: stat || `${untracked.length} new files`,
-    truncated: diff.length + note.length > 250000,
+    truncated: untracked.length > 100 || diff.length + note.length > 250000,
   };
 }
+async function reviewedFiles(root: string, files: string[]) {
+  return JSON.stringify(
+    await Promise.all(
+      [...new Set(files)].sort().map(async (file) => {
+        try {
+          const location = path.join(root, file);
+          const info = await lstat(location);
+          if (!info.isFile() || info.size > 100000)
+            throw new DomainError('Review the non-text change locally.');
+          return [
+            file,
+            info.mode,
+            createHash('sha256')
+              .update(await readFile(location))
+              .digest('hex'),
+          ];
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          return [file, 'deleted'];
+        }
+      }),
+    ),
+  );
+}
+
+/** Check the reviewed working files across Git's untracked → staged representation change. */
+export async function stageReviewedTree(
+  root: string,
+  baseCommit: string,
+  verifyReview?: (diff: TaskDiff) => Promise<void>,
+) {
+  if (!verifyReview) {
+    await git(root, ['add', '--all']);
+    return undefined;
+  }
+  const diff = await taskDiff(root, baseCommit);
+  await verifyReview(diff);
+  const reviewed = await reviewedFiles(root, diff.files);
+  await verifyReview(await taskDiff(root, baseCommit));
+  await git(root, ['add', '--all']);
+  const staged = (
+    await git(root, ['diff', '--cached', '--name-only', '--no-renames', '-z', baseCommit])
+  )
+    .split('\0')
+    .filter(Boolean);
+  if (reviewed !== (await reviewedFiles(root, staged)))
+    throw new DomainError(
+      'Files changed after independent review. Inspect the staged files and review again.',
+    );
+  await git(root, ['diff', '--quiet']);
+  return git(root, ['write-tree']);
+}
+
 export interface IntegrationOptions {
   baseCommit?: string;
+  verifyReview?: (diff: TaskDiff) => Promise<void>;
   validateDiff?: (
     diff: TaskDiff,
     context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
@@ -314,7 +371,7 @@ export async function integrate(
     throw new DomainError('The worktree branch changed. Inspect it before integrating.');
   const baseCommit =
     options.baseCommit || (await git(worktree, ['merge-base', 'HEAD', startingHead]));
-  await git(worktree, ['add', '--all']);
+  const reviewedTree = await stageReviewedTree(worktree, baseCommit, options.verifyReview);
   if (await git(worktree, ['diff', '--cached', '--name-only']))
     await git(worktree, [
       '-c',
@@ -333,6 +390,10 @@ export async function integrate(
       phase: 'worker',
     });
   const workerHead = await git(worktree, ['rev-parse', 'HEAD']);
+  if (reviewedTree && (await git(worktree, ['rev-parse', `${workerHead}^{tree}`])) !== reviewedTree)
+    throw new DomainError(
+      'A worker hook changed the reviewed files. Review the resulting diff before integration.',
+    );
   if (
     (await git(repo, ['rev-parse', 'HEAD'])) !== startingHead ||
     (await git(repo, ['status', '--porcelain']))
@@ -358,6 +419,7 @@ export async function integrate(
         root: repo,
         phase: 'staged',
       });
+    const stagedTree = reviewedTree ? await git(repo, ['write-tree']) : undefined;
     if (await git(repo, ['diff', '--cached', '--name-only']))
       await git(repo, [
         '-c',
@@ -368,6 +430,10 @@ export async function integrate(
         '-m',
         `RELAY: ${title}`,
       ]);
+    if (stagedTree && (await git(repo, ['rev-parse', 'HEAD^{tree}'])) !== stagedTree)
+      throw new DomainError(
+        'A project hook changed the reviewed integration. Inspect the project before retrying.',
+      );
     if (options.validateDiff)
       await options.validateDiff(await taskDiff(repo, startingHead), {
         root: repo,

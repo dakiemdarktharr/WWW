@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Member, PlanTask, Proposal, TeamPlan } from '../shared/types.ts';
 import { DomainError } from './store.ts';
 import { normalizeScope } from './security.ts';
+import { isPrivateCredentialPath } from './checkpoint.ts';
 
 const kinds = ['code', 'research', 'design', 'review'] as const;
 const keyPattern = /^[a-z][a-z0-9_-]{0,47}$/;
@@ -41,7 +42,7 @@ function normalizePlanScopes(values: string[]): string[] {
     } catch (error) {
       throw new DomainError(`Invalid scope “${value}”: ${(error as Error).message}`, 400);
     }
-    if (/(^|\/)(?:auth\.json|\.env(?:\.[^/]*)?|\.(?:aws|ssh|codex))(?:\/|$)/i.test(scope))
+    if (isPrivateCredentialPath(scope))
       throw new DomainError(
         `Private credentials or profile state cannot be assigned: ${scope}`,
         400,
@@ -116,6 +117,7 @@ const compareKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 export function allocatePlan(
   plan: TeamPlan,
   members: Member[],
+  options: { preferSpecialists?: boolean; available?: ReadonlySet<string> } = {},
 ): { key: string; memberId: string }[] {
   if (!members.length) throw new DomainError('A workflow needs at least one teammate.', 400);
   if (new Set(members.map((member) => member.id)).size !== members.length)
@@ -140,11 +142,17 @@ export function allocatePlan(
       throw new DomainError(
         'The requested teammate is unavailable or would review their own work.',
       );
+    const role = (a: Member, b: Member) =>
+      Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]);
     const member = [...eligible].sort(
       (a, b) =>
         Number(b.id === task.preferredMemberId) - Number(a.id === task.preferredMemberId) ||
+        (options.available
+          ? Number(options.available.has(b.id)) - Number(options.available.has(a.id))
+          : 0) ||
+        (options.preferSpecialists ? role(a, b) : 0) ||
         load.get(a.id)! - load.get(b.id)! ||
-        Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]) ||
+        role(a, b) ||
         compareKey(a.id, b.id),
     )[0];
     assignments.set(task.key, member.id);

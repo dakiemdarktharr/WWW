@@ -509,7 +509,11 @@ export class SessionManager {
         this.processSlots.delete(session.memberId);
     }
   }
-  async send(id: string, prompt: string): Promise<CodexSession> {
+  async send(
+    id: string,
+    prompt: string,
+    options: { sadeReview?: boolean } = {},
+  ): Promise<CodexSession> {
     if (!prompt.trim() || prompt.length > 16000)
       throw new DomainError('Enter a prompt of up to 16,000 characters.');
     if (this.busy.has(id)) throw new DomainError('This session is already starting or stopping.');
@@ -534,6 +538,8 @@ export class SessionManager {
     if (this.legacy(id))
       throw new DomainError('Pause the workflow turn before taking over its session.');
     const originalTask = this.host.store.get<Task>('task', initial.taskId);
+    if (originalTask.reviewOfTaskId && !options.sadeReview)
+      throw new DomainError('Use Retry review on the source task to review its current snapshot.');
     if (originalTask.phase === 'proposal' || originalTask.phase === 'plan')
       throw new DomainError(
         'Planning sessions are controlled by the team workflow. Resume the workflow to retry.',
@@ -862,6 +868,14 @@ export class SessionManager {
       return;
     }
     this.clearApprovals(id);
+    if (
+      success &&
+      !summary.trim() &&
+      this.host.store.get<Task>('task', session.taskId).reviewOfTaskId
+    ) {
+      success = false;
+      summary = 'Independent review returned no findings or verification notes. Retry the review.';
+    }
     this.update(id, {
       status: success ? (session.readOnly ? 'idle' : 'review') : 'error',
       error: success ? null : redact(summary),

@@ -216,6 +216,10 @@ test('Sade reviews a real isolated worktree through the session lifecycle while 
   assert.equal(session.readOnly, true);
   assert.equal(session.memberId, reviewer.id);
   assert.equal(f.store.get<Task>('task', session.taskId).reviewOfTaskId, task.id);
+  await assert.rejects(
+    f.workspace.sessions.send(session.id, 'Review something else.'),
+    /Retry review/,
+  );
   assert.ok(f.store.lease(task.id));
   await f.complete(
     session,

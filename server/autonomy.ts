@@ -64,7 +64,9 @@ export function chooseModel(
   const model = lightweight
     ? models.find(
         (model) =>
-          /mini|small|fast|sonnet|haiku/i.test(`${model.model} ${model.displayName}`) &&
+          /mini|small|fast|flash|lite|nano|luna|sonnet|haiku/i.test(
+            `${model.model} ${model.displayName}`,
+          ) &&
           (task.kind !== 'review' ||
             model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === 'high')),
       ) || standard
@@ -375,8 +377,8 @@ export class Autonomy {
         if (groupMembers(this.host.store, project.id).some((entry) => entry.id === member.id))
           this.host.mesh.ensureMember(project.id, member.id);
   }
-  async model(memberId: string, task: Task) {
-    await this.plugins(memberId);
+  async model(memberId: string, task: Task, options: { syncPlugins?: boolean } = {}) {
+    if (options.syncPlugins !== false) await this.plugins(memberId);
     const context = portfolio(this.host.store, memberId);
     const quota = this.host.quota.current(memberId);
     const remaining = quota.windows.length

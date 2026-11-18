@@ -99,6 +99,9 @@ test('private state, credentials, traversal, absolute paths and wildcard scopes 
     '.ssh/id_rsa',
     '.aws/credentials',
     '.codex/auth.json',
+    '.claude/settings.json',
+    '.gemini/settings.json',
+    'nested/.mcp.json',
     'auth.json',
     'src/auth.json',
     '.ENV.local',
@@ -113,6 +116,19 @@ test('private state, credentials, traversal, absolute paths and wildcard scopes 
   }
   assert.doesNotThrow(() =>
     parseTeamPlan(plan(task('one', { scope: ['src/auth.ts', '.env-example'] }))),
+  );
+});
+
+test('Sade assigns unspecified work to usable specialists while preserving a named owner', () => {
+  const roster = [member('a', 'designer'), member('b', 'engineer'), member('c', 'engineer')];
+  const allocation = allocatePlan(
+    plan(task('api'), task('ui', { kind: 'design' }), task('critical', { preferredMemberId: 'c' })),
+    roster,
+    { preferSpecialists: true, available: new Set(['a', 'b']) },
+  );
+  assert.deepEqual(
+    allocation.map((item) => item.memberId),
+    ['b', 'a', 'c'],
   );
 });
 

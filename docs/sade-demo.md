@@ -1,6 +1,6 @@
 # Sade: bộ demo và tiêu chí đánh giá
 
-Ngày: 17/11/2026. Sade dùng workflow có sẵn của Kivuno, thêm lựa chọn từ Chat, ưu tiên teammate được chỉ định, chọn model phù hợp và review độc lập. Bật **Sade · Plan and build** rồi gửi một yêu cầu. Một người trong nhóm có thể bắt đầu; các người khác không phải gửi lại cùng prompt.
+Ngày 19/11/2026. Trong Chat của project, bật **Sade · Plan and build** rồi gửi một yêu cầu. Một tài khoản đã kết nối lập kế hoạch. Sade kiểm tra kế hoạch, phân công theo tên hoặc vai trò, chờ đầu ra cần thiết và giao review độc lập. Xem [cấu hình và kết quả nghiên cứu](sade-workspace-research.vi.md) để phân biệt luồng Chat của project với Shared Groups.
 
 ## Chạy kiểm thử xác định
 

@@ -903,7 +903,13 @@ export async function buildApp(
       z.object({ memberId: id }).strict().parse(request.body).memberId,
     ),
   );
-  app.post('/api/requests/:id/resolve', async (request) => workspace.mesh.resolve(params(request)));
+  app.post('/api/requests/:id/resolve', async (request) => {
+    const input = z
+      .object({ answer: z.string().trim().min(1).max(4000).optional() })
+      .strict()
+      .parse(request.body ?? {});
+    return workspace.mesh.resolve(params(request), input.answer);
+  });
   app.post('/api/handoffs', async (request) =>
     workspace.handoffs.create(
       z
