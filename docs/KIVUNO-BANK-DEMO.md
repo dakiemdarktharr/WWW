@@ -1,6 +1,6 @@
 # Dùng thử thanh toán gói Kivuno bằng QR
 
-Người mua dùng một tài khoản Kivuno để nhận quyền Plus hoặc Max. Trong bản demo cục bộ, họ chuyển VND mô phỏng trực tiếp cho bên bán sau khi chọn gói. Người mua có thể thực hiện toàn bộ quy trình trong một tab trình duyệt. Máy không cần cài Core, có ví, số dư token hay tài khoản ngân hàng.
+Người mua dùng một tài khoản Kivuno để nhận quyền Plus hoặc Max. Trong bản demo cục bộ, họ chuyển VND mô phỏng trực tiếp cho bên bán sau khi chọn gói. Người mua có thể thực hiện toàn bộ quy trình trong một tab trình duyệt. Lần đầu mở trang mua gói sau khi đăng nhập, Kivuno tự tạo ví riêng nếu tài khoản chưa có ví liên kết. Mở mục **Ví riêng của tài khoản Kivuno** để xem địa chỉ và sao lưu. Người mua không cần Core hoặc số dư token để dùng QR. Ví phát hành của Kivuno ký giao dịch chứng thực trên Fuji.
 
 ## Chạy trên máy
 

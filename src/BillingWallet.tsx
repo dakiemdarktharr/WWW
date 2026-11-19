@@ -64,6 +64,7 @@ export async function legacySigner(bound: string) {
 }
 
 type Props = {
+  bankCheckout?: boolean;
   account: string;
   bound: string | null;
   token?: string;
@@ -72,7 +73,15 @@ type Props = {
   refresh: () => Promise<unknown>;
 };
 
-export function BillingWallet({ account, bound, token, busy, onMode, refresh }: Props) {
+export function BillingWallet({
+  account,
+  bound,
+  token,
+  busy,
+  onMode,
+  refresh,
+  bankCheckout,
+}: Props) {
   const [mode, setMode] = useState<WalletMode>('');
   const [working, setWorking] = useState(true);
   const [error, setError] = useState('');
@@ -143,6 +152,34 @@ export function BillingWallet({ account, bound, token, busy, onMode, refresh }: 
     }
   }
   const locked = working || busy;
+  if (bankCheckout)
+    return (
+      <details className="billing-wallet-box">
+        <summary>Ví riêng của tài khoản Kivuno</summary>
+        {bound && <code className="billing-wallet-address">{bound}</code>}
+        {working && <p role="status">Đang mở ví tài khoản…</p>}
+        <p>
+          Thanh toán QR dùng ngân hàng mô phỏng. Kivuno dùng ví phát hành để ghi biên nhận lên Fuji.
+        </p>
+        {bound && mode === 'embedded' && (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => void act(() => backupWallet(account, bound))}
+          >
+            Tải bản sao lưu mã hóa
+          </button>
+        )}
+        {error && (
+          <p role="alert">
+            {error}{' '}
+            <button type="button" disabled={locked} onClick={() => retry((n) => n + 1)}>
+              Thử lại
+            </button>
+          </p>
+        )}
+      </details>
+    );
   return (
     <section className="billing-wallet-box" aria-label="Ví thanh toán Kivuno">
       <strong>Ví thanh toán Kivuno</strong>

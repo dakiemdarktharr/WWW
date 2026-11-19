@@ -773,6 +773,19 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
                 </button>
               </div>
 
+              {summary?.account?.id === user.id && (
+                <BillingWallet
+                  key={user.id}
+                  account={user.id}
+                  bound={boundWallet}
+                  bankCheckout={bank}
+                  token={bank ? undefined : config?.tokenAddress}
+                  busy={busy !== ''}
+                  onMode={setWalletMode}
+                  refresh={refreshSummary}
+                />
+              )}
+
               {bank && summary?.account?.id === user.id && (
                 <BankCheckout key={user.id} onPaid={refreshSummary} />
               )}
@@ -783,18 +796,6 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
               )}
               {!bank && (
                 <>
-                  {summary?.account?.id === user.id && (
-                    <BillingWallet
-                      key={user.id}
-                      account={user.id}
-                      bound={boundWallet}
-                      token={config?.tokenAddress}
-                      busy={busy !== ''}
-                      onMode={setWalletMode}
-                      refresh={refreshSummary}
-                    />
-                  )}
-
                   <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
                     {(['plus', 'max'] as Plan[]).map((plan) => {
                       const selected = selectedPlan === plan;
