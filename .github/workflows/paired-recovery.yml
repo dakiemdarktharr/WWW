@@ -5,8 +5,12 @@ permissions:
 
 jobs:
   coordinator:
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
-    timeout-minutes: 16
+    timeout-minutes: 18
+    permissions:
+      contents: read
+      actions: write # Dispatch the existing tool-only macOS job on this revision.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -18,8 +22,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright install chromium
-      - name: Connect the isolated test bridge
+      - name: Run Windows Reviews with a paired Mac
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIVUNO_PAIRED_RECOVERY: '1'
+          KIVUNO_CROSS_HOST_PORT: '58174'
+          KIVUNO_RECOVERY_EVIDENCE_DIR: ${{ runner.temp }}/recovery-evidence
         run: |
           $bin = Join-Path $env:RUNNER_TEMP 'kivuno-fixture-cloudflared.exe'
           $log = Join-Path $env:RUNNER_TEMP 'kivuno-fixture-tunnel.log'
@@ -27,33 +36,27 @@ jobs:
           if ((Get-FileHash -LiteralPath $bin).Hash -ne '341deda3db5ec498a0482254d6c38c0b7cf01a30c37bb5dd95d2216d08955e35') { throw 'Unexpected tunnel binary digest' }
           if (Get-NetTCPConnection -LocalPort 58174 -State Listen -ErrorAction SilentlyContinue) { throw 'Test bridge port already in use' }
           $tunnel = Start-Process -FilePath $bin -WindowStyle Hidden -PassThru -RedirectStandardError $log -ArgumentList @('tunnel','--no-autoupdate','--protocol','http2','--url','http://127.0.0.1:58174')
-          "KIVUNO_TUNNEL_PID=$($tunnel.Id)" >> $env:GITHUB_ENV
-          $deadline = (Get-Date).AddSeconds(70)
-          do {
-            Start-Sleep -Seconds 1
-            $origin = [regex]::Match((Get-Content -LiteralPath $log -Raw) -as [string], 'https://[a-z0-9-]+\.trycloudflare\.com').Value
-          } until ($origin -or $tunnel.HasExited -or (Get-Date) -gt $deadline)
-          if (!$origin) { throw 'Unable to establish the cross-host fixture tunnel' }
-          "KIVUNO_CROSS_HOST_ORIGIN=$origin" >> $env:GITHUB_ENV
-          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'origin.txt') -Value $origin
-      - uses: actions/upload-artifact@v7
-        with:
-          name: recovery-origin-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/origin.txt
-          retention-days: 1
-      - name: Verify receipt recovery in Windows Reviews
-        env:
-          KIVUNO_PAIRED_RECOVERY: '1'
-          KIVUNO_CROSS_HOST_PORT: '58174'
-          KIVUNO_RECOVERY_EVIDENCE_DIR: ${{ runner.temp }}/recovery-evidence
-        run: node --import tsx --test --test-name-pattern "Windows Reviews recovers" tests/machine-execution.test.ts
-      - name: Close the fixture tunnel
-        if: always()
-        shell: pwsh
-        run: |
-          if ($env:KIVUNO_TUNNEL_PID) {
-            $tunnel = Get-Process -Id $env:KIVUNO_TUNNEL_PID -ErrorAction SilentlyContinue
-            if ($tunnel -and $tunnel.Path -eq (Join-Path $env:RUNNER_TEMP 'kivuno-fixture-cloudflared.exe')) { $tunnel.Kill() }
+          try {
+            $deadline = (Get-Date).AddSeconds(90)
+            do {
+              Start-Sleep -Seconds 1
+              $diagnostic = [string](Get-Content -LiteralPath $log -Raw)
+              $origin = [regex]::Match($diagnostic, 'https://[a-z0-9-]+\.trycloudflare\.com').Value
+              $registered = $diagnostic -match 'Registered tunnel connection'
+            } until (($origin -and $registered) -or $tunnel.HasExited -or (Get-Date) -gt $deadline)
+            if (!$origin -or !$registered) { throw 'Fixture tunnel failed to register a connection' }
+            $env:KIVUNO_CROSS_HOST_ORIGIN = $origin
+            $env:KIVUNO_MAC_WORKFLOW_REF = "$env:GITHUB_REPOSITORY/.github/workflows/ci.yml@$env:GITHUB_REF"
+            $macRun = gh workflow run ci.yml --ref main -f platform=paired-macos -f "paired_origin=$origin"
+            if ($LASTEXITCODE -or $macRun -notmatch '/actions/runs/(\d+)') { throw 'Could not identify the dispatched Mac run' }
+            $env:KIVUNO_MAC_RUN_ID = $Matches[1]
+            "Paired Mac run: $macRun" >> $env:GITHUB_STEP_SUMMARY
+            Remove-Item Env:\GH_TOKEN
+            node --import tsx --test --test-name-pattern "Windows Reviews recovers" tests/machine-execution.test.ts
+            if ($LASTEXITCODE) { throw 'Cross-host check failed' }
+          } finally {
+            if (!$tunnel.HasExited) { $tunnel.Kill() }
+            Get-Content -LiteralPath $log -Tail 12
           }
       - uses: actions/upload-artifact@v7
         if: always()
@@ -62,43 +65,3 @@ jobs:
           path: ${{ runner.temp }}/recovery-evidence/
           if-no-files-found: ignore
           retention-days: 30
-
-  mac-runner:
-    runs-on: macos-latest
-    timeout-minutes: 16
-    permissions:
-      contents: read
-      actions: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: npm
-      - run: npm ci
-      - name: Locate the Windows fixture for this workflow run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORIGIN_ARTIFACT: recovery-origin-${{ github.run_attempt }}
-        run: |
-          for i in {1..96}; do
-            if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ORIGIN_ARTIFACT" --dir "$RUNNER_TEMP/paired-origin" 2>/dev/null; then break; fi
-            sleep 5
-          done
-          origin=$(tr -d '\r\n' < "$RUNNER_TEMP/paired-origin/origin.txt")
-          [[ "$origin" =~ ^https://[a-z0-9-]+\.trycloudflare\.com$ ]]
-          for i in {1..36}; do
-            status=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' -X POST "$origin/paired-test/config") || true
-            if [[ "$status" == 403 ]]; then break; fi
-            sleep 2
-          done
-          [[ "$status" == 403 ]]
-          echo "KIVUNO_CROSS_HOST_ORIGIN=$origin" >> "$GITHUB_ENV"
-      - name: Pair the Mac and run Kivuno
-        run: >-
-          node --import tsx --input-type=module -e
-          "import { runCrossHostMac } from './tests/fixtures/shared-sade-cross-host.ts';
-          await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN)"

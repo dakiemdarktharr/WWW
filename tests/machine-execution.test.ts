@@ -504,9 +504,9 @@ if (process.env.KIVUNO_PAIRED_RECOVERY === '1')
       const bridge = await startCrossHostBridge(host, project.id, node, {
         origin: process.env.KIVUNO_CROSS_HOST_ORIGIN!,
         port: Number(process.env.KIVUNO_CROSS_HOST_PORT),
-        workflowRef: process.env.GITHUB_WORKFLOW_REF!,
+        workflowRef: process.env.KIVUNO_MAC_WORKFLOW_REF!,
         sha: process.env.GITHUB_SHA!,
-        runId: process.env.GITHUB_RUN_ID!,
+        runId: process.env.KIVUNO_MAC_RUN_ID!,
         dropExchange(body) {
           if (reopenedAt) return false;
           const receipt = body.events.find(

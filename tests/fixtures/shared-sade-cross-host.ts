@@ -18,6 +18,7 @@ const issuer = 'https://token.actions.githubusercontent.com';
 const bootstrapPath = '/paired-test/config';
 const statusPath = '/paired-test/status';
 const exchangePath = '/api/desktop/bridge/exchange';
+const enrollmentRequired = 'An unused, matching CI identity is required.';
 const key = () => randomBytes(32).toString('base64url');
 
 export function tunnelOrigin(input: string) {
@@ -120,7 +121,7 @@ export async function startCrossHostBridge(
   }
   edge.post(bootstrapPath, { bodyLimit: 256 }, async (request, reply) => {
     if (provisioned || !trusted(request.headers.authorization))
-      return reply.code(403).send({ error: 'An unused, matching CI identity is required.' });
+      return reply.code(403).send({ error: enrollmentRequired });
     provisioned = true;
     reply.header('Cache-Control', 'no-store');
     return {
@@ -196,6 +197,27 @@ export async function startCrossHostBridge(
 export async function runCrossHostMac(url: string) {
   assert.equal(process.platform, 'darwin');
   const origin = tunnelOrigin(url);
+  const deadline = Date.now() + 90_000;
+  // Wait for the fixture's JSON response; an intermediary can also return a 403.
+  for (;;) {
+    const probe = await fetch(origin + bootstrapPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(5000),
+      redirect: 'error',
+    }).catch(() => undefined);
+    if (
+      probe?.status === 403 &&
+      (await probe.json().catch(() => null))?.error === enrollmentRequired
+    )
+      break;
+    if (Date.now() >= deadline)
+      throw new Error(
+        `Fixture origin did not become ready (last HTTP status ${probe?.status ?? 'unreachable'}).`,
+      );
+    await wait(1500);
+  }
   const tokenUrl = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL!);
   tokenUrl.searchParams.set('audience', origin);
   const oidc = await fetch(tokenUrl, {
