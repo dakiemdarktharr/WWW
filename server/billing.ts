@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { CloudUser } from './cloud-auth.ts';
 import { DomainError, type Store } from './store.ts';
 import { DesktopIdentity } from './desktop-auth.ts';
+import { bankEntitlement } from './bank-checkout.ts';
 
 export const FUJI_CHAIN_ID = 43113;
 export const FUJI_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc';
@@ -33,6 +34,7 @@ const planInterface = new Interface([
   'function usdc() view returns (address)',
   'function treasury() view returns (address)',
   'function usedIntents(bytes32) view returns (bool)',
+  'function subscriptions(address) view returns (uint64 paidUntil,uint8 planId)',
   'event PlanPaid(bytes32 indexed paymentIntentId,address indexed payer,uint8 indexed planId,address token,uint256 amount,uint64 paidUntil)',
 ]);
 
@@ -99,8 +101,14 @@ function unixSeconds(value: number) {
   return Math.floor(value / 1000);
 }
 
+function latestEntitlement(store: Store, userId: string) {
+  const chain = store.lookup<Entitlement>('billingEntitlement', userId);
+  const bank = bankEntitlement(store, userId);
+  return bank && (!chain || bank.latestPaidAt >= Date.parse(chain.updatedAt)) ? bank : chain;
+}
+
 function tierFor(store: Store, userId: string, now = Date.now()): Tier {
-  const entitlement = store.lookup<Entitlement>('billingEntitlement', userId);
+  const entitlement = latestEntitlement(store, userId);
   return entitlement && entitlement.paidUntil > now ? entitlement.tier : 'free';
 }
 
@@ -166,6 +174,32 @@ export function registerBillingRoutes(
     map.set(key, window);
   };
   const findBinding = (userId: string) => store.lookup<BillingWallet>('billingWallet', userId);
+  const requireCurrentPayer = (userId: string, payer: string) => {
+    if (findBinding(userId)?.address !== payer)
+      throw new DomainError('The linked wallet changed. Reload billing before continuing.', 409);
+  };
+  // Unsubmitted intents can be abandoned. Once Fuji has advanced beyond their
+  // expiry, no further transaction can settle them within the accepted window.
+  const pendingThrough = (userId: string, payer: string) => {
+    if (tierFor(store, userId) !== 'free')
+      throw new DomainError('Wait until the current paid term ends before changing wallets.', 409);
+    let latestExpiry = 0;
+    for (const intent of store.all<PaymentIntent>('billingIntent')) {
+      if (intent.ownerId === userId && intent.payer === payer && intent.status === 'pending')
+        latestExpiry = Math.max(latestExpiry, intent.expiresAt);
+    }
+    if (latestExpiry > Date.now())
+      throw new DomainError('Verify the pending payment or wait for its intent to expire.', 409);
+    return latestExpiry;
+  };
+  const readSubscription = async (contract: string, payer: string, block: number) => {
+    const data = await provider.call({
+      to: contract,
+      data: planInterface.encodeFunctionData('subscriptions', [payer]),
+      blockTag: block,
+    });
+    return planInterface.decodeFunctionResult('subscriptions', data);
+  };
   const profileLimit = (userId: string): number | null => {
     const tier = tierFor(store, userId);
     return tier === 'max' ? null : tier === 'plus' ? 10 : 3;
@@ -214,10 +248,27 @@ export function registerBillingRoutes(
     };
   };
 
+  // The matching encrypted wallet lives on the customer's device. Neither half alone signs.
+  app.post('/api/billing/wallet/unlock', async (request, reply) => {
+    const user = await userFor(request);
+    const input = z.object({ accountId: z.string() }).strict().parse(request.body);
+    if (input.accountId !== user.id) throw new DomainError('Wallet account changed.', 403);
+    reply.header('Cache-Control', 'no-store');
+    const record = store.transaction(
+      () =>
+        store.lookup<{ id: string; wrappingKey: string }>('billingWalletSeal', user.id) ??
+        store.put('billingWalletSeal', {
+          id: user.id,
+          wrappingKey: hexlify(randomNodeBytes(32)),
+        }),
+    );
+    return { accountId: user.id, wrappingKey: record.wrappingKey };
+  });
+
   app.get('/api/billing/summary', async (request) => {
     const user = await userFor(request);
     const binding = findBinding(user.id);
-    const entitlement = store.lookup<Entitlement>('billingEntitlement', user.id);
+    const entitlement = latestEntitlement(store, user.id);
     return {
       account: user,
       wallet: binding?.address || null,
@@ -233,7 +284,8 @@ export function registerBillingRoutes(
         tokenDecimals: 6,
         contractAddress: contractAddress || null,
         treasuryAddress,
-        available: await configured(),
+        available:
+          (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),
       },
     };
   });
@@ -519,6 +571,7 @@ export function registerBillingRoutes(
     }
     if (signer !== challenge.address)
       throw new DomainError('Signature does not match the new wallet.', 403);
+    let checkedThrough = 0;
     if (
       challenge.currentAddress &&
       challenge.currentAddress.toLowerCase() !== challenge.address.toLowerCase()
@@ -538,6 +591,25 @@ export function registerBillingRoutes(
       }
       if (oldSigner.toLowerCase() !== challenge.currentAddress.toLowerCase())
         throw new DomainError('Current wallet signature does not match.', 403);
+      const lastExpiry = pendingThrough(user.id, challenge.currentAddress);
+      if (contractAddress) {
+        if (!(await configured()))
+          throw new DomainError('Cannot verify the old Fuji wallet right now. Retry later.', 503);
+        let end: number;
+        try {
+          const block = await provider.getBlock('latest');
+          if (!block) throw new Error('Missing Fuji block');
+          checkedThrough = block.timestamp * 1000;
+          const subscription = await readSubscription(contractAddress, oldSigner, block.number);
+          end = Number(subscription[0]) * 1000;
+        } catch {
+          throw new DomainError('Cannot verify the old Fuji subscription. Retry later.', 503);
+        }
+        if (end > checkedThrough)
+          throw new DomainError('The old wallet still has an active Fuji subscription.', 409);
+      } else if (lastExpiry) {
+        throw new DomainError('Fuji must be configured to check the previous payment.', 503);
+      }
     }
     store.transaction(() => {
       const latest = store.lookup<WalletChallenge>('billingWalletChallenge', input.challengeId);
@@ -558,8 +630,15 @@ export function registerBillingRoutes(
       );
       if (claimed && claimed.ownerId !== user.id)
         throw new DomainError('This wallet is already linked to another Kivuno account.', 409);
-      if (previous && previous.address.toLowerCase() !== challenge.address.toLowerCase())
+      if (previous && previous.address.toLowerCase() !== challenge.address.toLowerCase()) {
+        const lastExpiry = pendingThrough(user.id, previous.address);
+        if (lastExpiry && unixSeconds(lastExpiry) >= unixSeconds(checkedThrough))
+          throw new DomainError(
+            'Wait for Fuji to confirm the previous payment window closed.',
+            409,
+          );
         store.remove('billingWalletIndex', previous.address.toLowerCase());
+      }
       const binding: BillingWallet = {
         id: user.id,
         ownerId: user.id,
@@ -609,7 +688,10 @@ export function registerBillingRoutes(
       expiresAt,
       status: 'pending',
     };
-    store.put('billingIntent', intent);
+    store.transaction(() => {
+      requireCurrentPayer(user.id, intent.payer);
+      store.put('billingIntent', intent);
+    });
     return reply.code(201).send({
       id,
       plan: intent.plan,
@@ -640,6 +722,7 @@ export function registerBillingRoutes(
         );
       return { status: 'verified', verified: true, txHash: intent.txHash };
     }
+    requireCurrentPayer(user.id, intent.payer);
     if (!(await configured())) throw new DomainError('Fuji payment contract is unavailable.', 503);
     let transaction;
     let receipt;
@@ -653,14 +736,17 @@ export function registerBillingRoutes(
     }
     if (!transaction || !receipt) {
       if (Date.now() > intent.expiresAt + 10 * 60_000)
-        throw new DomainError(
-          'No Fuji transaction was confirmed before this payment intent expired.',
-          410,
-        );
+        return reply.code(410).send({
+          code: 'PAYMENT_EXPIRED',
+          error: 'No Fuji transaction was confirmed before this payment intent expired.',
+        });
       return reply.code(202).send({ status: 'pending', verified: false });
     }
     if (receipt.status !== 1)
-      throw new DomainError('The Fuji transaction failed; no entitlement was granted.', 409);
+      return reply.code(409).send({
+        code: 'PAYMENT_REVERTED',
+        error: 'The Fuji transaction failed; no entitlement was granted.',
+      });
     const expectedContract = getAddress(intent.contract);
     if (
       Number(transaction.chainId) !== FUJI_CHAIN_ID ||
@@ -756,16 +842,7 @@ export function registerBillingRoutes(
     if (!planInterface.decodeFunctionResult('usedIntents', intentUsed)[0])
       throw new DomainError('The payment contract did not mark this intent as used.', 403);
     const syncedBlock = await provider.getBlockNumber();
-    const currentSubscription = await provider.call({
-      to: expectedContract,
-      data: new Interface([
-        'function subscriptions(address) view returns (uint64 paidUntil,uint8 planId)',
-      ]).encodeFunctionData('subscriptions', [intent.payer]),
-      blockTag: syncedBlock,
-    });
-    const subscription = new Interface([
-      'function subscriptions(address) view returns (uint64 paidUntil,uint8 planId)',
-    ]).decodeFunctionResult('subscriptions', currentSubscription);
+    const subscription = await readSubscription(expectedContract, intent.payer, syncedBlock);
     const livePaidUntil = Number(subscription[0]);
     const livePlanId = Number(subscription[1]);
     if (livePaidUntil <= Date.now() / 1000 || (livePlanId !== 1 && livePlanId !== 2))
@@ -786,6 +863,7 @@ export function registerBillingRoutes(
           );
         return;
       }
+      requireCurrentPayer(user.id, latestIntent.payer);
       const existingPayment = store.lookup<{ id: string; intentId: string }>(
         'billingPayment',
         paymentKey,

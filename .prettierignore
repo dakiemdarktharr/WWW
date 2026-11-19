@@ -2,6 +2,7 @@ node_modules
 dist
 .local
 .relay
+.relay-fuji-demo
 .playwright-mcp
 package-lock.json
 .cloud

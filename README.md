@@ -40,6 +40,8 @@ Mở **http://127.0.0.1:4317**. Trên Windows, có thể chạy `start-relay.cmd
 
 Phát triển giao diện: `npm run dev`, rồi mở http://127.0.0.1:5173. Chạy kiểm thử: `npm test`. Kiểm tra cả TypeScript, tests và build: `npm run check`.
 
+**Demo mua gói bằng QR.** Chạy `npm run dev:fuji-demo`, mở [trang mua gói](http://127.0.0.1:5173/billing) và chọn Plus hoặc Max. Ngân hàng mô phỏng hiển thị số VND và mã đơn. Sau khi bạn xác nhận, Kivuno đối soát, cấp gói và cho phép kiểm chứng biên nhận trên EVM cục bộ. [Hướng dẫn demo QR](docs/KIVUNO-BANK-DEMO.md) · [Luồng test USDC riêng trên Avalanche Fuji](docs/KIVUNO-FUJI-DEPLOYMENT.md).
+
 Nếu Node hệ thống cũ, chạy công cụ bằng runtime riêng:
 
 ```sh

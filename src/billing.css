@@ -371,6 +371,31 @@
   color: var(--bill-mint);
 }
 
+.billing-wallet-box {
+  margin-block: 18px;
+  padding: 16px;
+  border: 1px solid rgb(185 221 233 / 14%);
+  border-radius: 12px;
+  min-width: 0;
+}
+.billing-wallet-box p {
+  margin: 8px 0;
+  font-size: 13px;
+}
+.billing-wallet-box summary {
+  cursor: pointer;
+  padding-block: 8px;
+}
+.billing-wallet-address {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.billing-wallet-box a {
+  color: var(--bill-mint);
+}
+.billing-wallet-box input {
+  max-width: 100%;
+}
 .billing-wallet-row {
   min-height: 66px;
   padding: 10px 0;
@@ -1042,6 +1067,48 @@
   .billing-footer {
     gap: 8px;
   }
+}
+
+.bank-plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.bank-plan-list .bank-plan {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  height: auto;
+  padding: 16px;
+  text-align: left;
+}
+.bank-plan strong,
+.bank-total {
+  font-size: 1.3rem;
+}
+.bank-qr {
+  display: block;
+  width: min(230px, 100%);
+  height: auto;
+  margin: 16px 0;
+  image-rendering: pixelated;
+}
+.bank-checkout .billing-primary {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  text-decoration: none;
+}
+.bank-checkout .billing-review-details {
+  margin: 18px 0;
+}
+.bank-proof {
+  margin-top: 16px;
+}
+.bank-proof code {
+  display: block;
+  overflow-wrap: anywhere;
 }
 
 @media (prefers-reduced-motion: reduce) {

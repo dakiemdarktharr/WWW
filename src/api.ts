@@ -1,3 +1,12 @@
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
+
 let sessionToken = '';
 let sessionPromise: Promise<void> | null = null;
 let generation = 0;
@@ -53,6 +62,7 @@ export async function api<T>(path: string, body?: unknown, method = 'POST'): Pro
   }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) expired(data);
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok)
+    throw new ApiError(data.error || `Request failed (${response.status})`, data.code);
   return data as T;
 }

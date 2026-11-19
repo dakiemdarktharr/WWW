@@ -1,13 +1,75 @@
-import { defineConfig } from 'vite';
+import { realpathSync } from 'node:fs';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
+
+const localCloudDemo = process.env.RELAY_LOCAL_CLOUD_DEMO === '1';
+const localGatewaySecret = process.env.RELAY_GATEWAY_SECRET || '';
+if (localCloudDemo && localGatewaySecret.length < 32)
+  throw new Error('The local billing demo needs its private Vite-to-server gateway secret.');
+
+const demoRoutes = new Set([
+  '/api/session',
+  '/api/auth/get-session',
+  '/api/auth/sign-in/email',
+  '/api/auth/sign-up/email',
+  '/api/auth/sign-out',
+  '/api/billing/summary',
+  '/api/billing/bank/config',
+  '/api/billing/bank/order',
+  '/api/billing/bank/status',
+  '/api/billing/bank/simulate',
+  '/api/billing/bank/proof',
+  '/api/billing/profiles',
+  '/api/billing/profiles/select',
+  '/api/billing/wallet/unlock',
+  '/api/billing/wallet/challenge',
+  '/api/billing/wallet/bind',
+  '/api/billing/intent',
+  '/api/billing/verify',
+]);
 
 export default defineConfig({
   plugins: [react()],
+  define: { 'import.meta.env.KIVUNO_BANK_DEMO': JSON.stringify(localCloudDemo) },
   server: {
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
-    proxy: { '/api': { target: 'http://127.0.0.1:4317', changeOrigin: true } },
+    fs: {
+      ...(localCloudDemo && {
+        allow: [
+          searchForWorkspaceRoot(process.cwd()),
+          realpathSync('node_modules/@fontsource-variable/geist/files'),
+          realpathSync('node_modules/@fontsource/jetbrains-mono/files'),
+        ],
+      }),
+      deny: [
+        '.env',
+        '.env.*',
+        '*.{crt,pem}',
+        '**/.git/**',
+        '**/.relay*/**',
+        '**/*.db*',
+        '**/*.private.json',
+      ],
+    },
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:4317',
+        changeOrigin: true,
+        ...(localCloudDemo
+          ? {
+              configure(proxy) {
+                proxy.on('proxyReq', (proxyRequest, request) => {
+                  proxyRequest.removeHeader('x-relay-gateway');
+                  if (demoRoutes.has((request.url || '').split('?')[0]))
+                    proxyRequest.setHeader('x-relay-gateway', localGatewaySecret);
+                });
+              },
+            }
+          : {}),
+      },
+    },
   },
   build: { outDir: 'dist', assetsInlineLimit: 0 },
 });

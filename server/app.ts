@@ -23,6 +23,8 @@ import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
 import { registerBillingRoutes } from './billing.ts';
+import { registerBankCheckout } from './bank-checkout.ts';
+import { registerBankProof } from './bank-proof.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -122,7 +124,7 @@ export async function buildApp(
       .header('Cache-Control', 'no-store');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https: http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.avax-test.network; frame-src https: http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     );
     const host = request.headers.host,
       origin = request.headers.origin;
@@ -198,8 +200,14 @@ export async function buildApp(
         '/api/desktop/request',
         '/api/desktop/approve',
         '/api/billing/summary',
+        '/api/billing/bank/config',
+        '/api/billing/bank/order',
+        '/api/billing/bank/status',
+        '/api/billing/bank/simulate',
+        '/api/billing/bank/proof',
         '/api/billing/profiles',
         '/api/billing/profiles/select',
+        '/api/billing/wallet/unlock',
         '/api/billing/wallet/challenge',
         '/api/billing/wallet/bind',
         '/api/billing/intent',
@@ -284,13 +292,13 @@ export async function buildApp(
       const user = options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
-  if (options.cloud)
-    registerBillingRoutes(
-      app,
-      workspace.store,
-      (request) => options.cloud!.auth.currentUser(request.headers),
-      desktopIdentity,
-    );
+  if (options.cloud) {
+    const auth = options.cloud.auth;
+    const currentUser = (request: FastifyRequest) => auth.currentUser(request.headers);
+    registerBillingRoutes(app, workspace.store, currentUser, desktopIdentity);
+    registerBankCheckout(app, workspace.store, currentUser);
+    registerBankProof(app, workspace.store, currentUser);
+  }
   registerAegisRoutes(app, workspace.aegis);
   if (!options.cloud) registerExternalRoutes(app, external);
   app.get('/api/desktop/release', async () => {
@@ -405,7 +413,7 @@ export async function buildApp(
       sessions.set(key, session);
       reply.header(
         'Set-Cookie',
-        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${options.cloud ? '; Secure' : ''}`,
+        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${options.cloud?.origin.startsWith('https:') ? '; Secure' : ''}`,
       );
     }
     return { token: session.token };

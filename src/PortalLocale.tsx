@@ -121,6 +121,7 @@ const english: Record<string, string> = {
   'Đã kết nối': 'Connected',
   'Đóng đăng nhập': 'Close sign-in',
   'Tên của bạn': 'Your name',
+  'Gói Kivuno': 'Kivuno plans',
   'Tài khoản workspace hiện tại': 'Existing workspace account',
   'Mật khẩu': 'Password',
   'Mật khẩu chủ workspace': 'Workspace owner password',

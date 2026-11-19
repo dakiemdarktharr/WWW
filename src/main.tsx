@@ -17,7 +17,15 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       {window.relayDesktop ? (
         <DesktopGate />
       ) : window.location.pathname === '/billing' ? (
-        <Billing />
+        <Billing
+          rail={
+            import.meta.env.DEV &&
+            import.meta.env.KIVUNO_BANK_DEMO &&
+            new URLSearchParams(location.search).get('demo') !== 'fuji'
+              ? 'bank'
+              : 'fuji'
+          }
+        />
       ) : ['localhost', '127.0.0.1', '[::1]', '::1'].includes(window.location.hostname) &&
         !new URLSearchParams(location.search).has('portal') ? (
         <App />
