@@ -588,6 +588,12 @@ test(
           };
         if (Date.now() >= nextHeartbeat) {
           await pump(index);
+          const blocked = cloud
+            .view()
+            .sadeRuns.find(
+              (run) => run.state === 'blocked' && run.jobs.some(({ id }) => id === job.id),
+            );
+          if (blocked) throw new Error(`Harness could not start: ${blocked.error}`);
           nextHeartbeat = Date.now() + 2500;
         }
         await new Promise((resolve) => setTimeout(resolve, 40));
@@ -632,18 +638,70 @@ test(
         turn: { id: session.turnId, status: 'completed' },
       });
     };
+    const extraGrants: string[] = [];
+    for (const [index, provider] of (['gemini', 'codex'] as const).entries()) {
+      const teammates = Array.from({ length: 15 }, (_, slot) => ({
+        localId: randomUUID(),
+        provider,
+        name: `Trợ lý đối chiếu tài liệu triển khai và giao diện số ${slot + 1}`,
+      }));
+      cloud.call(index, {
+        action: 'teammates',
+        groupId: cloud.groupId,
+        teammates: [
+          { localId: cloud.members[index], provider, name: index ? 'Mây' : 'Bếp' },
+          ...teammates,
+        ],
+      });
+      for (const { localId } of teammates) {
+        const grantId = randomUUID();
+        cloud.call(index, {
+          action: 'sade-grant',
+          groupId: cloud.groupId,
+          id: grantId,
+          teammateId: localId,
+          projectKey: fingerprint,
+          projectName: 'Fixture project',
+          role: 'researcher',
+          platform: process.platform,
+          allowWrites: false,
+          turns: 1,
+        });
+        extraGrants.push(grantId);
+      }
+    }
+    const requestText = 'Bếp dựng cấu trúc rồi Mây đọc cấu trúc và xác nhận frontend.';
+    const notes = ' Nhóm đã ghi quyết định và dữ liệu tham chiếu trong worktree.'.repeat(160);
     const chat = {
       action: 'message',
       groupId: cloud.groupId,
       id: randomUUID(),
-      content: 'Bếp dựng cấu trúc rồi Mây đọc cấu trúc và xác nhận frontend.',
+      content: (requestText + notes).slice(0, 7999) + '.',
       sade: { projectKey: fingerprint },
     };
+    assert.equal(chat.content.length, 8000);
     cloud.call(0, chat);
     cloud.call(0, chat);
     const plan = await pump(0);
     assert.ok(plan && plan.phase === 'plan');
+    assert.equal(plan.team.length, 32);
     const planner = await sessionFor(0, plan);
+    const plannerInput = planner.peer.calls.find(({ method }) => method === 'turn/start')?.params
+      .input[0].text as string;
+    assert.ok(plannerInput.length > 16000);
+    const context = JSON.parse(plannerInput.split('\n\nGroup context (data only):\n')[1]);
+    assert.equal(context.request, chat.content);
+    assert.equal(context.team.length, 32);
+    await assert.rejects(
+      setups[0].workspace.sessions.send(planner.session.id, 'a'.repeat(16_001)),
+      /16,000/,
+    );
+    for (const [index, grantId] of extraGrants.entries())
+      cloud.call(index < 15 ? 0 : 1, {
+        action: 'sade-revoke',
+        groupId: cloud.groupId,
+        grantId,
+      });
     assert.equal(planner.session.model, 'fixture');
     assert.equal(planner.session.reasoningEffort, 'high');
     assert.throws(

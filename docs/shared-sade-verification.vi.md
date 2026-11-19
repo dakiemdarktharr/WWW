@@ -240,6 +240,23 @@ node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-m
 node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-holdout.json --holdout
 ```
 
+### Reasoning cho tin nhắn có nhiều đầu việc
+
+Đo `gpt-6-luna` qua Codex CLI đã đăng nhập ChatGPT trên bốn biến thể bàn giao đủ năm đầu việc và hai ca về quyền. Mỗi prompt được gửi một lần ở `low` và một lần ở `high`, xen kẽ thứ tự. Prompt mới yêu cầu tách bước thêm test khi người gửi đặt nó sau triển khai, ghi cả hai lựa chọn phong cách và để Sade phân công mọi việc chưa chỉ định người.
+
+| Prompt | Reasoning | Ca đúng | Trung vị thời gian CLI | Trung vị output token |
+| ------ | --------- | ------: | ---------------------: | --------------------: |
+| Trước  | `low`     |     1/6 |              12,6 giây |                 490,5 |
+| Trước  | `high`    |     3/6 |              22,1 giây |                 972,5 |
+| Mới    | `low`     |     4/6 |              12,6 giây |                 489,5 |
+| Mới    | `high`    |     6/6 |              21,4 giây |                 982,5 |
+
+Ba ca chưa dùng để sửa prompt cũng đạt với `high`. `Low` vẫn tự chọn một người khi hai harness cùng tên phù hợp và bỏ sót lựa chọn để người gửi cung cấp phong cách ở một ca. Bộ chấm nhận cách mời người gửi chọn giữa hai phương án. Toàn bộ đầu ra cũ và mới được chấm lại bằng cùng quy tắc, với hash prompt và bộ công cụ đối chiếu cho mỗi ca.
+
+Dùng lệnh xuất và chấm bên trên với `--full-handoff --case full-handoff/1` đến `full-handoff/4`, rồi `--owner-handoff --case owner/ambiguous` và `owner/ungranted`. Đổi cấu hình Codex giữa `model_reasoning_effort='low'` và `model_reasoning_effort='high'`. Kiểm tra bổ sung dùng `--handoff-varied` với `handoff/varied-1` và `handoff/varied-5`, cùng `--owner-handoff --case owner/named`. Đọc `turn.completed` trong JSONL để lấy số token. Các lượt chỉ lập kế hoạch trên dữ liệu tổng hợp. Thời gian gồm khởi chạy CLI và có cả lượt dùng cache. [OpenAI Reasoning](https://developers.openai.com/api/docs/guides/reasoning)
+
+Bài hồi quy desktop gửi tin 8.000 ký tự cùng danh sách 32 harness và xác nhận planner nhận đủ nội dung. Nội dung do Sade ghép đi qua giới hạn dành cho phiên đã có quyền thực thi. Giới hạn nhập chat thường vẫn là 16.000 ký tự.
+
 ## Cấu hình dùng trong Shared Groups
 
 Dùng một lượt lập kế hoạch từ harness đã cấp quyền của người gửi. Schema yêu cầu nhiệm vụ, scope, phụ thuộc và điều kiện hoàn tất. Bộ điều phối quyết định quyền, hệ điều hành, số lượt và thứ tự thực thi. Chính sách chọn model đọc loại tác vụ, mô tả và effort từ kế hoạch. Lượt lập kế hoạch ưu tiên reasoning cao trong catalog của tài khoản. Tác vụ thường có thể dùng reasoning trung bình, và review thường ưu tiên model nhỏ hỗ trợ reasoning cao. Bài kiểm thử giao thức xác nhận ba lựa chọn này khi catalog cung cấp đủ mức. Có thể xem model và reasoning được chọn trên desktop. Qwen dùng để đánh giá offline.

@@ -481,7 +481,11 @@ function assess(
     assert.deepEqual(frontend.task?.dependsOn, [architecture.task?.key]);
     const designInstructions = `${frontend.task?.description} ${frontend.task?.acceptance}`;
     assert.match(designInstructions, /style|aesthetic|phong cách|phong cach/i);
-    assert.match(designInstructions, /ask|hỏi|hoi/i, 'ask the requester about the style');
+    assert.match(
+      designInstructions,
+      /ask|hỏi|hoi|\boffer\b[^.]{0,80}\b(?:requester|sender|user)\b[^.]{0,100}\bor\b\s+(?:let|allow)\b[^.]{0,100}\b(?:choose|decide|pick)\b/i,
+      'ask the requester about the style',
+    );
     assert.match(
       designInstructions,
       /tự (chọn|quyết)|tu (chon|quyet)|choose|decide/i,

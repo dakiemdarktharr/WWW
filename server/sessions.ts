@@ -536,8 +536,12 @@ export class SessionManager {
     prompt: string,
     options: { sadeReview?: boolean; sharedSade?: SharedDelivery['phase'] } = {},
   ): Promise<CodexSession> {
-    if (!prompt.trim() || prompt.length > 16000)
-      throw new DomainError('Enter a prompt of up to 16,000 characters.');
+    // Shared Sade composes an approved message with the roster, task and evidence.
+    const promptLimit = options.sharedSade ? 128_000 : 16_000;
+    if (!prompt.trim() || prompt.length > promptLimit)
+      throw new DomainError(
+        `Enter a prompt of up to ${promptLimit.toLocaleString('en-US')} characters.`,
+      );
     if (this.busy.has(id)) throw new DomainError('This session is already starting or stopping.');
     const initial = this.get(id);
     if (initial.external)
@@ -560,11 +564,12 @@ export class SessionManager {
     if (this.legacy(id))
       throw new DomainError('Pause the workflow turn before taking over its session.');
     const originalTask = this.host.store.get<Task>('task', initial.taskId);
-    if (originalTask.sharedSadeJobId) {
-      if (!options.sharedSade)
-        throw new DomainError('Shared Sade jobs can start only from the owning desktop queue.');
+    if (options.sharedSade) {
+      if (!originalTask.sharedSadeJobId)
+        throw new DomainError('This session has no Shared Sade delivery.');
       this.host.sharedSade.assertCurrent(originalTask.sharedSadeJobId);
-    }
+    } else if (originalTask.sharedSadeJobId)
+      throw new DomainError('Shared Sade jobs can start only from the owning desktop queue.');
     if (originalTask.reviewOfTaskId && !options.sadeReview)
       throw new DomainError('Use Retry review on the source task to review its current snapshot.');
     if (originalTask.phase === 'proposal' || originalTask.phase === 'plan')
