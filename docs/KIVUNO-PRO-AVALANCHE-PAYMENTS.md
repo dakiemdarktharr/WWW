@@ -190,7 +190,7 @@ Nghiên cứu nên làm sau demo: phỏng vấn 5–8 người dùng hiện hữ
 | 6. Security review      | Solidity, authorization, key storage, API, event processing, UX                                      | Independent reviewer; address all findings and record remaining risk             |
 | 7. Fuji demo            | Deploy/test only after values and wallet configured; no real funds                                   | Verify published address/receipt/event; test complete purchase→entitlement→quota |
 | 8. Handoff              | Setup, architecture, limitations, video script, rubric evidence                                      | Reproducible setup; label inherited vs new work; do not submit externally        |
-| 9. Release              | Test/build/lint/security scan, inspect diff, verify Git identity/remote                              | Commit/push `main` only after requested checks and identity verification         |
+| 9. Release              | Local typecheck, build and focused tests pass; Git identity verified; source pushed to `main`        | Cloud deploy and on-chain Fuji demo remain separate gates                        |
 
 Chưa deploy contract hoặc app. Vercel CLI chưa được cài; nên cài `npm i -g vercel` để mở các thao tác `vercel env pull`, deploy và logs khi cấu hình cloud billing. Không deploy mainnet hoặc dùng tài sản có giá trị thật trong phạm vi này.
 
@@ -247,6 +247,6 @@ Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; khô
 - Fuji USDC/chain ID đã xác định; live RPC trả `USD Coin`, version `2`, decimals `6`. Contract Fuji-only, compiler, backend payment API, UI Plus/Max và quota profile/group đã có trong source.
 - Kiểm tra local ngày 19/11/2026: typecheck, Prettier trên file hỗ trợ, build Vite/cloud, compile Solidity Cancun/Shanghai và 10 kiểm thử billing/contract/collaboration đều qua. Toàn bộ suite trước đó có 328 pass, 1 skip; sau thay đổi UI gần nhất đã chạy lại các nhóm liên quan.
 - Ví deployer/treasury do người dùng cung cấp là `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`. RPC Fuji cho thấy ví này có 0 AVAX và 0 USDC tại lần kiểm tra cuối.
-- Builder Hub báo nhận 0.5 AVAX, nhưng UI đang ký bằng Console Wallet nội bộ của Builder Hub (đuôi địa chỉ hiển thị `073F`), không phải ví deployer. Ví Console nội bộ đã tắt; không dùng số dư này để deploy. Core Extension Store đang mở trong Edge để người dùng kết nối đúng ví.
-- Còn lại: kết nối Core Extension tới Builder Hub bằng tài khoản có địa chỉ đuôi `2805`; nhận Fuji AVAX và Fuji test USDC vào đúng ví; deploy payment contract bằng giao dịch Core do người dùng ký; cấu hình env và deploy cloud; chạy payment end-to-end, kiểm tra receipt/entitlement; sau đó push GitHub.
+- Builder Hub báo nhận 0.5 AVAX, nhưng lần claim đó dùng Console Wallet nội bộ (đuôi địa chỉ hiển thị `073F`), không phải ví deployer. Không dùng số dư này để deploy. Người dùng đã kết nối Core Extension sau đó; địa chỉ được cấp quyền cần đối chiếu trong UI trước giao dịch. RPC Fuji vẫn trả 0 AVAX và 0 USDC cho ví deployer; Builder Hub hiện báo cooldown faucet.
+- Source đã được push trực tiếp lên GitHub `main` trong commit `3b57594` dưới tài khoản `Tienkhoaa2908`. Còn lại: nhận Fuji AVAX và Fuji test USDC vào đúng ví; deploy contract bằng giao dịch Core do người dùng ký; cấu hình env/deploy cloud; chạy payment end-to-end, kiểm tra receipt và entitlement.
 - Vercel CLI chưa cài; cần `npm i -g vercel` nếu dùng CLI để kéo env, deploy và đọc logs. Chưa có triển khai mainnet, thu tiền thật, submission cuộc thi hay audit độc lập.
