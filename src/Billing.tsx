@@ -237,6 +237,10 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
       try {
         const response = await fetch('/api/auth/get-session', { credentials: 'same-origin' });
         const body = await readJson(response);
+        if (response.status === 429)
+          throw new Error(
+            'Có nhiều yêu cầu đăng nhập từ máy này. Chờ một phút rồi tải lại trang để tiếp tục với đơn hiện tại.',
+          );
         if (!response.ok) throw new Error('Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.');
         const account = body.user as AuthUser | null | undefined;
         if (!mounted) return;

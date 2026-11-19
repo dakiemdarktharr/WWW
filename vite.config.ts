@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+import { realpathSync } from 'node:fs';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const localCloudDemo = process.env.RELAY_LOCAL_CLOUD_DEMO === '1';
@@ -35,6 +36,13 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     fs: {
+      ...(localCloudDemo && {
+        allow: [
+          searchForWorkspaceRoot(process.cwd()),
+          realpathSync('node_modules/@fontsource-variable/geist/files'),
+          realpathSync('node_modules/@fontsource/jetbrains-mono/files'),
+        ],
+      }),
       deny: [
         '.env',
         '.env.*',
