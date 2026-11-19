@@ -1889,7 +1889,11 @@ test(
       if (packet.delivery) deliveries.push(packet.delivery);
       await worker.execute({
         action: 'exchange',
-        ...packet,
+        active: packet.active,
+        delivery: packet.delivery,
+        reviews: packet.reviews,
+        updates: packet.updates,
+        revisionHandoff: packet.revisionHandoff,
         acknowledged: snapshot.results.map(({ jobId, version }) => ({ jobId, version })),
       });
     }
