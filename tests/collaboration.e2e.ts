@@ -109,9 +109,17 @@ const fixture = async (index: number) => {
   const context = await browser.newContext();
   await context.addInitScript(`
     sessionStorage.setItem('kivuno-guide-v3', 'seen');
+    const reservedProfiles = new Set();
     window.relayDesktop = {
       platform: 'win32', version: '0.8.5', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: ${JSON.stringify(user)}, cloudOrigin: location.origin }),
       prepareProvider: async (provider) => ({ provider, available: true }),
+      profiles: async ({action, profileId}) => {
+        if (action === 'sync') return { lockedIds: [] };
+        if (action === 'reserve') { reservedProfiles.add(profileId); return { reserved: true }; }
+        if (action === 'release') { reservedProfiles.delete(profileId); return { released: true }; }
+        if (action === 'commit' && reservedProfiles.delete(profileId)) return { committed: true };
+        throw new Error('Missing profile reservation in the desktop fixture');
+      },
       onStatus: () => () => {}, getWindowState: async () => ({ maximized: false, fullscreen: false }), onWindowState: () => () => {}, controlWindow: async () => ({}),
       groups: async (input) => {
         const response = await fetch('/__groups', { method: 'POST', body: JSON.stringify(input) });

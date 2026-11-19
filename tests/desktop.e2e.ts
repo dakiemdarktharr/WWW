@@ -22,6 +22,7 @@ let sharedPolls = 0;
 const rosterCapabilities: unknown[] = [];
 const sharedGrantPages: string[][] = [];
 let sharedGrantCursorSentToCloud = false;
+const reservedProfiles = new Map<string, Set<string>>();
 const reportedSharedJobs: string[] = [];
 let releaseFirstSharedFinish!: () => void;
 const firstSharedFinish = new Promise<void>((resolve) => {
@@ -62,6 +63,23 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/me') {
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
     response.end(JSON.stringify(identity));
+  } else if (request.url === '/api/desktop/profiles') {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    const reserved = reservedProfiles.get(accountId) || new Set<string>();
+    reservedProfiles.set(accountId, reserved);
+    if (payload.action === 'reserve') {
+      reserved.add(payload.profileId);
+      response.end(JSON.stringify({ reserved: true, locked: false }));
+    } else if (payload.action === 'commit' || payload.action === 'release') {
+      if (payload.action === 'commit') assert.ok(reserved.has(payload.profileId));
+      reserved.delete(payload.profileId);
+      response.end(
+        JSON.stringify({ [payload.action === 'commit' ? 'committed' : 'released']: true }),
+      );
+    } else {
+      assert.equal(payload.action, 'sync');
+      response.end(JSON.stringify({ lockedIds: [] }));
+    }
   } else if (request.url === '/api/desktop/bridge/poll') {
     bridgePolls++;
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
@@ -359,7 +377,25 @@ try {
       },
       { route, body },
     );
-  const member = await post('/members', { name: 'Browser fixture', role: 'researcher' });
+  const addProfile = async (
+    name: string,
+    role: 'researcher' | 'engineer',
+    provider: 'codex' | 'claude' | 'antigravity' = 'codex',
+  ) => {
+    const metadata = { profileId: randomUUID(), name, provider };
+    await page.evaluate(
+      (input) => (window as any).relayDesktop.profiles({ action: 'reserve', ...input }),
+      metadata,
+    );
+    const member = await post('/members', { ...metadata, role });
+    await page.evaluate(
+      (input) => (window as any).relayDesktop.profiles({ action: 'commit', ...input }),
+      metadata,
+    );
+    assert.equal(member.id, metadata.profileId);
+    return member;
+  };
+  const member = await addProfile('Browser fixture', 'researcher');
   const project = await post('/hackathons', {
     memberId: member.id,
     name: 'Browser test project',
@@ -446,11 +482,7 @@ try {
   // Both real-client connection types use scoped local MCP, not native model dispatch.
   for (const provider of ['claude', 'antigravity'] as const) {
     const label = provider === 'claude' ? 'Claude' : 'Antigravity';
-    const external = await post('/members', {
-      name: `${label} local`,
-      role: 'engineer',
-      provider,
-    });
+    const external = await addProfile(`${label} local`, 'engineer', provider);
     await page.evaluate(
       async ({ projectId, memberId }) => {
         const { token } = await (await fetch('/api/session')).json();
@@ -544,7 +576,7 @@ try {
   assert.equal(bob.members.length, 0);
   assert.equal(bob.projects.length, 0);
   assert.notEqual(bob.runtime.dataDir, state.runtime.dataDir);
-  await post('/members', { name: 'Only Bob', role: 'researcher' });
+  await addProfile('Only Bob', 'researcher');
   const bobOrigin = new URL(page.url()).origin;
   await page.evaluate(() => {
     void (window as any).relayDesktop.signOut();
