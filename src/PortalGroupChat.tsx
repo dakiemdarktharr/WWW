@@ -102,10 +102,24 @@ export default function PortalGroupChat() {
   const [announcement, setAnnouncement] = useState({ vi: '', en: '' });
   const section = useRef<HTMLElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
+  const transcriptContent = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
   const messageId = useRef(0);
   const reducedWasApplied = useRef(false);
   const finished = progress >= conversation.length;
   const playing = !paused && !reduced && !finished;
+
+  function follow(value: boolean) {
+    followingRef.current = value;
+    setFollowing(value);
+  }
+
+  function scrollToLatest() {
+    const element = transcript.current;
+    if (!followingRef.current || !element) return;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight > 1)
+      element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
+  }
 
   useEffect(() => {
     const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
@@ -140,10 +154,14 @@ export default function PortalGroupChat() {
   }, [progress, playing, visible]);
 
   useEffect(() => {
-    const element = transcript.current;
-    if (!following || !element) return;
-    element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
+    scrollToLatest();
   }, [messages, following, locale]);
+
+  useEffect(() => {
+    const observer = new ResizeObserver(scrollToLatest);
+    if (transcriptContent.current) observer.observe(transcriptContent.current);
+    return () => observer.disconnect();
+  }, []);
 
   function replay() {
     setMessages(reduced ? conversation : [conversation[0]]);
@@ -151,7 +169,7 @@ export default function PortalGroupChat() {
     setPaused(!!reduced);
     setApproved(false);
     setDraft('');
-    setFollowing(true);
+    follow(true);
     setAnnouncement({ vi: 'Đã bắt đầu lại mô phỏng.', en: 'The demo has restarted.' });
   }
 
@@ -161,7 +179,7 @@ export default function PortalGroupChat() {
     if (!text) return;
     const id = ++messageId.current;
     setPaused(true);
-    setFollowing(true);
+    follow(true);
     setMessages((current) => [
       ...current,
       { id: `local-${id}`, actor: 'you', vi: text, en: text },
@@ -180,7 +198,7 @@ export default function PortalGroupChat() {
     if (approved) return;
     setApproved(true);
     setPaused(true);
-    setFollowing(true);
+    follow(true);
     setMessages((current) => [
       ...current,
       {
@@ -310,102 +328,104 @@ export default function PortalGroupChat() {
               tabIndex={0}
               onScroll={(event) => {
                 const element = event.currentTarget;
-                setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 65);
+                follow(element.scrollHeight - element.scrollTop - element.clientHeight < 65);
               }}
             >
-              <div className="kg-day">
-                {copy('HÔM NAY · MỘT MỤC TIÊU CHUNG', 'TODAY · ONE SHARED GOAL')}
-              </div>
-              {messages.map((message, index) => {
-                const actor = participants.find((person) => person.id === message.actor);
-                const name = actor?.name || copy('Bạn', 'You');
-                return (
-                  <motion.article
-                    className={`kg-message ${message.actor}`}
-                    key={message.id}
-                    data-demo-message={message.id}
-                    initial={reduced ? false : { opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                  >
-                    <span className={`kg-avatar ${message.actor}`}>
-                      {message.actor === 'sade' ? <Sparkles size={16} /> : name[0]}
-                    </span>
-                    <div className="kg-message-body">
-                      <div className="kg-message-meta">
-                        <strong>{name}</strong>
-                        {actor && <span>{actor.role}</span>}
-                        <time>{`${String(Math.floor((581 + index) / 60) % 24).padStart(2, '0')}:${String((581 + index) % 60).padStart(2, '0')}`}</time>
-                      </div>
-                      <p>
-                        {message[locale]
-                          .split(/(@[\p{L}\w]+)/u)
-                          .map((part, i) =>
-                            part.startsWith('@') ? <mark key={i}>{part}</mark> : part,
-                          )}
-                      </p>
-                      {message.attachment === 'plan' && (
-                        <div className="kg-plan">
-                          <span>
-                            <i className="ari" />
-                            API · Ari
-                          </span>
-                          <span>
-                            <i className="nova" />
-                            UI · Nova
-                          </span>
-                          <span>
-                            <i className="sol" />
-                            Research · Sol
-                          </span>
+              <div className="kg-transcript-content" ref={transcriptContent}>
+                <div className="kg-day">
+                  {copy('HÔM NAY · MỘT MỤC TIÊU CHUNG', 'TODAY · ONE SHARED GOAL')}
+                </div>
+                {messages.map((message, index) => {
+                  const actor = participants.find((person) => person.id === message.actor);
+                  const name = actor?.name || copy('Bạn', 'You');
+                  return (
+                    <motion.article
+                      className={`kg-message ${message.actor}`}
+                      key={message.id}
+                      data-demo-message={message.id}
+                      initial={reduced ? false : { opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <span className={`kg-avatar ${message.actor}`}>
+                        {message.actor === 'sade' ? <Sparkles size={16} /> : name[0]}
+                      </span>
+                      <div className="kg-message-body">
+                        <div className="kg-message-meta">
+                          <strong>{name}</strong>
+                          {actor && <span>{actor.role}</span>}
+                          <time>{`${String(Math.floor((581 + index) / 60) % 24).padStart(2, '0')}:${String((581 + index) % 60).padStart(2, '0')}`}</time>
                         </div>
-                      )}
-                      {message.attachment === 'checkpoint' && (
-                        <div className="kg-checkpoint">
-                          <GitBranch size={17} />
-                          <span>
-                            <strong>auth-checkpoint</strong>
-                            <small>
-                              {copy(
-                                'Context + tests + bước tiếp theo',
-                                'Context + tests + next steps',
-                              )}
-                            </small>
-                          </span>
-                          <Check size={16} />
-                        </div>
-                      )}
-                      {message.attachment === 'review' && (
-                        <div className="kg-review">
-                          <div>
-                            <ShieldCheck size={18} />
+                        <p>
+                          {message[locale]
+                            .split(/(@[\p{L}\w]+)/u)
+                            .map((part, i) =>
+                              part.startsWith('@') ? <mark key={i}>{part}</mark> : part,
+                            )}
+                        </p>
+                        {message.attachment === 'plan' && (
+                          <div className="kg-plan">
                             <span>
-                              <strong>
-                                {copy('Review độc lập hoàn tất', 'Independent review complete')}
-                              </strong>
+                              <i className="ari" />
+                              API · Ari
+                            </span>
+                            <span>
+                              <i className="nova" />
+                              UI · Nova
+                            </span>
+                            <span>
+                              <i className="sol" />
+                              Research · Sol
+                            </span>
+                          </div>
+                        )}
+                        {message.attachment === 'checkpoint' && (
+                          <div className="kg-checkpoint">
+                            <GitBranch size={17} />
+                            <span>
+                              <strong>auth-checkpoint</strong>
                               <small>
                                 {copy(
-                                  'API · Quyền truy cập · Dẫn nguồn',
-                                  'API · Access checks · Citations',
+                                  'Context + tests + bước tiếp theo',
+                                  'Context + tests + next steps',
                                 )}
                               </small>
                             </span>
+                            <Check size={16} />
                           </div>
-                          <button type="button" onClick={approve} disabled={approved}>
-                            {approved ? <CheckCheck size={15} /> : <Check size={15} />}
-                            {approved
-                              ? copy('Đã duyệt bản demo', 'Demo approved')
-                              : copy('Duyệt bản demo', 'Approve demo')}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </motion.article>
-                );
-              })}
+                        )}
+                        {message.attachment === 'review' && (
+                          <div className="kg-review">
+                            <div>
+                              <ShieldCheck size={18} />
+                              <span>
+                                <strong>
+                                  {copy('Review độc lập hoàn tất', 'Independent review complete')}
+                                </strong>
+                                <small>
+                                  {copy(
+                                    'API · Quyền truy cập · Dẫn nguồn',
+                                    'API · Access checks · Citations',
+                                  )}
+                                </small>
+                              </span>
+                            </div>
+                            <button type="button" onClick={approve} disabled={approved}>
+                              {approved ? <CheckCheck size={15} /> : <Check size={15} />}
+                              {approved
+                                ? copy('Đã duyệt bản demo', 'Demo approved')
+                                : copy('Duyệt bản demo', 'Approve demo')}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </motion.article>
+                  );
+                })}
+              </div>
             </div>
             {!following && (
-              <button type="button" className="kg-latest" onClick={() => setFollowing(true)}>
+              <button type="button" className="kg-latest" onClick={() => follow(true)}>
                 <ArrowDown size={14} />
                 {copy('Tin mới nhất', 'Latest messages')}
               </button>

@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 export type PortalLocale = 'vi' | 'en';
 const english: Record<string, string> = {
+  'Rừng hoa tím và lime sau lớp kính khúc xạ, mở ra khoảng trời dịu phía trên.':
+    'A violet and lime flower forest behind refractive glass, with a quiet open sky above.',
   'Nhiều trí tuệ. Một nhịp làm việc.': 'Many minds. One shared rhythm.',
   'Không gian chung cho bạn và đội AI.': 'A shared space for you and your AI team.',
   'Bạn dẫn đội. Cùng nhau làm nên chuyện.': 'You lead. Together, make it happen.',

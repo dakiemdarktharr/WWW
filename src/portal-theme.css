@@ -1,0 +1,650 @@
+/* Website appearance stays independent from the desktop workspace preference. */
+html[data-portal-theme] .kp-theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #7952d54d;
+  border-radius: 50%;
+  background: #e0d2ff;
+  color: #46276f;
+  cursor: pointer;
+}
+html[data-portal-theme] .kp-theme-toggle:hover {
+  background: #d5ff5f;
+  color: #24271a;
+}
+html[data-portal-theme] .kp-theme-toggle:focus-visible {
+  outline: 2px solid #7651c8;
+  outline-offset: 3px;
+}
+.billing-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* Distinct lime and violet accents on the paper canvas. */
+html[data-portal-theme='light'] .kp-story-kicker {
+  color: #6740b2;
+}
+html[data-portal-theme='light'] .kp-sade-visual.glass,
+html[data-portal-theme='light'] .kp-aegis-proof.glass {
+  background: linear-gradient(135deg, #c9afff, #e9ddff 78%);
+  border-color: #a88bfa;
+}
+html[data-portal-theme='light'] .kp-handoff-visual.glass {
+  background: linear-gradient(130deg, #d5ff5f, #edffc4 83%);
+  border-color: #a6c55a;
+}
+html[data-portal-theme='light'] .kp-plans-teaser {
+  background: linear-gradient(110deg, #d5ff5f, #e7ffa4);
+  border-color: #a6c55a;
+}
+html[data-portal-theme='light'] .kg-sidebar {
+  background: linear-gradient(155deg, #d8c5ff, #ece3ff 77%, #e5f6b9);
+}
+html[data-portal-theme='light'] .kg-channel {
+  background: #d5ff5f;
+  border-color: #b4d773;
+}
+html[data-portal-theme='light'] .kg-header {
+  background: #efe7ff;
+}
+html[data-portal-theme='light'] .billing-plan.is-max.is-selected {
+  background: linear-gradient(115deg, #c6aaff, #e5d5ff);
+}
+html[data-portal-theme='light'] .billing-plan.is-selected:not(.is-max) {
+  background: linear-gradient(115deg, #d5ff5f, #edffc1);
+}
+
+/* Dark website foundations and navigation. */
+html[data-portal-theme='dark'] {
+  color-scheme: dark;
+}
+html[data-portal-theme='dark'] .kp-portal {
+  --kp-paper: #101014;
+  --kp-ink: #f8f5ff;
+  --kp-accent: #b69aff;
+  --kp-muted: #c0b4d1;
+  --lime: #d5ff5f;
+  color: #f8f5ff;
+  background: #101014;
+  color-scheme: dark;
+}
+html[data-portal-theme='dark'] .kp-content {
+  background: #101014;
+}
+html[data-portal-theme='dark'] .kp-hero {
+  background: radial-gradient(ellipse at 82% 30%, #7952d533, transparent 62%), #101014;
+}
+html[data-portal-theme='dark'] .kp-hero h1 {
+  color: #f8f5ff;
+}
+html[data-portal-theme='dark'] .kp-hero-core > .kp-eyebrow {
+  color: #c2a4ff;
+}
+html[data-portal-theme='dark'] .kp-light-a {
+  background: radial-gradient(ellipse, #7952d570, transparent 70%);
+}
+html[data-portal-theme='dark'] .kp-light-b {
+  background: radial-gradient(ellipse, #d5ff5f26, transparent 70%);
+}
+html[data-portal-theme='dark'] .kp-hero-prism {
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+html[data-portal-theme='dark'] :is(.kp-hero-meta, .kp-section-heading, .kp-feature-heading) {
+  border-color: #a88bfa38;
+}
+html[data-portal-theme='dark']
+  :is(
+    .kp-hero-caption,
+    .kp-feature-copy > p,
+    .kp-feature-index,
+    .kp-feature-heading > span:last-child
+  ) {
+  color: #c0b4d1;
+}
+html[data-portal-theme='dark'] .kp-portal .glass {
+  background: linear-gradient(130deg, #332347d9, #211a2ee6 75%);
+  border-color: #a88bfa4d;
+  box-shadow:
+    inset 0 1px 0 #ceb9ff1a,
+    0 22px 62px #0005;
+}
+html[data-portal-theme='dark'] :is(.kp-nav-button, .kp-language, .kp-theme-toggle) {
+  color: #ece2ff;
+  background: #392653;
+  border-color: #a88bfa66;
+}
+html[data-portal-theme='dark'] :is(.kp-nav-button, .kp-language, .kp-theme-toggle):hover {
+  background: #6942a5;
+  color: #fff;
+}
+html[data-portal-theme='dark'] .kp-dock.is-docked .kp-nav-button {
+  color: #ece2ff;
+}
+html[data-portal-theme='dark'] .kp-dock.is-docked .kp-nav-button:hover {
+  background: #7952d54d;
+}
+html[data-portal-theme='dark'] .kp-nav-signup,
+html[data-portal-theme='dark'] .kp-dock.is-docked .kp-nav-signup {
+  background: #d5ff5f;
+  border-color: #d5ff5f;
+  color: #202316;
+}
+html[data-portal-theme='dark'] .kp-theme-toggle:focus-visible {
+  outline-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-download-link {
+  background: #2c203c;
+  color: #f8f5ff;
+  border-color: #a88bfa69;
+}
+html[data-portal-theme='dark'] .kp-download-link:not(.primary):hover {
+  background: #4a316b;
+}
+html[data-portal-theme='dark'] .kp-download-link.primary {
+  background: #d5ff5f;
+  color: #202316;
+  border-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-scroll-cue {
+  color: #d5ff5f;
+  border-color: #a88bfa70;
+}
+html[data-portal-theme='dark'] .kp-scroll-cue:hover {
+  color: #202316;
+}
+
+/* Scroll stories and feature illustrations. */
+html[data-portal-theme='dark'] .kp-story-kicker {
+  color: #c4aaff;
+}
+html[data-portal-theme='dark'] .kp-conversation-body {
+  background: #18131ecc;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message p {
+  background: #342346;
+  color: #f1e8ff;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message.mint p {
+  background: #313a23;
+  color: #edf8d9;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message.blue p {
+  background: #4b2e6d;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message.amber p {
+  background: #38294c;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message.human p {
+  background: #efe8fb;
+  color: #21182d;
+  border-color: #b79adf;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message p mark {
+  color: #e0c7ff;
+  background: #a88bfa18;
+}
+html[data-portal-theme='dark'] .kp-conversation-body .kp-message.human p mark {
+  color: #5a328f;
+}
+html[data-portal-theme='dark'] :is(.kp-message-who time, .kp-message-who > span) {
+  color: #c0b4d1;
+}
+html[data-portal-theme='dark'] .kp-reactions button {
+  color: #dfd0f4;
+  background: #292032;
+  border-color: #a88bfa40;
+}
+html[data-portal-theme='dark'] .kp-reactions button[aria-pressed='true'] {
+  color: #202316;
+  background: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-session-toggle {
+  background: #332347;
+  color: #e0ccff;
+  border-color: #a88bfa70;
+}
+html[data-portal-theme='dark'] .kp-session-toggle[aria-pressed='true'] {
+  background: #a88bfa;
+  color: #261937;
+}
+html[data-portal-theme='dark'] .kp-session-preview {
+  background: #22192e;
+  border-color: #a88bfa40;
+}
+html[data-portal-theme='dark'] :is(.kp-session-preview-title span, .kp-session-selected span) {
+  color: #c0b4d1;
+}
+html[data-portal-theme='dark'] .kp-session-preview svg text {
+  fill: #dfd1f5;
+}
+html[data-portal-theme='dark'] .kp-session-preview svg circle {
+  fill: #4e336e;
+  stroke: #a88bfa;
+}
+html[data-portal-theme='dark'] .kp-session-preview .kp-session-hub {
+  fill: #21172e;
+}
+html[data-portal-theme='dark'] .kp-session-edges path {
+  stroke: #a88bfa80;
+}
+html[data-portal-theme='dark'] .kp-session-preview svg g.is-selected circle {
+  fill: #d5ff5f;
+  stroke: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-session-preview svg g.is-selected text:first-of-type {
+  fill: #202316;
+}
+html[data-portal-theme='dark'] .kp-machine-map.glass {
+  background-color: #251c33;
+  background-image: radial-gradient(#a88bfa4d 1px, transparent 1px) !important;
+}
+html[data-portal-theme='dark'] .kp-machine-node {
+  background: linear-gradient(135deg, #68449b, #332346);
+  color: #f7efff;
+  border-color: #bda0ff70;
+}
+html[data-portal-theme='dark'] .kp-machine-node svg {
+  color: #d8c0ff;
+}
+html[data-portal-theme='dark'] .kp-machine-node.lead {
+  background: linear-gradient(140deg, #d5ff5f, #b9df50);
+  color: #26301a;
+  border-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-machine-node.lead svg {
+  color: #34441a;
+}
+html[data-portal-theme='dark'] .kp-machine-links path {
+  stroke: #b998ff;
+}
+html[data-portal-theme='dark'] .kp-handoff-visual.glass {
+  background: linear-gradient(135deg, #392554, #211a2c);
+}
+html[data-portal-theme='dark'] .kp-handoff-ring circle.progress {
+  stroke: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-handoff-ring circle {
+  stroke: #a88bfa45;
+}
+html[data-portal-theme='dark'] .kp-handoff-route {
+  color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-handoff-route span {
+  background: #17121f;
+  border-color: #a88bfa45;
+}
+html[data-portal-theme='dark'] .kp-aegis-proof.glass {
+  background: linear-gradient(135deg, #4c316b, #282034 80%);
+}
+html[data-portal-theme='dark'] :is(.kp-aegis-emblem, .kp-sade-icon) {
+  color: #e7d6ff;
+  background: linear-gradient(135deg, #7952d5, #4d316f);
+  border-color: #bd9dff99;
+}
+html[data-portal-theme='dark']
+  :is(
+    .kp-aegis-proof > div > span,
+    .kp-proof-states,
+    .kp-sade-heading > span,
+    .kp-sade-flow small,
+    .kp-feature-note
+  ) {
+  color: #d0c0e1;
+}
+html[data-portal-theme='dark'] .kp-feature-note {
+  border-color: #a88bfa40;
+}
+html[data-portal-theme='dark'] .kp-sade-flow i {
+  background: #b698ff;
+}
+html[data-portal-theme='dark'] .kp-sade-flow > span:first-child i {
+  background: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-plans-teaser {
+  background: linear-gradient(115deg, #7250b9, #492b73);
+  border-color: #a88bfa80;
+}
+html[data-portal-theme='dark'] .kp-plans-teaser p {
+  color: #ece2fa;
+}
+html[data-portal-theme='dark'] .kp-plans-link {
+  color: #202316;
+  background: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-plans-link:hover {
+  background: #c2ee4c;
+}
+html[data-portal-theme='dark']
+  :is(.kp-patch time, .kp-patch summary > svg, .kp-patch li, .kp-download-dialog details) {
+  color: #c9bcd9;
+}
+html[data-portal-theme='dark'] .kp-patch li::marker {
+  color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-patch summary:focus-visible {
+  outline-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-modal-backdrop {
+  background: #08060dbf;
+}
+html[data-portal-theme='dark'] .kp-download-dialog.glass {
+  background: #21192ff5;
+}
+html[data-portal-theme='dark'] .kp-close {
+  color: #e7d6ff;
+  background: #38254e;
+  border-color: #a88bfa55;
+}
+html[data-portal-theme='dark'] .kp-error {
+  color: #ffb5ca;
+}
+html[data-portal-theme='dark'] .kp-footer-inner::after {
+  background: linear-gradient(180deg, #171120e8, #1711209e 38%, #1711200d 65%, transparent);
+}
+html[data-portal-theme='dark'] :is(.kp-footer-top, .kp-footer-top h2, .kp-footer-bottom) {
+  color: #faf4ff;
+}
+html[data-portal-theme='dark'] .kp-footer-bottom {
+  border-color: #e0caff4d;
+}
+html[data-portal-theme='dark'] .kp-footer-bottom :is(a, button):hover {
+  color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kp-footer-glass {
+  background-color: #462b6426;
+  border-color: #d4b7ff4d;
+}
+
+/* The interactive group conversation. */
+html[data-portal-theme='dark'] .kg-window {
+  --kg-text: #f7f1ff;
+  --kg-muted: #c4b6d6;
+  --kg-line: #a88bfa38;
+  color: var(--kg-text);
+  background: #19131f;
+  border-color: #a88bfa70;
+  box-shadow:
+    0 30px 80px #0005,
+    inset 0 1px 0 #cbb0ff33;
+}
+html[data-portal-theme='dark'] .kg-sidebar {
+  background: linear-gradient(160deg, #4e3371, #2b1e40 75%, #2e3524);
+}
+html[data-portal-theme='dark'] .kg-channel {
+  color: #202316;
+  background: #d5ff5f;
+  border-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kg-channel > span {
+  background: #afcf5c;
+  color: #273219;
+}
+html[data-portal-theme='dark'] .kg-project-icon {
+  background: #b99bf4;
+  color: #38234f;
+}
+html[data-portal-theme='dark'] .kg-conversation {
+  background: linear-gradient(145deg, #1d1528, #19131f 65%, #241a33);
+}
+html[data-portal-theme='dark'] .kg-header {
+  background: #2b1e3e;
+}
+html[data-portal-theme='dark']
+  :is(
+    .kg-header strong > span,
+    .kg-message-meta time,
+    .kg-day,
+    .kg-typing,
+    .kg-demo-note,
+    .kg-machine
+  ) {
+  color: #c0b1d3;
+}
+html[data-portal-theme='dark'] .kg-controls button {
+  color: #e1cff8;
+}
+html[data-portal-theme='dark'] .kg-controls button:hover {
+  color: #f9f5ff;
+  background: #543577;
+  border-color: #a88bfa66;
+}
+html[data-portal-theme='dark'] .kg-window :is(button, input, [tabindex]):focus-visible {
+  outline-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kg-message-meta > span {
+  color: #dbc8f6;
+  background: #3f285b;
+}
+html[data-portal-theme='dark'] .kg-message p {
+  color: #e2d9ed;
+}
+html[data-portal-theme='dark'] .kg-message mark {
+  color: #dcc3ff;
+  background: #7952d52e;
+}
+html[data-portal-theme='dark'] .kg-plan > span {
+  color: #e2d3f5;
+  background: #342447;
+  border-color: #a88bfa4d;
+}
+html[data-portal-theme='dark'] .kg-checkpoint {
+  color: #ceb0fa;
+  background: #342347;
+  border-color: #a88bfa59;
+}
+html[data-portal-theme='dark'] :is(.kg-checkpoint strong, .kg-review strong) {
+  color: #f1e5ff;
+}
+html[data-portal-theme='dark'] :is(.kg-checkpoint small, .kg-review small) {
+  color: #c9b6df;
+}
+html[data-portal-theme='dark'] .kg-review {
+  background: linear-gradient(130deg, #442c60, #261b35);
+  border-color: #a88bfa80;
+}
+html[data-portal-theme='dark'] .kg-review > div {
+  color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kg-window .kg-review > button:disabled {
+  color: #e2f6b2;
+  background: #364428;
+  border-color: #94b553;
+  opacity: 1;
+}
+html[data-portal-theme='dark'] .kg-composer {
+  background: #21172e;
+  border-color: #a88bfa70;
+}
+html[data-portal-theme='dark'] .kg-composer input {
+  color: #f6eeff;
+}
+html[data-portal-theme='dark'] .kg-composer input::placeholder {
+  color: #baabcb;
+}
+html[data-portal-theme='dark'] .kg-composer button {
+  color: #252b17;
+  background: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kg-composer button:disabled {
+  color: #b5a4c9;
+  background: #443453;
+}
+html[data-portal-theme='dark'] .kg-window .kg-latest {
+  color: #e5cffd;
+  background: #382449;
+  border-color: #a88bfa;
+}
+html[data-portal-theme='dark'] :is(.kg-demo-label i, .kg-status-dot) {
+  background: #d5ff5f;
+}
+html[data-portal-theme='dark'] .kg-typing-dots i {
+  background: #bc9cfa;
+}
+
+/* Authentication uses a React portal, so scope it from the document. */
+html[data-portal-theme='dark'] .ka-overlay {
+  --ka-ink: #f7f1ff;
+  --ka-muted: #c3b5d3;
+  --ka-line: #a88bfa47;
+  --ka-violet: #c2a4ff;
+  color-scheme: dark;
+  background: #08060dbf;
+}
+html[data-portal-theme='dark'] .ka-surface {
+  background: linear-gradient(145deg, #342247f7, #1d1727fc);
+  border-color: #a88bfa80;
+  box-shadow:
+    inset 0 1px 0 #d5bfff33,
+    0 30px 90px #0009;
+}
+html[data-portal-theme='dark'] .ka-card-under {
+  background: linear-gradient(145deg, #7952d5, #a88bfa);
+  border-color: #bfa6ff;
+}
+html[data-portal-theme='dark'] .ka-icon {
+  background: #402c56;
+}
+html[data-portal-theme='dark'] .ka-field input {
+  color: #f7f1ff;
+  background: #17121f;
+  border-color: #a88bfa66;
+}
+html[data-portal-theme='dark'] .ka-field input:focus {
+  border-color: #c2a4ff;
+  box-shadow: 0 0 0 3px #a88bfa26;
+}
+html[data-portal-theme='dark'] .ka-field input::placeholder {
+  color: #b2a4c2;
+}
+html[data-portal-theme='dark'] .ka-field input:-webkit-autofill {
+  -webkit-text-fill-color: #f7f1ff;
+  box-shadow: 0 0 0 100px #251a33 inset;
+}
+html[data-portal-theme='dark'] .ka-primary {
+  color: #202316;
+  border-color: #d5ff5f;
+}
+html[data-portal-theme='dark'] .ka-error {
+  color: #ffb5ca;
+}
+html[data-portal-theme='dark'] .ka-success-icon {
+  color: #d5ff5f;
+  background: #40502a;
+  border-color: #a8cc59;
+}
+
+/* Plan selection, wallet controls and both checkout rails. */
+html[data-portal-theme='dark'] .billing-page {
+  --bill-ink: #f7f1ff;
+  --bill-muted: #c9bdd7;
+  --bill-dim: #b7a8c9;
+  --bill-lime-ink: #d5ff5f;
+  --bill-violet-ink: #c5a7ff;
+  --bill-line: #a88bfa3d;
+  color-scheme: dark;
+  background:
+    radial-gradient(ellipse at 90% 12%, #7952d54d, transparent 40%),
+    radial-gradient(ellipse at 0% 60%, #d5ff5f12, transparent 40%), #101014;
+}
+html[data-portal-theme='dark'] :is(.billing-header, .billing-facts > div) {
+  border-color: #a88bfa33;
+}
+html[data-portal-theme='dark'] .billing-panel {
+  background: linear-gradient(140deg, #322044e6, #1c1626f2);
+  border-color: #a88bfa70;
+  box-shadow:
+    0 24px 70px #0005,
+    inset 0 1px 0 #ceb3ff26;
+}
+html[data-portal-theme='dark'] .billing-field input {
+  color: #f7f1ff;
+  background: #18111f;
+  border-color: #a88bfa70;
+}
+html[data-portal-theme='dark'] .billing-primary {
+  color: #222719;
+  border-color: #c0e55b;
+}
+html[data-portal-theme='dark'] :is(.billing-secondary, .billing-plan, .billing-profile-limits) {
+  color: var(--bill-ink);
+  background: #2e203f;
+  border-color: #a88bfa55;
+}
+html[data-portal-theme='dark'] .billing-secondary:hover:not(:disabled) {
+  background: #442b61;
+  border-color: #bda1f6;
+}
+html[data-portal-theme='dark'] .billing-plan.is-selected {
+  background: linear-gradient(110deg, #3b4927, #24301a);
+  border-color: #c3ee5d;
+}
+html[data-portal-theme='dark'] .billing-plan.is-max.is-selected {
+  background: linear-gradient(110deg, #5b3785, #352049);
+  border-color: #b794ff;
+}
+html[data-portal-theme='dark'] .billing-profile-option.is-selected {
+  background: #d5ff5f10;
+  border-color: #d5ff5f47;
+}
+html[data-portal-theme='dark'] .billing-review {
+  background: linear-gradient(135deg, #3e2a54, #251b32);
+  border-color: #b896f680;
+}
+html[data-portal-theme='dark'] :is(.billing-alert, .bank-checkout p.billing-alert) {
+  color: #ffb8ca;
+  background: #4d2234;
+  border-color: #c16b88;
+}
+html[data-portal-theme='dark'] .billing-wallet-box input::file-selector-button {
+  color: #e8d8ff;
+  background: #493061;
+  border-color: #a88bfa70;
+}
+html[data-portal-theme='dark'] .bank-plan[aria-pressed='true'] {
+  background: #d5ff5f24;
+}
+html[data-portal-theme='dark'] .bank-plan:nth-child(2)[aria-pressed='true'] {
+  background: #a88bfa38;
+}
+
+@media (max-width: 700px) {
+  html[data-portal-theme] .kp-auth-nav :is(.kp-nav-button, .kp-language, .kp-theme-toggle) {
+    width: 38px;
+    min-width: 38px;
+    flex-basis: 38px;
+    padding-inline: 0;
+  }
+  html[data-portal-theme] .kp-dock.is-docked {
+    gap: 5px;
+    padding: 7px;
+  }
+  html[data-portal-theme] .kp-dock.is-docked .kp-auth-nav {
+    gap: 3px;
+  }
+  html[data-portal-theme]
+    .kp-dock.is-docked
+    :is(.kp-nav-button, .kp-logo, .kp-language, .kp-theme-toggle) {
+    width: 38px;
+    min-width: 38px;
+    flex-basis: 38px;
+  }
+  .billing-header-actions {
+    gap: 12px;
+  }
+}
+@media (max-width: 380px) {
+  html[data-portal-theme]
+    .kp-dock.is-docked
+    :is(.kp-nav-button, .kp-logo, .kp-language, .kp-theme-toggle) {
+    width: 36px;
+    min-width: 36px;
+    flex-basis: 36px;
+  }
+}

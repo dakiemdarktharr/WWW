@@ -26,11 +26,17 @@ Use dark text on lime buttons. Use deep violet for small accent text and focus r
 
 ## Surfaces and typography
 
-The website uses a white editorial canvas, oversized black type and refracted glass forms. The desktop defaults to dark neutral surfaces so long conversations and tools remain comfortable to read. Its optional light theme uses the same paper, ink, lime and violet palette. Authentication, plan selection and checkout belong to the same visual system.
+The website has light and dark appearances. Light mode uses a paper canvas; dark mode uses a near-black `#101014` canvas with violet glass panels. Both use a four-row refracted wordmark and prominent violet and lime accents. Authentication, plan selection, checkout and the group-chat demonstration follow the selected appearance.
+
+The initial website appearance follows `prefers-color-scheme`. An explicit choice persists in `kivuno-portal-theme`, including across the website and billing page. The document attribute `data-portal-theme` scopes those styles and includes authentication dialogs rendered outside the page container. Keep that preference independent from the desktop's `data-workspace-theme`.
+
+The desktop defaults to dark neutral surfaces so long conversations and tools remain comfortable to read. Its optional light theme uses the same paper, ink, lime and violet palette.
 
 Use Geist for interface text and JetBrains Mono for code, checksums and short technical labels. Keep body copy readable and let spacing establish hierarchy. Glass surfaces use a restrained translucent fill, a thin edge highlight and soft depth. Keep enough surface opacity behind text; blur is decorative and must not be required for readability. Avoid placing animated refraction behind controls, code or long passages.
 
 The K symbol remains recognizable: lime strokes on a dark rounded square with a violet joint. The abstract glass artwork is an accent, not a replacement for the product interface.
+
+The botanical footer uses a collage of cropped real flower photographs from multiple sources, with source and license attribution retained. Do not substitute AI-generated botanical images. Use empty sky above the flowers for readable copy, and a translucent glass treatment that leaves the photographic details visible. Adjust the overlay and foreground for each appearance without changing the photographs' provenance.
 
 ## Motion and interaction
 

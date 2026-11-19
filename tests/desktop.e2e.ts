@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
 const accessToken = 'desktop-test-session-' + '0'.repeat(64);
@@ -17,6 +17,17 @@ let tokenRequests = 0;
 let revoked = false;
 let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
+type FixtureProfile = {
+  profileId: string;
+  name: string;
+  provider: string;
+  state: 'reserved' | 'active' | 'released';
+  selected: boolean;
+};
+// Match the cloud profile protocol while keeping every reservation in this fixture.
+const accountProfiles = new Map<string, Map<string, FixtureProfile>>();
+let profileReservations = 0;
+let profileCommits = 0;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
 const fixture = createServer(async (request, response) => {
   let input = '';
@@ -73,6 +84,61 @@ const fixture = createServer(async (request, response) => {
     );
     if (payload.responses.some((item: { status: number }) => item.status === 401))
       bridgeRejectedInvalidMachine = true;
+  } else if (request.url === '/api/desktop/profiles') {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    const profiles = accountProfiles.get(accountId) || new Map<string, FixtureProfile>();
+    accountProfiles.set(accountId, profiles);
+    const selectedCount = () => [...profiles.values()].filter((p) => p.selected).length;
+    if (payload.action === 'reserve') {
+      const existing = profiles.get(payload.profileId);
+      if (existing && existing.state !== 'released') {
+        response.end(JSON.stringify({ reserved: existing.selected, locked: !existing.selected }));
+      } else if (selectedCount() >= 3) {
+        response.statusCode = 429;
+        response.end(
+          JSON.stringify({ error: 'The fixture Free plan supports 3 active profiles.' }),
+        );
+      } else {
+        profiles.set(payload.profileId, { ...payload, state: 'reserved', selected: true });
+        profileReservations++;
+        response.end(JSON.stringify({ reserved: true, locked: false }));
+      }
+    } else if (payload.action === 'commit') {
+      const profile = profiles.get(payload.profileId);
+      assert.ok(profile && profile.state !== 'released' && profile.selected);
+      profiles.set(payload.profileId, { ...profile, ...payload, state: 'active' });
+      profileCommits++;
+      response.end(JSON.stringify({ committed: true }));
+    } else if (payload.action === 'release') {
+      const profile = profiles.get(payload.profileId);
+      if (profile?.state === 'reserved') {
+        profile.state = 'released';
+        profile.selected = false;
+      }
+      response.end(JSON.stringify({ released: true }));
+    } else {
+      assert.equal(payload.action, 'sync');
+      const ids = new Set(payload.profiles.map((p: FixtureProfile) => p.profileId));
+      for (const profile of profiles.values()) {
+        if (profile.state === 'active' && !ids.has(profile.profileId)) {
+          profile.state = 'released';
+          profile.selected = false;
+        }
+      }
+      for (const supplied of payload.profiles as FixtureProfile[]) {
+        const existing = profiles.get(supplied.profileId);
+        const selected =
+          existing && existing.state !== 'released' ? existing.selected : selectedCount() < 3;
+        profiles.set(supplied.profileId, { ...supplied, state: 'active', selected });
+      }
+      response.end(
+        JSON.stringify({
+          lockedIds: [...profiles.values()]
+            .filter((p) => p.state === 'active' && !p.selected)
+            .map((p) => p.profileId),
+        }),
+      );
+    }
   } else if (request.url === '/api/desktop/revoke') {
     revoked = true;
     response.end('{}');
@@ -282,7 +348,33 @@ try {
       },
       { route, body },
     );
-  const member = await post('/members', { name: 'Browser fixture', role: 'researcher' });
+  const addProfile = async (input: {
+    name: string;
+    role: 'researcher' | 'engineer';
+    provider?: 'codex' | 'claude' | 'antigravity';
+  }) => {
+    const profile = {
+      profileId: randomUUID(),
+      name: input.name,
+      provider: input.provider || 'codex',
+    };
+    await page.evaluate(
+      (profile) => (window as any).relayDesktop.profiles({ action: 'reserve', ...profile }),
+      profile,
+    );
+    const member = await post('/members', { ...input, profileId: profile.profileId });
+    assert.equal(member.id, profile.profileId);
+    await page.evaluate(
+      (profile) => (window as any).relayDesktop.profiles({ action: 'commit', ...profile }),
+      profile,
+    );
+    return member;
+  };
+  await assert.rejects(
+    post('/members', { name: 'Unreserved fixture', role: 'researcher' }),
+    /Reserve this profile/,
+  );
+  const member = await addProfile({ name: 'Browser fixture', role: 'researcher' });
   const project = await post('/hackathons', {
     memberId: member.id,
     name: 'Browser test project',
@@ -369,7 +461,7 @@ try {
   // Both real-client connection types use scoped local MCP, not native model dispatch.
   for (const provider of ['claude', 'antigravity'] as const) {
     const label = provider === 'claude' ? 'Claude' : 'Antigravity';
-    const external = await post('/members', {
+    const external = await addProfile({
       name: `${label} local`,
       role: 'engineer',
       provider,
@@ -467,7 +559,7 @@ try {
   assert.equal(bob.members.length, 0);
   assert.equal(bob.projects.length, 0);
   assert.notEqual(bob.runtime.dataDir, state.runtime.dataDir);
-  await post('/members', { name: 'Only Bob', role: 'researcher' });
+  await addProfile({ name: 'Only Bob', role: 'researcher' });
   const bobOrigin = new URL(page.url()).origin;
   await page.evaluate(() => {
     void (window as any).relayDesktop.signOut();
@@ -476,6 +568,8 @@ try {
   const returned = await switchIn('desktop-test-owner');
   assert.ok(returned.projects.some((item: { id: string }) => item.id === uiFixture.projectId));
   assert.ok(!returned.members.some((item: { name: string }) => item.name === 'Only Bob'));
+  assert.equal(profileReservations, 4, 'Each created profile reserved its cloud quota slot.');
+  assert.equal(profileCommits, 4, 'Each created profile confirmed the cloud quota record.');
   // A new app launch must show sign-in even while a prior session file exists.
   await desktop.close();
   desktop = await electron.launch({ args: [path.resolve('desktop')], env, timeout: 60000 });

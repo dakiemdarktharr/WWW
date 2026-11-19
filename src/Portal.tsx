@@ -33,8 +33,10 @@ import {
 import PortalAuth from './PortalAuth';
 import UpdatePatches from './UpdatePatches';
 import PortalGroupChat from './PortalGroupChat';
+import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
 import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
+import './portal-art.css';
 
 type Platform = 'windows' | 'linux' | 'macos';
 interface Download {
@@ -92,7 +94,48 @@ function Scramble({ iteration }: { iteration: number }) {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [iteration, reduced]);
-  return <span aria-hidden="true">{text}</span>;
+  return (
+    <svg className="kp-stacked-title" viewBox="0 -40 1120 730" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="title-prism" x1="0" y1="0" x2="1" y2=".7">
+          <stop offset="0" stopColor="#7651c8" />
+          <stop offset=".2" stopColor="#a88bfa" />
+          <stop offset=".43" stopColor="#f8f5ff" />
+          <stop offset=".6" stopColor="#c5aeff" />
+          <stop offset=".8" stopColor="#d5ff5f" />
+          <stop offset="1" stopColor="#a3ce2f" />
+        </linearGradient>
+        <linearGradient id="title-edge" x1="0" y1="0" x2="0" y2="1">
+          <stop stopColor="#ffffffaa" />
+          <stop offset=".55" stopColor="#7c5ca7" />
+          <stop offset="1" stopColor="#d5ff5f88" />
+        </linearGradient>
+        {[0, 1, 2, 3].map((row) => (
+          <path
+            key={row}
+            id={`title-wave-${row}`}
+            d={`M35 ${171 + row * 149} C310 ${169 + row * 149} 740 ${61 + row * 149} 1075 ${88 + row * 149}`}
+          />
+        ))}
+      </defs>
+      {[0, 1, 2, 3].map((row) => (
+        <text
+          key={row}
+          className="kp-title-row"
+          fill="url(#title-prism)"
+          stroke="url(#title-edge)"
+          strokeWidth=".7"
+          fontSize="174"
+          fontWeight="900"
+          letterSpacing="-9"
+        >
+          <textPath href={`#title-wave-${row}`} textLength="1035" lengthAdjust="spacingAndGlyphs">
+            {text.toUpperCase()}
+          </textPath>
+        </text>
+      ))}
+    </svg>
+  );
 }
 
 const scenarios = {
@@ -637,6 +680,7 @@ function PortalContent() {
               )}
             </AnimatePresence>
             <motion.div layout className="kp-auth-nav">
+              <PortalThemeToggle />
               <PortalLanguage />
               <a
                 href="/billing"
@@ -900,13 +944,16 @@ function PortalContent() {
               {footerArtReady && (
                 <img
                   className="kp-hivemind-art"
-                  src="/art/kivuno-prism.svg"
-                  alt={t('Dải kính khúc xạ đan vào nhau với ánh tím và lime.')}
+                  src="/art/kivuno-flower-collage.webp"
+                  alt={t(
+                    'Rừng hoa tím và lime sau lớp kính khúc xạ, mở ra khoảng trời dịu phía trên.',
+                  )}
                   decoding="async"
-                  width="1000"
-                  height="1000"
+                  width="3200"
+                  height="1800"
                 />
               )}
+              <div className="kp-footer-glass" aria-hidden="true" />
               <div className="kp-footer-top">
                 <h2>
                   {t('Đến lượt bạn')}
@@ -929,6 +976,9 @@ function PortalContent() {
                 <a href="#updates">Update patches</a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
                 <button onClick={home}>{t('Về đầu trang')}</button>
+                <a href="/art/photo-credits.html">
+                  {locale === 'vi' ? 'Nguồn ảnh' : 'Photo credits'}
+                </a>
               </div>
             </motion.div>
           </footer>
@@ -1038,7 +1088,9 @@ function PortalContent() {
 export default function Portal() {
   return (
     <PortalLocaleProvider>
-      <PortalContent />
+      <PortalThemeProvider>
+        <PortalContent />
+      </PortalThemeProvider>
     </PortalLocaleProvider>
   );
 }

@@ -41,6 +41,7 @@ const mime: Record<string, string> = {
   '.html': 'text/html',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
@@ -118,7 +119,9 @@ async function routePortal(context: BrowserContext, available = false) {
       return;
     }
     await route.fulfill({
-      body: await readFile(path.join('dist', url.pathname === '/' ? 'index.html' : url.pathname)),
+      body: await readFile(
+        path.join('dist', ['/', '/billing'].includes(url.pathname) ? 'index.html' : url.pathname),
+      ),
       contentType: mime[path.extname(url.pathname)] || 'text/html',
       headers: Object.fromEntries(
         config.headers[0].headers.map((header: { key: string; value: string }) => [
@@ -169,6 +172,9 @@ try {
   await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
   const heading = page.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(heading).toBeVisible();
+  await expect(heading.locator('.kp-title-row')).toHaveCount(4);
+  for (const row of await heading.locator('.kp-title-row').all())
+    await expect(row).toHaveText('KIVUNO');
   await expect(page.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Linux chưa có bản tải' })).toBeDisabled();
   await expect(
@@ -198,6 +204,7 @@ try {
   );
   await cdp.detach();
   await mkdir('.local', { recursive: true });
+  await page.screenshot({ path: '.local/kivuno-hero-desktop.png' });
   await page.screenshot({ path: '.local/kivuno-portal-desktop.png', fullPage: true });
   const menu = page.getByRole('navigation', { name: 'Menu Kivuno' });
   const stories = page.locator('[data-story]');
@@ -268,6 +275,8 @@ try {
       '0',
     );
   }
+  await page.locator('.kp-features').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '.local/kivuno-features-desktop.png' });
   await menu.getByRole('button', { name: 'Switch to English' }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.getByRole('button', { name: 'Read all messages' })).toHaveCount(0);
@@ -298,13 +307,34 @@ try {
   const englishAuth = page.getByRole('dialog');
   await expect(englishAuth).toHaveAccessibleName('Create account');
   await englishAuth.getByLabel('Your name').fill('Language check');
+  await expect(page.locator('.ka-content')).toHaveCSS('opacity', '1');
+  await page.screenshot({ path: '.local/kivuno-auth-desktop.png' });
   await englishAuth.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
   await expect(englishAuth.getByLabel('Tên của bạn')).toHaveValue('Language check');
   await englishAuth.getByRole('button', { name: 'Switch to English' }).click();
   await englishAuth.getByRole('button', { name: 'Close sign-in' }).click();
+  const themeToggle = menu.getByRole('button', { name: 'Dark appearance' });
+  await expect(themeToggle).toHaveAttribute('aria-pressed', 'false');
+  await themeToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await expect(themeToggle).toHaveAttribute('aria-pressed', 'true');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await expect(menu.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
+  await menu.getByRole('button', { name: 'Log in', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Log in', exact: true })).toBeVisible();
+  await expect(page.locator('.ka-overlay')).toBeVisible();
+  await page.screenshot({ path: '.local/kivuno-auth-dark.png' });
+  await page.keyboard.press('Escape');
+  await page.goto(origin + '/billing');
+  await expect(page.locator('[data-theme-toggle]')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await page.goto(origin);
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await menu.getByRole('button', { name: 'Dark appearance' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'light');
   await expect(
     page.getByRole('button', { name: 'Windows download not available', exact: true }),
   ).toBeDisabled();
@@ -345,6 +375,7 @@ try {
   );
   await expect(guide.getByRole('button', { name: 'Resume demo' })).toBeVisible();
   await menu.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
+  await expect(demoMessages.last()).toHaveCSS('opacity', '1');
   await page.screenshot({ path: '.local/kivuno-group-chat-interaction.png' });
   await demoReplay.click();
   await expect(demoMessages).toHaveCount(1);
@@ -381,6 +412,9 @@ try {
   await expect(loginOpener).toBeFocused();
   await expect(page.locator('#root')).not.toHaveAttribute('inert', '');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+  await expect(menu).not.toHaveClass(/is-docked/);
+  await page.screenshot({ path: '.local/kivuno-hero-mobile.png' });
   for (const selector of [
     '.kp-hero',
     '#demo-plan',
@@ -420,6 +454,54 @@ try {
     }
     await page.screenshot({ path: `.local/kivuno-portal-${width}.png`, fullPage: true });
   }
+  for (const viewport of [
+    { width: 1366, height: 720 },
+    { width: 390, height: 667 },
+    { width: 320, height: 568 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() =>
+      scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }),
+    );
+    for (const item of await page
+      .locator('.kp-footer h2, .kp-footer-cta, .kp-footer-bottom a, .kp-footer-bottom button')
+      .all()) {
+      await expect(item).toBeVisible();
+      await expect
+        .poll(async () => {
+          const box = await item.boundingBox();
+          return (
+            !!box &&
+            box.y >= -1 &&
+            box.y + box.height <= viewport.height + 1 &&
+            box.x >= -1 &&
+            box.x + box.width <= viewport.width + 1
+          );
+        })
+        .toBe(true);
+    }
+    await page.screenshot({
+      path: `.local/kivuno-footer-${viewport.width}x${viewport.height}.png`,
+    });
+  }
+  await expect(page.locator('.kp-hivemind-art')).toHaveAttribute(
+    'src',
+    '/art/kivuno-flower-collage.webp',
+  );
+  await expect(page.locator('.kp-footer a[href="/art/photo-credits.html"]')).toBeVisible();
+  const credits = await page.evaluate(async () => {
+    const response = await fetch('/art/photo-credits.html');
+    return { status: response.status, text: await response.text() };
+  });
+  assert.equal(credits.status, 200);
+  for (const species of [
+    'Fritillaria meleagris',
+    'Tricyrtis hirta',
+    'Passiflora incarnata',
+    'Eryngium alpinum',
+    'Helleborus foetidus',
+  ])
+    assert.ok(credits.text.includes(species), `Photo credits include ${species}.`);
 
   const reduced = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -437,6 +519,7 @@ try {
   await dialog.getByLabel('Mật khẩu', { exact: true }).fill('short');
   await dialog.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
   assert.equal(signupRequests, 0, 'Short passwords must not reach signup.');
+  await accountPage.screenshot({ path: '.local/kivuno-auth-mobile-validation.png' });
   await dialog.getByLabel('Mật khẩu', { exact: true }).fill(memberPassword);
   await dialog.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
   await dialog.getByText('Browser test desktop', { exact: true }).waitFor();
@@ -545,9 +628,10 @@ try {
   await accountPage.getByRole('button', { name: 'Kivuno — về màn hình đầu' }).click();
   await expect.poll(() => accountPage.evaluate(() => scrollY)).toBe(0);
   await expect(accountPage.locator('.kp-pixel-curtain')).toHaveCount(0);
-  await expect(accountPage.getByRole('heading', { name: 'Kivuno', exact: true })).toHaveText(
-    'Kivuno',
-  );
+  const reducedTitle = accountPage.getByRole('heading', { name: 'Kivuno', exact: true });
+  await expect(reducedTitle.locator('.kp-title-row')).toHaveCount(4);
+  for (const row of await reducedTitle.locator('.kp-title-row').all())
+    await expect(row).toHaveText('KIVUNO');
   await expect(accountPage.locator('.kp-scroll-story.show-all')).toHaveCount(3);
   for (const message of await accountPage.locator('[data-scroll-message]').all())
     await expect(message).toHaveCSS('opacity', '1');
@@ -563,6 +647,10 @@ try {
       macOSUnavailableShown: true,
       interactiveDemos: true,
       noTabbedGuide: true,
+      fourRefractedTitleRows: true,
+      persistedLightDarkAcrossBilling: true,
+      photoCollageWithCredits: true,
+      shortViewportFooterReachable: true,
       timedGroupChatPauseReplay: true,
       localDemoComposerAndApproval: true,
       separateScrollStories: true,

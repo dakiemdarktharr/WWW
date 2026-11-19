@@ -10,8 +10,8 @@ const patches = [
     date: '2026-11-19',
     fixes: [
       {
-        vi: 'Giao diện mới với nền trắng, chữ đen, lime và violet. Mô phỏng group chat liên tục thay cho các tab hướng dẫn; hỗ trợ tạm dừng, phát lại và gửi tin nhắn thử.',
-        en: 'A refreshed white, black, lime and violet interface. A continuous group chat replaces the guide tabs, with pause, replay and a local demo composer.',
+        vi: 'Giao diện black–white–lime–violet với chế độ sáng/tối, tiêu đề Kivuno bốn lớp và footer ghép từ ảnh hoa thật qua lớp kính khúc xạ. Mô phỏng group chat liên tục thay cho các tab hướng dẫn; hỗ trợ tạm dừng, phát lại và gửi tin nhắn thử.',
+        en: 'A black, white, lime and violet interface with light/dark modes, a four-layer Kivuno title, and a refractive glass footer collaged from real flower photographs. A continuous group chat replaces the guide tabs, with pause, replay and a local demo composer.',
       },
       {
         vi: 'Cập nhật giới thiệu Sade, review độc lập và bàn giao context. Đồng bộ thiết kế cho đăng nhập và gói Free/Plus/Max; checkout Fuji dùng token thử nghiệm, QR ngân hàng chỉ chạy trong demo cục bộ.',

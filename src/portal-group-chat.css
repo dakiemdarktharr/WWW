@@ -307,6 +307,9 @@
   font-size: 9px;
   letter-spacing: 0.08em;
 }
+.kg-transcript-content {
+  display: flow-root;
+}
 .kg-message {
   display: flex;
   gap: 12px;
