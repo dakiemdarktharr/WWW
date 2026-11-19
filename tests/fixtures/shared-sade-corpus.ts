@@ -76,6 +76,10 @@ export function sharedSadeCorpus() {
         style: style.label,
         providers: [first, second] as readonly [ProviderId, ProviderId],
         subscriptions: [firstPlan, secondPlan],
+        grantedTurns: [
+          3 + (team % 3),
+          scenario === 'budget' ? 1 : 1 + (team % 4) + Number(scenario === 'scope'),
+        ] as const,
         message: style.render(meaning, project, `Bếp ${firstPlan}, Mây ${secondPlan}`),
       })),
     ),

@@ -8,7 +8,7 @@ import type {
   SharedSadeRun,
 } from '../shared/collaboration.ts';
 import type { PlanTask, TaskDiff } from '../shared/types.ts';
-import { allocatePlan, parseTeamPlan, planTool } from './workflow-plan.ts';
+import { allocatePlan, collectPrerequisites, parseTeamPlan, planTool } from './workflow-plan.ts';
 import { redact, scopesOverlap } from './security.ts';
 import { DomainError, type Store } from './store.ts';
 import { reviewDigest } from './sade.ts';
@@ -233,19 +233,8 @@ function hasDependents(run: Run, job: Job) {
 }
 function prerequisitesOf(run: Run, target: Job) {
   const source = target.reviewOf ? run.jobs.find((job) => job.id === target.reviewOf) : target;
-  const seen = new Set<string>();
-  const required: Job[] = [];
   const byKey = new Map(run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job]));
-  const visit = (key: string) => {
-    if (seen.has(key)) return;
-    seen.add(key);
-    const job = byKey.get(key);
-    if (!job) return;
-    job.task!.dependsOn.forEach(visit);
-    required.push(job);
-  };
-  source?.task?.dependsOn.forEach(visit);
-  return required;
+  return collectPrerequisites(source?.task?.dependsOn || [], byKey, (job) => job.task!.dependsOn);
 }
 function writesTask(task?: PlanTask) {
   return task?.kind === 'code' || task?.kind === 'design';
@@ -806,6 +795,23 @@ export class GroupSade {
         if (job.phase === 'review' && !job.reviewOf) continue;
         const predecessors = dependencies.get(job) || [];
         if (predecessors.some((other) => other.state !== 'done')) continue;
+        if (
+          job.phase === 'task' &&
+          job.task?.kind === 'review' &&
+          predecessors.some(
+            (prior) =>
+              writes(prior.task) &&
+              scopesOverlap(prior.task!.scope, job.task!.scope) &&
+              grants.get(prior.grantId)?.ownerId === grant.ownerId,
+          )
+        ) {
+          this.block(
+            run,
+            job,
+            'This review needs a teammate who did not write the files under review.',
+          );
+          break;
+        }
         if (job.updateCount && !command.taskUpdates) {
           const summary = 'Update this desktop to continue a task with Shared Sade updates.';
           if (job.summary !== summary) {

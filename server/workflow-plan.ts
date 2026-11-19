@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Member, PlanTask, Proposal, TeamPlan } from '../shared/types.ts';
 import { DomainError } from './store.ts';
-import { normalizeScope } from './security.ts';
+import { normalizeScope, scopesOverlap } from './security.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 
 const kinds = ['code', 'research', 'design', 'review'] as const;
@@ -123,6 +123,26 @@ const roleForKind: Record<PlanTask['kind'], Member['role']> = {
 };
 const compareKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** Return transitive prerequisites once, with their own dependencies first. */
+export function collectPrerequisites<T>(
+  keys: readonly string[],
+  byKey: ReadonlyMap<string, T>,
+  dependenciesOf: (item: T) => readonly string[],
+) {
+  const seen = new Set<string>();
+  const ordered: T[] = [];
+  const visit = (key: string) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    const item = byKey.get(key);
+    if (item === undefined) return;
+    dependenciesOf(item).forEach(visit);
+    ordered.push(item);
+  };
+  keys.forEach(visit);
+  return ordered;
+}
+
 /** Balance estimated effort first; specialism only breaks equal-load ties. */
 export function allocatePlan(
   plan: TeamPlan,
@@ -140,6 +160,7 @@ export function allocatePlan(
     throw new DomainError('The workflow roster contains a duplicate teammate.', 400);
   const load = new Map(members.map((member) => [member.id, 0]));
   const assignments = new Map<string, string>();
+  const tasksByKey = new Map(plan.tasks.map((task) => [task.key, task]));
   const remaining = options.turns && new Map(options.turns);
   const requested = new Map<string, number>();
   if (remaining)
@@ -158,13 +179,21 @@ export function allocatePlan(
   );
   const ownerOf = (id: string) => options.ownerByMember?.get(id) ?? id;
   for (const task of byEffort) {
+    let reviewedKeys = task.kind === 'review' ? task.dependsOn : [];
+    if (options.ownerByMember && reviewedKeys.length) {
+      reviewedKeys = collectPrerequisites(task.dependsOn, tasksByKey, (item) => item.dependsOn)
+        .filter(
+          (prior) =>
+            (prior.kind === 'code' || prior.kind === 'design') &&
+            scopesOverlap(prior.scope, task.scope),
+        )
+        .map((prior) => prior.key);
+    }
     const authors = new Set(
-      task.kind === 'review'
-        ? task.dependsOn.flatMap((key) => {
-            const memberId = assignments.get(key);
-            return memberId ? [ownerOf(memberId)] : [];
-          })
-        : [],
+      reviewedKeys.flatMap((key) => {
+        const memberId = assignments.get(key);
+        return memberId ? [ownerOf(memberId)] : [];
+      }),
     );
     const capable = members.filter(
       (member) => !authors.has(ownerOf(member.id)) && (options.supports?.(member.id, task) ?? true),
