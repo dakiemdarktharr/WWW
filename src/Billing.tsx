@@ -14,6 +14,7 @@ import { api, ApiError, resetApiSession } from './api';
 import { BillingWallet, balance, fuji, legacySigner, type WalletMode } from './BillingWallet';
 import { walletForAccount } from './embedded-wallet';
 import { BankCheckout } from './BankCheckout';
+import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
 import './billing.css';
 
 type Plan = 'plus' | 'max';
@@ -184,6 +185,14 @@ function rejected(error: unknown) {
 }
 
 export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
+  return (
+    <PortalThemeProvider>
+      <BillingContent rail={rail} />
+    </PortalThemeProvider>
+  );
+}
+
+function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
   const bank = rail === 'bank';
   const [user, setUser] = useState<AuthUser | null>(null);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
@@ -619,9 +628,12 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
           <img src="/kivuno.svg" alt="" width="36" height="36" />
           <span>Kivuno</span>
         </a>
-        <a className="billing-back" href="/">
-          <ArrowLeft size={16} /> Trang chủ
-        </a>
+        <div className="billing-header-actions">
+          <PortalThemeToggle />
+          <a className="billing-back" href="/">
+            <ArrowLeft size={16} /> Trang chủ
+          </a>
+        </div>
       </header>
 
       <section className="billing-shell" aria-labelledby="billing-title">
@@ -773,6 +785,19 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
                 </button>
               </div>
 
+              {summary?.account?.id === user.id && (
+                <BillingWallet
+                  key={user.id}
+                  account={user.id}
+                  bound={boundWallet}
+                  bankCheckout={bank}
+                  token={bank ? undefined : config?.tokenAddress}
+                  busy={busy !== ''}
+                  onMode={setWalletMode}
+                  refresh={refreshSummary}
+                />
+              )}
+
               {bank && summary?.account?.id === user.id && (
                 <BankCheckout key={user.id} onPaid={refreshSummary} />
               )}
@@ -783,18 +808,6 @@ export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
               )}
               {!bank && (
                 <>
-                  {summary?.account?.id === user.id && (
-                    <BillingWallet
-                      key={user.id}
-                      account={user.id}
-                      bound={boundWallet}
-                      token={config?.tokenAddress}
-                      busy={busy !== ''}
-                      onMode={setWalletMode}
-                      refresh={refreshSummary}
-                    />
-                  )}
-
                   <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
                     {(['plus', 'max'] as Plan[]).map((plan) => {
                       const selected = selectedPlan === plan;

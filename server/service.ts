@@ -151,21 +151,33 @@ export class Workspace {
         (member) => !member.entitlementLocked && member.connectedAt && member.runnerId === runnerId,
       )) {
       if (this.closing) return;
-      try {
-        const updated = await this.refresh(member.id);
-        if (updated.account) await this.autonomy.ready(member.id);
-      } catch (error) {
-        if (!this.closing)
-          this.log(`Account restore needs attention: ${redact(error)}`, null, member.id, 'system');
-      }
+      await this.restoreAccount(member.id);
+    }
+  }
+  private async restoreAccount(id: string) {
+    try {
+      const updated = await this.refresh(id);
+      if (updated.account) await this.autonomy.ready(id);
+    } catch (error) {
+      if (!this.closing)
+        this.log(`Account restore needs attention: ${redact(error)}`, null, id, 'system');
     }
   }
   async applyProfileLocks(lockedIds: string[]) {
     const locked = new Set(lockedIds);
     const newlyLocked: Member[] = [];
+    const reconnect: string[] = [];
     for (const member of this.store.members()) {
       const next = locked.has(member.id);
       const justLocked = next && !member.entitlementLocked;
+      if (
+        !next &&
+        member.entitlementLocked &&
+        member.connectedAt &&
+        !member.runnerId &&
+        !isExternalMember(member)
+      )
+        reconnect.push(member.id);
       if (Boolean(member.entitlementLocked) !== next || justLocked)
         this.store.updateMember(member.id, {
           entitlementLocked: next,
@@ -242,6 +254,9 @@ export class Workspace {
         }
       }
     }
+    for (const id of reconnect)
+      if (!this.closing && !this.store.get<Member>('member', id).entitlementLocked)
+        await this.restoreAccount(id);
     return { updated: true };
   }
   assertProfileUnlocked(id: string): Member {
@@ -1426,7 +1441,8 @@ export class Workspace {
     if (
       ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(
         request.method,
-      )
+      ) ||
+      (client.provider === 'antigravity' && request.method === 'item/mcp/requestApproval')
     ) {
       const id = randomUUID();
       const approval: Approval = {

@@ -18,7 +18,7 @@ try {
   context.on('request', (request) => {
     const url = new URL(request.url());
     if (
-      /^\/api\/billing\/(?:wallet|intent|confirm)(?:\/|$)/.test(url.pathname) ||
+      /^\/api\/billing\/(?:intent|confirm)(?:\/|$)/.test(url.pathname) ||
       url.hostname === 'api.avax-test.network'
     )
       unexpected.push(url.pathname);
@@ -40,6 +40,10 @@ try {
   const config = await configResponse.json();
   assert.equal(config.available, true, 'The local bank sandbox must be available.');
   assert.equal(config.mode, 'sandbox');
+  const walletAddress = page.locator('.billing-wallet-address');
+  await expect(walletAddress).toHaveText(/^0x[0-9a-f]{40}$/i);
+  const buyerAddress = await walletAddress.textContent();
+  assert.notEqual(buyerAddress.toLowerCase(), '0x2b5a65b5c404b48ba775d3a9ea7ee9eaf2bc2805');
 
   const bankResponse = (action) =>
     page.waitForResponse(
@@ -123,6 +127,7 @@ try {
     );
 
     await page.reload();
+    await expect(walletAddress).toHaveText(buyerAddress);
     await expect(tier).toHaveText(plan);
     console.log(
       `${plan} quote, simulated bank credit, persisted entitlement and local receipt verified. QR ${decoded ? 'decoded by Edge' : 'rendered; native decoder unavailable'}.`,

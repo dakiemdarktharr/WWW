@@ -1,4 +1,10 @@
 .ka-overlay {
+  --ka-ink: #171619;
+  --ka-muted: #5f5b66;
+  --ka-line: rgb(23 22 25 / 15%);
+  --ka-lime: #d5ff5f;
+  --ka-violet: #7651c8;
+  color-scheme: light;
   position: fixed;
   inset: 0;
   z-index: 120;
@@ -6,10 +12,10 @@
   place-items: center;
   padding: 28px 18px;
   overflow-y: auto;
-  background: rgb(3 14 23 / 68%);
+  background: rgb(18 16 23 / 58%);
   backdrop-filter: blur(15px);
   -webkit-backdrop-filter: blur(15px);
-  color: #eaf5f7;
+  color: var(--ka-ink);
 }
 .ka-panel {
   position: relative;
@@ -21,21 +27,21 @@
   position: relative;
   z-index: 1;
   padding: 26px 30px 22px;
-  border: 1px solid rgb(206 240 245 / 18%);
+  border: 1px solid rgb(255 255 255 / 95%);
   border-radius: 28px;
-  background: linear-gradient(145deg, rgb(29 67 84 / 92%), rgb(8 28 41 / 98%));
+  background: linear-gradient(145deg, rgb(255 255 255 / 98%), rgb(246 243 252 / 96%));
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 9%),
-    0 32px 100px rgb(0 7 15 / 45%);
+    inset 0 2px 0 #fff,
+    0 32px 100px rgb(16 12 24 / 26%);
   overflow: hidden;
 }
 .ka-card-under {
   position: absolute;
   inset: 0 8px 7px;
   z-index: 0;
-  border: 1px solid rgb(140 232 207 / 30%);
+  border: 1px solid rgb(255 255 255 / 60%);
   border-radius: 28px;
-  background: #173d49;
+  background: linear-gradient(145deg, #b8a2ed, #e7e0f7);
   box-shadow: 0 15px 50px rgb(0 0 0 / 18%);
   pointer-events: none;
 }
@@ -55,13 +61,13 @@
 .ka-icon {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   padding: 0;
-  border: 1px solid rgb(234 245 247 / 10%);
+  border: 1px solid var(--ka-line);
   border-radius: 50%;
-  background: rgb(234 245 247 / 4%);
-  color: #d3e6eb;
+  background: rgb(255 255 255 / 60%);
+  color: var(--ka-muted);
   cursor: pointer;
 }
 .ka-panel h2 {
@@ -70,7 +76,7 @@
   font-weight: 540;
   line-height: 1.12;
   letter-spacing: -0.055em;
-  color: #eaf5f7;
+  color: var(--ka-ink);
 }
 .ka-form {
   display: grid;
@@ -81,35 +87,35 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 450;
-  color: #c7e0e7;
+  color: var(--ka-ink);
 }
 .ka-field input {
   width: 100%;
   height: 49px;
   box-sizing: border-box;
   padding: 0 14px;
-  border: 1px solid rgb(185 221 233 / 20%);
+  border: 1px solid rgb(23 22 25 / 22%);
   border-radius: 13px;
   outline: none;
-  color: #eaf5f7;
-  caret-color: #8ce8cf;
-  background: rgb(2 17 29 / 48%);
-  box-shadow: inset 0 1px 3px rgb(0 4 12 / 16%);
+  color: var(--ka-ink);
+  caret-color: var(--ka-violet);
+  background: rgb(255 255 255 / 88%);
+  box-shadow: inset 0 1px 3px rgb(23 22 25 / 3%);
   font-size: 15px;
   transition:
     border-color 160ms,
     box-shadow 160ms;
 }
 .ka-field input:focus {
-  border-color: #8ce8cf;
-  box-shadow: 0 0 0 3px rgb(140 232 207 / 12%);
+  border-color: var(--ka-violet);
+  box-shadow: 0 0 0 3px rgb(118 81 200 / 12%);
 }
 .ka-field input::placeholder {
-  color: #90afb8;
+  color: #77727f;
 }
 .ka-field input:-webkit-autofill {
-  -webkit-text-fill-color: #eaf5f7;
-  box-shadow: 0 0 0 100px #102c3b inset;
+  -webkit-text-fill-color: var(--ka-ink);
+  box-shadow: 0 0 0 100px #f5f2fc inset;
 }
 .ka-field .ka-code {
   text-align: center;
@@ -132,13 +138,13 @@
   align-items: center;
   gap: 9px;
   padding: 12px 17px;
-  border: 1px solid rgb(221 255 245 / 30%);
+  border: 1px solid rgb(79 102 11 / 27%);
   border-radius: 14px;
-  background: #8ce8cf;
+  background: var(--ka-lime);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 28%),
-    0 5px 20px rgb(37 136 117 / 12%);
-  color: #072b29;
+    0 5px 20px rgb(92 116 25 / 10%);
+  color: var(--ka-ink);
   font-weight: 590 !important;
   font-size: 14px !important;
   cursor: pointer;
@@ -151,7 +157,7 @@
   opacity: 0.6;
 }
 .ka-overlay button:focus-visible {
-  outline: 2px solid #8ce8cf;
+  outline: 2px solid var(--ka-violet);
   outline-offset: 4px;
 }
 .ka-text {
@@ -159,17 +165,17 @@
   justify-content: center;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: 44px;
   padding: 5px;
   border: 0;
   background: none;
-  color: #b7ebdd;
+  color: var(--ka-violet);
   font-size: 13px !important;
   line-height: 1.4;
   cursor: pointer;
 }
 .ka-text:hover {
-  color: #eaf5f7;
+  color: var(--ka-ink);
 }
 .ka-back {
   justify-self: start;
@@ -181,10 +187,10 @@
   gap: 4px;
   padding-top: 17px;
   margin-top: 21px;
-  border-top: 1px solid rgb(234 245 247 / 10%);
+  border-top: 1px solid var(--ka-line);
 }
 .ka-footer .ka-owner {
-  color: #a8c4ce;
+  color: var(--ka-muted);
   font-size: 12px !important;
 }
 .ka-note {
@@ -192,7 +198,7 @@
   gap: 8px;
   align-items: center;
   margin: 0;
-  color: #b4cdd4;
+  color: var(--ka-muted);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -201,7 +207,7 @@
 }
 .ka-error {
   margin: 15px 0 0;
-  color: #ffcbad;
+  color: #8c2841;
   font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -215,7 +221,7 @@
   align-items: center;
   gap: 10px;
   min-height: 130px;
-  color: #b4cdd4;
+  color: var(--ka-muted);
   font-size: 14px;
 }
 .ka-account {
@@ -223,7 +229,7 @@
   align-items: center;
   gap: 10px;
   padding-bottom: 4px;
-  color: #e1f0f3;
+  color: var(--ka-ink);
   font-size: 14px;
   overflow-wrap: anywhere;
 }
@@ -233,10 +239,10 @@
   width: 31px;
   height: 31px;
   flex: none;
-  border: 1px solid rgb(140 232 207 / 24%);
+  border: 1px solid rgb(118 81 200 / 24%);
   border-radius: 11px;
-  background: rgb(140 232 207 / 10%);
-  color: #8ce8cf;
+  background: rgb(168 139 250 / 14%);
+  color: var(--ka-violet);
   font-size: 13px;
 }
 .ka-device {
@@ -245,22 +251,22 @@
   gap: 11px;
   min-height: 47px;
   padding: 10px 13px;
-  border: 1px solid rgb(140 232 207 / 16%);
+  border: 1px solid rgb(118 81 200 / 20%);
   border-radius: 13px;
-  background: rgb(140 232 207 / 5%);
-  color: #d7eee8;
+  background: rgb(168 139 250 / 9%);
+  color: var(--ka-ink);
   font-size: 14px;
   overflow-wrap: anywhere;
 }
 .ka-device svg {
   flex: none;
-  color: #8ce8cf;
+  color: var(--ka-violet);
 }
 .ka-legacy {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #bcd6df;
+  color: var(--ka-muted);
   font-size: 13px;
 }
 .ka-success {
@@ -274,14 +280,14 @@
   place-items: center;
   width: 72px;
   height: 72px;
-  border: 1px solid rgb(140 232 207 / 20%);
+  border: 1px solid rgb(79 102 11 / 25%);
   border-radius: 24px;
-  background: rgb(140 232 207 / 8%);
-  color: #8ce8cf;
+  background: rgb(213 255 95 / 48%);
+  color: var(--ka-violet);
 }
 .ka-success p {
   margin: 0 0 3px;
-  color: #d4e7eb;
+  color: var(--ka-muted);
   font-size: 14px;
   text-align: center;
 }
@@ -317,7 +323,24 @@
 }
 .ka-header-actions .kp-language {
   order: -1;
-  width: 35px;
-  height: 35px;
-  flex-basis: 35px;
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+  padding: 0;
+  border: 1px solid var(--ka-line);
+  border-radius: 50%;
+  background: rgb(168 139 250 / 12%);
+  color: var(--ka-violet);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ka-icon:hover,
+.ka-header-actions .kp-language:hover {
+  background: rgb(168 139 250 / 19%);
+  color: var(--ka-ink);
+}
+
+.ka-success-icon {
+  color: #465b09;
 }

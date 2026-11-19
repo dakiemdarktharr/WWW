@@ -2,6 +2,36 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 export type PortalLocale = 'vi' | 'en';
 const english: Record<string, string> = {
+  'Rừng hoa tím và lime sau lớp kính khúc xạ, mở ra khoảng trời dịu phía trên.':
+    'A violet and lime flower forest behind refractive glass, with a quiet open sky above.',
+  'Nhiều trí tuệ. Một nhịp làm việc.': 'Many minds. One shared rhythm.',
+  'Không gian chung cho bạn và đội AI.': 'A shared space for you and your AI team.',
+  'Bạn dẫn đội. Cùng nhau làm nên chuyện.': 'You lead. Together, make it happen.',
+  'Cùng một không gian. Nhiều khả năng hơn.': 'One shared space. More possibilities.',
+  'Cả đội vào việc.': 'Everyone in the flow.',
+  'Cùng một mục tiêu.': 'One shared goal.',
+  'Sade chia việc ngay trong Chat, phối hợp các trợ lý AI và nhờ một AI khác kiểm tra kết quả. Code đổi, review cũng phải cập nhật.':
+    'Sade divides work in Chat, coordinates AI teammates, and brings in another AI to check the result. When code changes, the review must follow.',
+  'Điều phối trong Chat': 'Coordination in Chat',
+  'Kiểm tra độc lập': 'Independent review',
+  'Review theo phiên bản code': 'Review tied to the code revision',
+  'Bạn giữ quyền quyết định.': 'You make the final call.',
+  'KẾT NỐI': 'CONNECTED',
+  'QUYỀN KIỂM SOÁT': 'YOUR CONTROL',
+  'Làm việc trên máy của bạn, máy SSH hoặc máy đồng đội. Nhóm dùng chung cuộc trò chuyện, mỗi phần việc có người phụ trách rõ ràng.':
+    'Work on your computer, an SSH machine, or a teammate’s computer. Share one conversation, with clear ownership of each task.',
+  'Khi usage chạm ngưỡng dự trữ, Kivuno bàn giao checkpoint và bước tiếp theo. Đồng đội tiếp tục từ đúng chỗ bạn dừng.':
+    'When usage reaches the reserve threshold, Kivuno hands over the checkpoint and next steps. A teammate continues where you left off.',
+  'Duyệt thay đổi và quản lý quyền trước khi thực thi. AEGIS cung cấp bằng chứng xác minh trên Avalanche Fuji testnet khi được bật.':
+    'Review changes and manage permissions before execution. When enabled, AEGIS provides verification evidence on the Avalanche Fuji testnet.',
+  'Thêm chỗ cho cả đội.': 'Room for the whole team.',
+  'Chọn số hồ sơ AI và quy mô nhóm phù hợp. Xem hạn mức, ví thanh toán và gói hiện tại trong cùng một nơi.':
+    'Choose the AI profiles and group size that fit your team. See your limits, payment wallet, and current plan in one place.',
+  'Khám phá các gói': 'Explore plans',
+  'Dải kính khúc xạ đan vào nhau với ánh tím và lime.':
+    'Interwoven refractive glass ribbons in violet and lime.',
+  '@Sade mình phụ trách route này. Đã nhận sửa và bổ sung test.':
+    '@Sade that route is mine. I’ll fix it and add a test.',
   Bạn: 'You',
   '@Bạn': '@You',
   '/goal Xây một trợ lý nghiên cứu cho UniHack.': '/goal Build a research assistant for UniHack.',
@@ -100,9 +130,14 @@ const english: Record<string, string> = {
   'Windows x64 · Chưa ký chứng chỉ': 'Windows x64 · Unsigned installer',
   'Linux x64 · Cần Git, keyring và desktop Linux hỗ trợ sandbox.':
     'Linux x64 · Requires Git, a keyring, and a Linux desktop with sandbox support.',
-  'macOS Apple Silicon · Chưa ký, chưa notarize':
-    'macOS Apple Silicon · Unsigned and not notarized',
+  'macOS Apple Silicon · Chưa có chứng chỉ Developer ID hoặc notarization':
+    'macOS Apple Silicon · No Developer ID certificate or notarization',
   'macOS Apple Silicon · Chưa có bản tải': 'macOS Apple Silicon · Download not available yet',
+  'macOS Apple Silicon': 'macOS Apple Silicon',
+  'Mở DMG, kéo Kivuno vào Applications rồi mở app.':
+    'Open the DMG, drag Kivuno to Applications, then open the app.',
+  'Nếu macOS báo chưa xác minh nhà phát triển, mở System Settings → Privacy & Security → Open Anyway.':
+    'If macOS says it cannot verify the developer, go to System Settings → Privacy & Security → Open Anyway.',
   'Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.': 'Sign-in is unavailable. Please try again.',
   'Bạn đã thử nhiều lần. Vui lòng đợi một phút.': 'Too many attempts. Please wait a minute.',
   'Email hoặc mật khẩu không đúng.': 'The email or password is incorrect.',

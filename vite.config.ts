@@ -71,5 +71,9 @@ export default defineConfig({
       },
     },
   },
-  build: { outDir: 'dist', assetsInlineLimit: 0 },
+  build: {
+    outDir: 'dist',
+    assetsInlineLimit: 0,
+    rolldownOptions: { input: ['index.html', 'tools/kivuno-qr-fuji.html'] },
+  },
 });

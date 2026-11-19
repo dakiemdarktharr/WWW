@@ -15,6 +15,21 @@
       "statusCode": 307
     },
     {
+      "source": "/downloads/Kivuno-0.8.6-macOS-arm64.dmg",
+      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.6/Kivuno-0.8.6-macOS-arm64.dmg",
+      "statusCode": 307
+    },
+    {
+      "source": "/downloads/Kivuno-0.8.7-macOS-arm64.dmg",
+      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.7/Kivuno-0.8.7-macOS-arm64.dmg",
+      "statusCode": 307
+    },
+    {
+      "source": "/downloads/Kivuno-0.8.8-macOS-arm64.dmg",
+      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.8/Kivuno-0.8.8-macOS-arm64.dmg",
+      "statusCode": 307
+    },
+    {
       "source": "/:path*",
       "has": [{ "type": "host", "value": "nosleepclub-relay.vercel.app" }],
       "destination": "https://kivuno.vercel.app/:path*",

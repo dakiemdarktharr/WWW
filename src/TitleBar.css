@@ -153,12 +153,12 @@
   margin-top: 20px;
   border: 1px solid color-mix(in srgb, var(--lime) 55%, var(--line));
   border-radius: 7px;
-  background: var(--lime);
-  color: #08211e;
+  background: #d5ff5f;
+  color: #222619;
   font-weight: 700;
 }
 .desktop-update-download:hover {
-  background: color-mix(in srgb, var(--lime) 88%, white);
+  background: #e1ff91;
 }
 .desktop-update-error {
   margin-top: 14px !important;

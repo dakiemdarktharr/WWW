@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Biên nhận QR Kivuno · Avalanche Fuji</title>
+    <style>
+      :root {
+        font:
+          16px/1.55 system-ui,
+          sans-serif;
+        color: #1c2835;
+        background: #f1f4f7;
+      }
+      body {
+        margin: auto;
+        max-width: 780px;
+        padding: 3rem 1rem;
+      }
+      main {
+        border: 1px solid #d1dae3;
+        background: white;
+        border-radius: 16px;
+        padding: clamp(1rem, 4vw, 2.5rem);
+      }
+      h1 {
+        line-height: 1.13;
+        margin: 0.25em 0;
+      }
+      p,
+      dt {
+        color: #445564;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: minmax(7rem, 1fr) 3fr;
+        gap: 0.65rem;
+        margin: 1.5rem 0;
+      }
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      button {
+        font: inherit;
+        padding: 0.65rem 1rem;
+        border: 1px solid #355b6e;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #sign {
+        background: #144f67;
+        color: white;
+      }
+      a {
+        color: #125677;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+      strong {
+        color: #143d52;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <strong>Kivuno · Avalanche Fuji · 43113</strong>
+      <h1>Biên nhận của đơn QR mô phỏng</h1>
+      <p>
+        Kivuno đối soát giao dịch ngân hàng mô phỏng và cấp gói. Ví phát hành ghi mã cam kết dài 32
+        byte lên Fuji bằng một giao dịch gửi cho chính ví đó, giá trị 0 AVAX.
+      </p>
+      <dl>
+        <dt>Gói được cấp</dt>
+        <dd id="plan"></dd>
+        <dt>Thời điểm cấp</dt>
+        <dd id="start"></dd>
+        <dt>Hết hạn</dt>
+        <dd id="end"></dd>
+        <dt>Ví phát hành và nhận</dt>
+        <dd><code id="issuer"></code></dd>
+        <dt>Mã cam kết trên Fuji</dt>
+        <dd><code id="digest"></code></dd>
+        <dt>Phí tối đa cho lần ký</dt>
+        <dd id="fee">Hiển thị sau khi kết nối Core.</dd>
+      </dl>
+      <div id="operator" hidden>
+        <button id="connect" type="button">Kết nối Core</button>
+        <button id="sign" type="button" disabled>Xem giao dịch trong Core</button>
+      </div>
+      <p id="status" role="status" aria-live="polite">Đang đọc biên nhận…</p>
+      <a id="explorer" target="_blank" rel="noopener noreferrer" hidden
+        >Xem giao dịch trên Fuji Explorer</a
+      >
+    </main>
+    <script type="module" src="./kivuno-qr-fuji.js"></script>
+  </body>
+</html>

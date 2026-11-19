@@ -154,8 +154,39 @@ async function turn(bridge, prompt) {
   if (read.error || report.error) throw new Error('Scoped tool failed.');
   return 'Controlled protocol completion; not a real model evaluation.';
 }
+const permissionReplies = new Map();
+function permission(sessionId, name, kind = 'other') {
+  const id = randomUUID();
+  const answer = new Promise((resolve) => permissionReplies.set(id, resolve));
+  send({
+    jsonrpc: '2.0',
+    id,
+    method: 'session/request_permission',
+    params: {
+      sessionId,
+      toolCall: {
+        toolCallId: randomUUID(),
+        name,
+        kind,
+        title: 'Run mcp_kivuno_mesh_post',
+        rawInput: { content: 'QA post' },
+      },
+      options: [
+        { kind: 'allow_always', optionId: 'always' },
+        { kind: 'allow_once', optionId: 'allow' },
+        { kind: 'reject_once', optionId: 'deny' },
+      ],
+    },
+  });
+  return answer;
+}
 createInterface({ input: process.stdin }).on('line', async (line) => {
   const value = JSON.parse(line);
+  if (permissionReplies.has(value.id)) {
+    permissionReplies.get(value.id)(value.result.outcome.optionId);
+    permissionReplies.delete(value.id);
+    return;
+  }
   if (acp && value.id === 'untrusted-permission') {
     assert.equal(value.result.outcome.optionId, 'reject');
     await writeFile(path.join(home, 'permission-denied'), 'true');
@@ -237,6 +268,25 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       const option = configOptions.find((option) => option.id === value.params.configId);
       option.currentValue = value.params.value;
       result = { configOptions };
+    } else if (
+      value.method === 'session/prompt' &&
+      value.params.prompt[0].text.includes('test-acp-review')
+    ) {
+      const sessionId = value.params.sessionId;
+      for (const [id, name, kind] of [
+        [sessionId, 'run_command', 'execute'],
+        [sessionId, 'read_file', 'read'],
+        [sessionId, 'mcp_other_mesh_post', 'other'],
+        [sessionId, 'mcp_kivuno_workspace_write_file', 'other'],
+        [randomUUID(), 'mcp_kivuno_mesh_post', 'other'],
+      ])
+        assert.equal(await permission(id, name, kind), 'deny');
+      const answer = await permission(sessionId, 'mcp_kivuno_mesh_post');
+      if (answer === 'allow') {
+        const posted = await tool(sessions.get(sessionId), 'mesh_post', { content: 'QA post' });
+        assert.ok(posted.result);
+      } else assert.equal(answer, 'deny');
+      result = { stopReason: 'end_turn' };
     } else if (value.method === 'session/prompt') {
       send({
         jsonrpc: '2.0',

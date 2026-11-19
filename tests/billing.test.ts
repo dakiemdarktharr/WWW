@@ -1,9 +1,67 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import { Wallet } from 'ethers';
 import { effectiveTier, registerBillingRoutes } from '../server/billing.ts';
 import { Store } from '../server/store.ts';
+import { DesktopIdentity } from '../server/desktop-auth.ts';
+
+test('re-authentication preserves selected profiles from retired devices within the plan limit', async (t) => {
+  const app = Fastify(),
+    store = new Store(':memory:');
+  const identity = new DesktopIdentity(store, 'https://example.test');
+  const owner = { id: 'returning-owner', name: 'Owner', email: 'owner@example.test' };
+  registerBillingRoutes(app, store, async () => owner, identity);
+  t.after(async () => {
+    identity.close();
+    await app.close();
+    store.close();
+  });
+  const signIn = () => {
+    const proof = randomBytes(32).toString('base64url');
+    const grant = identity.authorize(
+      createHash('sha256').update(proof).digest('base64url'),
+      'Mac',
+      'test',
+    );
+    identity.approve(grant.userCode, owner);
+    return identity.token(grant.deviceCode, proof)!;
+  };
+  const profiles = ['Atlas', 'Vega', 'Nova', 'Fourth'].map((name) => ({
+    name,
+    profileId: randomUUID(),
+    provider: 'codex',
+  }));
+  const sync = async (accessToken: string, list = profiles) => {
+    const result = await app.inject({
+      method: 'POST',
+      url: '/api/desktop/profiles',
+      headers: { authorization: 'Bearer ' + accessToken },
+      payload: { action: 'sync', profiles: list },
+    });
+    assert.equal(result.statusCode, 200, result.body);
+    return result.json().lockedIds;
+  };
+  const old = signIn();
+  assert.deepEqual(await sync(old.accessToken), [profiles[3].profileId]);
+  const other = signIn();
+  assert.deepEqual(await sync(other.accessToken, [profiles[2]]), [profiles[2].profileId]);
+  identity.revoke(identity.authenticate('Bearer ' + old.accessToken));
+  const current = signIn();
+  assert.deepEqual(await sync(current.accessToken, profiles.slice().reverse()), [
+    profiles[3].profileId,
+  ]);
+  assert.deepEqual(await sync(current.accessToken), [profiles[3].profileId]);
+  const view = (await app.inject({ method: 'GET', url: '/api/billing/profiles' })).json();
+  assert.equal(view.profiles.length, 5);
+  assert.equal(view.profiles.filter((p: { selected: boolean }) => p.selected).length, 3);
+  assert.ok(
+    view.profiles.some(
+      (p: { deviceId: string; selected: boolean }) => p.deviceId === other.deviceId && !p.selected,
+    ),
+  );
+});
 
 test('wallet unlock is stable per account and rejects other or expired sessions', async (t) => {
   const app = Fastify();
