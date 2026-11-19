@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { z } from 'zod';
 import { SharedGroups } from '../server/collaboration.ts';
 import {
   groupNoWorkTool,
   groupPlanTool,
+  groupQuestionTool,
   needsGroupWrite,
   parseGroupNoWork,
   parseSharedGroupPlan,
+  sharedFinish,
   type SharedDelivery,
 } from '../server/group-sade.ts';
 import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
@@ -49,7 +52,33 @@ const messages = {
     'FYI for the human team: “start a Mac check and inspect the diff” was a quote from yesterday. No harness should run now.',
   ],
 };
-type Case = keyof typeof messages | 'full-handoff';
+const ownerHandoffs = [
+  {
+    id: 'owner/relative',
+    scenario: 'owner-relative',
+    message:
+      'ê Gemini của mình viết docs/contract.md trước nha, Gemini của ông lấy hợp đồng đó làm src/signup.ts giùm.',
+  },
+  {
+    id: 'owner/named',
+    scenario: 'owner-named',
+    message:
+      'Gemini cua minh viet docs/contract.md truoc nhe. Astra cua Binh lay dung hop dong do roi sua src/signup.ts.',
+  },
+  {
+    id: 'owner/ambiguous',
+    scenario: 'owner-ambiguous',
+    message:
+      'Gemini của mình viết docs/contract.md rồi giao Astra của bạn sửa src/signup.ts theo hợp đồng đó nha.',
+  },
+  {
+    id: 'owner/ungranted',
+    scenario: 'owner-ungranted',
+    message:
+      'Gemini của Bình viết docs/contract.md trước nhé, xong Gemini của mình làm src/signup.ts theo đúng file đó.',
+  },
+] as const;
+type Case = keyof typeof messages | 'full-handoff' | (typeof ownerHandoffs)[number]['scenario'];
 const workshop = {
   architecture: 'docs/workshop-contract.md',
   frontend: 'src/workshop/Form.tsx',
@@ -122,19 +151,27 @@ const { values, positionals } = parseArgs({
     case: { type: 'string' },
     'export-prompt': { type: 'boolean' },
     'external-plan': { type: 'string' },
+    'external-decision': { type: 'string' },
+    'owner-handoff': { type: 'boolean' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
   },
 });
 assert.ok(
-  [values['handoff-holdout'], values['handoff-varied'], values['full-handoff']].filter(Boolean)
-    .length <= 1,
+  [
+    values['handoff-holdout'],
+    values['handoff-varied'],
+    values['full-handoff'],
+    values['owner-handoff'],
+  ].filter(Boolean).length <= 1,
   'Choose one handoff suite',
 );
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
-const externalPath = values['external-plan'] && path.resolve(values['external-plan']);
+const externalInput = values['external-plan'] || values['external-decision'];
+const externalPath = externalInput && path.resolve(externalInput);
+assert.ok(!values['external-plan'] || !values['external-decision'], 'Choose one external input.');
 const exportPrompt = values['export-prompt'];
 assert.ok(
   [source, externalPath, exportPrompt].filter(Boolean).length <= 1,
@@ -143,17 +180,27 @@ assert.ok(
 if (externalPath || exportPrompt) assert.ok(values.case, 'Select one planning case with --case.');
 assert.notEqual(output, source, 'Choose a separate output file for replay');
 assert.notEqual(output, externalPath, 'Choose a separate output file for external plan scoring.');
-const externalPlan: unknown = externalPath
+const externalReply: unknown = externalPath
   ? JSON.parse(await readFile(externalPath, 'utf8'))
   : undefined;
 type SavedRun = {
   model: string;
   digest: string;
   toolsSha256: string;
-  rows: { id: string; promptSha256: string; plan?: unknown; error?: string; toolName?: string }[];
+  rows: {
+    id: string;
+    promptSha256: string;
+    plan?: unknown;
+    question?: string;
+    error?: string;
+    toolName?: string;
+  }[];
 };
 const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
-const tools = [groupPlanTool, groupNoWorkTool].map(({ type, name, description, inputSchema }) => ({
+const plannerTools = values['owner-handoff']
+  ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
+  : [groupPlanTool, groupNoWorkTool];
+const tools = plannerTools.map(({ type, name, description, inputSchema }) => ({
   type,
   function: { name, description, parameters: inputSchema },
 }));
@@ -176,6 +223,7 @@ async function withGroup<T>(
   run: (context: {
     delivery: SharedDelivery;
     finish: (plan: unknown) => void;
+    ask: (summary: string) => void;
     jobs: () => SharedSadeRun;
     verifyReview: (job: SharedSadeJob) => void;
   }) => Promise<T>,
@@ -183,11 +231,23 @@ async function withGroup<T>(
   const store = new Store(':memory:');
   try {
     const fullHandoff = scenario === 'full-handoff';
-    const names = fullHandoff ? ['Gemini', 'Astra', 'Claude', 'Antigravity'] : ['Bếp', 'Mây'];
+    const names =
+      scenario === 'owner-relative' || scenario === 'owner-ungranted'
+        ? ['Gemini', 'Gemini']
+        : scenario === 'owner-named' || scenario === 'owner-ambiguous'
+          ? ['Gemini', 'Astra', 'Astra']
+          : fullHandoff
+            ? ['Gemini', 'Astra', 'Claude', 'Antigravity']
+            : ['Bếp', 'Mây'];
     const roles = fullHandoff
       ? ['engineer', 'designer', 'engineer', 'reviewer']
-      : ['engineer', 'reviewer'];
-    const providers = ['gemini', 'codex', 'claude', 'antigravity'];
+      : ['engineer', 'reviewer', 'designer'];
+    const providers =
+      scenario === 'owner-relative' || scenario === 'owner-ungranted'
+        ? ['gemini', 'gemini']
+        : scenario === 'owner-named' || scenario === 'owner-ambiguous'
+          ? ['gemini', 'codex', 'codex']
+          : ['gemini', 'codex', 'claude', 'antigravity'];
     const groups = new SharedGroups(
       store,
       (value) => people.find((person) => person.id === value) || null,
@@ -219,7 +279,7 @@ async function withGroup<T>(
           },
         ],
       });
-      if (index && (scenario === 'mac' || scenario === 'missing-mac')) continue;
+      if (index && ['mac', 'missing-mac', 'owner-ungranted'].includes(scenario)) continue;
       call(index, {
         action: 'sade-grant',
         groupId,
@@ -251,6 +311,16 @@ async function withGroup<T>(
       delivery,
       finish: (plan) =>
         call(0, { action: 'sade-finish', jobId: delivery.id, result: { kind: 'plan', plan } }),
+      ask(summary) {
+        call(0, {
+          action: 'sade-finish',
+          jobId: delivery.id,
+          result: { kind: 'question', summary },
+        });
+        assert.equal(jobs().jobs[0].state, 'waiting');
+        assert.ok(jobs().jobs.every((job) => job.phase === 'plan'));
+        for (let index = 1; index < names.length; index++) assert.equal(poll(index), undefined);
+      },
       jobs,
       verifyReview(job) {
         assert.equal(poll(0)?.id, job.id, 'the implementation must be the first delivery');
@@ -315,6 +385,12 @@ function assess(
   run: SharedSadeRun,
   handoff = defaultHandoff,
 ) {
+  assert.notEqual(scenario, 'owner-ambiguous', 'ask which owner before assigning a named harness');
+  assert.notEqual(
+    scenario,
+    'owner-ungranted',
+    'report the missing grant before assigning a named harness',
+  );
   if (scenario === 'missing-mac') {
     assert.equal(run.state, 'blocked', 'missing Mac must stop assignment');
     assert.ok(
@@ -363,7 +439,7 @@ function assess(
     assert.equal(review.grantId, grants[3], 'the granted independent reviewer gets the audit');
     for (const job of [backend, tests, review])
       assert.equal(job.task?.preferredMemberId, undefined, 'delegate unnamed assignments to Sade');
-  } else if (scenario === 'handoff') {
+  } else if (['handoff', 'owner-relative', 'owner-named'].includes(scenario)) {
     assert.equal(jobs.length, 2, 'two tasks are sufficient');
     const source = scopedWriter(jobs, handoff.source);
     const target = scopedWriter(jobs, handoff.target);
@@ -438,32 +514,34 @@ const cases: {
   id: string;
   message: string;
   handoff?: typeof defaultHandoff;
-}[] = values['full-handoff']
-  ? fullHandoffs.map((message, index) => ({
-      scenario: 'full-handoff',
-      id: `full-handoff/${index + 1}`,
-      message,
-    }))
-  : values['handoff-varied']
-    ? variedHandoffs.map(({ message, ...handoff }, index) => ({
-        scenario: 'handoff',
-        id: `handoff/varied-${index + 1}`,
+}[] = values['owner-handoff']
+  ? [...ownerHandoffs]
+  : values['full-handoff']
+    ? fullHandoffs.map((message, index) => ({
+        scenario: 'full-handoff',
+        id: `full-handoff/${index + 1}`,
         message,
-        handoff,
       }))
-    : values['handoff-holdout']
-      ? handoffHoldout.map((message, index) => ({
-          scenario: 'handoff' as const,
-          id: `handoff/holdout-${index + 1}`,
+    : values['handoff-varied']
+      ? variedHandoffs.map(({ message, ...handoff }, index) => ({
+          scenario: 'handoff',
+          id: `handoff/varied-${index + 1}`,
           message,
+          handoff,
         }))
-      : Object.entries(messages).flatMap(([scenario, inputs]) =>
-          inputs.map((message, index) => ({
-            scenario: scenario as Case,
-            id: `${scenario}/${index + 1}`,
+      : values['handoff-holdout']
+        ? handoffHoldout.map((message, index) => ({
+            scenario: 'handoff' as const,
+            id: `handoff/holdout-${index + 1}`,
             message,
-          })),
-        );
+          }))
+        : Object.entries(messages).flatMap(([scenario, inputs]) =>
+            inputs.map((message, index) => ({
+              scenario: scenario as Case,
+              id: `${scenario}/${index + 1}`,
+              message,
+            })),
+          );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved && !values.case)
@@ -471,15 +549,43 @@ if (saved && !values.case)
 const selectedCases = values.case ? cases.filter(({ id }) => id === values.case) : cases;
 assert.ok(selectedCases.length, `Unknown case: ${values.case}`);
 await mkdir(path.dirname(output), { recursive: true });
+const externalDecision = z.object({
+  decision: z.object({ name: z.string(), arguments: z.unknown() }).strict(),
+});
 if (exportPrompt) {
   const { scenario, id, message } = selectedCases[0];
   assert.notEqual(scenario, 'chat', 'Choose a case that requests a plan.');
   await withGroup(scenario, message, async ({ delivery }) => {
     const prompt = sharedGroupPlanningPrompt(delivery);
+    const decisionSchema = {
+      type: 'object',
+      properties: {
+        decision: {
+          anyOf: plannerTools.map((tool) => ({
+            type: 'object',
+            properties: {
+              name: { type: 'string', enum: [tool.name], description: tool.description },
+              arguments: tool.inputSchema,
+            },
+            required: ['name', 'arguments'],
+            additionalProperties: false,
+          })),
+        },
+      },
+      required: ['decision'],
+      additionalProperties: false,
+    };
     await writeFile(
       output,
       JSON.stringify(
-        { id, prompt, promptSha256: sha256(prompt), tool: groupPlanTool, toolsSha256 },
+        {
+          id,
+          prompt,
+          promptSha256: sha256(prompt),
+          tool: groupPlanTool,
+          toolsSha256,
+          decisionSchema,
+        },
         null,
         2,
       ),
@@ -500,23 +606,41 @@ for (const { scenario, id, message, handoff } of selectedCases) {
     const started = performance.now();
     let parsed = false;
     let plan;
+    let question: string | undefined;
     let run;
     let error;
     let toolName;
     let correction;
     let generatedTokens = 0;
+    const roster = group.delivery.team.map((member) => member.id);
+    function acceptReply(tool: { name: string; arguments: unknown }) {
+      toolName = tool.name;
+      if (toolName === groupQuestionTool.name && values['owner-handoff']) {
+        const args = z.object({ summary: z.string() }).strict().parse(tool.arguments);
+        const result = sharedFinish.parse({ kind: 'question', ...args });
+        assert.equal(result.kind, 'question');
+        question = result.summary;
+      } else if (toolName === groupNoWorkTool.name) {
+        plan = parseGroupNoWork(tool.arguments);
+      } else {
+        assert.equal(toolName, groupPlanTool.name);
+        plan = parseSharedGroupPlan(tool.arguments, roster);
+      }
+    }
     try {
       if (prior) {
-        if (!prior.plan) throw new Error(prior.error || 'Model returned no plan.');
         toolName = prior.toolName;
-        plan = parseTeamPlan(prior.plan, { allowEmpty: true });
+        if (prior.question) question = prior.question;
+        else if (prior.plan) plan = parseTeamPlan(prior.plan, { allowEmpty: true });
+        else throw new Error(prior.error || 'Model returned no plan.');
       } else if (externalPath) {
-        toolName = groupPlanTool.name;
-        const roster = group.delivery.team.map((member) => member.id);
-        plan = parseSharedGroupPlan(externalPlan, roster);
+        acceptReply(
+          values['external-decision']
+            ? externalDecision.parse(externalReply).decision
+            : { name: groupPlanTool.name, arguments: externalReply },
+        );
       } else {
         const messages: unknown[] = [{ role: 'user', content: prompt }];
-        const roster = group.delivery.team.map((member) => member.id);
         for (let attempt = 0; attempt < 2; attempt++) {
           const {
             message: reply,
@@ -530,13 +654,8 @@ for (const { scenario, id, message, handoff } of selectedCases) {
             `expected one tool call (${done_reason || 'unknown'})`,
           );
           const tool = reply.tool_calls![0].function;
-          toolName = tool.name;
           try {
-            if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
-            else {
-              assert.equal(toolName, groupPlanTool.name);
-              plan = parseSharedGroupPlan(tool.arguments, roster);
-            }
+            acceptReply(tool);
             break;
           } catch (cause) {
             if (attempt !== 0 || toolName !== groupPlanTool.name) throw cause;
@@ -544,13 +663,26 @@ for (const { scenario, id, message, handoff } of selectedCases) {
             messages.push(reply, { role: 'tool', tool_name: toolName, content: correction });
           }
         }
-        assert.ok(plan, 'expected a validated plan');
       }
+      assert.ok(plan || question, 'expected a validated plan or question');
       parsed = true;
-      group.finish(plan);
-      run = group.jobs();
-      const writer = assess(scenario, plan, run, handoff);
-      if (writer) group.verifyReview(writer);
+      if (question) {
+        assert.ok(
+          ['owner-ambiguous', 'owner-ungranted'].includes(scenario),
+          'a uniquely identified, granted harness should start work directly',
+        );
+        assert.match(question, /Bình|Binh/i);
+        if (scenario === 'owner-ambiguous') assert.match(question, /Chi/i);
+        else assert.match(question, /quyền|cho phép|grant|authoriz|permission/i);
+        group.ask(question);
+        run = group.jobs();
+      } else {
+        assert.ok(plan);
+        group.finish(plan);
+        run = group.jobs();
+        const writer = assess(scenario, plan, run, handoff);
+        if (writer) group.verifyReview(writer);
+      }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
@@ -563,6 +695,7 @@ for (const { scenario, id, message, handoff } of selectedCases) {
       milliseconds: Math.round(performance.now() - started),
       ...(generatedTokens ? { generatedTokens } : {}),
       plan,
+      question,
       toolName,
       correction,
       state: run?.state,
@@ -584,7 +717,9 @@ for (const { scenario, id, message, handoff } of selectedCases) {
     output,
     JSON.stringify(
       {
-        ...(externalPath ? { source: 'external-plan' } : { model, digest: selected.digest }),
+        ...(externalPath
+          ? { source: values['external-decision'] ? 'external-decision' : 'external-plan' }
+          : { model, digest: selected.digest }),
         toolsSha256,
         ...(source ? { replayedFrom: path.basename(source) } : {}),
         rows,

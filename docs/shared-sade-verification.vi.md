@@ -6,6 +6,8 @@ Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế h
 
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
 
+Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. Nếu còn mơ hồ, người gửi trả lời trong **Sade progress**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
+
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
 Khi chia việc, Sade tính khối lượng của các tác vụ đã chỉ định trước khi chọn harness cho việc còn trống. Với tác vụ review trong kế hoạch, Sade lần theo cả các bước phụ thuộc gián tiếp và loại profile của chủ tài khoản đã nhận quyền ghi vào các file thuộc phạm vi review. Người chỉ chạy test hoặc viết file ngoài phạm vi đó vẫn đủ điều kiện. Sade kiểm tra lại trước khi giao một lượt review đã được lập từ bản cũ.
@@ -187,6 +189,26 @@ $OutputEncoding = [Text.UTF8Encoding]::new($false)
 $instruction = 'This is a synthetic, read-only benchmark. Do not execute work, run commands, use tools, or read files. Return the argument object for relay_submit_plan as the final structured response.'
 ($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
 node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-score.json --full-handoff --case full-handoff/1 --external-plan $answer
+```
+
+### Phân biệt chủ tài khoản khi harness trùng tên
+
+Codex CLI đã đăng nhập chạy bốn tin tổng hợp trước và sau khi sửa prompt. Bản cũ đạt 3/4. Khi Gemini của Bình đã được chia sẻ trong nhóm nhưng chưa có quyền cho project, model nhầm thành thiếu thành viên. Bản mới đạt 4/4. Hai câu có đủ thông tin tạo đúng việc viết hợp đồng rồi bàn giao giao diện. Câu có hai Astra hỏi người gửi chọn Bình hay Chi. Câu thiếu quyền yêu cầu Bình cấp quyền cho đúng project. Phần chấm chạy qua Shared Groups với các chủ quyền mô phỏng.
+
+Bài hồi quy xác nhận chỉ người gửi được trả lời câu hỏi và chưa có tác vụ nào được giao trước đó. Khi Bình cấp quyền rồi người gửi trả lời, Sade tiếp tục cùng workflow và giao đúng công việc. Quyền mà Bình cấp cho project khác bị loại khỏi danh sách của lượt lập kế hoạch.
+
+```powershell
+$case = 'owner/ungranted'
+node --import tsx scripts/eval-shared-sade-planner.ts .local/owner-prompt.json --owner-handoff --case $case --export-prompt
+$bundle = Get-Content .local/owner-prompt.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$schema = Join-Path (Get-Location).Path '.local/owner-schema.json'
+$answer = Join-Path (Get-Location).Path '.local/owner-answer.json'
+[IO.File]::WriteAllText($schema, ($bundle.decisionSchema | ConvertTo-Json -Depth 45))
+$sandbox = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$instruction = 'This is a synthetic, read-only benchmark. Do not execute work, run commands, use tools, or read files. Return the action you would take and its arguments as the final structured decision.'
+($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
+node --import tsx scripts/eval-shared-sade-planner.ts .local/owner-score.json --owner-handoff --case $case --external-decision $answer
 ```
 
 ### Qwen review bản vá chức năng
