@@ -16,6 +16,7 @@ import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
 import { MachineExecutor } from '../server/machine-execution.ts';
+import { startCrossHostBridge } from './fixtures/shared-sade-cross-host.ts';
 
 const key = 'a'.repeat(64);
 const sha = 'b'.repeat(40);
@@ -293,6 +294,18 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
   console.log('Shared Sade corpus (fixture, not live model semantics):', JSON.stringify(counts));
 });
 
+const crossHostOrigin = process.env.KIVUNO_CROSS_HOST_ORIGIN;
+const pathProgram = 'module.exports = (value) => value.split(require("node:path").sep).at(-1);\n';
+const portablePathProgram = 'module.exports = (value) => value.split(/[\\\\/]/).at(-1);\n';
+const smokeProgram = String.raw`
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+assert.equal(fs.existsSync('.env.local'), process.platform === 'win32');
+if (process.platform === 'darwin') assert.equal(process.env.OPENAI_API_KEY, undefined);
+assert.equal(require('./path-label.cjs')('C:\\kivuno\\registration'), 'registration');
+console.log(process.platform);
+`;
+
 class DesktopPeer extends CodexClient {
   override readonly provider;
   calls: { method: string; params: any }[] = [];
@@ -359,7 +372,7 @@ class DesktopPeer extends CodexClient {
 
 test(
   'two desktop workspaces hand off reviewed code without a Git push and verify a consented paired runner',
-  { timeout: 60000 },
+  { timeout: crossHostOrigin ? 660000 : 60000 },
   async (t) => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-e2e-')));
     const remote = path.join(root, 'bare');
@@ -380,7 +393,9 @@ test(
       memberId: string;
       peers: Map<string, DesktopPeer>;
     }[] = [];
+    let closeBridge: (() => Promise<void>) | undefined;
     t.after(async () => {
+      await closeBridge?.();
       for (const entry of setups) {
         await entry.workspace.close();
         entry.store.close();
@@ -394,7 +409,11 @@ test(
         await mkdir(repo);
         await git(repo, ['init', '-b', 'main']);
         await writeFile(path.join(repo, 'README.md'), 'Shared project\n');
-        await git(repo, ['add', 'README.md']);
+        if (crossHostOrigin) {
+          await writeFile(path.join(repo, 'path-label.cjs'), pathProgram);
+          await writeFile(path.join(repo, 'platform-smoke.cjs'), smokeProgram);
+        }
+        await git(repo, ['add', '.']);
         await git(repo, [...fixtureIdentity, 'commit', '-m', 'Initial']);
         await git(repo, ['remote', 'add', 'origin', remote]);
         await git(repo, ['push', '-u', 'origin', 'main']);
@@ -799,7 +818,17 @@ test(
     const { workspace, projectId, memberId } = setups[0];
     const pairedPlatform = process.platform === 'darwin' ? 'win32' : 'darwin';
     const node = workspace.runners.add('Paired verification fixture', 'computer', projectId);
-    const permission = {
+    const live = crossHostOrigin
+      ? await startCrossHostBridge(workspace, projectId, node, {
+          origin: crossHostOrigin,
+          port: Number(process.env.KIVUNO_CROSS_HOST_PORT),
+          workflowRef: process.env.KIVUNO_CROSS_HOST_WORKFLOW!,
+          sha: process.env.KIVUNO_CROSS_HOST_SHA!,
+        })
+      : undefined;
+    if (live) assert.equal(process.platform, 'win32');
+    closeBridge = live?.close;
+    const permission = (await live?.ready()) || {
       id: randomUUID(),
       projectId,
       fullAccess: true,
@@ -816,23 +845,25 @@ test(
         events: [],
         execution: { ...access, platform: pairedPlatform, arch: process.arch },
       });
-    await advertise();
+    if (!live) await advertise();
     let simulateRequestedOS = false;
-    const machineCall = t.mock.method(
-      workspace.runners,
-      'call',
-      async (...[peer, command]: Parameters<typeof workspace.runners.call>) => {
-        assert.equal(peer.nodeId, node.id);
-        assert.doesNotMatch(
-          JSON.stringify(command),
-          /provider-private|accessToken|tokenHash|\.env\.local/,
+    const machineCall = live
+      ? undefined
+      : t.mock.method(
+          workspace.runners,
+          'call',
+          async (...[peer, command]: Parameters<typeof workspace.runners.call>) => {
+            assert.equal(peer.nodeId, node.id);
+            assert.doesNotMatch(
+              JSON.stringify(command),
+              /provider-private|accessToken|tokenHash|\.env\.local/,
+            );
+            const result = await remoteWorker.perform(randomUUID(), command.params);
+            return simulateRequestedOS && 'platform' in result
+              ? { ...result, platform: pairedPlatform }
+              : result;
+          },
         );
-        const result = await remoteWorker.perform(randomUUID(), command.params);
-        return simulateRequestedOS && 'platform' in result
-          ? { ...result, platform: pairedPlatform }
-          : result;
-      },
-    );
     const nextGrant = {
       id: randomUUID(),
       groupId: cloud.groupId,
@@ -869,6 +900,7 @@ test(
       tasks: [
         work('platform-smoke', {
           kind: 'code',
+          ...(live ? { scope: ['path-label.cjs'] } : {}),
           preferredMemberId: nextGrant.id,
           requiredPlatform: pairedPlatform,
         }),
@@ -888,30 +920,103 @@ test(
       );
     await assert.rejects(use('sync'), /Verify/);
     await assert.rejects(use('info', {}, randomUUID()), /Only the approved/);
-    assert.equal(machineCall.mock.callCount(), 0);
-    await assert.rejects(use('info'), /requested operating system/);
-    simulateRequestedOS = true;
-    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
-      runnerId: node.id,
-      operation: 'info',
-    });
-    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
-      runnerId: node.id,
-      operation: 'sync',
-    });
-    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
-      runnerId: node.id,
-      operation: 'run',
-      args: { command: 'node', args: ['--version'] },
-    });
-    await advertise({ ...permission, id: randomUUID() });
-    await assert.rejects(use('info'), /authorization changed/);
+    if (machineCall) {
+      assert.equal(machineCall.mock.callCount(), 0);
+      await assert.rejects(use('info'), /requested operating system/);
+      simulateRequestedOS = true;
+    }
+    const machine = async (operation: string, args: object = {}) => {
+      const result = await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
+        runnerId: node.id,
+        operation,
+        args,
+      });
+      return JSON.parse(result.contentItems?.[0]?.text || '{}');
+    };
+    if (live) {
+      const root = debuggerSession.task.worktree!;
+      await writeFile(path.join(root, '.env.local'), 'OPENAI_API_KEY=example-value');
+      const { execFileSync } = await import('node:child_process');
+      assert.equal(
+        execFileSync(process.execPath, ['platform-smoke.cjs'], {
+          cwd: root,
+          encoding: 'utf8',
+        }).trim(),
+        'win32',
+      );
+      let heartbeat: Promise<unknown> = Promise.resolve();
+      const timer = setInterval(() => {
+        heartbeat = heartbeat.then(() => pump(0));
+        void heartbeat.catch(() => {});
+      }, 2500);
+      try {
+        assert.equal((await machine('info')).platform, 'darwin');
+        const synced = await machine('sync');
+        assert.ok(synced.files.includes('platform-smoke.cjs'));
+        assert.ok(!synced.files.includes('.env.local'));
+        const args = { command: 'node', args: ['platform-smoke.cjs'] };
+        const failed = await machine('run', args);
+        assert.equal(failed.platform, 'darwin');
+        assert.equal(failed.code, 1);
+        assert.match(failed.stderr, /registration/);
+        await machine('write', { path: 'path-label.cjs', content: portablePathProgram });
+        const fixed = await machine('run', args);
+        assert.equal(fixed.code, 0, fixed.stderr);
+        assert.equal(fixed.stdout.trim(), 'darwin');
+        await machine('pull');
+        assert.equal(
+          await readFile(path.join(root, 'path-label.cjs'), 'utf8'),
+          portablePathProgram,
+        );
+        assert.equal(
+          await readFile(path.join(setups[0].repo, 'path-label.cjs'), 'utf8'),
+          pathProgram,
+        );
+        assert.equal(
+          execFileSync(process.execPath, ['platform-smoke.cjs'], {
+            cwd: root,
+            encoding: 'utf8',
+          }).trim(),
+          'win32',
+        );
+        console.log(
+          'Windows passed, macOS reproduced the path bug, macOS passed after the fix, and Windows received the scoped change.',
+        );
+      } finally {
+        clearInterval(timer);
+        await heartbeat;
+      }
+    } else {
+      await machine('info');
+      await machine('sync');
+      await machine('run', { command: 'node', args: ['--version'] });
+      await advertise({ ...permission, id: randomUUID() });
+      await assert.rejects(use('info'), /authorization changed/);
+    }
     await complete(
       0,
       debuggerSession.session,
       debuggerSession.peer,
-      'Controlled paired OS fixture finished the smoke check.',
+      'Paired OS fixture finished the smoke check.',
     );
+    if (live) {
+      let review: SharedDelivery | undefined;
+      for (let attempt = 0; attempt < 100 && !review; attempt++) {
+        await pump(0);
+        review = await pump(1);
+        if (!review) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      assert.deepEqual(review?.review?.files, ['path-label.cjs']);
+      const check = await sessionFor(1, review!);
+      await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
+        verdict: 'approved',
+        summary: 'Portable path handling uses both separator forms.',
+      });
+      await complete(1, check.session, check.peer, 'Reviewed the pulled fix.');
+      await pump(1);
+      await pump(0);
+      await workspace.accept(debuggerSession.task.id);
+    }
     const deadline = Date.now() + 7000;
     while (cloud.view().sadeRuns.at(-1)?.state !== 'done' && Date.now() < deadline) {
       await pump(0);
@@ -923,6 +1028,10 @@ test(
       final?.jobs[1].summary ?? '',
       new RegExp(`Paired ${pairedPlatform} command exit status 0`),
     );
+    if (live) {
+      assert.equal(await remoteHead(), startingRevision);
+      await live.finish();
+    }
   },
 );
 

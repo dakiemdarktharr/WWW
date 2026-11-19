@@ -8,11 +8,16 @@ on:
         description: Verification platform
         type: choice
         default: desktop
-        options: [desktop, macos]
+        options: [desktop, macos, paired-macos]
+      paired_origin:
+        description: Temporary cross-host test origin for paired-macos
+        type: string
+        required: false
 permissions:
   contents: read
 jobs:
   verify:
+    if: inputs.platform != 'paired-macos'
     strategy:
       fail-fast: false
       matrix:
@@ -44,3 +49,27 @@ jobs:
       - if: runner.os == 'macOS'
         run: npm run test:collaboration
       - run: npm audit --omit=dev --audit-level=high
+  paired-macos:
+    if: inputs.platform == 'paired-macos'
+    runs-on: macos-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Run tool-only Sade pairing fixture
+        env:
+          KIVUNO_CROSS_HOST_ORIGIN: ${{ inputs.paired_origin }}
+          OPENAI_API_KEY: test-sentinel-not-a-credential
+        run: >-
+          node --import tsx --input-type=module -e
+          "import { runCrossHostMac } from './tests/fixtures/shared-sade-cross-host.ts';
+          await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN)"
