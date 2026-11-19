@@ -620,7 +620,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       'accept',
       `/tasks/${task.id}/accept`,
       {},
-      'Changes integrated. Task complete.',
+      task.sharedSadeJobId ? 'Task complete.' : 'Changes integrated. Task complete.',
     );
     if (result) closeModal();
   }

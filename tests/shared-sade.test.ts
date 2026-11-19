@@ -735,6 +735,13 @@ test(
       'Shared verified contract\n',
     );
     await complete(0, author.session, author.peer, 'Architecture contract prepared.');
+    const architectureRepo = setups[0].repo;
+    const authorWorktree = author.task.worktree!;
+    const authorHead = await git(authorWorktree, ['rev-parse', 'HEAD']);
+    await writeFile(path.join(architectureRepo, 'architecture.txt'), 'Shared verified contract\n');
+    await git(architectureRepo, ['add', 'architecture.txt']);
+    await git(architectureRepo, [...fixtureIdentity, 'commit', '-m', 'Existing architecture work']);
+    const existingArchitecture = await git(architectureRepo, ['rev-parse', 'HEAD']);
     assert.equal(await pump(1), undefined);
     await assert.rejects(setups[0].workspace.accept(author.task.id), /Wait for independent/);
     await pump(0);
@@ -756,12 +763,19 @@ test(
     await complete(1, check.session, check.peer, 'Reviewed the architecture text.');
     assert.equal(await pump(1), undefined, 'Dependency still needs local human integration');
     await pump(0);
-    await setups[0].workspace.accept(author.task.id);
+    const accepted = await setups[0].workspace.accept(author.task.id);
+    assert.match(accepted.summary || '', /already on the project branch/);
+    assert.equal(await git(architectureRepo, ['rev-parse', 'HEAD']), existingArchitecture);
+    assert.equal(await git(authorWorktree, ['rev-parse', 'HEAD']), authorHead);
     assert.equal(await remoteHead(), startingRevision);
     await assert.rejects(readFile(path.join(setups[1].repo, 'architecture.txt')), {
       code: 'ENOENT',
     });
     await pump(0);
+    assert.match(
+      cloud.view().sadeRuns[0].jobs.find((job) => job.id === writer.id)?.summary || '',
+      /already on the project branch/,
+    );
     assert.doesNotMatch(JSON.stringify(cloud.view()), /Shared verified contract/);
     const olderReceiver = cloud.call(1, {
       action: 'sade-poll',
@@ -870,7 +884,16 @@ test(
     await complete(0, frontendCheck.session, frontendCheck.peer, 'Frontend reviewed.');
     await pump(0);
     await pump(1);
+    const frontendRepo = setups[1].repo;
+    await writeFile(path.join(frontendRepo, 'frontend.txt'), 'Frontend uses the contract\n');
+    await git(frontendRepo, ['add', 'frontend.txt']);
+    await git(frontendRepo, [...fixtureIdentity, 'commit', '-m', 'Existing frontend work']);
     await setups[1].workspace.accept(resumed.task.id);
+    assert.equal(
+      await git(frontendRepo, ['diff', '--name-only', 'HEAD^', 'HEAD']),
+      'architecture.txt',
+      'Integration still brings in the missing prerequisite',
+    );
     await pump(1);
     const verification = (await pump(0))!;
     assert.equal(verification.task?.key, 'verify-ui');

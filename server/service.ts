@@ -1445,24 +1445,41 @@ export class Workspace {
           );
       };
       await validateDiff(await taskDiff(task.worktree, task.baseCommit || 'HEAD'));
-      const revision = await integrate(project.path, task.worktree, task.branch, task.title, {
-        baseCommit: task.baseCommit || undefined,
-        ...(task.sharedSadeJobId
-          ? {
-              verifyReview: async (diff) =>
-                this.sharedSade.assertReviewed(task.sharedSadeJobId!, diff),
-            }
-          : task.workflowId &&
-              this.store.get<Workflow>('workflow', task.workflowId).orchestrator === 'sade'
-            ? { verifyReview: (diff) => this.sade.assertReviewed(task, diff) }
-            : {}),
-        validateDiff,
-      });
+      const { revision, alreadyPresent } = await integrate(
+        project.path,
+        task.worktree,
+        task.branch,
+        task.title,
+        {
+          baseCommit: task.baseCommit || undefined,
+          ...(task.sharedSadeJobId
+            ? {
+                skipAlreadyPresent: !this.aegis.isProtected(project.id),
+                verifyReview: async (diff) =>
+                  this.sharedSade.assertReviewed(task.sharedSadeJobId!, diff),
+              }
+            : task.workflowId &&
+                this.store.get<Workflow>('workflow', task.workflowId).orchestrator === 'sade'
+              ? { verifyReview: (diff) => this.sade.assertReviewed(task, diff) }
+              : {}),
+          validateDiff,
+        },
+      );
       if (task.sharedSadeJobId) this.sharedSade.recordIntegration(task.sharedSadeJobId, revision);
       const lease = this.store.lease(taskId);
       if (lease) this.store.release(taskId, lease.token);
-      const updated = this.store.updateTask(taskId, { status: 'done', error: null });
-      this.log(`Integrated “${task.title}”.`, taskId, task.assignedTo, 'integrated');
+      const existingSummary = 'The reviewed changes are already on the project branch.';
+      const updated = this.store.updateTask(taskId, {
+        status: 'done',
+        error: null,
+        ...(alreadyPresent ? { summary: existingSummary } : {}),
+      });
+      this.log(
+        alreadyPresent ? existingSummary : `Integrated “${task.title}”.`,
+        taskId,
+        task.assignedTo,
+        'integrated',
+      );
       this.workflows.wakeProject(task.projectId);
       return updated;
     } finally {

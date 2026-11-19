@@ -346,6 +346,7 @@ export async function stageReviewedTree(
 
 export interface IntegrationOptions {
   baseCommit?: string;
+  skipAlreadyPresent?: boolean;
   verifyReview?: (diff: TaskDiff) => Promise<void>;
   validateDiff?: (
     diff: TaskDiff,
@@ -363,15 +364,58 @@ export async function integrate(
     throw new DomainError(
       'The project has uncommitted changes. Commit or stash them before integration.',
     );
-  if (!(await git(repo, ['branch', '--show-current'])))
-    throw new DomainError('Check out a named project branch before integration.');
+  const projectBranch = await git(repo, ['branch', '--show-current']);
+  if (!projectBranch) throw new DomainError('Check out a named project branch before integration.');
   const startingHead = await git(repo, ['rev-parse', 'HEAD']);
+  const assertProjectUnchanged = async () => {
+    if (
+      (await git(repo, ['rev-parse', 'HEAD'])) !== startingHead ||
+      (await git(repo, ['branch', '--show-current'])) !== projectBranch ||
+      (await git(repo, ['status', '--porcelain']))
+    )
+      throw new DomainError(
+        'The project changed while preparing integration. Review it before retrying.',
+      );
+  };
   const workerBranch = await git(worktree, ['branch', '--show-current']);
   if (workerBranch !== branch)
     throw new DomainError('The worktree branch changed. Inspect it before integrating.');
   const baseCommit =
     options.baseCommit || (await git(worktree, ['merge-base', 'HEAD', startingHead]));
   const reviewedTree = await stageReviewedTree(worktree, baseCommit, options.verifyReview);
+  if (options.skipAlreadyPresent && reviewedTree) {
+    const workerHead = await git(worktree, ['rev-parse', 'HEAD']);
+    // Include inherited prerequisite changes, even though the worker's review omits them.
+    const mergeBase = await git(worktree, ['merge-base', workerHead, startingHead]);
+    const diffNames = ['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z'];
+    const [affected, different] = await Promise.all([
+      git(worktree, [...diffNames, mergeBase, reviewedTree]),
+      git(worktree, [...diffNames, startingHead, reviewedTree]),
+    ]);
+    const differentPaths = new Set(different.split('\0'));
+    if (
+      affected &&
+      affected
+        .split('\0')
+        .filter(Boolean)
+        .every((file) => !differentPaths.has(file))
+    ) {
+      await options.validateDiff?.(await taskDiff(worktree, baseCommit), {
+        root: worktree,
+        phase: 'worker',
+      });
+      if (
+        (await git(worktree, ['rev-parse', 'HEAD'])) !== workerHead ||
+        (await git(worktree, ['branch', '--show-current'])) !== branch ||
+        (await git(worktree, ['write-tree'])) !== reviewedTree ||
+        (await git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']))
+      )
+        throw new DomainError('The reviewed worktree changed while checking the project branch.');
+      await git(worktree, ['diff', '--quiet']);
+      await assertProjectUnchanged();
+      return { revision: startingHead, alreadyPresent: true };
+    }
+  }
   if (await git(worktree, ['diff', '--cached', '--name-only']))
     await git(worktree, [
       '-c',
@@ -394,13 +438,7 @@ export async function integrate(
     throw new DomainError(
       'A worker hook changed the reviewed files. Review the resulting diff before integration.',
     );
-  if (
-    (await git(repo, ['rev-parse', 'HEAD'])) !== startingHead ||
-    (await git(repo, ['status', '--porcelain']))
-  )
-    throw new DomainError(
-      'The project changed while preparing integration. Review it before retrying.',
-    );
+  await assertProjectUnchanged();
   try {
     // Import the final proposal only. Worker commits can contain reverted private
     // or out-of-scope files and must not become ancestors of the project branch.
@@ -439,7 +477,7 @@ export async function integrate(
         root: repo,
         phase: 'committed',
       });
-    return await git(repo, ['rev-parse', 'HEAD']);
+    return { revision: await git(repo, ['rev-parse', 'HEAD']), alreadyPresent: false };
   } catch (error) {
     // --squash does not create MERGE_HEAD, so merge --abort cannot clean up its
     // conflicts. --merge restores the initial index/tree without a hard reset.

@@ -231,6 +231,29 @@ test('a conflicting integration aborts the merge and preserves both histories an
   await assert.rejects(git(f.repo, ['rev-parse', '--verify', 'MERGE_HEAD']));
 });
 
+test('accepting a reviewed change already present on the project creates no duplicate commit', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'duplicate-integration');
+  const update = 'accepted in another commit\n';
+  await writeFile(path.join(worker.worktree, 'shared.txt'), update);
+  await writeFile(path.join(f.repo, 'shared.txt'), update);
+  await writeFile(path.join(f.repo, 'unrelated.txt'), 'new work from another contributor\n');
+  await git(f.repo, ['add', '--all']);
+  await git(f.repo, ['commit', '-m', 'Independent equivalent change']);
+  const existing = await git(f.repo, ['rev-parse', 'HEAD']);
+  const originalWorker = await git(worker.worktree, ['rev-parse', 'HEAD']);
+  const review = await taskDiff(worker.worktree, worker.baseCommit);
+  const result = await integrate(f.repo, worker.worktree, worker.branch, 'Previously completed', {
+    baseCommit: worker.baseCommit,
+    skipAlreadyPresent: true,
+    verifyReview: async (current) => assert.deepEqual(current, review),
+  });
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), existing);
+  assert.equal(await git(worker.worktree, ['rev-parse', 'HEAD']), originalWorker);
+  assert.deepEqual(result, { revision: existing, alreadyPresent: true });
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+});
+
 test('dirty project preflight does not stage or commit the agent worktree', async (t) => {
   const f = await fixture(t);
   const worker = await createWorktree(f.repo, f.storage, 'dirty-task-6666');
