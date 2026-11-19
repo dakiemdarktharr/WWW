@@ -8,6 +8,8 @@ Kivuno dùng tài khoản provider đã đăng nhập trên desktop của từng
 
 Sau review độc lập, chủ máy kiểm tra và tích hợp thay đổi cục bộ. Sade bàn giao patch đã duyệt cho nhiệm vụ phụ thuộc qua Shared Groups. Desktop nhận kiểm tra digest và danh sách file, rồi áp dụng patch trong worktree riêng trước khi mở harness. Nhánh Git của người nhận chỉ nhận thay đổi khi chủ máy chọn tích hợp. Quyền cũ vẫn sử dụng **Share published revision**. Cấp lại quyền trên desktop mới để cho phép bàn giao patch.
 
+Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác tập file và byte trên nhánh đích. AEGIS có thể chặn tích hợp nhiệm vụ phụ thuộc nếu nhánh đích còn thiếu patch đầu vào.
+
 ## Kết quả A–D
 
 | Tình huống                                | Phần đã kiểm tra                                                                                                                                                                                                                                                                           |
@@ -25,7 +27,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `9c98f85`. `npm run check` đạt 290 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và trình duyệt Shared Groups đều đạt. Lần chạy đầu bắt được một giả định sai của test về trạng thái cửa sổ khi khởi động. Lần chạy lại xác nhận cửa sổ trên runner mở ở trạng thái maximized rồi kiểm tra được cả phóng to và khôi phục. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. [GitHub Actions](https://github.com/dakiemdarktharr/WWW/actions/runs/44439458693)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `6983211`. `npm run check` đạt 291 bài, gồm bàn giao patch qua ba bước, và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 296 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44441530347)
 
 CI dùng máy ảo macOS và fixture provider. Bằng chứng này xác minh chạy runner, build và UI trên Darwin. Phiên Windows → máy Mac của một chủ tài khoản khác qua Kivuno và model đăng nhập thật vẫn cần một lần thử riêng.
 

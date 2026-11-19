@@ -2,12 +2,15 @@
 
 Ngày 19/11/2026. Trong Chat của project, bật **Sade · Plan and build** rồi gửi một yêu cầu. Một tài khoản đã kết nối lập kế hoạch. Sade kiểm tra kế hoạch, phân công theo tên hoặc vai trò, chờ đầu ra cần thiết và giao review độc lập. Xem [cấu hình và kết quả nghiên cứu](sade-workspace-research.vi.md) để phân biệt luồng Chat của project với Shared Groups.
 
+Trong Shared Groups, mỗi người thêm teammate, liên kết cùng Git origin và nhánh, rồi xác nhận số lượt và quyền trên desktop. Người gửi chọn **Ask Sade** và dùng cùng các prompt A–D. Sau review và tích hợp cục bộ, patch có thể đi thẳng đến harness phụ thuộc nếu chủ patch đã cấp quyền bàn giao. [Thiết lập Shared Groups và kết quả kiểm thử](shared-sade-verification.vi.md)
+
 ## Chạy kiểm thử xác định
 
 Yêu cầu Node theo `package.json`. Chạy:
 
 ```sh
 npm run test:sade
+npm run test:shared-sade
 npm run test:chat
 npm run test:portal
 ```
@@ -28,7 +31,7 @@ Kỳ vọng: một workflow, các bước có dependency; frontend nhận kết 
 
 Cho hai yêu cầu cùng sửa `src/registration.ts`. Gửi lại cùng HTTP request ID khi giả lập mất kết nối. Khi một nhánh đang làm, báo: “Phần này tôi đã commit; đừng làm lại, kiểm tra commit mới trước.”
 
-Kỳ vọng: retry không tạo workflow thứ hai; chỉ một lease ghi vào phạm vi trùng; AI nhận thông tin mới qua room; code nằm trong worktree riêng. Khi tích hợp phải kiểm tra trạng thái Git và phạm vi. Không được gán nhãn đã giải quyết xung đột nếu chưa tích hợp/test.
+Kỳ vọng: retry không tạo workflow thứ hai và chỉ một lease ghi vào phạm vi trùng. Trong Chat của project, AI đọc thông tin cập nhật qua room. Trong Shared Groups, theo dõi việc phân công và thu hồi quyền trong nhóm. Kiểm thử tiếp nhận chỉ đạo giữa lượt của từng provider cần chạy riêng. Code nằm trong worktree riêng và tích hợp kiểm tra trạng thái Git cùng phạm vi.
 
 Đo: workflow trùng = 0; concurrent write lease chồng scope = 0; commit đã làm bị lặp = 0 qua kiểm tra thực tế. Phát hiện _tương đương ngữ nghĩa_ giữa hai commit không được bảo đảm chỉ bằng so tên task; vẫn cần agent đọc history và review diff.
 
@@ -48,9 +51,9 @@ Chạy các ca: chưa cấp quyền; cấp quyền đúng máy/project; hết h�
 
 **Luồng cấp quyền và thực thi đã có trên nhánh Sade, chưa xác minh Windows → Mac end-to-end.** Trong Machines, nguồn chọn project và xuất cấu hình dùng máy để kiểm thử. Chủ máy đích mở Kivuno, nhập cấu hình và xác nhận native dialog: project, 30 phút, full access mặc định tắt. Chủ máy đích cần tài khoản Kivuno để mở ứng dụng nhưng không cần tài khoản ChatGPT/Claude/Gemini cho chế độ này. Không chuyển session AI: model ở nguồn, lệnh/file chạy trên máy đích.
 
-machine_list chỉ trả máy đang online có grant đúng project. machine_use hỗ trợ info/sync/read/write/run/pull. Lệnh tối đa 60 giây; snapshot tối đa 2 MB/2.000 file, 512 KB mỗi file; credential paths bị loại và các mẫu secret phổ biến bị chặn (không thay thế việc chủ repo kiểm tra dữ liệu). Full access cho phép thực thi với quyền OS của chủ máy, **cwd không phải sandbox**. Không bật full access thì không chạy lệnh hoặc sửa file. Stop trên máy đích thu hồi quyền; hết hạn dừng subprocess; mất liên lạc dừng sau cửa sổ giám sát, không phải tức thời. Kết quả chưa rõ không được tự chạy lại, kể cả khi process khởi động lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
+`machine_list` chỉ trả máy đang online có grant đúng project. `machine_use` hỗ trợ info/sync/read/write/run/pull. Lệnh tối đa 60 giây. Runner hỗ trợ chia gói nhận snapshot tối đa 8 MiB, 2.000 file và 4 MiB mỗi file. Runner đời cũ nhận tối đa 2 MiB và 512 KiB mỗi file. Credential paths bị loại và các mẫu secret phổ biến bị chặn. Full access cho phép thực thi với quyền OS của chủ máy, **cwd chỉ là thư mục làm việc**. Stop trên máy đích thu hồi quyền. Hết hạn dừng subprocess và mất liên lạc dừng sau cửa sổ giám sát. Kết quả chưa rõ không tự chạy lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
 
-`machine-execution.test.ts` chạy tiến trình Node thật trên OS hiện tại và qua broker/MachineAgent có kiểm soát; chứng minh kiểm tra quyền, thu hồi, expiry, chống replay và giới hạn pull. Nó **không** chứng minh cloud transport hai máy hay OAuth/model thật trên Mac. Báo cáo Mac ở PR #2 kiểm thử code trước adapter/grant mới; cần chạy lại nhánh này trên Mac.
+`machine-execution.test.ts` chạy tiến trình Node thật trên Windows và macOS CI qua broker/MachineAgent có kiểm soát. Bài test xác minh quyền, thu hồi, hết hạn, chống replay và giới hạn pull. Buổi demo hai máy cần xác minh riêng vận chuyển qua Kivuno và phiên provider đăng nhập thật. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
 
 ## Demo cho người không chuyên kỹ thuật
 
