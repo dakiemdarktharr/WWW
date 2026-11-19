@@ -476,6 +476,7 @@ class DesktopPeer extends CodexClient {
         approvalsReviewer: 'user',
         approvalPolicy: 'on-request',
         sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
+        ...(params.kivunoSharedGroup ? { kivunoSharedGroupToolsScoped: true } : {}),
         toolPolicy: { kind: 'scoped-mcp', readOnly: params.sandbox === 'read-only' },
       };
     else if (method === 'turn/start') value = { turn: { id: randomUUID() } };

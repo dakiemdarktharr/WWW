@@ -112,6 +112,73 @@ test('conversation model catalog and reasoning are validated before any model tu
   );
 });
 
+test('only Shared Groups Codex threads disable account tools before starting', async (t) => {
+  const source = fixture.replace(
+    "case 'echo':",
+    "case 'config/read': result={config:{mcp_servers:{'personal-tools':{env:{APP_SECRET:'fixture-secret'}}}}}; break; case 'mcpServerStatus/list': result={data:[],nextCursor:null}; break; case 'echo':",
+  );
+  const client = await clientFor(t, source);
+  const threads: Record<string, unknown>[] = [];
+  let turns = 0;
+  client.on('notification', (method, params) => {
+    if (method === 'fixture/threadParams') threads.push(params);
+    if (method === 'turn/completed') turns++;
+  });
+  const options = { cwd: process.cwd(), prompt: 'Synthetic task' };
+  await startTask(client, options);
+  await startTask(client, { ...options, sharedGroup: true });
+  assert.equal(threads[0].config, undefined);
+  assert.deepEqual(threads[1].config, {
+    'features.apps': false,
+    'features.plugins': false,
+    'features.remote_plugin': false,
+    'features.hooks': false,
+    'mcp_servers.personal-tools.enabled': false,
+  });
+  assert.ok(!('kivunoSharedGroup' in threads[1]));
+  assert.doesNotMatch(JSON.stringify(threads), /fixture-secret/);
+  assert.equal(turns, 2);
+});
+
+test('an unscoped MCP resource prevents a Shared Groups Codex turn', async (t) => {
+  const client = await clientFor(
+    t,
+    fixture.replace(
+      "case 'echo':",
+      "case 'mcpServerStatus/list': result={data:[{tools:{},resources:[{}],resourceTemplates:[]}],nextCursor:null}; break; case 'echo':",
+    ),
+  );
+  let started = false;
+  client.on('notification', (method) => {
+    if (method === 'turn/completed') started = true;
+  });
+  await assert.rejects(
+    startTask(client, { cwd: process.cwd(), prompt: 'Synthetic task', sharedGroup: true }),
+    /still has external tools/,
+  );
+  assert.equal(started, false);
+});
+
+test('Shared Groups refuses a runner that cannot confirm its Codex tool scope', async (t) => {
+  const client = await clientFor(t);
+  const request = client.request.bind(client);
+  client.request = <T>(method: string, params?: unknown) => {
+    if (method !== 'thread/start') return request<T>(method, params);
+    const { kivunoSharedGroup, ...legacy } = params as Record<string, unknown>;
+    assert.equal(kivunoSharedGroup, true);
+    return request<T>(method, legacy);
+  };
+  let started = false;
+  client.on('notification', (method) => {
+    if (method === 'turn/completed') started = true;
+  });
+  await assert.rejects(
+    startTask(client, { cwd: process.cwd(), prompt: 'Synthetic task', sharedGroup: true }),
+    /Update Kivuno on this harness/,
+  );
+  assert.equal(started, false);
+});
+
 test('profile environment excludes inherited provider keys, WIF and unrelated application secrets', () => {
   const environment = codexEnvironment(path.resolve('profile'), {
     PATH: '/usr/bin',

@@ -409,6 +409,65 @@ export class CodexClient extends EventEmitter {
   }
 
   request<T = any>(method: string, params: unknown = {}): Promise<T> {
+    if (
+      (method === 'thread/start' || method === 'thread/resume') &&
+      params &&
+      typeof params === 'object' &&
+      'kivunoSharedGroup' in params &&
+      params.kivunoSharedGroup === true
+    )
+      return this.sharedGroupThread<T>(method, params);
+    return this.sendNativeRequest<T>(method, params);
+  }
+
+  private async sharedGroupThread<T>(
+    method: 'thread/start' | 'thread/resume',
+    {
+      kivunoSharedGroup: _shared,
+      ...params
+    }: { kivunoSharedGroup: unknown; [key: string]: unknown },
+  ): Promise<T> {
+    // Read the configuration on the machine that owns the provider account.
+    // The managed-runner transport receives only the resulting thread metadata.
+    const profile = await this.sendNativeRequest<{
+      config?: { mcp_servers?: Record<string, unknown> };
+    }>('config/read', { cwd: params.cwd });
+    const config: Record<string, unknown> = {
+      ...(params.config as Record<string, unknown> | undefined),
+      'features.apps': false,
+      'features.plugins': false,
+      'features.remote_plugin': false,
+      'features.hooks': false,
+    };
+    for (const name of Object.keys(profile.config?.mcp_servers || {})) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(name))
+        throw new Error('A configured MCP server cannot be isolated for a Shared Groups task.');
+      config[`mcp_servers.${name}.enabled`] = false;
+    }
+    const result = await this.sendNativeRequest(method, { ...params, config });
+    const threadId = result.thread?.id;
+    if (typeof threadId !== 'string') throw new Error('Codex did not return a thread ID.');
+    const inventory = await this.sendNativeRequest<{
+      nextCursor?: string | null;
+      data: {
+        tools?: Record<string, unknown>;
+        resources?: unknown[];
+        resourceTemplates?: unknown[];
+      }[];
+    }>('mcpServerStatus/list', { threadId });
+    if (
+      !Array.isArray(inventory.data) ||
+      inventory.nextCursor ||
+      inventory.data.some(
+        ({ tools, resources, resourceTemplates }) =>
+          Object.keys(tools || {}).length || resources?.length || resourceTemplates?.length,
+      )
+    )
+      throw new Error('Codex still has external tools available for this Shared Groups task.');
+    return { ...result, kivunoSharedGroupToolsScoped: true };
+  }
+
+  private sendNativeRequest<T = any>(method: string, params: unknown): Promise<T> {
     if (!this.child || this.child.exitCode !== null || this.closing)
       return Promise.reject(new Error('Codex App Server is not running.'));
     if (this.pending.size >= 128)
@@ -764,6 +823,7 @@ export async function startTask(
     cwd: string;
     prompt: string;
     developerInstructions?: string;
+    sharedGroup?: boolean;
     model?: string;
     reasoningEffort?: string;
     readOnly?: boolean;
@@ -783,6 +843,7 @@ export async function startTask(
       readOnly: !!options.readOnly,
       scopes: options.scopes || ['.'],
     });
+  const sharedCodex = options.sharedGroup && client.provider === 'codex';
   const result = await client.request(options.resumeThreadId ? 'thread/resume' : 'thread/start', {
     ...(options.resumeThreadId ? { threadId: options.resumeThreadId } : {}),
     cwd: options.cwd,
@@ -793,6 +854,7 @@ export async function startTask(
     approvalPolicy: 'on-request',
     approvalsReviewer: 'user',
     sandbox: options.readOnly ? 'read-only' : 'workspace-write',
+    ...(sharedCodex ? { kivunoSharedGroup: true } : {}),
     ...(!options.resumeThreadId ? { serviceName: 'relay_workspace' } : {}),
     developerInstructions: options.developerInstructions ?? null,
     ...(!options.resumeThreadId || client.provider !== 'codex'
@@ -816,6 +878,8 @@ export async function startTask(
     throw new Error('Codex did not honor the selected model. No turn was started.');
   if (options.reasoningEffort && result.reasoningEffort !== options.reasoningEffort)
     throw new Error('Codex did not honor the selected reasoning level. No turn was started.');
+  if (sharedCodex && result.kivunoSharedGroupToolsScoped !== true)
+    throw new Error('Update Kivuno on this harness to run a Shared Groups task with scoped tools.');
   if (typeof threadId !== 'string') throw new Error('Codex did not return a thread ID.');
   // Bind ownership before turn/start can emit notifications, including an immediate completion.
   options.onThread?.(threadId);

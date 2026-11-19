@@ -745,6 +745,7 @@ export class SessionManager {
             ? instructions
             : `${instructions}\n${portfolioContext(this.host.store, session.memberId)}\n${this.host.research.context(session.projectId)}`,
           readOnly: session.readOnly,
+          sharedGroup: Boolean(task.sharedSadeJobId),
           scopes: task.scope,
           model: session.model || undefined,
           reasoningEffort: session.reasoningEffort || undefined,
