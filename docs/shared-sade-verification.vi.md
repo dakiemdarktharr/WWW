@@ -75,6 +75,10 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-quota-fallback-1.7b.json --quota-fallback --model qwen3:1.7b-q4_K_M
 ```
 
+Commit `12c2ac8` đã ghép `main` tại `8372bdf`. Windows qua 383 bài, bỏ qua một bài theo nền tảng, và qua format cùng build. macOS arm64 qua 378 bài, bỏ qua sáu bài theo nền tảng, và qua build, Electron cùng giao diện Shared Groups. Bộ 1.000 tin với planner mô phỏng đạt trên cả hai. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44537970731)
+
+Lượt macOS đầu sau khi ghép `main` có bốn ca checkout ngân hàng demo lỗi vì SQLite chuẩn hóa đường dẫn qua alias của hệ điều hành. Bản sửa đối chiếu thư mục cha theo đường dẫn thực rồi giữ yêu cầu đúng thư mục `.relay-fuji-demo` và đúng file `workspace.db`. Bài hồi quy đi qua API với alias thư mục cha trên Windows và macOS. Fixture cũng dùng đường dẫn thực để dọn dữ liệu thử trên Windows.
+
 Sau review độc lập, chủ máy kiểm tra và tích hợp thay đổi cục bộ. Sade bàn giao patch đã duyệt cho nhiệm vụ phụ thuộc qua Shared Groups. Desktop nhận kiểm tra digest và danh sách file, rồi áp dụng patch trong worktree riêng trước khi mở harness. Nhánh Git của người nhận chỉ nhận thay đổi khi chủ máy chọn tích hợp. Quyền cũ vẫn sử dụng **Share published revision**. Cấp lại quyền trên desktop mới để cho phép bàn giao patch.
 
 **Share published revision** kiểm tra commit đã duyệt còn trong lịch sử nhánh remote và các file được review vẫn giữ nguyên nội dung và mode Git. Một commit mới chỉ sửa file khác vẫn cho phép bàn giao commit đã duyệt. Nếu nhánh remote đã đổi file được review hoặc đã bỏ commit khỏi lịch sử, Sade giữ bước bàn giao để người dùng kiểm tra. Bài thử dùng hai clone và một bare remote, bao gồm trường hợp máy tác giả chưa có object của commit mới. Khi cần tải object để đối chiếu, máy tác giả giữ nguyên nhánh hiện tại, các ref và `FETCH_HEAD`.
