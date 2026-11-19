@@ -70,7 +70,9 @@ Hai đầu ra Qwen đã ghi ở ca quota không dấu và tiếng Anh kỹ thu�
 
 Planner nhận phản hồi ngay trong lượt nếu tách bước kiểm thử trên máy ghép cặp thành tác vụ phụ thuộc mà harness được chỉ định không thể chạy trên OS đó. Bài kiểm tra hai workspace dùng harness mô phỏng để gửi kế hoạch tách bước, nhận lỗi rồi nộp lại một tác vụ với đầy đủ kiểm tra trên máy ghép cặp. Sade giữ bước review tích hợp hiện có. Với hội thoại chỉ có một harness được cấp quyền, planner cũng nhận phản hồi khi kế hoạch yêu cầu review độc lập bản sửa của chính harness đó.
 
-Ở commit `afcb0a0`, Windows qua 90 bài hồi quy Shared Groups, session và bộ phân công, gồm bộ 1.000 tin với planner mô phỏng. Build và bài giao diện `test:collaboration` cũng đạt. Bài giao diện chọn **Read-only request**, xác nhận planner nhận các grant với quyền ghi bị giới hạn, trả lời câu hỏi và tiếp tục trong cùng workflow.
+Ở commit `afcb0a0`, Windows qua 385 bài, bỏ qua một bài theo nền tảng. macOS arm64 qua 380 bài, bỏ qua sáu bài theo nền tảng. Bộ 1.000 tin với planner mô phỏng, build và bài giao diện `test:collaboration` đạt ở cả hai hệ điều hành. Bài giao diện chọn **Read-only request**, xác nhận planner nhận các grant với quyền ghi bị giới hạn, trả lời câu hỏi và tiếp tục trong cùng workflow. Electron cũng đạt trên macOS. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44549761634)
+
+Bản ghép `8984515` lấy `main` tại `b9ace37`, giữ cả bài thử quyền Shared Groups và giới hạn hồ sơ theo gói. Windows qua 391 bài, bỏ qua một bài theo nền tảng và build thành công. macOS arm64 qua 386 bài, bỏ qua sáu bài theo nền tảng, rồi qua build, Electron và giao diện Shared Groups. [CI bản ghép](https://github.com/dakiemdarktharr/WWW/actions/runs/44637527437)
 
 ### Phương án dự phòng được nêu trong tin nhắn
 
@@ -138,8 +140,10 @@ Bài kiểm thử dùng hai desktop có hồ sơ và worktree Git riêng. Một 
 
 Hai adapter mở tiến trình fixture qua giao thức tương ứng và gọi công cụ Kivuno qua MCP. Phép thử dùng hồ sơ đăng nhập giả và không gọi dịch vụ model. Hướng dẫn đọc phòng chat và gửi tiến độ của Claude chỉ xuất hiện khi phiên có công cụ tương ứng.
 
+Bài kiểm thử Antigravity gửi yêu cầu ACP trước mỗi lượt gọi MCP. Cấp quyền Shared Groups hiện đủ để nộp kế hoạch, nộp review và đọc file trong project qua công cụ Kivuno. Khi Antigravity được giao sửa file, chủ harness xác nhận từng thao tác sửa qua hộp thoại hiện có. Bài thử kiểm tra một xác nhận sửa file, yêu cầu read-only không có công cụ ghi, đường dẫn thông tin đăng nhập bị chặn và patch chỉ được tích hợp sau review của chủ harness còn lại.
+
 ```powershell
-node --import tsx --test --test-name-pattern 'one group message hands off' tests/shared-sade.test.ts
+node --import tsx --test --test-name-pattern 'one group message (hands off|lets Antigravity)' tests/shared-sade.test.ts
 ```
 
 ### Chạy lại tình huống D qua mạng

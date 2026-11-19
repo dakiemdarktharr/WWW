@@ -1266,12 +1266,14 @@ export class SessionManager {
       request.method === 'item/mcp/requestApproval' &&
       (params.tool === 'workspace_list_files' ||
         params.tool === 'workspace_read_file' ||
+        (params.tool === 'workspace_write_file' && !session.readOnly) ||
         this.host.sharedSade
           .tools(sharedJob)
           .some(({ name }) => name.startsWith('relay_') && name === params.tool))
     ) {
       // The Shared Groups grant covers project reads and workflow coordination.
       // The actual MCP call still goes through the lease, quota and file guards above.
+      // The bridge asks for the owner's approval before each file change.
       client.respond(request.id, { decision: 'accept' });
       return;
     }

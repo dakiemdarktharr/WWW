@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import type { CodexSession, Project, ProviderId, PlanTask, Task } from '../shared/types.ts';
 import type { SharedSadeRun, SharedTeammate } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
@@ -2640,10 +2640,9 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   assert.deepEqual((await snapshot()).revocations, []);
 });
 
-test(
-  'one group message hands off through the actual Claude and Antigravity adapters',
-  { timeout: 55000 },
-  async (t) => {
+const managedHandoff =
+  (providers: readonly ['claude', 'antigravity'] | readonly ['antigravity', 'claude']) =>
+  async (t: TestContext) => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'sade-managed-handoff-')));
     const desktops: {
       workspace: Workspace;
@@ -2670,11 +2669,11 @@ test(
       await rm(root, { recursive: true, force: true, maxRetries: 5 });
     });
 
-    const providers = ['claude', 'antigravity'] as const;
+    const names = providers.map((provider) => (provider === 'claude' ? 'Claude' : 'Antigravity'));
     const origin = 'https://example.test/shared/managed-fixture.git';
     const fingerprint = canonicalSharedRepository(origin, 'main');
     const plan = {
-      summary: 'Hand the independently reviewed contract to Antigravity.',
+      summary: `Hand the independently reviewed contract to ${names[1]}.`,
       tasks: [
         {
           ...work('contract', { scope: ['contract.txt'] }),
@@ -2690,8 +2689,8 @@ test(
         },
       ],
     };
-    const originRepo = path.join(root, 'Claude project');
-    const reviewRepo = path.join(root, 'Antigravity project');
+    const originRepo = path.join(root, names[0] + ' project');
+    const reviewRepo = path.join(root, names[1] + ' project');
     await mkdir(originRepo);
     await git(originRepo, ['init', '-b', 'main']);
     await writeFile(path.join(originRepo, '.gitattributes'), 'contract.txt text eol=lf\n');
@@ -2737,7 +2736,10 @@ test(
       );
       await writeFile(path.join(home, 'managed-fixture-shared-plan.json'), JSON.stringify(plan));
       const signedIn = await workspace.refresh(member.id);
-      assert.equal(signedIn.account?.type, index ? 'antigravity-google' : 'claude-subscription');
+      assert.equal(
+        signedIn.account?.type,
+        provider === 'antigravity' ? 'antigravity-google' : 'claude-subscription',
+      );
     }
 
     const cloud = fixture(providers, {
@@ -2764,8 +2766,7 @@ test(
       action: 'message',
       groupId: cloud.groupId,
       id: randomUUID(),
-      content:
-        'Claude viết hợp đồng trong contract.txt, rồi cho Antigravity review và dùng hợp đồng đã duyệt để kiểm tra nha.',
+      content: `${names[0]} viết hợp đồng trong contract.txt, rồi cho ${names[1]} review và dùng hợp đồng đã duyệt để kiểm tra nha.`,
       sade: { projectKey: fingerprint },
     };
     cloud.call(0, request);
@@ -2813,6 +2814,7 @@ test(
       'scoped file approval',
       () => author.workspace.sessions.approvals()[0],
     );
+    assert.equal(approval.method, 'item/fileChange/requestApproval');
     const authorTask = author.store.get<Task>('task', approval.taskId);
     assert.equal(
       await readFile(path.join(authorTask.worktree!, 'contract.txt'), 'utf8'),
@@ -2825,7 +2827,7 @@ test(
     assert.equal(reader.store.sessions().length, 0);
     await assert.rejects(author.workspace.accept(authorTask.id), /review|running/i);
     author.workspace.sessions.decide(approval.id, 'accept');
-    await waitFor('Antigravity review', () => {
+    await waitFor('independent review', () => {
       assert.equal(reader.workspace.sessions.approvals().length, 0, 'Review is already granted');
       return run().jobs.some(({ phase, state }) => phase === 'review' && state === 'done');
     });
@@ -2884,18 +2886,28 @@ test(
       );
       assert.deepEqual(
         store.sessions().map(({ model, reasoningEffort }) => [model, reasoningEffort]),
-        index
+        providers[index] === 'antigravity'
           ? [
-              ['agy-flash', 'high'],
+              [index ? 'agy-flash' : 'agy-controlled', 'high'],
               ['agy-controlled', 'medium'],
             ]
           : [
-              ['default', 'high'],
+              [index ? 'sonnet' : 'default', 'high'],
               ['default', 'medium'],
             ],
       );
     }
-  },
+  };
+
+test(
+  'one group message hands off through the actual Claude and Antigravity adapters',
+  { timeout: 55000 },
+  managedHandoff(['claude', 'antigravity']),
+);
+test(
+  'one group message lets Antigravity plan and write with one file approval',
+  { timeout: 55000 },
+  managedHandoff(['antigravity', 'claude']),
 );
 test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
   const f = fixture();
