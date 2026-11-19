@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
@@ -7,14 +9,16 @@ import {
   groupPlanTool,
   groupQuestionTool,
   groupReviewTool,
+  maxPortableDiff,
   needsGroupWrite,
   projectKey,
   sharedFinish,
+  sharedPrerequisite,
   type SharedDelivery,
   type SharedFinish,
 } from './group-sade.ts';
-import { git } from './git.ts';
-import { redact } from './security.ts';
+import { createWorktree, git } from './git.ts';
+import { normalizeScope, redact } from './security.ts';
 import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
 import { parsePlanTask, parseTeamPlan } from './workflow-plan.ts';
@@ -40,7 +44,12 @@ type PairedMachine = {
   platform: 'win32' | 'darwin' | 'linux';
   name: string;
 };
-type LocalGrant = GrantInput & { projectKey: string; expiresAt: number; machine?: PairedMachine };
+type LocalGrant = GrantInput & {
+  projectKey: string;
+  expiresAt: number;
+  machine?: PairedMachine;
+  patchHandoff?: true;
+};
 type Receipt = {
   id: string;
   grantId: string;
@@ -54,6 +63,8 @@ type Receipt = {
   clarified?: boolean;
   question?: string;
   providerTurnConsumed?: boolean;
+  portableReview?: true;
+  inheritedFiles?: string[];
   machine?: PairedMachine;
   machineVerified?: boolean;
   machineRun?: { platform: string; code: number | null; timedOut: boolean };
@@ -66,6 +77,7 @@ const deliveryInput = z
     projectKey,
     phase: z.enum(['plan', 'task', 'review']),
     requiresPublication: z.boolean().optional(),
+    portableReview: z.literal(true).optional(),
     request: z.string().max(8000),
     team: z
       .array(
@@ -94,20 +106,7 @@ const deliveryInput = z
       })
       .strict()
       .optional(),
-    prerequisites: z
-      .array(
-        z
-          .object({
-            title: z.string().max(140),
-            summary: z.string().max(4000).optional(),
-            revision: z
-              .string()
-              .regex(/^[a-f0-9]{40,64}$/)
-              .optional(),
-          })
-          .strict(),
-      )
-      .max(32),
+    prerequisites: z.array(sharedPrerequisite).max(32),
     clarification: z
       .object({ question: z.string().max(1000), answer: z.string().max(2000) })
       .strict()
@@ -344,6 +343,120 @@ export class SharedSadeWorker {
   recordIntegration(jobId: string, revision: string) {
     this.host.store.put('sharedSadeLocalReceipt', { ...this.receipt(jobId), revision });
   }
+  inheritedFiles(jobId: string) {
+    return this.receipt(jobId).inheritedFiles || [];
+  }
+  private async importPrerequisites(delivery: SharedDelivery, project: Project, taskId: string) {
+    const patches = delivery.prerequisites.filter((entry) => entry.patch);
+    if (!patches.length) return;
+    const worktree = await createWorktree(project.path, this.host.dataDir, taskId);
+    this.host.store.updateTask(taskId, worktree);
+    const inherited = new Set<string>();
+    let baseCommit = worktree.baseCommit;
+    for (const item of patches) {
+      this.assertCurrent(delivery.id);
+      const { change, digest } = item.patch!;
+      if (
+        reviewDigest(change) !== digest ||
+        Buffer.byteLength(JSON.stringify(change)) > maxPortableDiff ||
+        change.files.some((file) => file === '.' || normalizeScope(file) !== file)
+      )
+        throw new DomainError('A prerequisite patch failed verification.');
+      if (
+        item.revision &&
+        (await git(worktree.worktree, ['merge-base', '--is-ancestor', item.revision, 'HEAD']).then(
+          () => true,
+          () => false,
+        ))
+      )
+        continue;
+      const temp = await mkdtemp(path.join(this.host.dataDir, 'shared-patch-'));
+      const patch = path.join(temp, 'reviewed.patch');
+      try {
+        await writeFile(patch, change.diff, { flag: 'wx', mode: 0o600 });
+        const applied = await git(worktree.worktree, [
+          'apply',
+          '--check',
+          '--reverse',
+          '--index',
+          '--',
+          patch,
+        ]).then(
+          () => true,
+          () => false,
+        );
+        if (applied) continue;
+        this.assertCurrent(delivery.id);
+        await git(worktree.worktree, [
+          'apply',
+          '--index',
+          '--whitespace=nowarn',
+          '--',
+          patch,
+        ]).catch(() => {
+          throw new DomainError(
+            `“${item.title}” does not apply to this checkout. Existing files were left in place.`,
+          );
+        });
+        const changed = (
+          await git(worktree.worktree, [
+            'diff',
+            '--cached',
+            '--name-only',
+            '--no-renames',
+            '-z',
+            'HEAD',
+          ])
+        )
+          .split('\0')
+          .filter(Boolean);
+        const paths = [...new Set(change.files)].sort();
+        if (JSON.stringify(changed.sort()) !== JSON.stringify(paths))
+          throw new DomainError('Applied prerequisite paths differ from the reviewed file list.');
+        const entries = await git(worktree.worktree, [
+          '--literal-pathspecs',
+          'ls-files',
+          '--stage',
+          '-z',
+          '--',
+          ...paths,
+        ]);
+        if (
+          entries
+            .split('\0')
+            .filter(Boolean)
+            .some((entry) => !/^(100644|100755) /.test(entry))
+        )
+          throw new DomainError('Shared Sade can hand off only regular Git files.');
+        this.assertCurrent(delivery.id);
+        const tree = await git(worktree.worktree, ['write-tree']);
+        baseCommit = await git(worktree.worktree, [
+          '-c',
+          'user.name=RELAY',
+          '-c',
+          'user.email=relay@localhost',
+          'commit-tree',
+          tree,
+          '-p',
+          baseCommit,
+          '-m',
+          'Shared Sade: import reviewed worktree prerequisite',
+        ]);
+        this.assertCurrent(delivery.id);
+        await git(worktree.worktree, ['reset', '--soft', baseCommit]);
+        for (const file of paths) inherited.add(file);
+      } finally {
+        await unlink(patch).catch(() => {});
+        await rmdir(temp);
+      }
+    }
+    this.assertCurrent(delivery.id);
+    this.host.store.updateTask(taskId, { baseCommit });
+    this.host.store.put('sharedSadeLocalReceipt', {
+      ...this.receipt(delivery.id),
+      inheritedFiles: [...inherited],
+    });
+  }
   async shareRevision(taskId: string) {
     const task = this.host.store.get<Task>('task', taskId);
     if (!task.sharedSadeJobId || !task.sharedSadeNeedsPublication || task.status !== 'done')
@@ -392,6 +505,7 @@ export class SharedSadeWorker {
           ...input,
           projectKey: key,
           machine,
+          patchHandoff: true,
           expiresAt: Date.now() + 3600_000,
         } satisfies LocalGrant);
       return {
@@ -403,6 +517,7 @@ export class SharedSadeWorker {
         role: member.role,
         platform: process.platform,
         pairedPlatform: machine?.platform,
+        patchHandoff: true as const,
         pairedMachine: machine,
         allowWrites: input.allowWrites,
         turns: input.turns,
@@ -512,8 +627,10 @@ export class SharedSadeWorker {
       throw new DomainError(
         'This desktop did not grant the requested operation or does not match the OS.',
       );
+    if (delivery.portableReview && !grant.patchHandoff)
+      throw new DomainError('This workspace has not granted reviewed patch handoff.');
     for (const dependency of delivery.prerequisites)
-      if (dependency.revision)
+      if (dependency.revision && !dependency.patch)
         await git(project.path, ['merge-base', '--is-ancestor', dependency.revision, 'HEAD']).catch(
           () => {
             throw new DomainError(
@@ -541,7 +658,9 @@ export class SharedSadeWorker {
       ...this.receipt(delivery.id),
       sessionId: session.id,
       machine,
+      portableReview: delivery.portableReview,
     });
+    await this.importPrerequisites(delivery, project, session.taskId);
     this.assertCurrent(delivery.id);
     const instructions =
       delivery.phase === 'plan'
@@ -571,7 +690,7 @@ export class SharedSadeWorker {
                 })),
             task: delivery.task,
             clarification: delivery.clarification,
-            prerequisites: delivery.prerequisites.map((item) => ({
+            prerequisites: delivery.prerequisites.map(({ patch, ...item }) => ({
               ...item,
               summary: item.summary?.slice(0, 120),
             })),
@@ -617,7 +736,7 @@ export class SharedSadeWorker {
         this.readingChanges.add(jobId);
         void this.host
           .diff(task.id)
-          .then((diff) => {
+          .then(async (diff) => {
             this.assertCurrent(jobId);
             const unchanged = !diff.files.length && !diff.diff.trim() && !diff.truncated;
             if (receipt.machine && !receipt.question && !receipt.machineRun)
@@ -645,9 +764,21 @@ export class SharedSadeWorker {
               return;
             }
             reviewDigest(diff);
+            if (receipt.portableReview) {
+              await git(task.worktree!, ['add', '--intent-to-add', '--all']);
+              this.assertCurrent(jobId);
+              diff = await this.host.diff(task.id);
+              reviewDigest(diff);
+              if (Buffer.byteLength(JSON.stringify(diff)) > maxPortableDiff)
+                throw new DomainError(
+                  'The reviewed patch exceeds the Shared Groups handoff limit.',
+                );
+            }
+            this.assertCurrent(jobId);
             this.result(jobId, {
               kind: 'change',
               diff,
+              portable: receipt.portableReview,
               summary: redact(task.summary || 'Changes ready for review.').slice(0, 4000),
             });
           })

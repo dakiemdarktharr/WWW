@@ -44,6 +44,7 @@ export interface SharedHarnessGrant {
   role: Role;
   platform: SharedPlatform;
   pairedPlatform?: SharedPlatform;
+  patchHandoff?: true;
   allowWrites: boolean;
   expiresAt: number;
   turns: number;

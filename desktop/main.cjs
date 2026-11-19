@@ -647,6 +647,7 @@ async function sharedSadeLoop(generation, owner) {
         '/api/desktop/groups',
         {
           action: 'sade-poll',
+          patchHandoff: true,
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -907,7 +908,7 @@ function registerIpc() {
         type: 'question',
         title: 'Allow Sade to use your teammate?',
         message: `${preview.teammateName} · ${preview.projectName}`,
-        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes and sharing the proposed diff with an independent reviewer in your group. You control integration and publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching OS request while that owner’s permission is active.` : ''} Your provider sign-in stays on this computer.`,
+        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes, sharing the diff with an independent reviewer, and passing approved patches to assigned teammates after you integrate locally. You control Git publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching OS request while that owner’s permission is active.` : ''} Your provider sign-in stays on this computer.`,
         buttons: ['Cancel', 'Allow'],
         defaultId: 0,
         cancelId: 0,

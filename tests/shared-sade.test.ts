@@ -33,6 +33,7 @@ function fixture(
     mac?: boolean;
     key?: string;
     members?: string[];
+    patchHandoff?: boolean;
   } = {},
 ) {
   const store = new Store(':memory:');
@@ -78,6 +79,7 @@ function fixture(
         role: index ? 'reviewer' : 'engineer',
         platform: index && options.mac ? 'darwin' : 'win32',
         allowWrites: true,
+        ...(options.patchHandoff ? { patchHandoff: true } : {}),
         turns: index ? options.turnsB || 8 : 8,
       });
   }
@@ -87,7 +89,16 @@ function fixture(
     grantIds = [grants[index]],
     deviceId = devices[index],
   ) =>
-    call(index, { action: 'sade-poll', grants: grantIds, active }, deviceId) as {
+    call(
+      index,
+      {
+        action: 'sade-poll',
+        grants: grantIds,
+        active,
+        ...(options.patchHandoff ? { patchHandoff: true } : {}),
+      },
+      deviceId,
+    ) as {
       delivery?: SharedDelivery;
       active: string[];
       reviews: { jobId: string; digest: string }[];
@@ -343,7 +354,7 @@ class DesktopPeer extends CodexClient {
 }
 
 test(
-  'two desktop workspaces execute one Shared Groups request with separate harnesses, real Git review and dependent handoff',
+  'two desktop workspaces hand off reviewed code without a Git push and verify a consented paired runner',
   { timeout: 60000 },
   async (t) => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-e2e-')));
@@ -431,7 +442,10 @@ test(
     const cloud = fixture(['gemini', 'codex'], {
       key: fingerprint,
       members: setups.map((entry) => entry.memberId),
+      patchHandoff: true,
     });
+    const remoteHead = () => git(root, ['--git-dir', remote, 'rev-parse', 'refs/heads/main']);
+    const startingRevision = await remoteHead();
     t.after(() => cloud.store.close());
     for (const [index, entry] of setups.entries()) {
       const grant = await entry.workspace.sharedSade.execute({
@@ -548,9 +562,14 @@ test(
           preferredMemberId: cloud.grants[0],
         }),
         work('frontend', {
-          scope: ['architecture.txt'],
+          kind: 'code',
+          scope: ['frontend.txt'],
           preferredMemberId: cloud.grants[1],
           dependsOn: ['architecture'],
+        }),
+        work('verify-ui', {
+          preferredMemberId: cloud.grants[0],
+          dependsOn: ['frontend'],
         }),
       ],
     });
@@ -580,16 +599,28 @@ test(
       summary: 'Contract is present and scoped.',
     });
     await complete(1, check.session, check.peer, 'Reviewed the architecture text.');
-    assert.equal(await pump(1), undefined, 'Dependency still needs verified Git publication');
+    assert.equal(await pump(1), undefined, 'Dependency still needs local human integration');
     await pump(0);
     await setups[0].workspace.accept(author.task.id);
-    await assert.rejects(setups[0].workspace.sharedSade.shareRevision(author.task.id), /Publish/);
-    await git(setups[0].repo, ['push', 'origin', 'main']);
-    await git(setups[1].repo, ['pull', '--ff-only', 'origin', 'main']);
-    await setups[0].workspace.sharedSade.shareRevision(author.task.id);
+    assert.equal(await remoteHead(), startingRevision);
+    await assert.rejects(readFile(path.join(setups[1].repo, 'architecture.txt')), {
+      code: 'ENOENT',
+    });
     await pump(0);
+    assert.doesNotMatch(JSON.stringify(cloud.view()), /Shared verified contract/);
+    const olderReceiver = cloud.call(1, {
+      action: 'sade-poll',
+      grants: [cloud.grants[1]],
+      active: [],
+    });
+    assert.equal(olderReceiver.delivery, undefined);
+    assert.match(
+      cloud.view().sadeRuns[0].jobs.find((job) => job.task?.key === 'frontend')?.summary || '',
+      /Update this desktop/,
+    );
     const frontend = (await pump(1))!;
     assert.equal(frontend.task?.key, 'frontend');
+    assert.ok(frontend.prerequisites[0]?.patch);
     const reader = await sessionFor(1, frontend);
     assert.match(
       await readFile(path.join(reader.task.worktree!, 'architecture.txt'), 'utf8'),
@@ -599,7 +630,14 @@ test(
       summary: 'Bạn muốn chọn phong cách giao diện hay để Mây tự chọn?',
     });
     await complete(1, reader.session, reader.peer, 'Waiting for style preference.');
-    assert.equal(await pump(1), undefined);
+    for (
+      let attempt = 0;
+      attempt < 100 && !cloud.view().sadeRuns[0].jobs.some((job) => job.state === 'waiting');
+      attempt++
+    ) {
+      assert.equal(await pump(1), undefined);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     assert.equal(
       cloud.view().sadeRuns[0].jobs.find((job) => job.id === frontend.id)?.state,
       'waiting',
@@ -619,10 +657,63 @@ test(
     assert.equal(continued.task?.key, 'frontend');
     const resumed = await sessionFor(1, continued);
     assert.match(JSON.stringify(resumed.peer.calls), /tự chọn phong cách nhé/);
-    await complete(1, resumed.session, resumed.peer, 'Frontend has the correct contract.');
+    await writeFile(
+      path.join(resumed.task.worktree!, 'frontend.txt'),
+      'Frontend uses the contract\n',
+    );
+    await complete(
+      1,
+      resumed.session,
+      resumed.peer,
+      'Frontend implemented using the correct contract.',
+    );
+    let frontendReviewer: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !frontendReviewer; attempt++) {
+      await pump(1);
+      frontendReviewer = await pump(0);
+      if (!frontendReviewer) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(frontendReviewer?.phase === 'review');
+    assert.deepEqual(frontendReviewer.review?.files, ['frontend.txt']);
+    assert.ok(frontendReviewer.prerequisites[0]?.patch);
+    const frontendCheck = await sessionFor(0, frontendReviewer);
+    await submit(0, frontendCheck.session, frontendCheck.peer, 'relay_submit_shared_review', {
+      verdict: 'approved',
+      summary: 'Frontend changes stay within their assigned file.',
+    });
+    await complete(0, frontendCheck.session, frontendCheck.peer, 'Frontend reviewed.');
+    await pump(0);
     await pump(1);
+    await setups[1].workspace.accept(resumed.task.id);
+    await pump(1);
+    const verification = (await pump(0))!;
+    assert.equal(verification.task?.key, 'verify-ui');
+    assert.deepEqual(
+      verification.prerequisites.map((entry) => entry.patch?.change.files),
+      [['architecture.txt'], ['frontend.txt']],
+    );
+    const verifier = await sessionFor(0, verification);
+    assert.match(
+      await readFile(path.join(verifier.task.worktree!, 'frontend.txt'), 'utf8'),
+      /Frontend uses the contract/,
+    );
+    await complete(0, verifier.session, verifier.peer, 'Verified the assembled worktree.');
+    await pump(0);
     assert.equal(cloud.view().sadeRuns[0].state, 'done');
+    assert.doesNotMatch(
+      JSON.stringify(cloud.store.get('sharedSadeRun', chat.id)),
+      /Shared verified contract|Frontend uses the contract/,
+    );
     assert.equal(setups[0].store.get<Task>('task', author.task.id).status, 'done');
+    assert.equal(await remoteHead(), startingRevision);
+    assert.match(
+      await readFile(path.join(setups[1].repo, 'architecture.txt'), 'utf8'),
+      /Shared verified contract/,
+    );
+    assert.match(
+      await readFile(path.join(setups[1].repo, 'frontend.txt'), 'utf8'),
+      /Frontend uses the contract/,
+    );
 
     const { workspace, projectId, memberId } = setups[0];
     const pairedPlatform = process.platform === 'darwin' ? 'win32' : 'darwin';
@@ -799,6 +890,16 @@ test('a revoked assignment blocks pending deliveries and a clean writing result 
       },
     });
     const writer = f.poll(0).delivery!;
+    assert.throws(
+      () =>
+        f.finish(0, writer.id, {
+          kind: 'change',
+          diff: patch,
+          summary: 'This legacy grant only shares with a reviewer.',
+          portable: true,
+        }),
+      /not granted reviewed patch handoff/,
+    );
     f.finish(0, writer.id, {
       kind: 'unchanged',
       summary: 'The expected patch is already in the project.',
@@ -823,6 +924,55 @@ test('a revoked assignment blocks pending deliveries and a clean writing result 
       'Check all queued permissions before dispatching the first task',
     );
     assert.equal(f.view().sadeRuns.at(-1)?.state, 'blocked');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a completed author can revoke permission before a reviewed prerequisite reaches a dependent harness', () => {
+  const f = fixture(['gemini', 'codex'], { patchHandoff: true });
+  try {
+    const runId = randomUUID();
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: runId,
+      content: 'Prepare the contract, then implement the interface.',
+      sade: { projectKey: key },
+    });
+    const plan = f.poll(0).delivery!;
+    f.finish(0, plan.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Share the reviewed contract before starting the interface.',
+        tasks: [
+          work('contract', {
+            kind: 'code',
+            scope: ['src/example.ts'],
+            preferredMemberId: f.grants[0],
+          }),
+          work('interface', { dependsOn: ['contract'], preferredMemberId: f.grants[1] }),
+        ],
+      },
+    });
+    const author = f.poll(0).delivery!;
+    f.finish(0, author.id, {
+      kind: 'change',
+      summary: 'Ready for independent review.',
+      diff: patch,
+      portable: true,
+    });
+    const reviewer = f.poll(1).delivery!;
+    f.finish(1, reviewer.id, {
+      kind: 'review',
+      verdict: 'approved',
+      summary: 'Verified the source change.',
+    });
+    f.finish(0, author.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+    f.call(0, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[0] });
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.match(f.view().sadeRuns[0].error || '', /withdrew permission/);
+    assert.doesNotMatch(JSON.stringify(f.store.get('sharedSadeRun', runId)), /export const value/);
   } finally {
     f.store.close();
   }

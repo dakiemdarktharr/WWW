@@ -1414,6 +1414,9 @@ export class Workspace {
     try {
       const verifyApprovedSource = await this.aegis.consumeMerge(taskId);
       const project = this.store.get<Project>('project', task.projectId);
+      const inherited = new Set(
+        task.sharedSadeJobId ? this.sharedSade.inheritedFiles(task.sharedSadeJobId) : [],
+      );
       const validateDiff = async (
         diff: Awaited<ReturnType<typeof taskDiff>>,
         context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
@@ -1421,6 +1424,10 @@ export class Workspace {
         await verifyApprovedSource(diff, context || { root: task.worktree!, phase: 'preview' });
         const outside = diff.files.filter(
           (file) =>
+            !(
+              (context?.phase === 'staged' || context?.phase === 'committed') &&
+              inherited.has(file)
+            ) &&
             !task.scope.some(
               (scope) =>
                 scope === '.' ||

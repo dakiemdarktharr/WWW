@@ -28,16 +28,27 @@ export const groupSadeGrant = z
     role: z.enum(['engineer', 'designer', 'researcher', 'reviewer']),
     platform,
     pairedPlatform: platform.optional(),
+    patchHandoff: z.literal(true).optional(),
     allowWrites: z.boolean(),
     turns: z.number().int().min(1).max(10),
   })
   .strict();
-const diffInput = z
+export const sharedDiffInput = z
   .object({
     files: z.array(z.string().max(500)).max(100),
     diff: z.string().max(12000),
     stat: z.string().max(6000),
     truncated: z.boolean(),
+  })
+  .strict();
+export const maxPortableDiff = 64 * 1024;
+const revisionInput = z.string().regex(/^[a-f0-9]{40,64}$/);
+export const sharedPrerequisite = z
+  .object({
+    title: z.string().max(140),
+    summary: z.string().max(4000).optional(),
+    revision: revisionInput.optional(),
+    patch: z.object({ change: sharedDiffInput, digest: projectKey }).strict().optional(),
   })
   .strict();
 export const sharedFinish = z.discriminatedUnion('kind', [
@@ -59,7 +70,8 @@ export const sharedFinish = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('change'),
-      diff: diffInput,
+      diff: sharedDiffInput,
+      portable: z.literal(true).optional(),
       summary: z.string().trim().min(1).max(4000),
     })
     .strict(),
@@ -89,6 +101,7 @@ export const groupSadeCommands = [
       action: z.literal('sade-poll'),
       grants: z.array(id).max(32),
       active: z.array(id).max(4),
+      patchHandoff: z.literal(true).optional(),
     })
     .strict(),
   z.object({ action: z.literal('sade-finish'), jobId: id, result: sharedFinish }).strict(),
@@ -103,6 +116,8 @@ type Job = SharedSadeJob & {
   change?: TaskDiff;
   reviewOf?: string;
   reviewedDigest?: string;
+  portable?: boolean;
+  published?: boolean;
   clarification?: { question: string; answer: string };
 };
 type Run = Omit<SharedSadeRun, 'jobs'> & {
@@ -130,15 +145,32 @@ export type SharedDelivery = {
     ownedByRequester: boolean;
   }[];
   task?: PlanTask;
-  prerequisites: { title: string; summary?: string; revision?: string }[];
+  prerequisites: z.infer<typeof sharedPrerequisite>[];
   review?: TaskDiff;
   clarification?: Job['clarification'];
   requiresPublication?: boolean;
+  portableReview?: true;
 };
 export const needsGroupWrite = writesTask;
 const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
 function hasDependents(run: Run, job: Job) {
   return !!job.task && run.jobs.some((other) => other.task?.dependsOn.includes(job.task!.key));
+}
+function prerequisitesOf(run: Run, target: Job) {
+  const source = target.reviewOf ? run.jobs.find((job) => job.id === target.reviewOf) : target;
+  const seen = new Set<string>();
+  const required: Job[] = [];
+  const byKey = new Map(run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job]));
+  const visit = (key: string) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    const job = byKey.get(key);
+    if (!job) return;
+    job.task!.dependsOn.forEach(visit);
+    required.push(job);
+  };
+  source?.task?.dependsOn.forEach(visit);
+  return required;
 }
 function writesTask(task?: PlanTask) {
   return task?.kind === 'code' || task?.kind === 'design';
@@ -262,7 +294,17 @@ export class GroupSade {
         ...run,
         canAnswer: ownerId === authorId,
         jobs: run.jobs.map(
-          ({ deadline, revision, change, reviewOf, reviewedDigest, clarification, ...job }) => job,
+          ({
+            deadline,
+            revision,
+            change,
+            reviewOf,
+            reviewedDigest,
+            clarification,
+            portable,
+            published,
+            ...job
+          }) => job,
         ),
       })),
     };
@@ -326,6 +368,7 @@ export class GroupSade {
           existing.role !== command.role ||
           existing.platform !== command.platform ||
           existing.pairedPlatform !== command.pairedPlatform ||
+          existing.patchHandoff !== command.patchHandoff ||
           existing.allowWrites !== command.allowWrites ||
           existing.turns !== command.turns
         )
@@ -452,6 +495,26 @@ export class GroupSade {
         );
         continue;
       }
+      const dependencies = new Map(
+        run.jobs
+          .filter((job) => job.state === 'queued')
+          .map((job) => [job, prerequisitesOf(run, job)]),
+      );
+      const withdrawn = [...dependencies].find(([, predecessors]) =>
+        predecessors.some((other) => {
+          if (other.state !== 'done' || !other.portable || other.published) return false;
+          const owner = grants.get(other.grantId);
+          return !owner || !this.usable(owner, group, false);
+        }),
+      );
+      if (withdrawn) {
+        this.block(
+          run,
+          withdrawn[0],
+          'A prerequisite owner withdrew permission before the reviewed patch was handed off.',
+        );
+        continue;
+      }
       let touched = false;
       for (const job of run.jobs) {
         if (!['queued', 'running', 'reviewing'].includes(job.state)) continue;
@@ -475,9 +538,19 @@ export class GroupSade {
           )
         )
           continue;
-        const predecessors =
-          job.task?.dependsOn.map((key) => run.jobs.find((other) => other.task?.key === key)) || [];
-        if (predecessors.some((other) => other?.state !== 'done')) continue;
+        const predecessors = dependencies.get(job) || [];
+        if (predecessors.some((other) => other.state !== 'done')) continue;
+        if (
+          !command.patchHandoff &&
+          predecessors.some((other) => other.portable && !other.published)
+        ) {
+          const summary = 'Update this desktop to receive a reviewed Shared Sade patch.';
+          if (job.summary !== summary) {
+            job.summary = summary;
+            touched = true;
+          }
+          continue;
+        }
         if (
           job.task &&
           run.jobs.some(
@@ -491,6 +564,7 @@ export class GroupSade {
         )
           continue;
         job.state = 'running';
+        job.summary = undefined;
         job.deadline = this.now() + leaseMs;
         this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
         touched = true;
@@ -525,12 +599,20 @@ export class GroupSade {
           team,
           task: job.task,
           prerequisites: predecessors.map((other) => ({
-            title: other!.task!.title,
-            summary: other!.summary?.slice(0, 500),
-            revision: other!.revision,
+            title: other.task!.title,
+            summary: other.summary?.slice(0, 500),
+            revision: other.revision,
+            ...(other.portable && !other.published && other.change && other.reviewedDigest
+              ? { patch: { change: other.change, digest: other.reviewedDigest } }
+              : {}),
           })),
           clarification: job.clarification,
-          requiresPublication: writes(job.task) && hasDependents(run, job),
+          requiresPublication:
+            writes(job.task) &&
+            hasDependents(run, job) &&
+            !(command.patchHandoff && grant.patchHandoff),
+          portableReview:
+            writes(job.task) && command.patchHandoff && grant.patchHandoff ? true : undefined,
           ...(job.reviewOf
             ? { review: run.jobs.find((other) => other.id === job.reviewOf)?.change }
             : {}),
@@ -623,6 +705,10 @@ export class GroupSade {
     } else if (result.kind === 'change') {
       if (job.phase !== 'task' || !writes(job.task) || !grant.allowWrites)
         throw new DomainError('Only a granted writing task can share a diff.');
+      if (result.portable && !grant.patchHandoff)
+        throw new DomainError('The author has not granted reviewed patch handoff.', 403);
+      if (result.portable && Buffer.byteLength(JSON.stringify(result.diff)) > maxPortableDiff)
+        throw new DomainError('The reviewed patch exceeds the Shared Groups handoff limit.');
       let digest: string;
       try {
         digest = reviewDigest(result.diff);
@@ -677,6 +763,7 @@ export class GroupSade {
       }
       job.state = 'reviewing';
       job.change = result.diff;
+      job.portable = result.portable;
       job.summary = 'Waiting for independent review.';
       run.jobs.push({
         id: randomUUID(),
@@ -701,9 +788,10 @@ export class GroupSade {
         );
       else {
         source.reviewedDigest = reviewDigest(source.change);
-        source.summary = hasDependents(run, source)
-          ? 'Reviewed. Integrate and share the Git revision from the author’s workspace.'
-          : 'Reviewed. The author can integrate the changes locally.';
+        source.summary =
+          hasDependents(run, source) && !source.portable
+            ? 'Reviewed. Integrate and share the Git revision from the author’s workspace.'
+            : 'Reviewed. The author can integrate the changes locally.';
         this.store.put('sharedSadeRun', run);
       }
     } else if (result.kind === 'unchanged') {
@@ -711,7 +799,10 @@ export class GroupSade {
         throw new DomainError('Only a running writing task can report an unchanged worktree.', 409);
       job.state = 'done';
       job.summary = redact(result.summary);
-      if (run.jobs.every((item) => item.state === 'done')) run.state = 'done';
+      if (run.jobs.every((item) => item.state === 'done')) {
+        run.state = 'done';
+        for (const item of run.jobs) item.change = undefined;
+      }
       this.store.put('sharedSadeRun', run);
     } else {
       if (
@@ -719,16 +810,20 @@ export class GroupSade {
         (writes(job.task) &&
           (!result.revision ||
             !job.reviewedDigest ||
-            (hasDependents(run, job) && !result.published)))
+            (hasDependents(run, job) && !result.published && !job.portable)))
       )
         throw new DomainError(
           'A writing task needs independent review and a verified shared Git revision.',
         );
       job.state = 'done';
       job.summary = redact(result.summary);
-      job.revision = result.published ? result.revision : undefined;
-      job.change = undefined;
-      if (run.jobs.every((item) => item.state === 'done')) run.state = 'done';
+      job.published = result.published;
+      job.revision = result.published || job.portable ? result.revision : undefined;
+      if (!job.portable || job.published || !hasDependents(run, job)) job.change = undefined;
+      if (run.jobs.every((item) => item.state === 'done')) {
+        run.state = 'done';
+        for (const item of run.jobs) item.change = undefined;
+      }
       this.store.put('sharedSadeRun', run);
     }
     return { accepted: true };

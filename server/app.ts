@@ -426,7 +426,7 @@ export async function buildApp(
   });
   const params = (request: FastifyRequest) => z.object({ id }).parse(request.params).id;
   if (!options.cloud && options.desktopSecret)
-    app.post('/api/desktop/shared-sade', async (request) =>
+    app.post('/api/desktop/shared-sade', { bodyLimit: 4 * 1024 * 1024 }, async (request) =>
       workspace.sharedSade.execute(request.body),
     );
   if (!options.cloud)
