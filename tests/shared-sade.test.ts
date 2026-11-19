@@ -1124,6 +1124,7 @@ test(
           port: Number(process.env.KIVUNO_CROSS_HOST_PORT),
           workflowRef: process.env.KIVUNO_CROSS_HOST_WORKFLOW!,
           sha: process.env.KIVUNO_CROSS_HOST_SHA!,
+          runId: process.env.KIVUNO_MAC_RUN_ID,
         })
       : undefined;
     if (live) assert.equal(process.platform, 'win32');
