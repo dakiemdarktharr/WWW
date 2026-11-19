@@ -1709,6 +1709,41 @@ test('a quota fallback can write the same scope using another write grant and in
   }
 });
 
+test('the desktop keeps staged patches local after a grant is revoked or expires', async (t) => {
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+  });
+  const worker = workspace.sharedSade;
+  const snapshot = async () =>
+    (await worker.execute({ action: 'snapshot' })) as { results: { jobId: string }[] };
+  const queued = Array.from({ length: 3 }, () => ({
+    id: randomUUID(),
+    grantId: randomUUID(),
+    phase: 'task',
+    result: { kind: 'change', diff: patch, summary: 'Ready for independent review' },
+  }));
+  for (const { grantId } of queued)
+    store.put('sharedSadeLocalGrant', { id: grantId, expiresAt: Date.now() + 60_000 });
+  for (const receipt of queued) store.put('sharedSadeLocalReceipt', receipt);
+  assert.deepEqual(
+    (await snapshot()).results.map((entry) => entry.jobId),
+    queued.map(({ id }) => id),
+  );
+
+  const [revoked, expired, stillGranted] = queued;
+  await worker.execute({ action: 'revoke', grantId: revoked.grantId });
+  store.put('sharedSadeLocalGrant', { id: expired.grantId, expiresAt: Date.now() - 1 });
+  assert.deepEqual(
+    (await snapshot()).results.map((entry) => entry.jobId),
+    [stillGranted.id],
+  );
+  assert.deepEqual(store.get('sharedSadeLocalReceipt', revoked.id), revoked);
+  assert.deepEqual(store.get('sharedSadeLocalReceipt', expired.id), expired);
+});
+
 test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
   const f = fixture();
   try {

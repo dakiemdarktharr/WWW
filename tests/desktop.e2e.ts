@@ -6,7 +6,8 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { Store } from '../server/store.ts';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
 const accessToken = 'desktop-test-session-' + '0'.repeat(64);
@@ -17,6 +18,12 @@ let tokenRequests = 0;
 let revoked = false;
 let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
+let sharedPolls = 0;
+const reportedSharedJobs: string[] = [];
+let releaseFirstSharedFinish!: () => void;
+const firstSharedFinish = new Promise<void>((resolve) => {
+  releaseFirstSharedFinish = resolve;
+});
 const expiresAt = new Date(Date.now() + 600000).toISOString();
 const fixture = createServer(async (request, response) => {
   let input = '';
@@ -73,6 +80,16 @@ const fixture = createServer(async (request, response) => {
     );
     if (payload.responses.some((item: { status: number }) => item.status === 401))
       bridgeRejectedInvalidMachine = true;
+  } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-finish') {
+    reportedSharedJobs.push(payload.jobId);
+    if (reportedSharedJobs.length === 1) await firstSharedFinish;
+    response.end('{}');
+  } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-poll') {
+    sharedPolls++;
+    response.end(JSON.stringify({ active: [], reviews: [], updates: [] }));
+  } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
+    response.statusCode = 503;
+    response.end(JSON.stringify({ error: 'Shared Groups service is reconnecting.' }));
   } else if (request.url === '/api/desktop/revoke') {
     revoked = true;
     response.end('{}');
@@ -141,6 +158,42 @@ try {
     true,
     'the cloud bridge must forward to the authenticated local runner boundary',
   );
+
+  const unrelated = { id: randomUUID(), grantId: randomUUID() };
+  const withdrawn = { id: randomUUID(), grantId: randomUUID() };
+  const store = new Store(path.join(state.runtime.dataDir, 'workspace.db'));
+  try {
+    store.transaction(() => {
+      for (const queued of [unrelated, withdrawn]) {
+        store.put('sharedSadeLocalGrant', {
+          id: queued.grantId,
+          expiresAt: Date.now() + 60_000,
+        });
+        store.put('sharedSadeLocalReceipt', {
+          ...queued,
+          phase: 'task',
+          result: { kind: 'done', summary: 'Synthetic project result' },
+        });
+      }
+    });
+    await expect.poll(() => reportedSharedJobs[0], { timeout: 15000 }).toBe(unrelated.id);
+    await assert.rejects(
+      page.evaluate((input) => (window as any).relayDesktop.groups(input), {
+        action: 'sade-revoke',
+        grantId: withdrawn.grantId,
+        groupId: randomUUID(),
+      }),
+      /Shared Groups service is reconnecting/,
+    );
+    const pollsBeforeRevoke = sharedPolls;
+    releaseFirstSharedFinish();
+    await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
+    assert.ok(!reportedSharedJobs.includes(withdrawn.id));
+    assert.ok(store.get('sharedSadeLocalReceipt', withdrawn.id));
+  } finally {
+    releaseFirstSharedFinish();
+    store.close();
+  }
 
   const memory = async () =>
     desktop!.evaluate(({ app }) =>
@@ -490,7 +543,7 @@ try {
   ).toBeVisible();
 
   console.log(
-    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
+    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, local Shared Sade revocation, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
   );
 } finally {
   if (desktop) await desktop.close();

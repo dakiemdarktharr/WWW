@@ -84,6 +84,8 @@ let lastError = '';
 let quitting = false;
 let signInGeneration = 0;
 let bridgeGeneration = 0;
+let sharedSadeConsentVersion = 0;
+let pendingSharedSadeRevocations = 0;
 let identityTransition = false;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const projectBrowser = new ProjectBrowser({
@@ -604,20 +606,29 @@ async function bridgeLoop() {
 }
 
 async function localSharedSade(payload) {
-  const result = await fetch(backendOrigin + '/api/desktop/shared-sade', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Origin: backendOrigin,
-      'X-Relay-Desktop': desktopSecret,
-      'X-Relay-Control': desktopSecret,
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(10_000),
-  });
-  const body = await result.json();
-  if (!result.ok) throw new Error(body.error || 'Shared Sade is not available on this desktop.');
-  return body;
+  const revoking = payload.action === 'revoke';
+  if (revoking) {
+    ++sharedSadeConsentVersion;
+    ++pendingSharedSadeRevocations;
+  }
+  try {
+    const result = await fetch(backendOrigin + '/api/desktop/shared-sade', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: backendOrigin,
+        'X-Relay-Desktop': desktopSecret,
+        'X-Relay-Control': desktopSecret,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = await result.json();
+    if (!result.ok) throw new Error(body.error || 'Shared Sade is not available on this desktop.');
+    return body;
+  } finally {
+    if (revoking) --pendingSharedSadeRevocations;
+  }
 }
 
 async function sharedSadeLoop(generation, owner) {
@@ -625,17 +636,28 @@ async function sharedSadeLoop(generation, owner) {
     !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
   let supportsReviewRevision = false;
   while (current()) {
+    if (pendingSharedSadeRevocations) {
+      await pause(250);
+      continue;
+    }
+    const consentVersion = sharedSadeConsentVersion;
+    // A revocation can start while a snapshot or an earlier upload is in flight.
+    const snapshotCurrent = () => current() && consentVersion === sharedSadeConsentVersion;
     let delay = 2500;
     try {
       const snapshot = await localSharedSade({ action: 'snapshot' });
-      if (!current()) return;
+      if (!snapshotCurrent()) continue;
       if (!snapshot.grants?.length && !snapshot.active?.length && !snapshot.results?.length) {
         await pause(4000);
         continue;
       }
       const acknowledged = [];
-      for (const { jobId, version, result, updatesRead } of snapshot.results.slice(0, 2)) {
-        if (!current()) return;
+      for (const { jobId, version, result, updatesRead, grantExpiresAt } of snapshot.results.slice(
+        0,
+        2,
+      )) {
+        if (!snapshotCurrent()) break;
+        if (!(grantExpiresAt > Date.now())) continue;
         const { response } = await cloudRequest(
           '/api/desktop/groups',
           { action: 'sade-finish', jobId, result, updatesRead },
@@ -644,6 +666,7 @@ async function sharedSadeLoop(generation, owner) {
         if (response.ok || [403, 404, 409].includes(response.status))
           acknowledged.push({ jobId, version });
       }
+      if (!snapshotCurrent()) continue;
       const { response, body } = await cloudRequest(
         '/api/desktop/groups',
         {
@@ -658,7 +681,7 @@ async function sharedSadeLoop(generation, owner) {
         },
         owner.accessToken,
       );
-      if (!current()) return;
+      if (!snapshotCurrent()) continue;
       supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
       if (response.ok)
         await localSharedSade({
