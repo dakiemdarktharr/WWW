@@ -2187,6 +2187,60 @@ test('sharing the same profile again requires fresh Sade approval', (t) => {
   assert.deepEqual(grantIds(), [f.grants[0]]);
 });
 
+for (const change of ['leave', 'remove', 'unshare', 'replace provider'] as const) {
+  test(`rejects a first grant from an older desktop after a teammate's ${change}`, (t) => {
+    const f = fixture(undefined, { grantB: false });
+    t.after(() => f.store.close());
+    const teammate = { localId: f.members[1], name: 'Mây', provider: 'codex' };
+    const publish = (teammates: object[]) =>
+      f.call(1, { action: 'teammates', groupId: f.groupId, teammates });
+    const read = () => f.call(1, { action: 'read', groupId: f.groupId });
+    const delayed = {
+      action: 'sade-grant',
+      groupId: f.groupId,
+      id: f.grants[1],
+      teammateId: teammate.localId,
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'reviewer',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    };
+    if (change === 'leave' || change === 'remove') {
+      f.call(change === 'leave' ? 1 : 0, {
+        action: change,
+        groupId: f.groupId,
+        ...(change === 'remove' ? { userId: 'owner-B' } : {}),
+      });
+      f.call(0, { action: 'invite', groupId: f.groupId, account: 'owner-B' });
+      f.call(1, { action: 'accept', groupId: f.groupId });
+    } else if (change === 'unshare') {
+      publish([]);
+    }
+    const firstShare = { localId: randomUUID(), name: 'Gió', provider: 'gemini' };
+    publish([
+      { ...teammate, provider: change === 'replace provider' ? 'claude' : teammate.provider },
+      firstShare,
+    ]);
+
+    assert.throws(() => f.call(1, delayed), /Update Kivuno to confirm the grant again/);
+    assert.equal(f.store.lookup('sharedSadeGrant', delayed.id), undefined);
+    const unrelated = { ...delayed, teammateId: firstShare.localId, id: randomUUID() };
+    f.call(1, unrelated);
+    const member = read().group.teammates.find(
+      (member: SharedTeammate) => member.localId === teammate.localId,
+    ) as SharedTeammate;
+    assert.ok(member.sharingId);
+    const fresh = { ...delayed, id: randomUUID(), sharingId: member.sharingId };
+    f.call(1, fresh);
+    assert.deepEqual(
+      read().sadeGrants.map(({ id }: { id: string }) => id),
+      [f.grants[0], unrelated.id, fresh.id],
+    );
+  });
+}
+
 test('an owner can finish syncing a revocation after leaving and being invited back', (t) => {
   const f = fixture();
   t.after(() => f.store.close());

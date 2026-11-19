@@ -19,6 +19,8 @@ export const projectKey = z.string().regex(/^[a-f0-9]{64}$/);
 export const inlineSharedSadeTeamLimit = 32;
 const short = z.string().trim().min(1).max(100);
 const platform = z.enum(['win32', 'darwin', 'linux']);
+const withdrawnShareKey = (groupId: string, ownerId: string, teammateId: string) =>
+  JSON.stringify([groupId, ownerId, teammateId]);
 export const groupSadeGrant = z
   .object({
     action: z.literal('sade-grant'),
@@ -578,7 +580,9 @@ export class GroupSade {
       if (!member) throw new DomainError('Share your own teammate in this group first.', 403);
       if (command.sharingId && command.sharingId !== (member.sharingId ?? member.localId))
         throw new DomainError('The teammate’s sharing changed. Confirm the grant again.', 409);
-      const existing = this.grants(group).find((grant) => grant.id === command.id);
+      const existing = this.store.lookup<Grant>('sharedSadeGrant', command.id);
+      if (existing && existing.groupId !== group.id)
+        throw new DomainError('Grant ID already used.');
       if (existing) {
         if (
           existing.ownerId !== actor.ownerId ||
@@ -597,8 +601,17 @@ export class GroupSade {
           throw new DomainError('Grant ID already used.', 409);
         return this.view(group, actor.ownerId);
       }
-      if (this.store.all<Grant>('sharedSadeGrant').some((grant) => grant.id === command.id))
-        throw new DomainError('Grant ID already used.');
+      if (
+        !command.sharingId &&
+        this.store.lookup(
+          'sharedSadeWithdrawnShare',
+          withdrawnShareKey(group.id, actor.ownerId, member.localId),
+        )
+      )
+        throw new DomainError(
+          'This teammate was shared again. Update Kivuno to confirm the grant again.',
+          409,
+        );
       for (const previous of this.grants(group))
         if (
           previous.ownerId === actor.ownerId &&
@@ -712,7 +725,14 @@ export class GroupSade {
   private actorGrant(grant: Grant, actor: SharedPrincipal) {
     return grant.ownerId === actor.ownerId && grant.deviceId === actor.deviceId;
   }
-  revokeOwnerGrants(group: SharedGroup, ownerId: string, teammateIds?: ReadonlySet<string>) {
+  endTeammateSharing(group: SharedGroup, ownerId: string, teammateIds?: ReadonlySet<string>) {
+    // A pending desktop approval may have never registered a grant. Keep the
+    // publication history even when the teammate leaves the group's roster.
+    for (const member of group.teammates)
+      if (member.ownerId === ownerId && (!teammateIds || teammateIds.has(member.localId)))
+        this.store.put('sharedSadeWithdrawnShare', {
+          id: withdrawnShareKey(group.id, ownerId, member.localId),
+        });
     for (const grant of this.grants(group))
       if (
         grant.ownerId === ownerId &&

@@ -11,12 +11,14 @@ import { createCloudIdentity } from '../server/cloud-auth.ts';
 import { buildApp } from '../server/app.ts';
 import type { SharedGroup } from '../shared/collaboration.ts';
 
+const tempRoot = path.resolve(os.tmpdir());
+
 test('groups isolate accounts, require invitation acceptance and protect teammate ownership and message retries', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-groups-'));
+  const dir = await mkdtemp(path.join(tempRoot, 'kivuno-groups-'));
   const store = new Store(path.join(dir, 'groups.db'));
   t.after(async () => {
     store.close();
-    assert.equal(path.dirname(dir), os.tmpdir());
+    assert.equal(path.dirname(dir), tempRoot);
     await rm(dir, { recursive: true, force: true });
   });
   const alice = { id: 'alice', name: 'Alice' },
@@ -71,11 +73,11 @@ test('groups isolate accounts, require invitation acceptance and protect teammat
 });
 
 test('free group seats include the owner, reserve invitations, and let locked people leave', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-group-seats-'));
+  const dir = await mkdtemp(path.join(tempRoot, 'kivuno-group-seats-'));
   const store = new Store(path.join(dir, 'groups.db'));
   t.after(async () => {
     store.close();
-    assert.equal(path.dirname(dir), os.tmpdir());
+    assert.equal(path.dirname(dir), tempRoot);
     await rm(dir, { recursive: true, force: true });
   });
   const owner = { id: 'seat-owner', name: 'Owner' };
@@ -129,11 +131,11 @@ test('free group seats include the owner, reserve invitations, and let locked pe
 });
 
 test('Plus and Max group seats follow the owner tier and preserve people after a downgrade', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-group-plan-seats-'));
+  const dir = await mkdtemp(path.join(tempRoot, 'kivuno-group-plan-seats-'));
   const store = new Store(path.join(dir, 'groups.db'));
   t.after(async () => {
     store.close();
-    assert.equal(path.dirname(dir), os.tmpdir());
+    assert.equal(path.dirname(dir), tempRoot);
     await rm(dir, { recursive: true, force: true });
   });
   const owner = { id: 'plan-owner', name: 'Plan owner' };
@@ -220,7 +222,7 @@ test('Plus and Max group seats follow the owner tier and preserve people after a
 });
 
 test('real account login and PKCE tokens authenticate group API; cookies and revoked tokens cannot bypass it', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-groups-auth-'));
+  const dir = await mkdtemp(path.join(tempRoot, 'kivuno-groups-auth-'));
   const store = new Store(path.join(dir, 'workspace.db'));
   const workspace = new Workspace(store, dir, dir);
   const origin = 'https://kivuno.test',
@@ -235,7 +237,7 @@ test('real account login and PKCE tokens authenticate group API; cookies and rev
   t.after(async () => {
     await app.close();
     store.close();
-    assert.equal(path.dirname(dir), os.tmpdir());
+    assert.equal(path.dirname(dir), tempRoot);
     await rm(dir, { recursive: true, force: true });
   });
   const request = (url: string, payload: unknown, headers = {}) =>

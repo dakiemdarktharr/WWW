@@ -190,7 +190,7 @@ export class SharedGroups {
           throw new DomainError('The group owner cannot leave the group.', 409);
         if (target !== owner.id && !isOwner)
           throw new DomainError('Only the group owner can remove accounts.', 403);
-        this.sade.revokeOwnerGrants(group, target);
+        this.sade.endTeammateSharing(group, target);
         group.people = group.people.filter((person) => person.id !== target);
         group.teammates = group.teammates.filter((member) => member.ownerId !== target);
         return this.saveGroup(group);
@@ -266,7 +266,7 @@ export class SharedGroups {
             .filter((member) => submitted.get(member.localId)?.provider !== member.provider)
             .map((member) => member.localId),
         );
-        if (withdrawn.size) this.sade.revokeOwnerGrants(group, owner.id, withdrawn);
+        if (withdrawn.size) this.sade.endTeammateSharing(group, owner.id, withdrawn);
         group.teammates = [
           ...group.teammates.filter((member) => member.ownerId !== owner.id),
           ...input.teammates.map((member) => {
