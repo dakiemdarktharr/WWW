@@ -64,6 +64,9 @@ export const sharedSadeUpdate = z
   .strict();
 export const sharedSadeUpdates = z.array(sharedSadeUpdate).max(maxTaskUpdates);
 export const taskUpdateAck = z.object({ jobId: id, through: taskUpdateSequence }).strict();
+export const sharedReviewRevision = z
+  .object({ previousJobId: id, feedback: z.string().min(1).max(4000) })
+  .strict();
 const syncPrerequisiteSummary =
   'Sync the prerequisite Git revision into this desktop’s linked project. Sade will continue after the revision is available.';
 export const sharedFinish = z.discriminatedUnion('kind', [
@@ -131,6 +134,7 @@ export const groupSadeCommands = [
       grants: z.array(id).max(32),
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
+      reviewRevision: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
@@ -155,6 +159,9 @@ type Job = SharedSadeJob & {
   change?: TaskDiff;
   reviewOf?: string;
   reviewGrantId?: string;
+  canReviseReview?: boolean;
+  reviewRevision?: z.infer<typeof sharedReviewRevision>;
+  rejectedDigest?: string;
   reviewedDigest?: string;
   portable?: boolean;
   published?: boolean;
@@ -190,6 +197,7 @@ export type SharedDelivery = {
   task?: PlanTask;
   prerequisites: z.infer<typeof sharedPrerequisite>[];
   review?: TaskDiff;
+  reviewRevision?: Job['reviewRevision'];
   clarification?: Job['clarification'];
   requiresPublication?: boolean;
   portableReview?: true;
@@ -418,7 +426,13 @@ export class GroupSade {
       )
       .all(group.id)
       .reverse()
-      .map((row) => JSON.parse(String(row.data)) as Run);
+      .map((row) => {
+        const run = JSON.parse(String(row.data)) as Run;
+        return {
+          ...run,
+          jobs: run.jobs.map(({ canReviseReview, reviewRevision, rejectedDigest, ...job }) => job),
+        };
+      });
   }
   private usable(grant: Grant, group: SharedGroup, checkBudget = true) {
     let device;
@@ -791,6 +805,71 @@ export class GroupSade {
     }
     this.store.put('sharedSadeRun', run);
   }
+  private reviseAfterReview(
+    run: Run,
+    source: Job,
+    group: SharedGroup,
+    grants: Grant[],
+    feedback: string,
+  ) {
+    if (
+      !source.canReviseReview ||
+      source.reviewRevision ||
+      !source.change ||
+      (source.deadline || 0) <= this.now()
+    )
+      return false;
+    const author = grants.find((entry) => entry.id === source.grantId);
+    if (!author || !this.usable(author, group) || unreservedTurns(run, author, source) < 1)
+      return false;
+    const reviews = run.jobs.filter((job) => job.reviewOf === source.id);
+    if (reviews.some((job) => job.state === 'running')) return false;
+
+    const planned = reviews.filter((job) => job.task);
+    const reviewer = planned.length
+      ? undefined
+      : this.availableReviewer(run, source, group, this.reviewGrants(run, author, grants));
+    if (!planned.length && !reviewer) return false;
+    for (const grantId of new Set(planned.map((job) => job.grantId))) {
+      const grant = grants.find((entry) => entry.id === grantId);
+      const completed = planned.filter((job) => job.grantId === grantId && job.state === 'done');
+      if (
+        !grant ||
+        grant.ownerId === author.ownerId ||
+        !this.usable(grant, group) ||
+        unreservedTurns(run, grant) < completed.length
+      )
+        return false;
+    }
+    const rejectedDigest = reviewDigest(source.change);
+    run.jobs = run.jobs.map((job) => {
+      if (job === source)
+        return {
+          ...job,
+          id: randomUUID(),
+          state: 'queued',
+          reviewRevision: { previousJobId: source.id, feedback: feedback.slice(0, 4000) },
+          rejectedDigest,
+          reviewedDigest: undefined,
+          reviewGrantId: reviewer?.id,
+          deadline: undefined,
+          change: undefined,
+          summary: 'Waiting for the author to revise the same task.',
+        };
+      if (planned.includes(job))
+        return {
+          ...job,
+          id: randomUUID(),
+          state: 'queued',
+          reviewOf: undefined,
+          deadline: undefined,
+          summary: undefined,
+        };
+      return job;
+    });
+    this.store.put('sharedSadeRun', run);
+    return true;
+  }
   poll(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-poll' }>) {
     const active: string[] = [];
     const reviews: { jobId: string; digest: string }[] = [];
@@ -878,7 +957,7 @@ export class GroupSade {
                 command.readUpdates?.find((entry) => entry.jobId === job.id)?.through || 0;
               if (read > (job.updatesRead || 0) && read <= (job.updateCount || 0))
                 job.updatesRead = read;
-              if (job.updates && (job.updatesRead || 0) < job.updates.length)
+              if (job.updates && (job.updatesRead || 0) < (job.updates.at(-1)?.sequence || 0))
                 updates.push({
                   jobId: job.id,
                   notes: job.updates.map(({ ownerId, ...note }) => note),
@@ -887,6 +966,18 @@ export class GroupSade {
             touched = true;
           }
           continue;
+        }
+        if (job.reviewRevision) {
+          const previous = job.reviewRevision.previousJobId;
+          if (!command.reviewRevision || !held.has(previous)) {
+            this.block(
+              run,
+              job,
+              'The original author session is no longer available. Its work stays local.',
+            );
+            break;
+          }
+          active.push(previous);
         }
         if (
           delivery ||
@@ -972,8 +1063,9 @@ export class GroupSade {
           job.reviewGrantId = reviewer?.id;
         }
         job.state = 'running';
+        job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
         job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
-        job.summary = undefined;
+        job.summary = job.reviewRevision ? 'Revising after independent review.' : undefined;
         job.deadline = this.now() + leaseMs;
         this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
         touched = true;
@@ -1025,6 +1117,7 @@ export class GroupSade {
           request: reviewRequirements ?? run.content,
           team,
           task: job.task,
+          ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
           prerequisites: predecessors.map((other) => ({
             title: other.task!.title,
             summary: other.summary?.slice(0, 500),
@@ -1049,6 +1142,7 @@ export class GroupSade {
       if (touched) this.store.put('sharedSadeRun', run);
     }
     return {
+      supportsReviewRevision: true as const,
       active,
       delivery,
       reviews,
@@ -1189,6 +1283,14 @@ export class GroupSade {
           throw new DomainError('The diff changed after review submission.');
         return { accepted: true };
       }
+      if (digest === job.rejectedDigest) {
+        this.block(
+          run,
+          job,
+          'The author resubmitted the same rejected change. Inspect the worktree locally.',
+        );
+        return { accepted: true };
+      }
       if (
         result.diff.files.some(
           (file) =>
@@ -1247,13 +1349,14 @@ export class GroupSade {
         throw new DomainError('No current change to review.');
       job.state = 'done';
       job.summary = redact(result.summary);
-      if (result.verdict === 'changes')
-        this.block(
-          run,
-          source,
-          'Independent reviewer requested changes. Read the review before continuing.',
-        );
-      else {
+      if (result.verdict === 'changes') {
+        if (!this.reviseAfterReview(run, source, group, grants, job.summary))
+          this.block(
+            run,
+            source,
+            'Independent reviewer requested changes. Read the review before continuing.',
+          );
+      } else {
         if (run.jobs.every((other) => other.reviewOf !== source.id || other.state === 'done')) {
           source.reviewedDigest = reviewDigest(source.change);
           source.summary =
@@ -1266,6 +1369,10 @@ export class GroupSade {
     } else if (result.kind === 'unchanged') {
       if (job.phase !== 'task' || !writes(job.task) || job.state !== 'running')
         throw new DomainError('Only a running writing task can report an unchanged worktree.', 409);
+      if (job.reviewRevision) {
+        this.block(run, job, 'The revision produced no patch. Inspect the worktree locally.');
+        return { accepted: true };
+      }
       const hasNextTask = run.jobs.some((other) => other.task?.dependsOn.includes(job.task!.key));
       if (hasNextTask && !result.revision) {
         this.block(

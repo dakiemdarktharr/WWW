@@ -45,6 +45,7 @@ function fixture(
     members?: string[];
     names?: [string, string];
     patchHandoff?: boolean;
+    reviewRevision?: boolean;
     taskUpdates?: boolean;
     roleA?: 'researcher';
     roleB?: 'reviewer' | 'researcher';
@@ -118,11 +119,13 @@ function fixture(
         grants: grantIds,
         active,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
+        ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(options.taskUpdates ? { taskUpdates: true, readUpdates } : {}),
         waitingForRevisions,
       },
       deviceId,
     ) as {
+      supportsReviewRevision?: true;
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
@@ -419,9 +422,9 @@ class DesktopPeer extends CodexClient {
           isDefault: index === 0,
         })),
       };
-    else if (method === 'thread/start')
+    else if (method === 'thread/start' || method === 'thread/resume')
       value = {
-        thread: { id: randomUUID() },
+        thread: { id: params.threadId || randomUUID() },
         model: params.model,
         reasoningEffort: params.config?.model_reasoning_effort,
         approvalsReviewer: 'user',
@@ -533,6 +536,7 @@ test(
       key: fingerprint,
       members: setups.map((entry) => entry.memberId),
       patchHandoff: true,
+      reviewRevision: true,
       taskUpdates: true,
     });
     const remoteHead = () => git(root, ['--git-dir', remote, 'rev-parse', 'refs/heads/main']);
@@ -555,7 +559,7 @@ test(
       const hello = (await worker.execute({ action: 'snapshot' })) as any;
       for (const result of hello.results)
         cloud.finish(index, result.jobId, result.result, result.updatesRead);
-      const packet = cloud.poll(
+      const { supportsReviewRevision, ...packet } = cloud.poll(
         index,
         hello.active,
         hello.grants,
@@ -563,6 +567,7 @@ test(
         hello.readUpdates,
         hello.waitingForRevisions,
       );
+      assert.equal(supportsReviewRevision, true);
       assert.doesNotMatch(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
@@ -765,16 +770,12 @@ test(
     assert.equal(cloud.view().sadeRuns[0].jobs.find((job) => job.id === writer.id)?.updatesRead, 1);
     await writeFile(
       path.join(author.task.worktree!, 'architecture.txt'),
-      'Shared verified contract\n',
+      'Draft contract needs correction\n',
     );
     await complete(0, author.session, author.peer, 'Architecture contract prepared.');
     const architectureRepo = setups[0].repo;
     const authorWorktree = author.task.worktree!;
     const authorHead = await git(authorWorktree, ['rev-parse', 'HEAD']);
-    await writeFile(path.join(architectureRepo, 'architecture.txt'), 'Shared verified contract\n');
-    await git(architectureRepo, ['add', 'architecture.txt']);
-    await git(architectureRepo, [...fixtureIdentity, 'commit', '-m', 'Existing architecture work']);
-    const existingArchitecture = await git(architectureRepo, ['rev-parse', 'HEAD']);
     assert.equal(await pump(1), undefined);
     await assert.rejects(setups[0].workspace.accept(author.task.id), /Wait for independent/);
     await pump(0);
@@ -789,13 +790,76 @@ test(
     const check = await sessionFor(1, reviewer);
     assert.equal(check.session.model, 'fixture');
     assert.equal(check.session.reasoningEffort, 'high');
-    assert.match(JSON.stringify(check.peer.calls), /Shared verified contract/);
+    assert.match(JSON.stringify(check.peer.calls), /Draft contract needs correction/);
     assert.match(JSON.stringify(check.peer.calls), /Verify the registration field names/);
     await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
-      verdict: 'approved',
-      summary: 'Contract is present and scoped.',
+      verdict: 'changes',
+      summary: 'Use the approved registration fields in the contract.',
     });
-    await complete(1, check.session, check.peer, 'Reviewed the architecture text.');
+    await complete(1, check.session, check.peer, 'Requested a scoped correction.');
+    assert.equal(await pump(1), undefined);
+    assert.throws(
+      () =>
+        cloud.finish(0, writer.id, {
+          kind: 'done',
+          revision: sha,
+          summary: 'Stale attempt.',
+        }),
+      /unavailable/,
+    );
+    const revision = (await pump(0))!;
+    assert.equal(revision.reviewRevision?.previousJobId, writer.id);
+    const revised = await sessionFor(0, revision);
+    assert.equal(revised.task.id, author.task.id);
+    assert.equal(revised.task.worktree, authorWorktree);
+    assert.equal(revised.session.id, author.session.id);
+    assert.notEqual(revised.session.turnId, author.session.turnId);
+    assert.equal(revised.peer.calls.filter((call) => call.method === 'turn/start').length, 2);
+    assert.match(JSON.stringify(revised.peer.calls), /Use the approved registration fields/);
+    assert.equal(
+      await readFile(path.join(authorWorktree, 'architecture.txt'), 'utf8'),
+      'Draft contract needs correction\n',
+    );
+    cloud.call(0, sendUpdate(revision.id, 'Giữ tên trường đã duyệt trong bản sửa.'));
+    await pump(0);
+    const pending = await callTool(0, revised.session, revised.peer, 'workspace_write_file', {
+      path: 'architecture.txt',
+      content: 'This change missed the update.',
+    });
+    assert.equal(pending?.success, false);
+    assert.match(pending?.contentItems?.[0]?.text || '', /Read the latest task update/);
+    const revisionUpdate = await submit(
+      0,
+      revised.session,
+      revised.peer,
+      'relay_read_shared_updates',
+      {},
+    );
+    assert.match(revisionUpdate.contentItems?.[0]?.text || '', /Giữ tên trường đã duyệt/);
+    await writeFile(path.join(authorWorktree, 'architecture.txt'), 'Shared verified contract\n');
+    await complete(0, revised.session, revised.peer, 'Revised the registration contract.');
+    let repeatedReview: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !repeatedReview; attempt++) {
+      await pump(0);
+      repeatedReview = await pump(1);
+      if (!repeatedReview) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(repeatedReview && repeatedReview.phase === 'review');
+    assert.notEqual(repeatedReview.id, reviewer.id);
+    assert.match(repeatedReview.review?.diff || '', /Shared verified contract/);
+    await assert.rejects(setups[0].workspace.accept(author.task.id), /Wait for independent/);
+    const finalReview = await sessionFor(1, repeatedReview);
+    assert.equal(finalReview.session.model, 'fixture');
+    assert.equal(finalReview.session.reasoningEffort, 'high');
+    await submit(1, finalReview.session, finalReview.peer, 'relay_submit_shared_review', {
+      verdict: 'approved',
+      summary: 'The revised contract contains the approved fields.',
+    });
+    await complete(1, finalReview.session, finalReview.peer, 'Reviewed the revised patch.');
+    await writeFile(path.join(architectureRepo, 'architecture.txt'), 'Shared verified contract\n');
+    await git(architectureRepo, ['add', 'architecture.txt']);
+    await git(architectureRepo, [...fixtureIdentity, 'commit', '-m', 'Existing architecture work']);
+    const existingArchitecture = await git(architectureRepo, ['rev-parse', 'HEAD']);
     assert.equal(await pump(1), undefined, 'Dependency still needs local human integration');
     await pump(0);
     const accepted = await setups[0].workspace.accept(author.task.id);
@@ -808,7 +872,7 @@ test(
     });
     await pump(0);
     assert.match(
-      cloud.view().sadeRuns[0].jobs.find((job) => job.id === writer.id)?.summary || '',
+      cloud.view().sadeRuns[0].jobs.find((job) => job.id === revision.id)?.summary || '',
       /already on the project branch/,
     );
     assert.doesNotMatch(JSON.stringify(cloud.view()), /Shared verified contract/);
@@ -2204,6 +2268,94 @@ test('Shared Sade reports a missing review turn before dispatching a writer', ()
     f.store.close();
   }
 });
+
+for (const scenario of [
+  'author exhausted',
+  'reviewer exhausted',
+  'desktop disconnected',
+  'second rejection',
+  'unchanged patch',
+  'empty revision',
+  'older desktop',
+] as const) {
+  test(`Shared Sade stops automatic revision after ${scenario}`, () => {
+    const f = fixture(['gemini', 'codex'], {
+      reviewRevision: scenario !== 'older desktop',
+      turnsA: scenario === 'author exhausted' ? 2 : 5,
+      turnsB: scenario === 'reviewer exhausted' ? 1 : 3,
+    });
+    try {
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content: 'Sửa file và nhờ một người độc lập review.',
+        sade: { projectKey: key },
+      });
+      const plan = f.poll(0).delivery!;
+      f.finish(0, plan.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Run the scoped edit with independent patch review.',
+          tasks: [
+            work('write', { kind: 'code', scope: patch.files, preferredMemberId: f.grants[0] }),
+          ],
+        },
+      });
+      const writer = f.poll(0).delivery!;
+      const propose = (job: SharedDelivery, diff = patch) =>
+        f.finish(0, job.id, { kind: 'change', diff, summary: 'Scoped proposal.' });
+      const reject = (job: SharedDelivery) =>
+        f.finish(1, job.id, {
+          kind: 'review',
+          verdict: 'changes',
+          summary: 'Handle the limit case.',
+        });
+      propose(writer);
+      reject(f.poll(1).delivery!);
+      const revised = ['second rejection', 'unchanged patch', 'empty revision'].includes(scenario);
+      if (revised) {
+        const revision = f.poll(0, [writer.id]).delivery!;
+        assert.equal(revision.reviewRevision?.previousJobId, writer.id);
+        assert.throws(
+          () =>
+            f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Obsolete attempt.' }),
+          /unavailable/,
+        );
+        if (scenario === 'second rejection') {
+          propose(revision, { ...patch, diff: '+export const value = 2;\n' });
+          reject(f.poll(1).delivery!);
+        } else if (scenario === 'unchanged patch') {
+          propose(revision);
+          assert.match(f.view().sadeRuns[0].error || '', /same rejected change/);
+        } else {
+          f.finish(0, revision.id, {
+            kind: 'unchanged',
+            summary: 'Returned to the initial state.',
+          });
+          assert.match(f.view().sadeRuns[0].error || '', /produced no patch/);
+        }
+      } else if (scenario === 'desktop disconnected') {
+        assert.equal(f.view().sadeRuns[0].state, 'running');
+        assert.equal(f.poll(0).delivery, undefined);
+        assert.match(f.view().sadeRuns[0].error || '', /original author session/);
+      }
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      assert.equal(f.poll(0, [writer.id]).delivery, undefined);
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(
+        f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used,
+        2 + Number(revised),
+      );
+      assert.equal(
+        f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used,
+        1 + Number(scenario === 'second rejection'),
+      );
+    } finally {
+      f.store.close();
+    }
+  });
+}
 
 test('planned patch reviews use their allocated turns and all verdicts are required', () => {
   const f = fixture(['gemini', 'codex'], { turnsB: 2 });

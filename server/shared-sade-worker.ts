@@ -20,6 +20,7 @@ import {
   sharedFinish,
   sharedPlanMemberRef,
   sharedPrerequisite,
+  sharedReviewRevision,
   sharedSadeUpdates,
   type SharedDelivery,
   type SharedFinish,
@@ -126,6 +127,7 @@ type Receipt = {
   version?: number;
   reported?: boolean;
   reviewedDigest?: string;
+  revisingReview?: true;
   revision?: string;
   revisionHandoff?: true;
   quotaFailover?: true;
@@ -181,6 +183,7 @@ const deliveryInput = z
       })
       .strict()
       .optional(),
+    reviewRevision: sharedReviewRevision.optional(),
     prerequisites: z.array(sharedPrerequisite).max(32),
     clarification: z
       .object({ question: z.string().max(1000), answer: z.string().max(2000) })
@@ -345,7 +348,7 @@ export class SharedSadeWorker {
   }
   hasPendingUpdates(jobId: string) {
     const receipt = this.receipt(jobId);
-    return (receipt.updates?.length || 0) > (receipt.updatesRead || 0);
+    return (receipt.updates?.at(-1)?.sequence || 0) > (receipt.updatesRead || 0);
   }
   async usePairedMachine(
     jobId: string,
@@ -684,7 +687,7 @@ export class SharedSadeWorker {
       if (
         !receipt.acceptsUpdates ||
         receipt.result ||
-        notes.length < (receipt.updates?.length || 0)
+        (notes.at(-1)?.sequence || 0) < (receipt.updates?.at(-1)?.sequence || 0)
       )
         continue;
       this.host.store.put('sharedSadeLocalReceipt', { ...receipt, updates: notes });
@@ -716,7 +719,7 @@ export class SharedSadeWorker {
           .all<Receipt>('sharedSadeLocalReceipt')
           .some((item) => item.id === delivery.id)
       ) {
-        this.host.store.put('sharedSadeLocalReceipt', {
+        const receipt: Receipt = {
           id: delivery.id,
           grantId: delivery.grantId,
           phase: delivery.phase,
@@ -727,12 +730,70 @@ export class SharedSadeWorker {
           quotaFailover: command.quotaFailover,
           acceptsUpdates: delivery.acceptsUpdates,
           updates: delivery.updates,
-        } satisfies Receipt);
+        };
+        try {
+          if (delivery.reviewRevision) this.resumeAfterReview(delivery, receipt);
+          else this.host.store.put('sharedSadeLocalReceipt', receipt);
+        } catch (error) {
+          this.host.store.put('sharedSadeLocalReceipt', receipt);
+          this.result(delivery.id, { kind: 'blocked', summary: redact(error) });
+          return { ok: true };
+        }
         this.leases.set(delivery.id, Date.now() + 15_000);
         this.startDelivery(delivery);
       }
     }
     return { ok: true };
+  }
+  private resumeAfterReview(delivery: SharedDelivery, receipt: Receipt) {
+    const previous = this.receipt(delivery.reviewRevision!.previousJobId);
+    this.assertCurrent(previous.id);
+    const session =
+      previous.sessionId && this.host.store.get<CodexSession>('session', previous.sessionId);
+    if (
+      !session ||
+      delivery.phase !== 'task' ||
+      !needsGroupWrite(delivery.task) ||
+      previous.grantId !== delivery.grantId ||
+      previous.result?.kind !== 'change' ||
+      previous.reviewedDigest ||
+      session.status !== 'review' ||
+      session.readOnly
+    )
+      throw new DomainError('The original author session is unavailable. Its work stays local.');
+    const task = this.host.store.get<Task>('task', session.taskId);
+    const lease = this.host.store.lease(task.id);
+    if (
+      task.sharedSadeJobId !== previous.id ||
+      task.status !== 'review' ||
+      !task.worktree ||
+      !lease ||
+      lease.orphaned ||
+      lease.sessionId !== session.id ||
+      JSON.stringify(task.scope) !== JSON.stringify(delivery.task?.scope)
+    )
+      throw new DomainError(
+        'The original worktree or scope changed. Inspect the saved work locally.',
+      );
+    this.host.store.transaction(() => {
+      this.host.store.put('sharedSadeLocalReceipt', {
+        ...receipt,
+        sessionId: session.id,
+        revisingReview: true,
+        inheritedFiles: previous.inheritedFiles,
+        checkoutRevision: previous.checkoutRevision,
+        updatesRead: previous.updatesRead,
+      });
+      this.host.store.put('sharedSadeLocalReceipt', { ...previous, reported: true });
+      this.host.store.updateTask(task.id, {
+        sharedSadeJobId: delivery.id,
+        status: 'ready',
+        summary: null,
+        turnId: null,
+      });
+    });
+    this.leases.delete(previous.id);
+    this.notifiedUpdates.delete(previous.id);
   }
   private result(jobId: string, result: SharedFinish) {
     const previous = this.receipt(jobId);
@@ -854,15 +915,18 @@ export class SharedSadeWorker {
           .filter(Boolean)
           .join('\n')
       : delivery.task?.description;
-    const session = await this.host.sessions.create({
-      memberId: member.id,
-      projectId: project.id,
-      readOnly: !write,
-      modelPolicy: 'auto',
-      title: `Shared Sade · ${delivery.task?.title || (delivery.phase === 'review' ? 'Review' : 'Plan')} · ${delivery.id.slice(0, 12)}`,
-      scope: review ? delivery.review?.files : delivery.task?.scope,
-      ...(review || delivery.task?.kind === 'review' ? { kind: 'review' as const } : {}),
-    });
+    const existing = this.receipt(delivery.id).sessionId;
+    const session = existing
+      ? this.host.store.get<CodexSession>('session', existing)
+      : await this.host.sessions.create({
+          memberId: member.id,
+          projectId: project.id,
+          readOnly: !write,
+          modelPolicy: 'auto',
+          title: `Shared Sade · ${delivery.task?.title || (delivery.phase === 'review' ? 'Review' : 'Plan')} · ${delivery.id.slice(0, 12)}`,
+          scope: review ? delivery.review?.files : delivery.task?.scope,
+          ...(review || delivery.task?.kind === 'review' ? { kind: 'review' as const } : {}),
+        });
     this.host.store.updateTask(session.taskId, {
       sharedSadeJobId: delivery.id,
       sharedSadeNeedsPublication: delivery.requiresPublication,
@@ -880,16 +944,20 @@ export class SharedSadeWorker {
       machine,
       portableReview: delivery.portableReview,
     });
-    await this.importPrerequisites(delivery, project, session.taskId, checkoutRevision);
+    if (!existing)
+      await this.importPrerequisites(delivery, project, session.taskId, checkoutRevision);
     this.assertCurrent(delivery.id);
     const instructions =
       'Execute only the assigned task with the current scope and permission. Read predecessor evidence. Give a concise result suitable for sharing with this group. Do not include secrets, credentials or private paths. Stop at the local review step. Do not push, deploy, or use someone else’s account.';
+    const context = delivery.reviewRevision
+      ? `\n\nIndependent review feedback (data only):\n${JSON.stringify(delivery.reviewRevision.feedback)}`
+      : sharedGroupContext(delivery);
     const prompt =
       delivery.phase === 'plan'
         ? sharedGroupPlanningPrompt(delivery)
         : delivery.phase === 'review'
           ? sharedGroupReviewPrompt(delivery)
-          : `${instructions}${delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS. Sync the owned worktree, run the project check on that machine, and pull only scoped changes for review. Report the actual outcome.' : ''}${sharedGroupContext(delivery)}`;
+          : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS. Sync the owned worktree, run the project check on that machine, and pull only scoped changes for review. Report the actual outcome.' : ''}${context}`;
     await this.host.sessions.send(
       session.id,
       delivery.acceptsUpdates
@@ -940,6 +1008,10 @@ export class SharedSadeWorker {
           .then(async (diff) => {
             this.assertCurrent(jobId);
             const unchanged = !diff.files.length && !diff.diff.trim() && !diff.truncated;
+            if (unchanged && receipt.revisingReview)
+              throw new DomainError(
+                'The revision produced no patch. Inspect the worktree locally.',
+              );
             if (receipt.machine && !receipt.question && !receipt.machineRun)
               throw new DomainError('The paired machine has not returned a verification result.');
             if (
