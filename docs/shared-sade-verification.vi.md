@@ -142,6 +142,8 @@ Hai adapter mở tiến trình fixture qua giao thức tương ứng và gọi c
 
 Bài kiểm thử Antigravity gửi yêu cầu ACP trước mỗi lượt gọi MCP. Cấp quyền Shared Groups hiện đủ để nộp kế hoạch, nộp review và đọc file trong project qua công cụ Kivuno. Khi Antigravity được giao sửa file, chủ harness xác nhận từng thao tác sửa qua hộp thoại hiện có. Bài thử kiểm tra một xác nhận sửa file, yêu cầu read-only không có công cụ ghi, đường dẫn thông tin đăng nhập bị chặn và patch chỉ được tích hợp sau review của chủ harness còn lại.
 
+Commit `95f5899` qua 392 bài trên Windows và 387 bài trên macOS arm64, bỏ qua lần lượt một và sáu bài theo nền tảng. Cả hai qua build, Electron, giao diện Shared Groups, bộ 1.000 tin nhắn với kế hoạch mô phỏng và bài bàn giao Claude → Antigravity lẫn Antigravity → Claude. Kiểm tra riêng dùng Claude Code 2.1.281 và Gemini CLI đi kèm 0.66.0 trên Windows. Hai adapter báo cần đăng nhập khi mở hồ sơ thử nghiệm trống. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44639442994)
+
 ```powershell
 node --import tsx --test --test-name-pattern 'one group message (hands off|lets Antigravity)' tests/shared-sade.test.ts
 ```
@@ -151,6 +153,8 @@ node --import tsx --test --test-name-pattern 'one group message (hands off|lets 
 Chế độ tùy chọn `paired-macos` đã có trong workflow **Verify RELAY**. Phép thử dùng project Git tổng hợp trên Windows, một runner công cụ macOS arm64 và cầu nối desktop Kivuno cô lập. Cấu hình runner chỉ cấp khi danh tính GitHub Actions khớp origin, workflow và commit. Phép thử có một lỗi xử lý đường dẫn qua dấu gạch chéo, đi qua thứ tự chạy trên Windows, tái hiện lỗi trên macOS, sửa trên máy đích, kéo thay đổi trong scope về Windows, review độc lập và tích hợp cục bộ. Quick Tunnel chỉ mở trong lúc thử. [GitHub Actions OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect) · [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
 
 Ở commit `b9d8d20`, một tin casual tiếng Việt đăng lại cùng mã vẫn tạo một tin và một workflow. Codex App Server dùng GPT-6.2-Sol với reasoning `high` để lập kế hoạch và GPT-6-Luna với reasoning `low` để sửa. Cả hai lượt dùng phiên Codex đã đăng nhập trên Windows. Runner macOS arm64 được cấp quyền qua OIDC và chỉ chạy công cụ. Snapshot bốn file loại `.env.local`. Hai biên nhận đã xác thực của `machine_run` ghi mã 1 trước khi sửa và mã 0 với đầu ra `darwin` sau khi sửa `path-label.cjs`. macOS xác nhận giao nhận hai chiều. Bản sửa về đúng file trong worktree Windows và qua bước chạy lại. Review độc lập dùng fixture, giữ chặn tích hợp đến khi có verdict đúng digest. SHA của Git remote thử nghiệm giữ nguyên sau tích hợp cục bộ. [Lượt kiểm thử Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44531098964)
+
+Chạy lại trên `95f5899` với planner và reviewer mô phỏng. Node chạy thật trên Windows và runner macOS arm64. Mac tái hiện lỗi đường dẫn, chạy lại thành công sau khi sửa và trả đúng file về worktree Windows. Runner xác nhận `round-trip-verified`. Lượt kiểm thử kết thúc sau 126,4 giây. [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44639956006)
 
 Trên máy thử Windows, `.local/sade-native-live` giữ bản ghi `scoped-native-paired-mac.json`, mã chạy `run-paired-native.source.txt` và lệnh tái lập `run-paired-native.ps1`. Phép đo ghi 104,3 giây từ khi gửi tin nhắn đến khi hoàn tất tích hợp và các kiểm tra cục bộ.
 
