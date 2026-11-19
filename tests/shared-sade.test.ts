@@ -1813,6 +1813,7 @@ test(
     const backup = authorStore.addMember({ name: 'Sổ tay', role: 'researcher', provider: 'codex' });
     authorStore.updateMember(backup.id, { status: 'ready', account: { type: 'chatgpt' } });
     const project = authorStore.get<Project>('project', setups[0].projectId);
+    assert.ok(project.memberIds);
     authorStore.put('project', { ...project, memberIds: [...project.memberIds, backup.id] });
     const primaryControl = (await workspace.client(setups[0].memberId)) as DesktopPeer;
     primaryControl.quotaUsedPercent = 100;
