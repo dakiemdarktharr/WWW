@@ -352,6 +352,7 @@ export async function stageReviewedTree(
 export interface IntegrationOptions {
   baseCommit?: string;
   skipAlreadyPresent?: boolean;
+  requireReviewedFiles?: boolean;
   verifyMachineInput?: () => Promise<void>;
   verifyReview?: (diff: TaskDiff) => Promise<void>;
   validateDiff?: (
@@ -359,6 +360,22 @@ export interface IntegrationOptions {
     context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
   ) => void | Promise<void>;
 }
+async function changedTreeFiles(repo: string, from: string, to: string) {
+  return (
+    await git(repo, [
+      'diff',
+      '--name-only',
+      '--no-renames',
+      '--ignore-submodules=none',
+      '-z',
+      from,
+      to,
+    ])
+  )
+    .split('\0')
+    .filter(Boolean);
+}
+
 export async function integrate(
   repo: string,
   worktree: string,
@@ -405,20 +422,23 @@ export async function integrate(
         'The integration tree differs from the paired-machine check. Update the worktree to the target branch and rerun the check.',
       );
   };
-  if (options.skipAlreadyPresent && reviewedTree) {
+  let affectedPaths = new Set<string>();
+  if (reviewedTree && (options.skipAlreadyPresent || options.requireReviewedFiles)) {
     const workerHead = await git(worktree, ['rev-parse', 'HEAD']);
     // Include inherited prerequisite changes, even though the worker's review omits them.
     const mergeBase = await git(worktree, ['merge-base', workerHead, startingHead]);
-    const diffNames = ['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z'];
     const [different, ...affected] = await Promise.all([
-      git(worktree, [...diffNames, startingHead, reviewedTree]),
+      options.skipAlreadyPresent ? changedTreeFiles(worktree, startingHead, reviewedTree) : [],
       ...[...new Set([baseCommit, mergeBase])].map((base) =>
-        git(worktree, [...diffNames, base, reviewedTree]),
+        changedTreeFiles(worktree, base, reviewedTree!),
       ),
     ]);
-    const differentPaths = new Set(different.split('\0'));
-    const affectedPaths = affected.flatMap((files) => files.split('\0').filter(Boolean));
-    if (affectedPaths.length && affectedPaths.every((file) => !differentPaths.has(file))) {
+    affectedPaths = new Set(affected.flat());
+    const alreadyPresent =
+      options.skipAlreadyPresent &&
+      affectedPaths.size > 0 &&
+      !different.some((file) => affectedPaths.has(file));
+    if (alreadyPresent) {
       await options.validateDiff?.(await taskDiff(worktree, baseCommit), {
         root: worktree,
         phase: 'worker',
@@ -480,6 +500,19 @@ export async function integrate(
       });
     const stagedTree = reviewedTree ? await git(repo, ['write-tree']) : undefined;
     if (stagedTree) checkTargetTree(stagedTree);
+    if (
+      options.requireReviewedFiles &&
+      reviewedTree &&
+      stagedTree &&
+      stagedTree !== reviewedTree &&
+      (await changedTreeFiles(repo, reviewedTree, stagedTree)).some((file) =>
+        affectedPaths.has(file),
+      )
+    )
+      throw new DomainError(
+        'The merged files differ from the independent review. Reconcile the changes and request another review.',
+        409,
+      );
     const stagedChanges = await git(repo, ['diff', '--cached', '--name-only']);
     if (options.skipAlreadyPresent && reviewedTree && !stagedChanges)
       throw new DomainError(
