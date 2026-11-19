@@ -201,15 +201,26 @@ gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-ev
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=corpus
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=corpus -f sade_intent_prompt=ordered
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=contrast
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=planner-constraints
 ```
 
 Khi lượt chạy kết thúc, tải bằng `gh run download <run-id> --repo dakiemdarktharr/WWW --dir .local/sade-ci-results`. Pilot lưu JSON của các kế hoạch và JSONL phân loại mẫu. Corpus lưu năm file JSONL. Mỗi dòng JSONL có ID, digest model, hash prompt, thời gian, đáp án và dự đoán hoặc lỗi. Dùng một thư mục riêng cho từng run để đối chiếu. Artifact CI giữ trong bảy ngày.
+
+```powershell
+node --import tsx scripts/summarize-shared-sade-corpus.ts .local/sade-ci-results
+```
+
+Lệnh tổng hợp yêu cầu đủ 1.000 ID khác nhau, kiểm tra cùng model và prompt, rồi in số đúng theo cách diễn đạt, tình huống, cặp provider/gói và ma trận nhầm lẫn.
 
 Pilot đầu trên CPU ở commit `0e3c3fa` ghi đủ 23 dòng lập kế hoạch. Sáu ca trả kết quả và đều đạt tiêu chí chấm, gồm một ca giữ người đã chỉ định, một ca chống sửa trùng và bốn ca xác minh hoặc báo thiếu Mac. Mười bốn ca hết thời gian chờ 60 giây. Ba ca chat gặp lỗi kết nối khi runner bị dừng ở phút 20. Lượt này chưa chạy tới mẫu 40 tin. Cấu hình sau chạy năm ca quota, ba phần A–D và mẫu phân loại ở các job riêng, với 120 giây cho mỗi yêu cầu lập kế hoạch. [Pilot đầu và dữ liệu kết quả](https://github.com/dakiemdarktharr/WWW/actions/runs/44539788906)
 
 Trên 15 cặp viết riêng, cùng Qwen 4B chấm đúng 19/30 với prompt ban đầu và 24/30 với prompt có thứ tự ưu tiên. Hai prompt nhận đúng cả hai tin trong lần lượt 4 và 9 cặp. Số tin chỉ cập nhật nhận đúng tăng từ 5/15 lên 12/15. Số yêu cầu làm việc nhận đúng giảm từ 14/15 xuống 12/15. Prompt có thứ tự nhầm hai yêu cầu chung thành chat và một yêu cầu chung thành tránh sửa trùng. Đây là phép đo offline. [Lượt so sánh prompt](https://github.com/dakiemdarktharr/WWW/actions/runs/44543948618)
 
 Chấm lại đầu ra pilot dài hơn phát hiện hai lỗi riêng. Fixture cũ không gửi heartbeat trong lúc chờ model, nên có kế hoạch hợp lệ bị báo hết hạn. Đã thêm heartbeat và kiểm tra một phản hồi mô phỏng đến sau 65 giây vẫn được chấm. Sau khi phát lại đầu ra Qwen, các lỗi model còn thấy gồm bỏ trống trường dự phòng, thấy yêu cầu chỉ đọc nhưng tạo tác vụ ghi, và tách một ca chạy trên Mac ghép cặp thành hai tác vụ. Chế độ `planner-constraints` thử prompt có thêm ba ràng buộc này trên năm ca quota và ca Mac không dấu. Đây là prompt thử nghiệm trong bộ đo.
+
+Các kế hoạch đã lưu ở pilot thứ hai được phát lại sau sửa heartbeat. Nhóm A–D và đối chứng đạt 14/18. B đạt 3/3, C đạt 2/3, D đạt 5/6 tính cả các ca thiếu Mac, A đạt 1/3 và chat đạt 3/3. Nhóm quota đạt 1/5. Một ca C vẫn hết thời gian 120 giây và một ca A tham chiếu tác vụ phụ thuộc chưa khai báo. Phát lại dùng cùng hash prompt và schema, giữ nguyên các đầu ra đã ghi. [Pilot thứ hai và dữ liệu kết quả](https://github.com/dakiemdarktharr/WWW/actions/runs/44544213702)
+
+Lượt corpus đầu dùng Qwen thật và đúng 747/1.000 câu, với 0 lỗi gọi model. Độ trễ CPU là p50 3,02 giây và p95 5,02 giây. Theo cách nhắn, điểm là 159/200 casual, 145/200 không dấu, 154/200 người mới, 153/200 kỹ thuật và 136/200 song ngữ. Ca Mac đạt 200/200 nếu gộp cả thiếu máy. Ca review đạt 73/200. Ca về quota đạt 7/50. [Dữ liệu corpus với prompt ban đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44542052380)
 
 ### Qwen lập kế hoạch A–D qua công cụ thật
 
