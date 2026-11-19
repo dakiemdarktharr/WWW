@@ -748,7 +748,7 @@ export class SharedSadeWorker {
     }
     for (const jobId of this.leases.keys()) {
       if (command.active.includes(jobId)) this.leases.set(jobId, Date.now() + 15_000);
-      else void this.stop(jobId);
+      else if (command.delivery?.id !== jobId) void this.stop(jobId);
     }
     for (const review of command.reviews) {
       if (!this.leases.has(review.jobId) || !command.active.includes(review.jobId)) continue;
@@ -792,11 +792,7 @@ export class SharedSadeWorker {
         ...command.delivery,
         task: command.delivery.task ? parsePlanTask(command.delivery.task) : undefined,
       };
-      if (
-        !this.host.store
-          .all<Receipt>('sharedSadeLocalReceipt')
-          .some((item) => item.id === delivery.id)
-      ) {
+      if (!this.host.store.lookup<Receipt>('sharedSadeLocalReceipt', delivery.id)) {
         const receipt: Receipt = {
           id: delivery.id,
           grantId: delivery.grantId,

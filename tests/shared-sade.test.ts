@@ -167,6 +167,41 @@ function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
   };
 }
 
+test('a lost poll response can retry the original delivery without spending another turn', (t) => {
+  const f = fixture(undefined, { turnsA: 1 });
+  t.after(() => f.store.close());
+  const id = randomUUID();
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id,
+    content: 'Nhờ Bếp lên kế hoạch kiểm tra trước khi giao việc.',
+    sade: { projectKey: key },
+  });
+  const offer = f.poll(0).delivery;
+  assert.ok(offer);
+  const tracked = () =>
+    f.store.get<{ id: string; jobs: { id: string; deadline: number }[] }>('sharedSadeRun', id);
+  const originalDeadline = tracked().jobs[0].deadline;
+  assert.equal(f.poll(0, [], f.grants, randomUUID()).delivery, undefined);
+  assert.equal(f.poll(1, [], f.grants).delivery, undefined);
+  assert.deepEqual(f.poll(0).delivery, offer);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
+  assert.equal(tracked().jobs[0].deadline, originalDeadline);
+  assert.ok(tracked().jobs[0].deadline > Date.now() + 30_000);
+  assert.doesNotMatch(JSON.stringify(f.view()), /awaitingReceipt|deadline/);
+  const admitted = f.poll(0, [offer.id]);
+  assert.deepEqual(admitted.active, [offer.id]);
+  assert.equal(admitted.delivery, undefined);
+  assert.ok(tracked().jobs[0].deadline <= Date.now() + 30_000);
+  assert.equal(f.poll(0).delivery, undefined);
+  const expired = tracked();
+  expired.jobs[0].deadline = 0;
+  f.store.put('sharedSadeRun', expired);
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.view().sadeRuns[0].state, 'blocked');
+});
+
 test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {
   const cases = sharedSadeCorpus();
   assert.equal(new Set(cases.map((item) => item.message)).size, 1000);
@@ -198,7 +233,9 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
         const plan = f.poll(0).delivery!;
         assert.equal(plan.phase, 'plan');
         assert.equal(plan.request, item.message.trim());
-        assert.equal(f.poll(0).delivery, undefined, 'Do not redeliver an uncertain planner turn');
+        if (item.scenario === 'lost') assert.deepEqual(f.poll(0).delivery, plan);
+        assert.deepEqual(f.poll(0, [plan.id]).active, [plan.id]);
+        assert.equal(f.poll(0).delivery, undefined, 'Do not redeliver an acknowledged turn');
         const [a, b] = f.grants;
         if (item.scenario === 'lost') {
           // Simulate a persisted lease deadline after desktop loss. Never start it twice.
@@ -564,7 +601,7 @@ test(
       assert.equal((grant as any).projectKey, fingerprint);
     }
     const grantCursors: (string | undefined)[] = [];
-    const pump = async (index: number) => {
+    const pump = async (index: number, response: 'deliver' | 'drop' | 'repeat' = 'deliver') => {
       const worker = setups[index].workspace.sharedSade;
       const hello = (await worker.execute({
         action: 'snapshot',
@@ -587,13 +624,16 @@ test(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
       );
-      await worker.execute({
+      if (response === 'drop') return packet.delivery;
+      const exchange = {
         action: 'exchange',
         ...packet,
         acknowledged: hello.results.map(
           ({ jobId, version }: { jobId: string; version: number }) => ({ jobId, version }),
         ),
-      });
+      };
+      await worker.execute(exchange);
+      if (response === 'repeat') await worker.execute(exchange);
       grantCursors[index] = hello.nextGrantCursor;
       return packet.delivery;
     };
@@ -772,8 +812,10 @@ test(
     assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 0);
     assert.equal(cloud.view().sadeRuns[0].jobs[0].state, 'queued');
     assert.match(cloud.view().sadeRuns[0].jobs[0].summary || '', /Update this desktop/);
-    const plan = await pump(0);
+    const firstOffer = await pump(0, 'drop');
+    const plan = await pump(0, 'repeat');
     assert.ok(plan && plan.phase === 'plan');
+    assert.deepEqual(plan, firstOffer);
     assert.equal(plan.team.length, 33);
     const planner = await sessionFor(0, plan);
     const plannerInput = planner.peer.calls.find(({ method }) => method === 'turn/start')?.params
@@ -929,7 +971,9 @@ test(
     assert.match(lateQuestion?.contentItems?.[0]?.text || '', /already recorded/);
     assert.equal(planner.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
     await complete(0, planner.session, planner.peer, 'Plan submitted.');
-    const writer = (await pump(0))!;
+    const lostWriter = await pump(0, 'drop');
+    const writer = (await pump(0, 'repeat'))!;
+    assert.deepEqual(writer, lostWriter);
     const plannedReviewId = cloud
       .view()
       .sadeRuns[0].jobs.find((job) => job.task?.key === 'review-contract')?.id;
@@ -1016,7 +1060,9 @@ test(
         }),
       /unavailable/,
     );
-    const revision = (await pump(0))!;
+    const lostRevision = await pump(0, 'drop');
+    const revision = (await pump(0, 'repeat'))!;
+    assert.deepEqual(revision, lostRevision);
     assert.equal(revision.reviewRevision?.previousJobId, writer.id);
     const revised = await sessionFor(0, revision);
     assert.equal(revised.task.id, author.task.id);
@@ -3293,54 +3339,64 @@ test('an unchanged result without a Git revision cannot release dependent work',
   }
 });
 
-test('a completed author can revoke permission before a reviewed prerequisite reaches a dependent harness', () => {
-  const f = fixture(['gemini', 'codex'], { patchHandoff: true });
-  try {
-    const runId = randomUUID();
-    f.call(0, {
-      action: 'message',
-      groupId: f.groupId,
-      id: runId,
-      content: 'Prepare the contract, then implement the interface.',
-      sade: { projectKey: key },
-    });
-    const plan = f.poll(0).delivery!;
-    f.finish(0, plan.id, {
-      kind: 'plan',
-      plan: {
-        summary: 'Share the reviewed contract before starting the interface.',
-        tasks: [
-          work('contract', {
-            kind: 'code',
-            scope: ['src/example.ts'],
-            preferredMemberId: f.grants[0],
-          }),
-          work('interface', { dependsOn: ['contract'], preferredMemberId: f.grants[1] }),
-        ],
-      },
-    });
-    const author = f.poll(0).delivery!;
-    f.finish(0, author.id, {
-      kind: 'change',
-      summary: 'Ready for independent review.',
-      diff: patch,
-      portable: true,
-    });
-    const reviewer = f.poll(1).delivery!;
-    f.finish(1, reviewer.id, {
-      kind: 'review',
-      verdict: 'approved',
-      summary: 'Verified the source change.',
-    });
-    f.finish(0, author.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
-    f.call(0, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[0] });
-    assert.equal(f.poll(1).delivery, undefined);
-    assert.match(f.view().sadeRuns[0].error || '', /withdrew permission/);
-    assert.doesNotMatch(JSON.stringify(f.store.get('sharedSadeRun', runId)), /export const value/);
-  } finally {
-    f.store.close();
-  }
-});
+for (const responseLost of [false, true]) {
+  test(`a completed author can revoke permission ${responseLost ? 'before retrying delivery of a reviewed prerequisite' : 'before a reviewed prerequisite reaches a dependent harness'}`, () => {
+    const f = fixture(['gemini', 'codex'], { patchHandoff: true });
+    try {
+      const runId = randomUUID();
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: runId,
+        content: 'Prepare the contract, then implement the interface.',
+        sade: { projectKey: key },
+      });
+      const plan = f.poll(0).delivery!;
+      f.finish(0, plan.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Share the reviewed contract before starting the interface.',
+          tasks: [
+            work('contract', {
+              kind: 'code',
+              scope: ['src/example.ts'],
+              preferredMemberId: f.grants[0],
+            }),
+            work('interface', { dependsOn: ['contract'], preferredMemberId: f.grants[1] }),
+          ],
+        },
+      });
+      const author = f.poll(0).delivery!;
+      f.finish(0, author.id, {
+        kind: 'change',
+        summary: 'Ready for independent review.',
+        diff: patch,
+        portable: true,
+      });
+      const reviewer = f.poll(1).delivery!;
+      f.finish(1, reviewer.id, {
+        kind: 'review',
+        verdict: 'approved',
+        summary: 'Verified the source change.',
+      });
+      f.finish(0, author.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+      if (responseLost) {
+        const first = f.poll(1).delivery;
+        assert.equal(first?.task?.key, 'interface');
+        assert.deepEqual(first?.prerequisites[0]?.patch?.change, patch);
+      }
+      f.call(0, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[0] });
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.match(f.view().sadeRuns[0].error || '', /withdrew permission/);
+      assert.doesNotMatch(
+        JSON.stringify(f.store.get('sharedSadeRun', runId)),
+        /export const value/,
+      );
+    } finally {
+      f.store.close();
+    }
+  });
+}
 
 test('an unread task update blocks a stale completion without releasing dependent work', () => {
   const f = fixture(['claude', 'antigravity'], { taskUpdates: true });

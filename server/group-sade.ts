@@ -158,6 +158,7 @@ export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; revoked?: boolean };
 type Job = SharedSadeJob & {
   deadline?: number;
+  awaitingReceipt?: true;
   revision?: string;
   change?: TaskDiff;
   reviewOf?: string;
@@ -271,6 +272,8 @@ function reviewedWriters(run: Run, job: Job) {
   );
 }
 const leaseMs = 30_000;
+// Leave time for a timed-out cloud poll and its retry before the desktop acknowledges delivery.
+const deliveryLeaseMs = 60_000;
 const grantMs = 60 * 60_000;
 
 const sharedPlanKinds = {
@@ -475,6 +478,7 @@ export class GroupSade {
           jobs: run.jobs.map(
             ({
               deadline,
+              awaitingReceipt,
               revision,
               change,
               reviewOf,
@@ -889,6 +893,17 @@ export class GroupSade {
     const supplied = new Set(command.grants);
     const held = new Set(command.active);
     const waiting = new Set(command.waitingForRevisions);
+    const awaitingDelivery = (job: Job) =>
+      job.state === 'running' && job.awaitingReceipt && !held.has(job.id);
+    // Retry an outstanding delivery before considering newly queued work across groups.
+    const retryIndex = runs.findIndex((run) =>
+      run.jobs.some((job) => {
+        if (!awaitingDelivery(job) || !supplied.has(job.grantId)) return false;
+        const grant = this.store.lookup<Grant>('sharedSadeGrant', job.grantId);
+        return grant && this.actorGrant(grant, actor);
+      }),
+    );
+    if (retryIndex > 0) runs.unshift(...runs.splice(retryIndex, 1));
     for (const run of runs) {
       const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
       const grants = new Map(this.grants(group).map((grant) => [grant.id, grant]));
@@ -920,7 +935,7 @@ export class GroupSade {
       }
       const dependencies = new Map(
         run.jobs
-          .filter((job) => job.state === 'queued')
+          .filter((job) => job.state === 'queued' || awaitingDelivery(job))
           .map((job) => [job, prerequisitesOf(run, job)]),
       );
       const withdrawn = [...dependencies].find(([, predecessors]) =>
@@ -943,8 +958,10 @@ export class GroupSade {
         if (!['queued', 'running', 'reviewing'].includes(job.state)) continue;
         const grant = grants.get(job.grantId)!;
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
-        if (job.state !== 'queued') {
+        const retry = awaitingDelivery(job);
+        if (job.state !== 'queued' && !retry) {
           if (held.has(job.id)) {
+            job.awaitingReceipt = undefined;
             job.deadline = this.now() + leaseMs;
             active.push(job.id);
             if (
@@ -989,7 +1006,9 @@ export class GroupSade {
           command.active.length >= 4 ||
           run.jobs.some(
             (other) =>
-              other.state === 'running' && grants.get(other.grantId)?.deviceId === actor.deviceId,
+              other !== job &&
+              other.state === 'running' &&
+              grants.get(other.grantId)?.deviceId === actor.deviceId,
           )
         )
           continue;
@@ -1033,6 +1052,7 @@ export class GroupSade {
           job.task &&
           run.jobs.some(
             (other) =>
+              other !== job &&
               ['running', 'reviewing'].includes(other.state) &&
               other.task &&
               writes(other.task) &&
@@ -1041,7 +1061,7 @@ export class GroupSade {
           )
         )
           continue;
-        if (writes(job.task) && !plannedReviews(run, job).length) {
+        if (!retry && writes(job.task) && !plannedReviews(run, job).length) {
           const peers = this.reviewGrants(run, grant, grants.values());
           const reviewer = this.availableReviewer(run, job, group, peers);
           if (!reviewer && peers.length) {
@@ -1100,13 +1120,16 @@ export class GroupSade {
           }
           continue;
         }
-        job.state = 'running';
-        job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
-        job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
-        job.summary = job.reviewRevision ? 'Revising after independent review.' : undefined;
-        job.deadline = this.now() + leaseMs;
-        this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
-        touched = true;
+        if (!retry) {
+          job.state = 'running';
+          job.awaitingReceipt = true;
+          job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
+          job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
+          job.summary = job.reviewRevision ? 'Revising after independent review.' : undefined;
+          job.deadline = this.now() + deliveryLeaseMs;
+          this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
+          touched = true;
+        }
         const reviewedJob = job.reviewOf
           ? run.jobs.find((other) => other.id === job.reviewOf)
           : undefined;
@@ -1188,6 +1211,7 @@ export class GroupSade {
       (job.deadline || 0) <= this.now()
     )
       throw new DomainError('This job is no longer running. Recover locally.', 409);
+    job.awaitingReceipt = undefined;
     const result = command.result;
     if (result.kind === 'provider-unavailable') {
       this.handleUnavailableProvider(run, job, group, grant, grants);
