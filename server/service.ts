@@ -1592,6 +1592,7 @@ export class Workspace {
           ...(task.sharedSadeJobId
             ? {
                 skipAlreadyPresent: !this.aegis.isProtected(project.id),
+                requireReviewedFiles: true,
                 verifyReview: async (diff) =>
                   this.sharedSade.assertReviewed(task.sharedSadeJobId!, diff),
               }

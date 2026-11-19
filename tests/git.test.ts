@@ -3,6 +3,10 @@ import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:f
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { Workspace } from '../server/service.ts';
+import { Store } from '../server/store.ts';
+import type { Task, TaskDiff } from '../shared/types.ts';
 import {
   createWorktree,
   git,
@@ -283,6 +287,74 @@ test('a prior merge does not prove the current branch already has the full revie
     'replacement from another contributor\n',
   );
 });
+
+for (const sameFile of [true, false]) {
+  test(`Shared Sade ${sameFile ? 'stops an unreviewed clean merge within a file' : 'preserves unrelated commits during reviewed integration'}`, async (t) => {
+    const f = await fixture(t);
+    const base = ['header', 'one', 'two', 'three', 'four', 'five', 'six', 'footer', ''].join('\n');
+    await writeFile(path.join(f.repo, 'shared.txt'), base);
+    await git(f.repo, ['add', 'shared.txt']);
+    await git(f.repo, ['commit', '-m', 'Add the common starting document']);
+    const worker = await createWorktree(f.repo, f.storage, 'reviewed-integration');
+    const reviewed = base.replace('footer', 'reviewed footer');
+    await writeFile(path.join(worker.worktree, 'shared.txt'), reviewed);
+    const teammate = base.replace('header', 'teammate header');
+    const teammateFile = sameFile ? 'shared.txt' : 'team.txt';
+    await writeFile(path.join(f.repo, teammateFile), teammate);
+    await git(f.repo, ['add', teammateFile]);
+    await git(f.repo, ['commit', '-m', 'Independent teammate change']);
+    const projectHead = await git(f.repo, ['rev-parse', 'HEAD']);
+    const preview = await taskDiff(worker.worktree, worker.baseCommit);
+    const store = new Store(':memory:');
+    const workspace = new Workspace(store, f.root, f.repo);
+    t.after(async () => {
+      await workspace.close();
+      store.close();
+    });
+    const project = store.put('project', {
+      id: randomUUID(),
+      name: 'Shared project',
+      path: f.repo,
+      goal: '',
+      createdAt: new Date().toISOString(),
+    });
+    const task = store.addTask({
+      projectId: project.id,
+      title: 'Reviewed update',
+      kind: 'code',
+      scope: ['shared.txt'],
+      description: 'Update the footer.',
+      priority: 'medium',
+      dependsOn: [],
+      acceptance: 'Change just the footer.',
+    });
+    const jobId = randomUUID();
+    store.put('sharedSadeLocalReceipt', { id: jobId });
+    store.updateTask(task.id, { ...worker, status: 'review', sharedSadeJobId: jobId });
+    t.mock.method(workspace.sharedSade, 'assertReviewed', async (id: string, diff: TaskDiff) => {
+      assert.equal(id, jobId);
+      assert.deepEqual(diff, preview);
+    });
+    const accept = () => workspace.accept(task.id);
+    if (sameFile) {
+      await assert.rejects(accept, /merged files differ from the independent review/i);
+      assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), projectHead);
+      assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), teammate);
+      assert.equal(await readFile(path.join(worker.worktree, 'shared.txt'), 'utf8'), reviewed);
+      assert.equal(store.get<Task>('task', task.id).status, 'review');
+      assert.equal(
+        store.get<{ revision?: string }>('sharedSadeLocalReceipt', jobId).revision,
+        undefined,
+      );
+    } else {
+      assert.equal((await accept()).status, 'done');
+      assert.equal(await git(f.repo, ['rev-parse', 'HEAD^']), projectHead);
+      assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), reviewed);
+      assert.equal(await readFile(path.join(f.repo, teammateFile), 'utf8'), teammate);
+    }
+    assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  });
+}
 
 test('dirty project preflight does not stage or commit the agent worktree', async (t) => {
   const f = await fixture(t);
