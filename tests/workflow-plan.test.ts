@@ -132,6 +132,46 @@ test('Sade assigns unspecified work to usable specialists while preserving a nam
   );
 });
 
+test('Shared Sade accounts for named work and assigns a review outside the authors’ accounts', () => {
+  const roster = [
+    member('a-gemini', 'engineer'),
+    member('b-astra', 'designer'),
+    member('c-claude', 'engineer'),
+    member('d-alternate-profile', 'reviewer'),
+    member('e-teammate', 'researcher'),
+  ];
+  const ownerByMember = new Map([
+    ['a-gemini', 'person-a'],
+    ['b-astra', 'person-b'],
+    ['c-claude', 'person-c'],
+    ['d-alternate-profile', 'person-a'],
+    ['e-teammate', 'person-e'],
+  ]);
+  const input = plan(
+    task('architecture', { effort: 2, preferredMemberId: 'a-gemini' }),
+    task('frontend', {
+      kind: 'design',
+      effort: 4,
+      preferredMemberId: 'b-astra',
+      dependsOn: ['architecture'],
+    }),
+    task('backend', { effort: 8, dependsOn: ['architecture'] }),
+    task('review', { kind: 'review', dependsOn: ['architecture', 'backend'] }),
+  );
+  const options = { preferSpecialists: true, ownerByMember };
+  assert.deepEqual(
+    allocatePlan(input, roster, options).map(({ memberId }) => memberId),
+    ['a-gemini', 'b-astra', 'c-claude', 'e-teammate'],
+  );
+  const selfReview = {
+    ...input,
+    tasks: input.tasks.map((item) =>
+      item.key === 'review' ? { ...item, preferredMemberId: 'd-alternate-profile' } : item,
+    ),
+  };
+  assert.throws(() => allocatePlan(selfReview, roster, options), /review their own work/);
+});
+
 test('strict schemas bound size and reject agent-selected owners or malformed estimates', () => {
   assert.throws(() => parseTeamPlan(plan()));
   assert.throws(() => parseTeamPlan(plan(...Array.from({ length: 33 }, (_, i) => task(`t${i}`)))));

@@ -952,11 +952,13 @@ export class GroupSade {
         const eligible = grants.filter(
           (entry) => run.roster.includes(entry.id) && this.usable(entry, group),
         );
+        const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         const allocations = allocatePlan(
           plan,
           eligible.map((entry) => ({ id: entry.id, role: entry.role })),
           {
             preferSpecialists: true,
+            ownerByMember: ownerByGrant,
             turns: new Map(eligible.map((entry) => [entry.id, entry.turns - entry.used])),
             supports: (grantId, task) =>
               eligible.some(
@@ -984,7 +986,6 @@ export class GroupSade {
           state: 'queued',
         }));
         const byKey = new Map(planned.map((item) => [item.task!.key, item]));
-        const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         for (const item of planned) {
           const task = item.task!;
           if (task.kind !== 'review' || task.dependsOn.length !== 1) continue;

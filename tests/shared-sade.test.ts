@@ -42,6 +42,7 @@ function fixture(
     members?: string[];
     patchHandoff?: boolean;
     taskUpdates?: boolean;
+    roleB?: 'reviewer' | 'researcher';
   } = {},
 ) {
   const store = new Store(':memory:');
@@ -84,7 +85,7 @@ function fixture(
         teammateId: member,
         projectKey: options.key || key,
         projectName: 'Fixture project',
-        role: index ? 'reviewer' : 'engineer',
+        role: index ? options.roleB || 'reviewer' : 'engineer',
         platform: index && options.mac ? 'darwin' : 'win32',
         allowWrites: true,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
@@ -391,21 +392,23 @@ class DesktopPeer extends CodexClient {
             };
     else if (method === 'model/list')
       value = {
-        data: [
-          {
-            id: 'fixture',
-            model: 'fixture',
-            displayName: 'Fixture model',
-            defaultReasoningEffort: '',
-            supportedReasoningEfforts: [],
-            isDefault: true,
-          },
-        ],
+        data: ['fixture', 'fixture-mini'].map((model, index) => ({
+          id: model,
+          model,
+          displayName: model,
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: ['low', 'medium', 'high'].map((reasoningEffort) => ({
+            reasoningEffort,
+            description: reasoningEffort,
+          })),
+          isDefault: index === 0,
+        })),
       };
     else if (method === 'thread/start')
       value = {
         thread: { id: randomUUID() },
         model: params.model,
+        reasoningEffort: params.config?.model_reasoning_effort,
         approvalsReviewer: 'user',
         approvalPolicy: 'on-request',
         sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
@@ -628,6 +631,8 @@ test(
     const plan = await pump(0);
     assert.ok(plan && plan.phase === 'plan');
     const planner = await sessionFor(0, plan);
+    assert.equal(planner.session.model, 'fixture');
+    assert.equal(planner.session.reasoningEffort, 'high');
     assert.throws(
       () => setups[0].workspace.quota.assertCanRun(setups[0].memberId, setups[0].projectId),
       /bounded number/,
@@ -668,7 +673,11 @@ test(
           kind: 'review-read-only',
         },
         {
-          ...work('verify-ui', { preferredMemberId: 'member-1', dependsOn: ['frontend'] }),
+          ...work('verify-ui', {
+            preferredMemberId: 'member-1',
+            dependsOn: ['frontend'],
+            effort: 4,
+          }),
           kind: 'research-read-only',
         },
       ].map((task) => ({ ...task, requiredPlatform: task.requiredPlatform || 'any' })),
@@ -796,6 +805,8 @@ test(
     assert.equal(frontend.task?.kind, 'design');
     assert.ok(frontend.prerequisites[0]?.patch);
     const reader = await sessionFor(1, frontend);
+    assert.equal(reader.session.model, 'fixture');
+    assert.equal(reader.session.reasoningEffort, 'medium');
     assert.match(
       await readFile(path.join(reader.task.worktree!, 'architecture.txt'), 'utf8'),
       /Shared verified contract/,
@@ -876,6 +887,8 @@ test(
     assert.deepEqual(frontendReviewer.review?.files, ['frontend.txt']);
     assert.ok(frontendReviewer.prerequisites[0]?.patch);
     const frontendCheck = await sessionFor(0, frontendReviewer);
+    assert.equal(frontendCheck.session.model, 'fixture-mini');
+    assert.equal(frontendCheck.session.reasoningEffort, 'high');
     assert.match(
       JSON.stringify(frontendCheck.peer.calls),
       /The form preserves the agreed registration field names/,
@@ -909,6 +922,8 @@ test(
       [['architecture.txt'], ['frontend.txt']],
     );
     const verifier = await sessionFor(0, verification);
+    assert.equal(verifier.session.model, 'fixture');
+    assert.equal(verifier.session.reasoningEffort, 'high');
     assert.match(
       await readFile(path.join(verifier.task.worktree!, 'frontend.txt'), 'utf8'),
       /Frontend uses the contract/,
@@ -1543,6 +1558,61 @@ test('planned patch reviews use their allocated turns and all verdicts are requi
     assert.equal(f.poll(1).delivery, undefined);
     assert.equal(f.view().sadeRuns[0].state, 'done');
     assert.equal(f.view().sadeRuns[0].jobs.filter((job) => job.phase === 'review').length, 2);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a planned review skips a different provider profile owned by the author', () => {
+  const f = fixture(['gemini', 'codex'], { roleB: 'researcher' });
+  try {
+    const profile = randomUUID();
+    const alternateGrant = randomUUID();
+    f.call(0, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [
+        { localId: f.members[0], provider: 'gemini', name: 'Bếp' },
+        { localId: profile, provider: 'claude', name: 'Alternate reviewer' },
+      ],
+    });
+    f.call(0, {
+      action: 'sade-grant',
+      id: alternateGrant,
+      groupId: f.groupId,
+      teammateId: profile,
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'reviewer',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 2,
+    });
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Nhờ Gemini sửa file, rồi chọn người khác xem lại bản sửa.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Route the reviewed change to another owner.',
+        tasks: [
+          work('write', { kind: 'code', scope: patch.files, preferredMemberId: f.grants[0] }),
+          work('audit', { kind: 'review', scope: patch.files, dependsOn: ['write'] }),
+        ],
+      },
+    });
+    const planned = f.view().sadeRuns[0].jobs.find((job) => job.task?.key === 'audit')!;
+    assert.equal(planned.grantId, f.grants[1]);
+    assert.equal(planned.phase, 'review');
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'A bounded change.' });
+    assert.equal(f.poll(0, [writer.id], [f.grants[0], alternateGrant]).delivery, undefined);
+    assert.equal(f.poll(1).delivery?.id, planned.id);
   } finally {
     f.store.close();
   }

@@ -21,6 +21,7 @@ import {
 import { createHackathonProject } from './hackathons.ts';
 import { DomainError, type Lease } from './store.ts';
 import { createWorktree } from './git.ts';
+import type { SharedDelivery } from './group-sade.ts';
 import { redact, safeDetails } from './security.ts';
 import type { Workspace } from './service.ts';
 import { assertGroupMember } from './groups.ts';
@@ -533,7 +534,7 @@ export class SessionManager {
   async send(
     id: string,
     prompt: string,
-    options: { sadeReview?: boolean; sharedSade?: boolean } = {},
+    options: { sadeReview?: boolean; sharedSade?: SharedDelivery['phase'] } = {},
   ): Promise<CodexSession> {
     if (!prompt.trim() || prompt.length > 16000)
       throw new DomainError('Enter a prompt of up to 16,000 characters.');
@@ -612,8 +613,9 @@ export class SessionManager {
         await this.host.autonomy.shareSkills(session.memberId);
         const selection = await this.host.autonomy.model(session.memberId, {
           ...originalTask,
+          phase: options.sharedSade === 'plan' ? 'plan' : originalTask.phase,
           description:
-            originalTask.kind === 'review'
+            originalTask.sharedSadeJobId || originalTask.kind === 'review'
               ? originalTask.description
               : `${originalTask.description}\n${prompt}`,
         });
