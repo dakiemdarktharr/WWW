@@ -6,7 +6,7 @@ Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế h
 
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
 
-Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. Nếu còn mơ hồ, người gửi trả lời trong **Sade progress**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
+Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. **Sade progress** hiển thị tên harness cùng tên chủ tài khoản. Nếu còn mơ hồ, người gửi dùng **Reply to Sade**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
 
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
@@ -195,7 +195,7 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-score.js
 
 Codex CLI đã đăng nhập chạy bốn tin tổng hợp trước và sau khi sửa prompt. Bản cũ đạt 3/4. Khi Gemini của Bình đã được chia sẻ trong nhóm nhưng chưa có quyền cho project, model nhầm thành thiếu thành viên. Bản mới đạt 4/4. Hai câu có đủ thông tin tạo đúng việc viết hợp đồng rồi bàn giao giao diện. Câu có hai Astra hỏi người gửi chọn Bình hay Chi. Câu thiếu quyền yêu cầu Bình cấp quyền cho đúng project. Phần chấm chạy qua Shared Groups với các chủ quyền mô phỏng.
 
-Bài hồi quy xác nhận chỉ người gửi được trả lời câu hỏi và chưa có tác vụ nào được giao trước đó. Khi Bình cấp quyền rồi người gửi trả lời, Sade tiếp tục cùng workflow và giao đúng công việc. Quyền mà Bình cấp cho project khác bị loại khỏi danh sách của lượt lập kế hoạch.
+Bài hồi quy xác nhận chỉ người gửi được trả lời câu hỏi và chưa có tác vụ nào được giao trước đó. Khi Bình cấp quyền rồi người gửi trả lời, Sade tiếp tục cùng workflow và giao đúng công việc. Quyền mà Bình cấp cho project khác bị loại khỏi danh sách của lượt lập kế hoạch. Bài kiểm thử hai cửa sổ Shared Groups xác nhận cả hai người nhìn thấy câu hỏi, người gửi có ô trả lời và việc được giao hiển thị tên chủ harness.
 
 ```powershell
 $case = 'owner/ungranted'
