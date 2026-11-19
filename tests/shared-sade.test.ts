@@ -2825,9 +2825,10 @@ test(
     assert.equal(reader.store.sessions().length, 0);
     await assert.rejects(author.workspace.accept(authorTask.id), /review|running/i);
     author.workspace.sessions.decide(approval.id, 'accept');
-    await waitFor('Antigravity review', () =>
-      run().jobs.some(({ phase, state }) => phase === 'review' && state === 'done'),
-    );
+    await waitFor('Antigravity review', () => {
+      assert.equal(reader.workspace.sessions.approvals().length, 0, 'Review is already granted');
+      return run().jobs.some(({ phase, state }) => phase === 'review' && state === 'done');
+    });
     assert.ok(!deliveries.some(({ task }) => task?.key === 'check'));
     assert.equal(author.store.get<Task>('task', authorTask.id).status, 'review');
     assert.equal(
@@ -2837,7 +2838,10 @@ test(
     await pump(0);
     const integrated = await author.workspace.accept(authorTask.id);
     assert.ok(integrated);
-    await waitFor('dependent read', () => run().state === 'done');
+    await waitFor('dependent read', () => {
+      assert.equal(reader.workspace.sessions.approvals().length, 0, 'The scoped read is granted');
+      return run().state === 'done';
+    });
 
     assert.deepEqual(
       deliveries.map(({ phase, grantId }) => [phase, grantId]),

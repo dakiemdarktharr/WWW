@@ -88,7 +88,7 @@ async function bridgeRequest(bridge, method, params) {
 }
 const tool = (bridge, name, args) => bridgeRequest(bridge, 'tools/call', { name, arguments: args });
 
-async function sharedTurn(bridge, prompt) {
+async function sharedTurn(bridge, prompt, authorize) {
   assert.ok(
     !prompt.includes('fixture-profile-marker'),
     'Provider profile data reached the prompt.',
@@ -102,6 +102,7 @@ async function sharedTurn(bridge, prompt) {
   const tools = list.result.tools.map(({ name }) => name);
   assert.ok(!tools.includes('relay_read_room') && !tools.includes('relay_report'));
   const checkedTool = async (name, args) => {
+    if (authorize) assert.equal(await authorize(name, args), 'allow');
     const response = await tool(bridge, name, args);
     assert.ok(!response.error, response.error?.message);
     return JSON.parse(response.result.content[0].text);
@@ -128,12 +129,20 @@ async function sharedTurn(bridge, prompt) {
     });
     return 'The contract text is ready for review.';
   }
+  if (authorize) {
+    const files = await checkedTool('workspace_list_files', {});
+    assert.ok(files.paths.some(({ path }) => path === 'contract.txt'));
+    const args = { path: '.env.fixture' };
+    assert.equal(await authorize('workspace_read_file', args), 'allow');
+    const privateFile = await tool(bridge, 'workspace_read_file', args);
+    assert.match(privateFile.error?.message || '', /private files cannot be accessed/i);
+  }
   const read = await checkedTool('workspace_read_file', { path: 'contract.txt' });
   assert.equal(read.content.trim(), 'Native shared contract v1');
   return 'Read the approved contract in the dependent worktree.';
 }
-async function turn(bridge, prompt) {
-  if (sharedPlan) return sharedTurn(bridge, prompt);
+async function turn(bridge, prompt, authorize) {
+  if (sharedPlan) return sharedTurn(bridge, prompt, authorize);
   if (prompt.includes('hold-turn')) return new Promise(() => {});
   const read = await tool(bridge, 'workspace_read_file', { path: 'sample.txt' });
   if (prompt.includes('read-task-update')) {
@@ -155,7 +164,7 @@ async function turn(bridge, prompt) {
   return 'Controlled protocol completion; not a real model evaluation.';
 }
 const permissionReplies = new Map();
-function permission(sessionId, name, kind = 'other') {
+function permission(sessionId, name, kind = 'other', args = { content: 'QA post' }) {
   const id = randomUUID();
   const answer = new Promise((resolve) => permissionReplies.set(id, resolve));
   send({
@@ -169,7 +178,7 @@ function permission(sessionId, name, kind = 'other') {
         name,
         kind,
         title: 'Run mcp_kivuno_mesh_post',
-        rawInput: { content: 'QA post' },
+        rawInput: args,
       },
       options: [
         { kind: 'allow_always', optionId: 'always' },
@@ -300,7 +309,10 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
           ],
         },
       });
-      const text = await turn(sessions.get(value.params.sessionId), value.params.prompt[0].text);
+      const sessionId = value.params.sessionId;
+      const text = await turn(sessions.get(sessionId), value.params.prompt[0].text, (name, args) =>
+        permission(sessionId, 'mcp_kivuno_' + name, 'other', args),
+      );
       send({
         jsonrpc: '2.0',
         method: 'session/update',

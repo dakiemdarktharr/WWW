@@ -1261,6 +1261,21 @@ export class SessionManager {
       return;
     }
     if (
+      sharedJob &&
+      client.provider === 'antigravity' &&
+      request.method === 'item/mcp/requestApproval' &&
+      (params.tool === 'workspace_list_files' ||
+        params.tool === 'workspace_read_file' ||
+        this.host.sharedSade
+          .tools(sharedJob)
+          .some(({ name }) => name.startsWith('relay_') && name === params.tool))
+    ) {
+      // The Shared Groups grant covers project reads and workflow coordination.
+      // The actual MCP call still goes through the lease, quota and file guards above.
+      client.respond(request.id, { decision: 'accept' });
+      return;
+    }
+    if (
       ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(
         request.method,
       ) ||
