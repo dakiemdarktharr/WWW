@@ -718,6 +718,17 @@ test(
     assert.match(invalid?.contentItems?.[0]?.text || '', /Declared task keys: architecture/);
     assert.equal(cloud.view().sadeRuns[0].jobs.length, 1);
     await submit(0, planner.session, planner.peer, 'relay_submit_plan', validPlan);
+    const lateQuestion = await callTool(
+      0,
+      planner.session,
+      planner.peer,
+      'relay_ask_shared_requester',
+      {
+        summary: 'Should the group change the architecture?',
+      },
+    );
+    assert.equal(lateQuestion?.success, false);
+    assert.match(lateQuestion?.contentItems?.[0]?.text || '', /already recorded/);
     assert.equal(planner.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
     await complete(0, planner.session, planner.peer, 'Plan submitted.');
     const writer = (await pump(0))!;
@@ -985,6 +996,18 @@ test(
       verdict: 'approved',
       summary: 'Frontend changes stay within their assigned file.',
     });
+    const lateVerdict = await callTool(
+      0,
+      frontendCheck.session,
+      frontendCheck.peer,
+      'relay_submit_shared_review',
+      {
+        verdict: 'changes',
+        summary: 'This contradicts the accepted verdict.',
+      },
+    );
+    assert.equal(lateVerdict?.success, false);
+    assert.match(lateVerdict?.contentItems?.[0]?.text || '', /already recorded/);
     await complete(0, frontendCheck.session, frontendCheck.peer, 'Frontend reviewed.');
     await pump(0);
     await pump(1);
@@ -1284,9 +1307,36 @@ test(
       tasks: [],
     });
     assert.equal(empty?.success, false);
-    await submit(0, noWork.session, noWork.peer, 'relay_finish_shared_without_work', {
+    const noWorkDecision = {
       summary: 'A status update for the team.',
+    };
+    await submit(
+      0,
+      noWork.session,
+      noWork.peer,
+      'relay_finish_shared_without_work',
+      noWorkDecision,
+    );
+    const latePlan = await callTool(0, noWork.session, noWork.peer, 'relay_submit_plan', {
+      summary: 'An unexpected request to edit a file.',
+      tasks: [
+        {
+          ...work('late-edit', { scope: ['src/menu.ts'] }),
+          kind: 'edit-files',
+          preferredMemberId: 'auto',
+          requiredPlatform: 'any',
+        },
+      ],
     });
+    assert.equal(latePlan?.success, false);
+    assert.match(latePlan?.contentItems?.[0]?.text || '', /already recorded/);
+    await submit(
+      0,
+      noWork.session,
+      noWork.peer,
+      'relay_finish_shared_without_work',
+      noWorkDecision,
+    );
     await complete(0, noWork.session, noWork.peer, 'A status update for the team.');
     assert.equal(await pump(0), undefined);
     const closed = cloud.view().sadeRuns.at(-1);

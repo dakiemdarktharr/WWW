@@ -411,20 +411,30 @@ export class SharedSadeWorker {
     this.assertCurrent(jobId);
     const receipt = this.receipt(jobId);
     if (receipt.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
+    if (receipt.question)
+      throw new DomainError('The planner already recorded a question for this request.', 409);
     const plan = noWork
       ? parseGroupNoWork(input)
       : parseSharedGroupPlan(input, receipt.planMembers || []);
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
       throw new DomainError('The plan is too large.');
-    this.host.store.put('sharedSadeLocalPlan', { id: jobId, plan });
-    return { accepted: true };
+    return this.recordDecision('sharedSadeLocalPlan', { id: jobId, plan });
   }
   submitReview(jobId: string, input: unknown) {
     this.assertCurrent(jobId);
     if (this.receipt(jobId).phase !== 'review')
       throw new DomainError('Only an independent reviewer can report this verdict.');
     const review = sharedFinish.parse({ ...(input as object), kind: 'review' });
-    this.host.store.put('sharedSadeLocalReview', { id: jobId, review });
+    return this.recordDecision('sharedSadeLocalReview', { id: jobId, review });
+  }
+  private recordDecision<T extends { id: string }>(
+    kind: 'sharedSadeLocalPlan' | 'sharedSadeLocalReview',
+    decision: T,
+  ) {
+    const previous = this.host.store.lookup<T>(kind, decision.id);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(decision))
+      throw new DomainError('This job already recorded a different result.', 409);
+    if (!previous) this.host.store.put(kind, decision);
     return { accepted: true };
   }
   ask(jobId: string, input: unknown) {
@@ -432,6 +442,8 @@ export class SharedSadeWorker {
     const receipt = this.receipt(jobId);
     if (receipt.phase === 'review' || receipt.clarified || receipt.question)
       throw new DomainError('Only one clarification is available for this task.');
+    if (receipt.phase === 'plan' && this.host.store.lookup('sharedSadeLocalPlan', jobId))
+      throw new DomainError('The planner already recorded a result for this request.', 409);
     const { summary } = z
       .object({ summary: z.string().trim().min(1).max(500) })
       .strict()
@@ -1086,9 +1098,10 @@ export class SharedSadeWorker {
       }
       if (receipt.question) this.result(jobId, { kind: 'question', summary: receipt.question });
       else if (receipt.phase === 'plan') {
-        const plan = this.host.store
-          .all<{ id: string; plan: unknown }>('sharedSadeLocalPlan')
-          .find((item) => item.id === jobId);
+        const plan = this.host.store.lookup<{ id: string; plan: unknown }>(
+          'sharedSadeLocalPlan',
+          jobId,
+        );
         this.result(
           jobId,
           plan
@@ -1096,9 +1109,10 @@ export class SharedSadeWorker {
             : { kind: 'blocked', summary: 'Planner did not submit a structured plan.' },
         );
       } else if (receipt.phase === 'review') {
-        const verdict = this.host.store
-          .all<{ id: string; review: SharedFinish }>('sharedSadeLocalReview')
-          .find((item) => item.id === jobId);
+        const verdict = this.host.store.lookup<{ id: string; review: SharedFinish }>(
+          'sharedSadeLocalReview',
+          jobId,
+        );
         this.result(
           jobId,
           verdict?.review || {
