@@ -221,20 +221,19 @@ try {
   if (await guide.isVisible()) await guide.click();
   const titlebar = page.getByRole('banner', { name: 'Điều khiển cửa sổ' });
   await expect(titlebar.getByRole('button')).toHaveCount(3);
+  const windowState = () => page.evaluate(() => (window as any).relayDesktop.getWindowState());
+  const initialWindow = await windowState();
+  console.log(`Desktop initial window state: ${JSON.stringify(initialWindow)}`);
+  assert.equal(initialWindow.fullscreen, false);
+  // macOS can launch zoomed when the work area is about the default window size.
+  if (initialWindow.maximized) {
+    await titlebar.getByRole('button', { name: 'Khôi phục cửa sổ', exact: true }).click();
+    await expect.poll(async () => (await windowState()).maximized).toBe(false);
+  }
   await titlebar.getByRole('button', { name: 'Phóng to', exact: true }).click();
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).maximized,
-    )
-    .toBe(true);
+  await expect.poll(async () => (await windowState()).maximized).toBe(true);
   await titlebar.getByRole('button', { name: 'Khôi phục cửa sổ', exact: true }).click();
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => (window as any).relayDesktop.getWindowState())).maximized,
-    )
-    .toBe(false);
+  await expect.poll(async () => (await windowState()).maximized).toBe(false);
   await page.locator('body').click({ position: { x: 300, y: 150 } });
   await page.keyboard.press('F11');
   await expect
