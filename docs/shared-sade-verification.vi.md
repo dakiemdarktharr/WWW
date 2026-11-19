@@ -49,6 +49,16 @@ CI trên macOS arm64 với Node 24.22.1 đã chạy commit `3fc1d2f`. `npm run c
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
+### Bàn giao giữa Claude và Antigravity
+
+Bài kiểm thử dùng hai desktop có hồ sơ và worktree Git riêng. Một tin tiếng Việt mở một lượt lập kế hoạch qua adapter Claude. Máy này ghi đúng một file sau khi người dùng duyệt. Antigravity dùng quyền chỉ đọc để review diff và kiểm tra đầu ra khi bản sửa đã được tích hợp cục bộ. Worktree kiểm tra nhận bản vá đã duyệt, còn nhánh Git của máy Antigravity giữ nội dung gốc. Mỗi bên dùng đúng hai lượt theo quyền đã cấp. Catalog thử nghiệm có biến thể Flash, nên bài test xác nhận Sade chọn Flash với reasoning cao cho review và model mặc định với reasoning trung bình cho bước kiểm tra đầu ra.
+
+Hai adapter mở tiến trình fixture qua giao thức tương ứng và gọi công cụ Kivuno qua MCP. Phép thử dùng hồ sơ đăng nhập giả và không gọi dịch vụ model. Hướng dẫn đọc phòng chat và gửi tiến độ của Claude chỉ xuất hiện khi phiên có công cụ tương ứng.
+
+```powershell
+node --import tsx --test --test-name-pattern 'one group message hands off' tests/shared-sade.test.ts
+```
+
 ### Chạy lại tình huống D qua mạng
 
 Chế độ tùy chọn `paired-macos` đã có trong workflow **Verify RELAY**. Phép thử dùng project Git tổng hợp trên Windows, một runner công cụ macOS arm64 và cầu nối desktop Kivuno cô lập. Cấu hình runner chỉ cấp khi danh tính GitHub Actions khớp origin, workflow và commit. Phép thử có một lỗi xử lý đường dẫn qua dấu gạch chéo, đi qua thứ tự chạy trên Windows, tái hiện lỗi trên macOS, sửa trên máy đích, kéo thay đổi trong scope về Windows, review độc lập và tích hợp cục bộ. Quick Tunnel chỉ mở trong lúc thử. [GitHub Actions OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect) · [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)

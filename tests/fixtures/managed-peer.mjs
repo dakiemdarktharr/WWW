@@ -28,6 +28,13 @@ for (const key of [
 ])
   assert.equal(process.env[key], undefined);
 const acp = process.argv.includes('acp');
+const sharedPlan = await readFile(path.join(home, 'managed-fixture-shared-plan.json'), 'utf8').then(
+  (data) => JSON.parse(data),
+  (error) => {
+    if (error.code !== 'ENOENT') throw error;
+    return null;
+  },
+);
 const sessions = new Map();
 const send = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const configOptions = [
@@ -35,7 +42,10 @@ const configOptions = [
     id: 'model',
     category: 'model',
     currentValue: 'agy-controlled',
-    options: [{ value: 'agy-controlled', name: 'Controlled model' }],
+    options: [
+      { value: 'agy-controlled', name: 'Controlled model' },
+      ...(sharedPlan ? [{ value: 'agy-flash', name: 'Controlled Flash model' }] : []),
+    ],
   },
   {
     id: 'thinking',
@@ -59,7 +69,7 @@ if (!acp) {
   assert.equal(policy.useG1Credits, false);
   assert.ok(policy.permissions.deny.includes('command(*)'));
 }
-async function tool(bridge, name, args) {
+async function bridgeRequest(bridge, method, params) {
   const headers = Array.isArray(bridge.headers)
     ? Object.fromEntries(bridge.headers.map((item) => [item.name, item.value]))
     : bridge.headers;
@@ -69,14 +79,61 @@ async function tool(bridge, name, args) {
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: randomUUID(),
-      method: 'tools/call',
-      params: { name, arguments: args },
+      method,
+      params,
     }),
   });
   assert.equal(response.status, 200);
   return response.json();
 }
+const tool = (bridge, name, args) => bridgeRequest(bridge, 'tools/call', { name, arguments: args });
+
+async function sharedTurn(bridge, prompt) {
+  assert.ok(
+    !prompt.includes('fixture-profile-marker'),
+    'Provider profile data reached the prompt.',
+  );
+  assert.ok(
+    !/Read the room before work|Report progress with relay_report/i.test(prompt),
+    'The prompt directs a Shared Groups turn to unavailable room tools.',
+  );
+  const list = await bridgeRequest(bridge, 'tools/list', {});
+  assert.ok(!list.error, list.error?.message);
+  const tools = list.result.tools.map(({ name }) => name);
+  assert.ok(!tools.includes('relay_read_room') && !tools.includes('relay_report'));
+  const checkedTool = async (name, args) => {
+    const response = await tool(bridge, name, args);
+    assert.ok(!response.error, response.error?.message);
+    return JSON.parse(response.result.content[0].text);
+  };
+  if (tools.includes('relay_submit_plan')) {
+    assert.match(prompt, /Claude viết hợp đồng/);
+    assert.ok(!tools.includes('workspace_write_file'));
+    await checkedTool('relay_submit_plan', sharedPlan);
+    return 'Structured handoff plan submitted.';
+  }
+  if (tools.includes('relay_submit_shared_review')) {
+    assert.match(prompt, /\+Native shared contract v1/);
+    assert.ok(!tools.includes('workspace_write_file'));
+    await checkedTool('relay_submit_shared_review', {
+      verdict: 'approved',
+      summary: 'The contract diff matches the requested text.',
+    });
+    return 'Independent contrast with the baseline complete.';
+  }
+  if (tools.includes('workspace_write_file')) {
+    await checkedTool('workspace_write_file', {
+      path: 'contract.txt',
+      content: 'Native shared contract v1\n',
+    });
+    return 'The contract text is ready for review.';
+  }
+  const read = await checkedTool('workspace_read_file', { path: 'contract.txt' });
+  assert.equal(read.content.trim(), 'Native shared contract v1');
+  return 'Read the approved contract in the dependent worktree.';
+}
 async function turn(bridge, prompt) {
+  if (sharedPlan) return sharedTurn(bridge, prompt);
   if (prompt.includes('hold-turn')) return new Promise(() => {});
   const read = await tool(bridge, 'workspace_read_file', { path: 'sample.txt' });
   if (prompt.includes('read-task-update')) {

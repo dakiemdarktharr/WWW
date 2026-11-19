@@ -343,6 +343,12 @@ export class ClaudeClient extends ScopedCliClient {
       this.turn = id;
       this.text = '';
       this.emit('notification', 'turn/started', { threadId: this.thread, turn: { id } });
+      const roomGuide = this.dynamicTools.some(({ name }) => name === 'relay_read_room')
+        ? ' Read the room before work.'
+        : '';
+      const progressGuide = this.dynamicTools.some(({ name }) => name === 'relay_report')
+        ? ' Report progress with relay_report.'
+        : '';
       this.transport.write({
         type: 'user',
         session_id: this.thread,
@@ -356,7 +362,10 @@ export class ClaudeClient extends ScopedCliClient {
               .filter((part: any) => part.type === 'text')
               .map((part: any) => part.text)
               .join('\n') +
-            '\nUse Kivuno MCP tools for project files and coordination. The CLI directory contains no project. Read the room before work and report progress. Do not invoke slash commands or other agents.',
+            '\nUse Kivuno MCP tools for project files and coordination. The CLI directory contains no project.' +
+            roomGuide +
+            progressGuide +
+            ' Do not invoke slash commands or other agents.',
         },
       });
       result = { turn: { id } };
