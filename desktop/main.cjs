@@ -368,8 +368,10 @@ async function readIdentity() {
   // Retire the previous launch's device lease so normal restarts cannot fill
   // the cloud's active-device limit. A failed cleanup never authenticates UI.
   try {
+    // A new profile has no lease to retire and should not prompt for Keychain access.
+    const saved = await readFile(identityFile);
     if (secureCredentialStorage(safeStorage, process.platform)) {
-      const previous = JSON.parse(safeStorage.decryptString(await readFile(identityFile)));
+      const previous = JSON.parse(safeStorage.decryptString(saved));
       if (typeof previous.accessToken === 'string')
         void cloudRequest('/api/desktop/revoke', {}, previous.accessToken).catch(() => {});
     }
