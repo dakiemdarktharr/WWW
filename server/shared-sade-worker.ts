@@ -848,24 +848,28 @@ export class SharedSadeWorker {
     }
     this.assertCurrent(delivery.id);
     this.waitingForRevisions.delete(delivery.id);
+    const review = delivery.phase === 'review';
+    const description = review
+      ? [delivery.task?.description, delivery.task?.acceptance, delivery.request]
+          .filter(Boolean)
+          .join('\n')
+      : delivery.task?.description;
     const session = await this.host.sessions.create({
       memberId: member.id,
       projectId: project.id,
       readOnly: !write,
       modelPolicy: 'auto',
       title: `Shared Sade · ${delivery.task?.title || (delivery.phase === 'review' ? 'Review' : 'Plan')} · ${delivery.id.slice(0, 12)}`,
-      scope: delivery.task?.scope,
-      ...(delivery.phase === 'review' || delivery.task?.kind === 'review'
-        ? { kind: 'review' as const }
-        : {}),
+      scope: review ? delivery.review?.files : delivery.task?.scope,
+      ...(review || delivery.task?.kind === 'review' ? { kind: 'review' as const } : {}),
     });
     this.host.store.updateTask(session.taskId, {
       sharedSadeJobId: delivery.id,
       sharedSadeNeedsPublication: delivery.requiresPublication,
+      ...(description ? { description } : {}),
       ...(delivery.task
         ? {
             kind: delivery.task.kind,
-            description: delivery.task.description,
             effort: delivery.task.effort,
           }
         : {}),

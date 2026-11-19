@@ -667,7 +667,11 @@ test(
       summary: 'Build architecture then inspect the result in another harness.',
       tasks: [
         {
-          ...work('architecture', { scope: ['architecture.txt'], preferredMemberId: 'member-1' }),
+          ...work('architecture', {
+            scope: ['architecture.txt'],
+            preferredMemberId: 'member-1',
+            acceptance: 'Keep credential fields out of the shared registration contract.',
+          }),
           kind: 'edit-files',
         },
         {
@@ -783,6 +787,8 @@ test(
     assert.ok(reviewer && reviewer.phase === 'review');
     assert.equal(reviewer.id, plannedReviewId);
     const check = await sessionFor(1, reviewer);
+    assert.equal(check.session.model, 'fixture');
+    assert.equal(check.session.reasoningEffort, 'high');
     assert.match(JSON.stringify(check.peer.calls), /Shared verified contract/);
     assert.match(JSON.stringify(check.peer.calls), /Verify the registration field names/);
     await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
@@ -903,6 +909,7 @@ test(
     assert.deepEqual(frontendReviewer.review?.files, ['frontend.txt']);
     assert.ok(frontendReviewer.prerequisites[0]?.patch);
     const frontendCheck = await sessionFor(0, frontendReviewer);
+    assert.deepEqual(frontendCheck.task.scope, ['frontend.txt']);
     assert.equal(frontendCheck.session.model, 'fixture-mini');
     assert.equal(frontendCheck.session.reasoningEffort, 'high');
     assert.match(

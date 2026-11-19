@@ -232,6 +232,27 @@ node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-m
 node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-holdout.json --holdout
 ```
 
+### Tình huống C với Codex đã đăng nhập
+
+Catalog của tài khoản ChatGPT trên Windows có GPT-6-Luna và mức reasoning `high`. Chính sách Sade chọn cấu hình đó cho ca review logic tính giảm giá. Hai lượt chỉ đọc qua Codex CLI dùng cùng yêu cầu và hai bản vá tổng hợp. Bản lỗi dùng `>` và trả 0 ngay tại ngưỡng chi tiêu. Model chỉ đúng trường hợp đó và yêu cầu sửa. Model duyệt bản dùng `>=` trả 10. Shared Groups nhận hai verdict qua grant thử nghiệm, giữ bản lỗi ở trạng thái chặn và chỉ cấp digest để tích hợp bản đúng. Cả hai lượt đều đọc diff mà không chạy mã.
+
+Một bài hồi quy desktop tái hiện việc tiêu chí bảo mật của tác vụ gốc bị bỏ khỏi khâu chọn model cho review. Desktop giờ đưa yêu cầu đã gửi đến reviewer vào thông tin chọn model và đặt scope của review theo danh sách file trong diff. Review thường vẫn dùng model nhẹ có reasoning cao. Khi yêu cầu có tiêu chí bảo mật, chính sách dùng model mặc định của catalog với reasoning cao nếu hỗ trợ.
+
+Chạy từ repo bằng tài khoản ChatGPT đã đăng nhập. Chọn một variant mỗi lần để tái lập đúng bản vá. Tệp điểm ghi hash prompt và digest bản vá dùng để đối chiếu với bản xuất.
+
+```powershell
+$variant = 'defect'
+$base = Join-Path (Get-Location).Path ".local/codex-review-$variant"
+node --import tsx scripts/eval-shared-sade-review.ts "$base-prompt.json" --case discount --variant $variant --export-prompt
+$bundle = Get-Content "$base-prompt.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+[IO.File]::WriteAllText("$base-schema.json", ($bundle.tool.inputSchema | ConvertTo-Json -Depth 35))
+$sandbox = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$instruction = 'This is a synthetic, read-only review benchmark. Inspect only the supplied data. Do not run commands, use tools, read project files, or make changes. Return the argument object for relay_submit_shared_review as the final structured response.'
+($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -m gpt-6-luna -c "model_reasoning_effort='high'" -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema "$base-schema.json" --output-last-message "$base-verdict.json" --json -
+node --import tsx scripts/eval-shared-sade-review.ts "$base-score.json" --case discount --variant $variant --external-verdict "$base-verdict.json"
+```
+
 ## Cấu hình dùng trong Shared Groups
 
 Dùng một lượt lập kế hoạch từ harness đã cấp quyền của người gửi. Schema yêu cầu nhiệm vụ, scope, phụ thuộc và điều kiện hoàn tất. Bộ điều phối quyết định quyền, hệ điều hành, số lượt và thứ tự thực thi. Chính sách chọn model đọc loại tác vụ, mô tả và effort từ kế hoạch. Lượt lập kế hoạch ưu tiên reasoning cao trong catalog của tài khoản. Tác vụ thường có thể dùng reasoning trung bình, và review thường ưu tiên model nhỏ hỗ trợ reasoning cao. Bài kiểm thử giao thức xác nhận ba lựa chọn này khi catalog cung cấp đủ mức. Có thể xem model và reasoning được chọn trên desktop. Qwen dùng để đánh giá offline.
