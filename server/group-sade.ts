@@ -153,6 +153,7 @@ type Job = SharedSadeJob & {
   revision?: string;
   change?: TaskDiff;
   reviewOf?: string;
+  reviewGrantId?: string;
   reviewedDigest?: string;
   portable?: boolean;
   published?: boolean;
@@ -208,6 +209,19 @@ function plannedReviews(run: Run, writer: Job) {
     ? run.jobs.filter((job) => job.phase === 'review' && job.task?.dependsOn[0] === key)
     : [];
 }
+function unreservedTurns(run: Run, grant: Grant, claimant?: Job) {
+  return (
+    grant.turns -
+    grant.used -
+    run.jobs.filter(
+      (job) =>
+        job !== claimant &&
+        (job.reviewGrantId === grant.id ||
+          (job.grantId === grant.id && ['queued', 'waiting'].includes(job.state))),
+    ).length
+  );
+}
+
 function hasDependents(run: Run, job: Job) {
   if (!job.task) return false;
   // Patch reviews can run before integration, but tasks waiting on them still need the integrated change.
@@ -436,6 +450,7 @@ export class GroupSade {
             revision,
             change,
             reviewOf,
+            reviewGrantId,
             reviewedDigest,
             clarification,
             portable,
@@ -617,7 +632,7 @@ export class GroupSade {
         if (!job || job.state !== 'waiting' || !job.summary || final(run))
           throw new DomainError('This question is no longer waiting.', 409);
         const grant = this.grants(group).find((item) => item.id === job.grantId);
-        if (!grant || !this.usable(grant, group))
+        if (!grant || !this.usable(grant, group) || unreservedTurns(run, grant, job) < 1)
           throw new DomainError('The harness needs a remaining granted turn to continue.', 409);
         // Each attempt has its own receipt. The task key still identifies dependencies.
         run.jobs[run.jobs.indexOf(job)] = {
@@ -644,6 +659,7 @@ export class GroupSade {
               ...job,
               change: undefined,
               updates: undefined,
+              reviewGrantId: undefined,
               state: job.state === 'done' ? 'done' : 'cancelled',
             })),
           } satisfies Run);
@@ -654,6 +670,21 @@ export class GroupSade {
   private actorGrant(grant: Grant, actor: SharedPrincipal) {
     return grant.ownerId === actor.ownerId && grant.deviceId === actor.deviceId;
   }
+  private reviewGrants(run: Run, writer: Grant, grants: Iterable<Grant>) {
+    return [...grants].filter(
+      (grant) => run.roster.includes(grant.id) && grant.ownerId !== writer.ownerId,
+    );
+  }
+  private availableReviewer(run: Run, job: Job, group: SharedGroup, grants: Grant[]) {
+    return grants
+      .filter((grant) => this.usable(grant, group) && unreservedTurns(run, grant, job) > 0)
+      .sort(
+        (a, b) =>
+          Number(b.id === job.reviewGrantId) - Number(a.id === job.reviewGrantId) ||
+          Number(b.role === 'reviewer') - Number(a.role === 'reviewer') ||
+          a.used - b.used,
+      )[0];
+  }
   private block(run: Run, job: Job, reason: string) {
     run.state = 'blocked';
     run.error = redact(reason);
@@ -662,6 +693,7 @@ export class GroupSade {
     for (const item of run.jobs) {
       item.change = undefined;
       item.updates = undefined;
+      item.reviewGrantId = undefined;
     }
     this.store.put('sharedSadeRun', run);
   }
@@ -805,6 +837,32 @@ export class GroupSade {
           )
         )
           continue;
+        if (writes(job.task) && !plannedReviews(run, job).length) {
+          const peers = this.reviewGrants(run, grant, grants.values());
+          const reviewer = this.availableReviewer(run, job, group, peers);
+          if (!reviewer && peers.length) {
+            if (
+              run.jobs.some(
+                (other) =>
+                  other !== job && ['running', 'reviewing', 'waiting'].includes(other.state),
+              )
+            ) {
+              const summary = 'Waiting for an independent review turn while other work is active.';
+              if (job.summary !== summary) {
+                job.summary = summary;
+                touched = true;
+              }
+              continue;
+            }
+            this.block(
+              run,
+              job,
+              'This plan has no spare independent review turn for the change. Retry with another owner’s remaining review turn.',
+            );
+            break;
+          }
+          job.reviewGrantId = reviewer?.id;
+        }
         job.state = 'running';
         job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
         job.summary = undefined;
@@ -927,10 +985,7 @@ export class GroupSade {
     else if (result.kind === 'question') {
       if (job.phase === 'review' || job.state !== 'running' || job.clarification)
         throw new DomainError('This job cannot ask another question.', 409);
-      const reserved = run.jobs.filter(
-        (other) => other.state === 'queued' && other.grantId === grant.id,
-      ).length;
-      if (grant.turns - grant.used <= reserved)
+      if (unreservedTurns(run, grant) < 1)
         this.block(run, job, 'The harness has no spare granted turn for a clarification.');
       else {
         job.state = 'waiting';
@@ -952,11 +1007,13 @@ export class GroupSade {
         const eligible = grants.filter(
           (entry) => run.roster.includes(entry.id) && this.usable(entry, group),
         );
+        const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         const allocations = allocatePlan(
           plan,
           eligible.map((entry) => ({ id: entry.id, role: entry.role })),
           {
             preferSpecialists: true,
+            ownerByMember: ownerByGrant,
             turns: new Map(eligible.map((entry) => [entry.id, entry.turns - entry.used])),
             supports: (grantId, task) =>
               eligible.some(
@@ -984,7 +1041,6 @@ export class GroupSade {
           state: 'queued',
         }));
         const byKey = new Map(planned.map((item) => [item.task!.key, item]));
-        const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         for (const item of planned) {
           const task = item.task!;
           if (task.kind !== 'review' || task.dependsOn.length !== 1) continue;
@@ -1054,23 +1110,7 @@ export class GroupSade {
       }
       const reviewer = scheduled.length
         ? undefined
-        : grants
-            .filter(
-              (entry) =>
-                run.roster.includes(entry.id) &&
-                entry.ownerId !== grant.ownerId &&
-                this.usable(entry, group),
-            )
-            .sort(
-              (a, b) =>
-                Number(b.role === 'reviewer') - Number(a.role === 'reviewer') || a.used - b.used,
-            )
-            .find(
-              (entry) =>
-                run.jobs.filter((other) => other.state === 'queued' && other.grantId === entry.id)
-                  .length <
-                entry.turns - entry.used,
-            );
+        : this.availableReviewer(run, job, group, this.reviewGrants(run, grant, grants));
       if (!scheduled.length && !reviewer) {
         this.block(
           run,
@@ -1080,6 +1120,7 @@ export class GroupSade {
         return { accepted: true };
       }
       job.state = 'reviewing';
+      job.reviewGrantId = undefined;
       job.change = result.diff;
       job.portable = result.portable;
       job.summary = 'Waiting for independent review.';
@@ -1130,6 +1171,7 @@ export class GroupSade {
       }
       for (const review of plannedReviews(run, job)) review.phase = 'task';
       job.state = 'done';
+      job.reviewGrantId = undefined;
       job.summary = redact(result.summary);
       if (hasNextTask) job.revision = result.revision;
       if (run.jobs.every((item) => item.state === 'done')) {

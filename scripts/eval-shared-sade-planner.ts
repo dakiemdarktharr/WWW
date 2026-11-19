@@ -49,7 +49,19 @@ const messages = {
     'FYI for the human team: “start a Mac check and inspect the diff” was a quote from yesterday. No harness should run now.',
   ],
 };
-type Case = keyof typeof messages;
+type Case = keyof typeof messages | 'full-handoff';
+const workshop = {
+  architecture: 'docs/workshop-contract.md',
+  frontend: 'src/workshop/Form.tsx',
+  backend: 'src/workshop/signup.ts',
+  tests: 'tests/workshop-signup.test.ts',
+};
+const fullHandoffs = [
+  'ê Gemini ghi hợp đồng đăng ký workshop vào docs/workshop-contract.md trước. Astra lấy hợp đồng rồi làm src/workshop/Form.tsx, hỏi tui style hay muốn để Astra tự chọn. Backend src/workshop/signup.ts cũng theo hợp đồng đó, xong thêm tests/workshop-signup.test.ts. Mấy việc chưa gọi tên Sade tự chia nha. Khi có frontend và backend rồi, kiểm tra phòng thủ hai file đó xem lỗi đăng ký có làm lộ địa chỉ email không.',
+  'Gemini lam docs/workshop-contract.md truoc. Co hop dong roi thi Astra sua src/workshop/Form.tsx va hoi tui muon style nao. Backend src/workshop/signup.ts cung cho hop dong, con tests/workshop-signup.test.ts doi backend. Cac phan con lai Sade tu giao. Review chi doc frontend va backend sau khi ca hai xong de coi cach bao loi co lo email khong.',
+  'Gemini owns and writes docs/workshop-contract.md. Astra implements src/workshop/Form.tsx after the contract and should offer to choose the aesthetic. Automatically assign src/workshop/signup.ts after the contract, and tests/workshop-signup.test.ts after backend. Once frontend and backend are ready, assign an independent read-only review of both source files for email leakage in errors.',
+  'Cho Astra làm src/workshop/Form.tsx, nhưng chờ Gemini viết docs/workshop-contract.md trước rồi hỏi mình có thích phong cách nào không. Sade tự chọn người làm src/workshop/signup.ts từ cùng hợp đồng, rồi thêm tests/workshop-signup.test.ts khi backend xong. Riêng review bảo mật phòng thủ thì để người không viết hai file nguồn đọc kiểm tra dữ liệu lỗi sau cả backend lẫn giao diện.',
+];
 const handoffHoldout = [
   'Mây làm src/signup.ts sau khi nhận docs/contract.md, cái file tài liệu em nhờ Bếp cập nhật trước nghen.',
   'Cho Bep dien quy uoc vao docs/contract.md. Khi nao nhan dung file thi May moi sua src/signup.ts nha.',
@@ -109,9 +121,14 @@ const { values, positionals } = parseArgs({
     replay: { type: 'string' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
+    'full-handoff': { type: 'boolean' },
   },
 });
-assert.ok(!(values['handoff-holdout'] && values['handoff-varied']), 'Choose one handoff suite');
+assert.ok(
+  [values['handoff-holdout'], values['handoff-varied'], values['full-handoff']].filter(Boolean)
+    .length <= 1,
+  'Choose one handoff suite',
+);
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
 assert.notEqual(output, source, 'Choose a separate output file for replay');
@@ -129,14 +146,15 @@ const tools = [groupPlanTool, groupNoWorkTool].map(({ type, name, description, i
 const projectKey = 'a'.repeat(64);
 const uuid = (n: number) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const groupId = uuid(1);
-const grants = [uuid(2), uuid(3)];
-const devices = [uuid(4), uuid(5)];
-const teammates = [uuid(6), uuid(7)];
+const grants = [uuid(2), uuid(3), uuid(12), uuid(13)];
+const devices = [uuid(4), uuid(5), uuid(14), uuid(15)];
+const teammates = [uuid(6), uuid(7), uuid(16), uuid(17)];
 const people = [
   { id: 'owner-a', name: 'An' },
   { id: 'owner-b', name: 'Bình' },
+  { id: 'owner-c', name: 'Chi' },
+  { id: 'owner-d', name: 'Dũng' },
 ];
-const authors = ['Bếp', 'Mây'];
 
 async function withGroup<T>(
   scenario: Case,
@@ -150,13 +168,19 @@ async function withGroup<T>(
 ) {
   const store = new Store(':memory:');
   try {
+    const fullHandoff = scenario === 'full-handoff';
+    const names = fullHandoff ? ['Gemini', 'Astra', 'Claude', 'Antigravity'] : ['Bếp', 'Mây'];
+    const roles = fullHandoff
+      ? ['engineer', 'designer', 'engineer', 'reviewer']
+      : ['engineer', 'reviewer'];
+    const providers = ['gemini', 'codex', 'claude', 'antigravity'];
     const groups = new SharedGroups(
       store,
       (value) => people.find((person) => person.id === value) || null,
     );
     const call = (actor: number, input: object) =>
       groups.execute(people[actor], input, devices[actor]);
-    for (const [index, id] of devices.entries())
+    for (const [index, id] of devices.slice(0, names.length).entries())
       store.put('desktopDevice', {
         id,
         owner: people[index],
@@ -165,17 +189,19 @@ async function withGroup<T>(
         tokenHash: 'fixture-private-token-hash',
       });
     call(0, { action: 'create', id: groupId, name: 'Local planner test' });
-    call(0, { action: 'invite', groupId, account: people[1].id });
-    call(1, { action: 'accept', groupId });
-    for (const [index, localId] of teammates.entries()) {
+    for (let index = 1; index < names.length; index++) {
+      call(0, { action: 'invite', groupId, account: people[index].id });
+      call(index, { action: 'accept', groupId });
+    }
+    for (const [index, localId] of teammates.slice(0, names.length).entries()) {
       call(index, {
         action: 'teammates',
         groupId,
         teammates: [
           {
             localId,
-            provider: index ? 'codex' : 'gemini',
-            name: authors[index],
+            provider: providers[index],
+            name: names[index],
           },
         ],
       });
@@ -187,9 +213,9 @@ async function withGroup<T>(
         teammateId: localId,
         projectKey,
         projectName: 'Local test project',
-        role: index ? 'reviewer' : 'engineer',
+        role: roles[index],
         platform: 'win32',
-        allowWrites: true,
+        allowWrites: !fullHandoff || index < 3,
         turns: 8,
         ...(!index && scenario === 'mac' ? { pairedPlatform: 'darwin' } : {}),
       });
@@ -296,7 +322,26 @@ function assess(
   }
   assert.equal(run.state, 'running', run.error || 'a valid plan should be queued');
   const jobs = run.jobs.filter((job) => job.phase === 'task');
-  if (scenario === 'handoff') {
+  if (scenario === 'full-handoff') {
+    assert.equal(jobs.length, 5, 'architecture, frontend, backend, tests and a defensive review');
+    const architecture = scopedWriter(jobs, workshop.architecture);
+    const frontend = scopedWriter(jobs, workshop.frontend);
+    const backend = scopedWriter(jobs, workshop.backend);
+    const tests = scopedWriter(jobs, workshop.tests);
+    const review = jobs.find((job) => job.task?.kind === 'review');
+    assert.ok(review, 'the defensive review is read-only');
+    assert.equal(architecture.grantId, grants[0], 'architecture stays with Gemini');
+    assert.equal(frontend.grantId, grants[1], 'frontend stays with Astra');
+    assert.deepEqual(frontend.task?.dependsOn, [architecture.task?.key]);
+    assert.deepEqual(backend.task?.dependsOn, [architecture.task?.key]);
+    assert.deepEqual(tests.task?.dependsOn, [backend.task?.key]);
+    assert.deepEqual(new Set(review.task?.scope), new Set([workshop.frontend, workshop.backend]));
+    assert.ok(review.task?.dependsOn.includes(frontend.task!.key), 'review waits for frontend');
+    assert.ok(review.task?.dependsOn.includes(backend.task!.key), 'review waits for backend');
+    assert.equal(review.grantId, grants[3], 'the granted independent reviewer gets the audit');
+    for (const job of [backend, tests, review])
+      assert.equal(job.task?.preferredMemberId, undefined, 'delegate unnamed assignments to Sade');
+  } else if (scenario === 'handoff') {
     assert.equal(jobs.length, 2, 'two tasks are sufficient');
     const source = scopedWriter(jobs, handoff.source);
     const target = scopedWriter(jobs, handoff.target);
@@ -329,7 +374,7 @@ type PlannerReply = {
   content: string;
   tool_calls?: { function: { name: string; arguments: unknown } }[];
 };
-async function getPlannerReply(messages: unknown[]): Promise<PlannerReply> {
+async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
   const response = await local('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -338,14 +383,18 @@ async function getPlannerReply(messages: unknown[]): Promise<PlannerReply> {
       stream: false,
       think: false,
       keep_alive: '45s',
-      options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
+      options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: fullHandoff ? 1600 : 768 },
       tools,
       messages,
     }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
-  return (await response.json()).message;
+  return (await response.json()) as {
+    message: PlannerReply;
+    eval_count?: number;
+    done_reason?: string;
+  };
 }
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const toolsSha256 = sha256(JSON.stringify(tools));
@@ -364,26 +413,32 @@ const cases: {
   id: string;
   message: string;
   handoff?: typeof defaultHandoff;
-}[] = values['handoff-varied']
-  ? variedHandoffs.map(({ message, ...handoff }, index) => ({
-      scenario: 'handoff',
-      id: `handoff/varied-${index + 1}`,
+}[] = values['full-handoff']
+  ? fullHandoffs.map((message, index) => ({
+      scenario: 'full-handoff',
+      id: `full-handoff/${index + 1}`,
       message,
-      handoff,
     }))
-  : values['handoff-holdout']
-    ? handoffHoldout.map((message, index) => ({
-        scenario: 'handoff' as const,
-        id: `handoff/holdout-${index + 1}`,
+  : values['handoff-varied']
+    ? variedHandoffs.map(({ message, ...handoff }, index) => ({
+        scenario: 'handoff',
+        id: `handoff/varied-${index + 1}`,
         message,
+        handoff,
       }))
-    : Object.entries(messages).flatMap(([scenario, inputs]) =>
-        inputs.map((message, index) => ({
-          scenario: scenario as Case,
-          id: `${scenario}/${index + 1}`,
+    : values['handoff-holdout']
+      ? handoffHoldout.map((message, index) => ({
+          scenario: 'handoff' as const,
+          id: `handoff/holdout-${index + 1}`,
           message,
-        })),
-      );
+        }))
+      : Object.entries(messages).flatMap(([scenario, inputs]) =>
+          inputs.map((message, index) => ({
+            scenario: scenario as Case,
+            id: `${scenario}/${index + 1}`,
+            message,
+          })),
+        );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved) assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
@@ -402,6 +457,7 @@ for (const { scenario, id, message, handoff } of cases) {
     let error;
     let toolName;
     let correction;
+    let generatedTokens = 0;
     try {
       if (prior) {
         if (!prior.plan) throw new Error(prior.error || 'Model returned no plan.');
@@ -411,8 +467,17 @@ for (const { scenario, id, message, handoff } of cases) {
         const messages: unknown[] = [{ role: 'user', content: prompt }];
         const roster = group.delivery.team.map((member) => member.id);
         for (let attempt = 0; attempt < 2; attempt++) {
-          const reply = await getPlannerReply(messages);
-          assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
+          const {
+            message: reply,
+            eval_count,
+            done_reason,
+          } = await getPlannerReply(messages, scenario === 'full-handoff');
+          generatedTokens += eval_count || 0;
+          assert.equal(
+            reply.tool_calls?.length,
+            1,
+            `expected one tool call (${done_reason || 'unknown'})`,
+          );
           const tool = reply.tool_calls![0].function;
           toolName = tool.name;
           try {
@@ -445,6 +510,7 @@ for (const { scenario, id, message, handoff } of cases) {
       parsed,
       pass: !error,
       milliseconds: Math.round(performance.now() - started),
+      ...(generatedTokens ? { generatedTokens } : {}),
       plan,
       toolName,
       correction,

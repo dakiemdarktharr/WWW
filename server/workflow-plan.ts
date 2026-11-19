@@ -132,6 +132,7 @@ export function allocatePlan(
     available?: ReadonlySet<string>;
     supports?: (memberId: string, task: PlanTask) => boolean;
     turns?: ReadonlyMap<string, number>;
+    ownerByMember?: ReadonlyMap<string, string>;
   } = {},
 ): { key: string; memberId: string }[] {
   if (!members.length) throw new DomainError('A workflow needs at least one teammate.', 400);
@@ -145,19 +146,28 @@ export function allocatePlan(
     for (const task of plan.tasks)
       if (task.preferredMemberId)
         requested.set(task.preferredMemberId, (requested.get(task.preferredMemberId) || 0) + 1);
-  // Allocate implementations first so reviews can exclude their authors.
+  // Allocate implementations before reviews, and count named work before filling open assignments.
   const byEffort = [...plan.tasks].sort(
     (a, b) =>
       Number(a.kind === 'review') - Number(b.kind === 'review') ||
+      (options.preferSpecialists
+        ? Number(Boolean(b.preferredMemberId)) - Number(Boolean(a.preferredMemberId))
+        : 0) ||
       b.effort - a.effort ||
       compareKey(a.key, b.key),
   );
+  const ownerOf = (id: string) => options.ownerByMember?.get(id) ?? id;
   for (const task of byEffort) {
     const authors = new Set(
-      task.kind === 'review' ? task.dependsOn.map((key) => assignments.get(key)) : [],
+      task.kind === 'review'
+        ? task.dependsOn.flatMap((key) => {
+            const memberId = assignments.get(key);
+            return memberId ? [ownerOf(memberId)] : [];
+          })
+        : [],
     );
     const capable = members.filter(
-      (member) => !authors.has(member.id) && (options.supports?.(member.id, task) ?? true),
+      (member) => !authors.has(ownerOf(member.id)) && (options.supports?.(member.id, task) ?? true),
     );
     if (!capable.length)
       throw new DomainError(

@@ -8,6 +8,8 @@ Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không d
 
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
+Khi chia việc, Sade tính khối lượng của các tác vụ đã chỉ định trước khi chọn harness cho việc còn trống. Với review, Sade loại các profile do chủ tài khoản đã thực hiện tác vụ đầu vào quản lý, kể cả profile ở provider khác.
+
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
 
 Shared Groups nhận một workflow đang hoạt động cho mỗi nhóm hoặc project. Bài hồi quy dùng hai người gửi và xác nhận tin yêu cầu thứ hai bị từ chối khi tác vụ ghi đang chạy. Sau khi tác vụ kết thúc, cùng ID tin nhắn có thể được gửi lại để mở workflow mới.
@@ -21,6 +23,8 @@ Khi nhánh đích đã có đúng nội dung và mode Git của toàn bộ file 
 Nếu một tác vụ ghi hoàn tất với worktree nguyên trạng, Sade dùng revision Git gốc của lần chạy làm điều kiện bàn giao cho các tác vụ phụ thuộc. Máy nhận kiểm tra nhánh đã liên kết và chờ nếu commit chưa có trong lịch sử nhánh đó. Chỉ tải object Git về vẫn chưa đủ. Sau khi chủ máy đồng bộ nhánh, Sade tiếp tục cùng tác vụ, từ một worktree ghim vào revision vừa kiểm tra. Khâu chờ giữ một lượt cấp quyền đã đặt trước và chưa khởi động provider. Revision đi trong gói bàn giao đến desktop đã được cấp quyền. Desktop cũ cần cập nhật để báo revision cho công việc có bước phụ thuộc.
 
 Nếu kế hoạch đã giao review cho một chủ tài khoản khác, với đúng phạm vi và chỉ phụ thuộc vào một tác vụ sửa, chính tác vụ review đó nhận diff khi bản sửa sẵn sàng. Sade giữ người được giao và tiêu chí review. Reviewer nhận tên, mô tả, tiêu chí nghiệm thu của tác vụ sửa và câu trả lời gần nhất của người gửi nếu có. Nếu cùng một diff có nhiều lượt review, mỗi lượt phải chấp thuận trước khi tích hợp. Nhiệm vụ phụ thuộc vẫn chờ kết quả tích hợp. Nếu tác vụ sửa kết thúc với worktree nguyên trạng, phần review đã yêu cầu tiếp tục dưới dạng kiểm tra chỉ đọc trên file hiện có.
+
+Khi workflow có grant của nhiều chủ tài khoản, Sade giữ một lượt review độc lập trước khi giao mỗi tác vụ ghi mà kế hoạch chưa có reviewer. Lượt được giữ trong ngân sách của nhóm và chỉ tính đã dùng khi giao review. Tác vụ ghi khác chờ nếu chưa có lượt review trống. Nếu tác vụ trước kết thúc với worktree nguyên trạng, lượt review trở lại ngân sách. Nếu lượt đã dành cho review thực tế, tác vụ đang review vẫn có thể hoàn thành và tích hợp trước khi Sade báo thiếu lượt cho việc tiếp theo. Với kế hoạch đã dành hết lượt của bên review cho công việc khác, Sade báo thiếu lượt trước khi mở harness sửa file.
 
 Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác tập file và byte trên nhánh đích. AEGIS có thể chặn tích hợp nhiệm vụ phụ thuộc nếu nhánh đích còn thiếu patch đầu vào.
 
@@ -41,7 +45,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `044ca7c`. `npm run check` đạt 300 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng commit, Windows đạt 305 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Bộ 1.000 tin dùng planner mô phỏng đạt trên cả hai hệ điều hành. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44466237455)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `7a424a2`. `npm run check` đạt 302 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng commit, Windows đạt 307 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Bộ 1.000 tin dùng planner mô phỏng đạt trên cả hai hệ điều hành. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44468580136)
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
@@ -148,6 +152,18 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-action-varied.json --handoff-varied
 ```
 
+### Tình huống A có đủ năm đầu việc
+
+Bốn câu mới dùng nhóm mô phỏng có Gemini, Astra, Claude và Antigravity. Mỗi câu giao Gemini viết tài liệu hợp đồng, Astra làm giao diện, rồi để Sade tự chia backend, kiểm thử và review phòng thủ việc lộ email trong thông báo lỗi. Bài chấm kiểm tra đủ năm tác vụ, file được yêu cầu, hai assignee đã chỉ định, các dependency, quyền sửa và reviewer độc lập.
+
+Qwen3 4B cục bộ đạt 0/4. Ba câu cho kế hoạch đã qua schema nhưng sai yêu cầu, gồm thiếu tác vụ, khóa cứng người dùng đã giao Sade tự quyết, hoặc đọc tài liệu thay vì tạo tài liệu. Câu còn lại không sửa được dependency trong lần thử lại. Biểu mẫu thử rút gọn đạt 12/18 ở bộ chính và có một lỗi bộ nhớ Ollama trong bốn câu mới. Một biến thể prompt nhấn mạnh thứ tự và review nhiều file cũng đạt 0/4 ở bộ mới. Sade giữ biểu mẫu hiện tại và dùng Qwen cho đánh giá offline.
+
+Bài hồi quy bộ phân công cho thấy một tác vụ backend chưa chỉ định có thể dùng Claude đang rảnh sau khi giữ việc kiến trúc cho Gemini và frontend cho Astra. Một bài Shared Groups xác nhận profile Claude của chính người đã viết bản sửa không nhận review, dù profile đó có vai trò reviewer.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-full-handoff.json --full-handoff
+```
+
 ### Qwen review bản vá chức năng
 
 Phép đo dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ, temperature 0 và seed 7013. Sáu cặp chính và ba cặp bổ sung đều có một bản đúng và một bản lỗi. Script chạy input mẫu trên các hàm có sẵn để xác nhận đáp án, rồi gửi diff qua prompt và schema review của Sade. Model đọc diff. Shared Groups ghi verdict bằng hai chủ quyền mô phỏng và kiểm tra trạng thái tích hợp trong SQLite. Luồng Git thật được kiểm tra riêng trong các bài workspace.
@@ -169,7 +185,7 @@ node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-h
 
 ## Cấu hình dùng trong Shared Groups
 
-Dùng một lượt lập kế hoạch từ harness đã cấp quyền của người gửi. Schema yêu cầu nhiệm vụ, scope, phụ thuộc và điều kiện hoàn tất. Bộ điều phối quyết định quyền, hệ điều hành, số lượt và thứ tự thực thi. Mỗi thay đổi nhận một reviewer độc lập, ưu tiên vai trò review và dùng model nhỏ có reasoning cao khi catalog của tài khoản hỗ trợ. Có thể xác nhận cấu hình của phiên từ model và reasoning hiển thị trên desktop. Kết quả phân loại Qwen 1.7B hiện phù hợp để tiếp tục đánh giá offline.
+Dùng một lượt lập kế hoạch từ harness đã cấp quyền của người gửi. Schema yêu cầu nhiệm vụ, scope, phụ thuộc và điều kiện hoàn tất. Bộ điều phối quyết định quyền, hệ điều hành, số lượt và thứ tự thực thi. Chính sách chọn model đọc loại tác vụ, mô tả và effort từ kế hoạch. Lượt lập kế hoạch ưu tiên reasoning cao trong catalog của tài khoản. Tác vụ thường có thể dùng reasoning trung bình, và review thường ưu tiên model nhỏ hỗ trợ reasoning cao. Bài kiểm thử giao thức xác nhận ba lựa chọn này khi catalog cung cấp đủ mức. Có thể xem model và reasoning được chọn trên desktop. Qwen dùng để đánh giá offline.
 
 ## Huấn luyện Qwen trên máy
 
