@@ -156,7 +156,7 @@ test('Shared Sade accounts for named work and assigns a review outside the autho
       dependsOn: ['architecture'],
     }),
     task('backend', { effort: 8, dependsOn: ['architecture'] }),
-    task('review', { kind: 'review', dependsOn: ['architecture', 'backend'] }),
+    task('review', { kind: 'review', scope: ['src'], dependsOn: ['architecture', 'backend'] }),
   );
   const options = { preferSpecialists: true, ownerByMember };
   assert.deepEqual(
@@ -170,6 +170,48 @@ test('Shared Sade accounts for named work and assigns a review outside the autho
     ),
   };
   assert.throws(() => allocatePlan(selfReview, roster, options), /review their own work/);
+});
+
+test('Shared Sade excludes owners of overlapping writes through intermediate dependencies', () => {
+  const roster = [
+    member('a-writer', 'engineer'),
+    member('a-reviewer', 'reviewer'),
+    member('b-tester', 'researcher'),
+    member('c-reviewer', 'reviewer'),
+  ];
+  const ownerByMember = new Map([
+    ['a-writer', 'person-a'],
+    ['a-reviewer', 'person-a'],
+    ['b-tester', 'person-b'],
+    ['c-reviewer', 'person-c'],
+  ]);
+  const input = plan(
+    task('docs', { scope: ['docs'], preferredMemberId: 'c-reviewer' }),
+    task('backend', { scope: ['src/signup.ts'], preferredMemberId: 'a-writer' }),
+    task('test', {
+      kind: 'research',
+      scope: ['src/signup.ts'],
+      dependsOn: ['docs', 'backend'],
+      preferredMemberId: 'b-tester',
+    }),
+    task('audit', { kind: 'review', scope: ['src'], dependsOn: ['test'] }),
+  );
+  const options = { preferSpecialists: true, ownerByMember };
+  assert.equal(allocatePlan(input, roster, options).at(-1)?.memberId, 'c-reviewer');
+  const namedSelfReview = {
+    ...input,
+    tasks: input.tasks.map((item) =>
+      item.key === 'audit' ? { ...item, preferredMemberId: 'a-reviewer' } : item,
+    ),
+  };
+  assert.throws(() => allocatePlan(namedSelfReview, roster, options), /review their own work/);
+  const namedTester = {
+    ...input,
+    tasks: input.tasks.map((item) =>
+      item.key === 'audit' ? { ...item, preferredMemberId: 'b-tester' } : item,
+    ),
+  };
+  assert.equal(allocatePlan(namedTester, roster, options).at(-1)?.memberId, 'b-tester');
 });
 
 test('strict schemas bound size and reject agent-selected owners or malformed estimates', () => {

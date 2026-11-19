@@ -38,6 +38,7 @@ function fixture(
   providers: readonly [ProviderId, ProviderId] = ['gemini', 'codex'],
   options: {
     grantB?: boolean;
+    turnsA?: number;
     turnsB?: number;
     mac?: boolean;
     key?: string;
@@ -91,7 +92,7 @@ function fixture(
         platform: index && options.mac ? 'darwin' : 'win32',
         allowWrites: true,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
-        turns: index ? options.turnsB || 8 : 8,
+        turns: (index ? options.turnsB : options.turnsA) ?? 8,
       });
   }
   const poll = (
@@ -152,7 +153,8 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
   for (const item of cases) {
     const f = fixture(item.providers, {
       grantB: item.scenario !== 'no-access',
-      turnsB: item.scenario === 'budget' ? 1 : 8,
+      turnsA: item.grantedTurns[0],
+      turnsB: item.grantedTurns[1],
       mac: item.scenario === 'platform',
     });
     try {
@@ -283,6 +285,7 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
           const reviewer = f.poll(1).delivery!;
           assert.equal(reviewer.phase, 'review');
           if (plannedReview) assert.equal(reviewer.task?.key, 'peer-review');
+          assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', b).used, 1);
           assert.equal(f.view().sadeRuns[0].jobs.filter((job) => job.phase === 'review').length, 1);
           assert.equal(reviewer.review?.diff, patch.diff);
           assert.throws(
@@ -1792,6 +1795,66 @@ test('a planned review skips a different provider profile owned by the author', 
     f.store.close();
   }
 });
+
+for (const olderPlan of [false, true]) {
+  test(`Shared Sade ${olderPlan ? 'blocks an old self-review assignment' : 'allows an independent tester to review'} through an intermediate task`, () => {
+    const f = fixture();
+    try {
+      const runId = randomUUID();
+      const scope = ['src/signup.ts'];
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: runId,
+        content: 'Bếp làm phần đăng ký. Cho kiểm thử rồi review riêng phần code.',
+        sade: { projectKey: key },
+      });
+      const planner = f.poll(0).delivery!;
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Write the signup change, test it, then review the source.',
+          tasks: [
+            work('source', { kind: 'code', scope, preferredMemberId: f.grants[0] }),
+            work('test', { scope, dependsOn: ['source'], preferredMemberId: f.grants[1] }),
+            work('audit', { kind: 'review', scope: ['src'], dependsOn: ['test'] }),
+          ],
+        },
+      });
+      const persisted = f.store.get<SharedSadeRun>('sharedSadeRun', runId);
+      const audit = persisted.jobs.find((job) => job.task?.key === 'audit')!;
+      assert.equal(audit.grantId, f.grants[1]);
+      if (olderPlan) {
+        audit.grantId = f.grants[0];
+        f.store.put('sharedSadeRun', persisted);
+      }
+      const writer = f.poll(0).delivery!;
+      f.finish(0, writer.id, {
+        kind: 'unchanged',
+        revision: sha,
+        summary: 'Source already exists.',
+      });
+      const testing = f.poll(1).delivery!;
+      assert.equal(testing.task?.key, 'test');
+      f.finish(1, testing.id, { kind: 'done', summary: 'Read-only verification passed.' });
+      if (olderPlan) {
+        assert.equal(f.poll(0).delivery, undefined);
+        assert.match(f.view().sadeRuns[0].error || '', /did not write the files under review/);
+      } else {
+        const reviewing = f.poll(1).delivery!;
+        assert.equal(reviewing.id, audit.id);
+        assert.deepEqual(
+          reviewing.prerequisites.map((item) => item.revision),
+          [sha, undefined],
+        );
+        f.finish(1, reviewing.id, { kind: 'done', summary: 'Independent review finished.' });
+        assert.equal(f.view().sadeRuns[0].state, 'done');
+      }
+    } finally {
+      f.store.close();
+    }
+  });
+}
 
 test('a planned review checks existing files when the author has no diff', () => {
   const f = fixture(['gemini', 'codex'], { turnsB: 1 });
