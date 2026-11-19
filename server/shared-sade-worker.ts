@@ -29,6 +29,7 @@ import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
 import { parsePlanTask } from './workflow-plan.ts';
 import { reviewDigest } from './sade.ts';
+import { inspectMachineChecks } from './machine-checks.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 
 const sharedQuestionHint =
@@ -281,6 +282,15 @@ export class SharedSadeWorker {
       platform: permission.platform as PairedMachine['platform'],
       name: node.name,
     };
+  }
+  requiresMachine(jobId?: string) {
+    return !!jobId && !!this.receipt(jobId).machine;
+  }
+  assertCheckMachine(jobId: string, nodeId: string, grantId: string) {
+    this.assertCurrent(jobId);
+    const machine = this.receipt(jobId).machine;
+    if (machine?.nodeId !== nodeId || machine.grantId !== grantId)
+      throw new DomainError('The check requires its original Shared Groups machine grant.');
   }
   assertCurrent(jobId: string) {
     if (
@@ -886,6 +896,13 @@ export class SharedSadeWorker {
             const unchanged = !diff.files.length && !diff.diff.trim() && !diff.truncated;
             if (receipt.machine && !receipt.question && !receipt.machineRun)
               throw new DomainError('The paired machine has not returned a verification result.');
+            if (
+              unchanged &&
+              receipt.machine &&
+              !receipt.question &&
+              !(await inspectMachineChecks(this.host.store, task, true))?.passed
+            )
+              return;
             if (receipt.question || unchanged) {
               if (!unchanged)
                 throw new DomainError(

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { codexEnvironment } from './codex.ts';
 import { providerFileTool } from './provider-files.ts';
 import {
+  machineInput,
   applyRunnerFiles,
   exportRunnerFiles,
   validateRunnerFiles,
@@ -17,6 +18,8 @@ import {
 } from './runner-files.ts';
 import { createHash } from 'node:crypto';
 import { git } from './git.ts';
+import { machineSigningKey, signMachineResult } from './machine-signature.ts';
+import { machineCommand, evidenceHash, type MachineCommand } from './machine-checks.ts';
 import { redact } from './security.ts';
 
 export const executionGrantSchema = z
@@ -37,6 +40,12 @@ const commandSchema = z
     grantId: z.string().uuid(),
     projectId: z.string().uuid(),
     taskId: z.string().uuid(),
+    checkId: z.string().uuid().optional(),
+    baseCommit: z
+      .string()
+      .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+      .nullable()
+      .optional(),
     operation: z.enum([
       'sync',
       'read',
@@ -51,17 +60,6 @@ const commandSchema = z
       'snapshot-read',
     ]),
     args: z.record(z.string(), z.unknown()).default({}),
-  })
-  .strict();
-const runSchema = z
-  .object({
-    command: z
-      .string()
-      .min(1)
-      .max(1000)
-      .refine((value) => !/[\r\n\0]/.test(value)),
-    args: z.array(z.string().max(10000)).max(64).default([]),
-    timeoutMs: z.number().int().min(100).max(60000).default(30000),
   })
   .strict();
 const execute = promisify(execFile);
@@ -208,8 +206,15 @@ export class MachineExecutor {
           { cwd: root, readOnly: operation === 'read', scopes: ['.'] },
           () => current(operation === 'write'),
         );
-      const run = runSchema.parse(args);
-      return await this.run(commandId, root, run, () => current(true));
+      const run = machineCommand.parse(args);
+      return await this.run(
+        commandId,
+        values.checkId ?? commandId,
+        values.baseCommit ?? null,
+        root,
+        run,
+        () => current(true),
+      );
     } finally {
       this.busy.delete(taskId);
     }
@@ -336,8 +341,10 @@ export class MachineExecutor {
   }
   private async run(
     id: string,
+    checkId: string,
+    baseCommit: string | null,
     root: string,
-    input: z.infer<typeof runSchema>,
+    input: MachineCommand,
     assertCurrent: () => void,
   ) {
     assertCurrent();
@@ -348,6 +355,9 @@ export class MachineExecutor {
     env.HOME = home;
     env.USERPROFILE = home;
     // Full access is explicitly chosen by the host. cwd is not an OS sandbox.
+    const inputDigest = await machineInput(root);
+    assertCurrent();
+    const hashes = { stdout: createHash('sha256'), stderr: createHash('sha256') };
     const child = spawn(input.command === 'node' ? process.execPath : input.command, input.args, {
       cwd: root,
       env,
@@ -364,6 +374,7 @@ export class MachineExecutor {
     const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
     this.active.set(id, { child, closed, taskId: path.basename(root) });
     const capture = (kind: 'stdout' | 'stderr', chunk: Buffer) => {
+      hashes[kind].update(chunk);
       bytes += chunk.length;
       if (bytes > 128000) {
         exceeded = true;
@@ -386,7 +397,35 @@ export class MachineExecutor {
         child.once('close', resolve);
       });
       assertCurrent();
+      clearTimeout(timer);
+      const after = await machineInput(root);
+      assertCurrent();
+      const evidence = {
+        version: 1,
+        baseCommit,
+        runId: id,
+        checkId,
+        taskId: path.basename(root),
+        projectId: this.grant!.projectId,
+        grantId: this.grant!.id,
+        platform: process.platform,
+        arch: process.arch,
+        code,
+        timedOut,
+        outputTruncated: exceeded,
+        completedAt: new Date().toISOString(),
+        recipe: evidenceHash(input),
+        input: inputDigest,
+        after,
+        output: evidenceHash([hashes.stdout.digest('hex'), hashes.stderr.digest('hex')]),
+        release: os.release(),
+        runtime: process.version,
+      };
+      const proof = signMachineResult(await machineSigningKey(this.dataDir), evidence);
+      assertCurrent();
       return {
+        evidence,
+        proof,
         code,
         stdout: redact(stdout).slice(0, 20000),
         stderr: redact(stderr).slice(0, 20000),

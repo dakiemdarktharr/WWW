@@ -8,8 +8,9 @@ import { MachineExecutor, type ExecutionGrant } from '../server/machine-executio
 import { MachineAgent, runMachine } from '../server/runner-agent.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
+import { verifyMachineSignature } from '../server/machine-signature.ts';
 import { machineTool } from '../server/machine-tools.ts';
-import { git } from '../server/git.ts';
+import { createWorktree, git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
 import {
   machineChunkBytes,
@@ -413,5 +414,178 @@ test(
     );
     authorized = false;
     await assert.rejects(use('info'), /revoked/);
+  },
+);
+
+test(
+  'Reviews binds a real paired check to the exact patch, preserves failed attempts and requires a fresh pass to integrate',
+  { timeout: 45000 },
+  async (t) => {
+    const f = await fixture(t);
+    const store = new Store(path.join(f.root, 'check.db'));
+    const host = new Workspace(store, f.root, f.root);
+    f.cleanups.push(async () => {
+      await host.close();
+      store.close();
+    });
+    const repo = path.join(f.root, 'repo');
+    await mkdir(repo);
+    await git(repo, ['init', '-b', 'main']);
+    await git(repo, ['config', 'core.autocrlf', 'false']);
+    await writeFile(path.join(repo, 'value.txt'), 'base');
+    await git(repo, ['add', '.']);
+    await git(repo, [
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=t@example.org',
+      'commit',
+      '-m',
+      'base',
+    ]);
+    const permission = f.executor.grant!;
+    const project = store.put('project', {
+      id: permission.projectId,
+      name: 'Check fixture',
+      path: repo,
+      goal: '',
+      createdAt: new Date().toISOString(),
+    } satisfies Project);
+    const owner = host.autonomy.addAccount();
+    store.updateMember(owner.id, { status: 'ready', account: { type: 'chatgpt' } });
+    const task = store.addTask({
+      projectId: project.id,
+      title: 'Checked change',
+      kind: 'code',
+      scope: ['value.txt'],
+      description: '',
+      priority: 'medium',
+      dependsOn: [],
+      acceptance: '',
+      status: 'ready',
+    });
+    store.claim(task.id, owner.id);
+    const checkout = await createWorktree(repo, f.root, task.id);
+    store.updateTask(task.id, { ...checkout, status: 'review' });
+    const session = {
+      id: randomUUID(),
+      projectId: project.id,
+      taskId: task.id,
+      memberId: owner.id,
+      readOnly: false,
+    };
+    const node = host.runners.add('Fixture machine', 'computer', project.id);
+    await host.runners.exchange(node.id, {
+      epoch: host.runners.epoch,
+      ready: true,
+      busy: false,
+      version: 'fixture',
+      events: [],
+      execution: f.executor.metadata(),
+    });
+    let legacy = true;
+    t.mock.method(
+      host.runners,
+      'call',
+      async (_peer: unknown, command: { params: { operation: string } }) => {
+        const result = await f.executor.perform(randomUUID(), command.params);
+        if (legacy && command.params.operation === 'run')
+          return { code: 0, platform: process.platform };
+        return result;
+      },
+    );
+    const target = path.join(checkout.worktree, 'value.txt');
+    const guard = () => {};
+    async function use(operation: string, args: object = {}) {
+      return machineTool(
+        host,
+        session,
+        'machine_use',
+        { runnerId: node.id, operation, args },
+        guard,
+        true,
+      );
+    }
+    await writeFile(target, 'good v1');
+    await use('sync');
+    const recipe = {
+      command: 'node',
+      args: [
+        '-e',
+        "process.exit(require('fs').readFileSync('value.txt','utf8').startsWith('good') ? 0 : 1)",
+      ],
+    };
+    await assert.rejects(use('run', recipe), /Update the paired runner/);
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.attempts[0].status, 'unconfirmed');
+    await assert.rejects(host.accept(task.id), /passing paired-machine/);
+    legacy = false;
+    await use('run', recipe);
+    const check = (await host.reviewDiff(task.id)).machineChecks!;
+    assert.equal(check.passed, true);
+    const original = check.attempts.at(-1)!;
+    const manifest = host.machineCheckManifest(task.id, original.id);
+    verifyMachineSignature(manifest.evidence, manifest.proof, manifest.fingerprint);
+    assert.throws(
+      () =>
+        verifyMachineSignature(
+          { ...manifest.evidence, input: '0'.repeat(64) },
+          manifest.proof,
+          manifest.fingerprint,
+        ),
+      /signature/,
+    );
+    assert.throws(
+      () => verifyMachineSignature(manifest.evidence, manifest.proof, 'f'.repeat(64)),
+      /key/,
+    );
+    await writeFile(target, 'broken v2');
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.attempts.at(-1)?.status, 'stale');
+    await assert.rejects(host.accept(task.id), /passing paired-machine/);
+    assert.equal(await git(repo, ['rev-parse', 'HEAD']), checkout.baseCommit);
+    const failed = (await host.repeatMachineCheck(task.id, original.id)).machineChecks!;
+    assert.equal(failed.attempts.length, 3);
+    assert.equal(failed.attempts.at(-1)?.status, 'failed');
+    assert.equal(failed.attempts[0].current, false);
+    await use('run', { command: 'node', args: ['--version'] });
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.passed, false);
+    await assert.rejects(host.accept(task.id), /passing paired-machine/);
+    const second = (await host.reviewDiff(task.id)).machineChecks!.attempts.at(-1)!;
+    await writeFile(target, 'good v3');
+    await host.repeatMachineCheck(task.id, second.id);
+    const passed = (await host.repeatMachineCheck(task.id, original.id)).machineChecks!;
+    assert.equal(passed.passed, true);
+    assert.notEqual(passed.attempts.at(-1)?.input, original.input);
+    // An unrelated commit on the destination creates a merge tree the runner never saw.
+    await writeFile(path.join(repo, 'other.txt'), 'changed target');
+    await git(repo, ['add', 'other.txt']);
+    await git(repo, [
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=t@example.org',
+      'commit',
+      '-m',
+      'new target',
+    ]);
+    const newHead = await git(repo, ['rev-parse', 'HEAD']);
+    await assert.rejects(host.accept(task.id), /integration tree differs/);
+    assert.equal(await git(repo, ['rev-parse', 'HEAD']), newHead);
+    assert.equal(await readFile(path.join(repo, 'value.txt'), 'utf8'), 'base');
+    await git(checkout.worktree, [
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=t@example.org',
+      'merge',
+      '--no-edit',
+      newHead,
+    ]);
+    // Keep the task's diff relative to its updated base after the target has been incorporated.
+    store.updateTask(task.id, { baseCommit: newHead });
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.passed, false);
+    await host.repeatMachineCheck(task.id, original.id);
+    await host.repeatMachineCheck(task.id, second.id);
+    assert.equal((await host.accept(task.id)).status, 'done');
+    assert.equal(await readFile(path.join(repo, 'value.txt'), 'utf8'), 'good v3');
   },
 );

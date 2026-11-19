@@ -384,7 +384,29 @@ export interface LoginResult {
   verificationUrl?: string;
   userCode?: string;
 }
+export interface MachineCheckView {
+  id: string;
+  current: boolean;
+  status: 'passed' | 'stale' | 'failed' | 'unconfirmed';
+  runner: string;
+  platform: string;
+  arch: string;
+  command: string;
+  started: string;
+  finished?: string;
+  input?: string;
+  output?: string;
+  runId?: string;
+  recipe?: string;
+  release?: string;
+  runtime?: string;
+  code?: number | null;
+  timedOut?: boolean;
+  error?: string;
+  repeatable: boolean;
+}
 export interface TaskDiff {
+  machineChecks?: { passed: boolean; attempts: MachineCheckView[] };
   diff: string;
   files: string[];
   stat: string;

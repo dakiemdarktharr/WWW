@@ -21,6 +21,8 @@ import { CodexClient } from '../server/codex.ts';
 import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
+import { generateKeyPairSync } from 'node:crypto';
+import { signMachineResult } from '../server/machine-signature.ts';
 import { MachineExecutor } from '../server/machine-execution.ts';
 import { startCrossHostBridge } from './fixtures/shared-sade-cross-host.ts';
 
@@ -971,6 +973,7 @@ test(
         execution: { ...access, platform: pairedPlatform, arch: process.arch },
       });
     if (!live) await advertise();
+    const fixtureSigner = remoteWorker ? generateKeyPairSync('ed25519').privateKey : undefined;
     let simulateRequestedOS = false;
     const machineCall = remoteWorker
       ? t.mock.method(
@@ -983,6 +986,16 @@ test(
               /provider-private|accessToken|tokenHash|\.env\.local/,
             );
             const result = await remoteWorker.perform(randomUUID(), command.params);
+            if (simulateRequestedOS && 'evidence' in result && result.evidence) {
+              // The single-host fixture impersonates the remote OS; only the cross-host run uses a real Mac signer.
+              const evidence = { ...result.evidence, platform: pairedPlatform };
+              return {
+                ...result,
+                platform: pairedPlatform,
+                evidence,
+                proof: signMachineResult(fixtureSigner!, evidence),
+              };
+            }
             return simulateRequestedOS && 'platform' in result
               ? { ...result, platform: pairedPlatform }
               : result;

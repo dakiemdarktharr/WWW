@@ -1474,3 +1474,10 @@
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
+
+.machine-checks code {
+  overflow-wrap: anywhere;
+}
+.machine-checks details {
+  margin-block: 0.65rem;
+}

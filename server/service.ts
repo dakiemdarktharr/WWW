@@ -46,6 +46,8 @@ import { assertGroupMember, groupMembers, humanPresence, memberPresence } from '
 import { BrowserBridge } from './browser.ts';
 import { nativeProviderClient } from './providers.ts';
 import { providerFileTool } from './provider-files.ts';
+import { inspectMachineChecks, assertMachineChecks, type MachineCheck } from './machine-checks.ts';
+import { safeRunnerFile } from './runner-files.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 
@@ -1404,14 +1406,92 @@ export class Workspace {
     if (!task.worktree) return { diff: 'No worktree yet.', files: [], stat: '', truncated: false };
     return taskDiff(task.worktree, task.baseCommit || 'HEAD');
   }
+  assertMachineCheckAllowed(projectId: string) {
+    if (this.mergeBusy.has(projectId)) throw new DomainError('Integration is in progress.');
+  }
+  async reviewDiff(taskId: string) {
+    const task = this.store.get<Task>('task', taskId);
+    const [diff, machineChecks] = await Promise.all([
+      this.diff(taskId),
+      inspectMachineChecks(this.store, task, this.sharedSade.requiresMachine(task.sharedSadeJobId)),
+    ]);
+    return { ...diff, machineChecks };
+  }
+  machineCheckManifest(taskId: string, checkId: string) {
+    const row = this.store.get<MachineCheck>('machineCheck:' + taskId, checkId);
+    if (!row.evidence || !row.proof)
+      throw new DomainError('This attempt has no signed runner result.');
+    return {
+      evidence: row.evidence,
+      proof: row.proof,
+      runnerId: row.runnerId,
+      fingerprint: this.store.get<{ fingerprint: string }>('machineCheckSigner', row.runnerId)
+        .fingerprint,
+    };
+  }
+  private checkingTasks = new Set<string>();
+  async repeatMachineCheck(taskId: string, checkId: string) {
+    if (this.checkingTasks.has(taskId)) throw new DomainError('A paired check is already running.');
+    const task = this.store.get<Task>('task', taskId);
+    const row = this.store.get<MachineCheck>('machineCheck:' + taskId, checkId);
+    const lease = this.store.lease(taskId);
+    if (!row.repeat || !task.assignedTo || !lease || lease.orphaned)
+      throw new DomainError('Resume the owner and run the check on a current task lease.');
+    const guard = () => {
+      this.assertMachineCheckAllowed(task.projectId);
+      const current = this.store.get<Task>('task', task.id);
+      const held = this.store.lease(task.id);
+      if (
+        current.status !== 'review' ||
+        !held ||
+        held.orphaned ||
+        held.token !== lease.token ||
+        current.assignedTo !== task.assignedTo
+      )
+        throw new DomainError('This task is no longer under review by the same owner.');
+      if (task.sharedSadeJobId)
+        this.sharedSade.assertCheckMachine(task.sharedSadeJobId, row.runnerId, row.grantId);
+      if (this.runners.assertReady(row.runnerId).execution?.id !== row.grantId)
+        throw new DomainError('The original paired machine grant is no longer active.');
+    };
+    guard();
+    const session = {
+      id: task.sessionId || task.id,
+      taskId,
+      projectId: task.projectId,
+      memberId: task.assignedTo,
+      readOnly: false,
+    };
+    this.checkingTasks.add(taskId);
+    try {
+      for (const operation of ['sync', 'run'])
+        await machineTool(
+          this,
+          session,
+          'machine_use',
+          {
+            runnerId: row.runnerId,
+            operation,
+            args: operation === 'run' ? row.repeat : {},
+          },
+          guard,
+          true,
+        );
+      return await this.reviewDiff(taskId);
+    } finally {
+      this.checkingTasks.delete(taskId);
+    }
+  }
   async accept(taskId: string) {
     const task = this.store.get<Task>('task', taskId);
     if (task.status !== 'review' || !task.worktree || !task.branch)
       throw new DomainError('Only a completed task in review can be integrated.');
-    if (this.mergeBusy.has(task.projectId))
-      throw new DomainError('Another integration is in progress.');
+    if (this.mergeBusy.has(task.projectId) || this.checkingTasks.has(taskId))
+      throw new DomainError('Another check or integration is in progress.');
     this.mergeBusy.add(task.projectId);
     try {
+      const required = this.sharedSade.requiresMachine(task.sharedSadeJobId);
+      const checked = await assertMachineChecks(this.store, task, required);
       const verifyApprovedSource = await this.aegis.consumeMerge(taskId);
       const project = this.store.get<Project>('project', task.projectId);
       const inherited = new Set(
@@ -1421,6 +1501,7 @@ export class Workspace {
         diff: Awaited<ReturnType<typeof taskDiff>>,
         context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
       ) => {
+        if (checked) diff.files.forEach(safeRunnerFile);
         await verifyApprovedSource(diff, context || { root: task.worktree!, phase: 'preview' });
         const outside = diff.files.filter(
           (file) =>
@@ -1451,6 +1532,11 @@ export class Workspace {
         task.branch,
         task.title,
         {
+          verifyMachineInput: checked
+            ? async () => {
+                await assertMachineChecks(this.store, task, true);
+              }
+            : undefined,
           baseCommit: task.baseCommit || undefined,
           ...(task.sharedSadeJobId
             ? {

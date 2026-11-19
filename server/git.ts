@@ -352,6 +352,7 @@ export async function stageReviewedTree(
 export interface IntegrationOptions {
   baseCommit?: string;
   skipAlreadyPresent?: boolean;
+  verifyMachineInput?: () => Promise<void>;
   verifyReview?: (diff: TaskDiff) => Promise<void>;
   validateDiff?: (
     diff: TaskDiff,
@@ -387,7 +388,23 @@ export async function integrate(
     throw new DomainError('The worktree branch changed. Inspect it before integrating.');
   const baseCommit =
     options.baseCommit || (await git(worktree, ['merge-base', 'HEAD', startingHead]));
-  const reviewedTree = await stageReviewedTree(worktree, baseCommit, options.verifyReview);
+  let reviewedTree = await stageReviewedTree(worktree, baseCommit, options.verifyReview);
+  if (options.verifyMachineInput) {
+    reviewedTree ??= await git(worktree, ['write-tree']);
+    await options.verifyMachineInput();
+    await git(worktree, ['diff', '--quiet']);
+    if (
+      (await git(worktree, ['write-tree'])) !== reviewedTree ||
+      (await git(worktree, ['ls-files', '--others', '--exclude-standard', '-z']))
+    )
+      throw new DomainError('The staged patch changed during paired-machine verification.');
+  }
+  const checkTargetTree = (tree: string) => {
+    if (options.verifyMachineInput && tree !== reviewedTree)
+      throw new DomainError(
+        'The integration tree differs from the paired-machine check. Update the worktree to the target branch and rerun the check.',
+      );
+  };
   if (options.skipAlreadyPresent && reviewedTree) {
     const workerHead = await git(worktree, ['rev-parse', 'HEAD']);
     // Include inherited prerequisite changes, even though the worker's review omits them.
@@ -415,6 +432,8 @@ export async function integrate(
         throw new DomainError('The reviewed worktree changed while checking the project branch.');
       await git(worktree, ['diff', '--quiet']);
       await assertProjectUnchanged();
+      if (options.verifyMachineInput)
+        checkTargetTree(await git(repo, ['rev-parse', 'HEAD^{tree}']));
       return { revision: startingHead, alreadyPresent: true };
     }
   }
@@ -460,6 +479,7 @@ export async function integrate(
         phase: 'staged',
       });
     const stagedTree = reviewedTree ? await git(repo, ['write-tree']) : undefined;
+    if (stagedTree) checkTargetTree(stagedTree);
     const stagedChanges = await git(repo, ['diff', '--cached', '--name-only']);
     if (options.skipAlreadyPresent && reviewedTree && !stagedChanges)
       throw new DomainError(

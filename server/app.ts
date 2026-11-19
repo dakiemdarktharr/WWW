@@ -1085,7 +1085,19 @@ export async function buildApp(
     workspace.workflows.cancel(params(request)),
   );
   app.post('/api/tasks/:id/stop', async (request) => workspace.stop(params(request)));
-  app.get('/api/tasks/:id/diff', async (request) => workspace.diff(params(request)));
+  app.get('/api/tasks/:id/checks/:checkId', async (request, reply) => {
+    const { id, checkId } = z
+      .object({ id: z.string().uuid(), checkId: z.string().uuid() })
+      .parse(request.params);
+    return reply
+      .header('Content-Disposition', 'attachment; filename="paired-check.json"')
+      .send(workspace.machineCheckManifest(id, checkId));
+  });
+  app.post('/api/tasks/:id/machine-check', async (request) => {
+    const { checkId } = z.object({ checkId: z.string().uuid() }).strict().parse(request.body);
+    return workspace.repeatMachineCheck(params(request), checkId);
+  });
+  app.get('/api/tasks/:id/diff', async (request) => workspace.reviewDiff(params(request)));
   app.post('/api/tasks/:id/accept', async (request) => workspace.accept(params(request)));
   app.post('/api/tasks/:id/sade-review', async (request) => workspace.sade.retry(params(request)));
   app.post('/api/tasks/:id/revise', async (request) => {

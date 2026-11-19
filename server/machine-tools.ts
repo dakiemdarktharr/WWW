@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DynamicTool } from './codex.ts';
 import type { Workspace } from './service.ts';
 import type { CodexSession, Task } from '../shared/types.ts';
+import { beginMachineCheck, machineCommand, receiveMachineResult } from './machine-checks.ts';
+import { redact } from './security.ts';
 import { DomainError } from './store.ts';
 import {
   exportRunnerFiles,
@@ -117,10 +119,11 @@ export async function machineTool(
   name: string,
   input: unknown,
   guard: () => void,
+  humanReview = false,
 ) {
   const current = () => {
     guard();
-    host.quota.assertCanRun(session.memberId, session.projectId, session.id);
+    if (!humanReview) host.quota.assertCanRun(session.memberId, session.projectId, session.id);
   };
   current();
   if (name === 'machine_list') {
@@ -205,7 +208,7 @@ export async function machineTool(
       }
     }, 250);
     watchdog.unref();
-    const call: ExecuteMachine = async (operation, args) => {
+    const call = async (operation: string, args: Record<string, unknown>, checkId?: string) => {
       current();
       const result = await host.runners.call(
         {
@@ -223,6 +226,7 @@ export async function machineTool(
             projectId: session.projectId,
             taskId: task.id,
             operation,
+            ...(checkId ? { checkId, baseCommit: task.baseCommit } : {}),
             args,
           },
         },
@@ -272,6 +276,33 @@ export async function machineTool(
         platform: grant.platform,
         arch: grant.arch,
       };
+    }
+    if (values.operation === 'run') {
+      host.assertMachineCheckAllowed(task.projectId);
+      const recipe = machineCommand.parse(values.args);
+      const check = beginMachineCheck(host.store, task, node, grant, recipe);
+      const kind = 'machineCheck:' + task.id;
+      try {
+        const result = await call('run', recipe, check.id);
+        if (!result?.evidence || !result.proof)
+          throw new DomainError('Update the paired runner to record a verified check.');
+        receiveMachineResult(host.store, task, check, recipe, result);
+        return {
+          ...result,
+          code: result.evidence.code,
+          platform: result.evidence.platform,
+          arch: result.evidence.arch,
+          timedOut: result.evidence.timedOut,
+          outputTruncated: result.evidence.outputTruncated,
+        };
+      } catch (error) {
+        host.store.put(kind, {
+          ...check,
+          finished: new Date().toISOString(),
+          error: redact((error as Error).message).slice(0, 1000),
+        });
+        throw error;
+      }
     }
     const result = await call(values.operation, values.args);
     host.log(

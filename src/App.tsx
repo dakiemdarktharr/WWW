@@ -350,6 +350,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [taskSearch, setTaskSearch] = useState('');
   const [detailMember, setDetailMember] = useState('');
   const [diff, setDiff] = useState<TaskDiff | null>(null);
+  const [reviewRefresh, setReviewRefresh] = useState(0);
   const [diffError, setDiffError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [quickSearch, setQuickSearch] = useState('');
@@ -461,11 +462,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     setDiffError('');
     setDetailMember('');
     const task = state?.tasks.find((t) => t.id === modal.taskId);
-    if (task?.worktree)
-      api<TaskDiff>(`/tasks/${task.id}/diff`)
-        .then(setDiff)
-        .catch((err) => setDiffError(err.message));
-  }, [modal?.type === 'detail' ? modal.taskId : null]);
+    if (!task?.worktree) return;
+    let closed = false;
+
+    const load = async () => {
+      try {
+        const next = await api<TaskDiff>(`/tasks/${task.id}/diff`);
+        if (closed) return;
+        setDiff(next);
+        setDiffError('');
+      } catch (err) {
+        if (!closed) setDiffError((err as Error).message);
+      }
+    };
+    void load();
+    return () => {
+      closed = true;
+    };
+  }, [modal?.type === 'detail' ? modal.taskId : null, reviewRefresh]);
 
   async function perform<T>(
     key: string,
@@ -623,6 +637,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       task.sharedSadeJobId ? 'Task complete.' : 'Changes integrated. Task complete.',
     );
     if (result) closeModal();
+    else setReviewRefresh((n) => n + 1);
   }
 
   const pageTitle =
@@ -1956,6 +1971,107 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   </div>
                 ) : (
                   <>
+                    {diff.machineChecks && (
+                      <section
+                        aria-label="Paired-machine checks"
+                        className="detail-section machine-checks"
+                      >
+                        <h3>Paired-machine checks</h3>
+                        <Button disabled={pending} onClick={() => setReviewRefresh((n) => n + 1)}>
+                          Refresh checks
+                        </Button>
+                        {!diff.machineChecks.attempts.length && (
+                          <p>This task needs a check from an updated paired runner.</p>
+                        )}
+                        {diff.machineChecks.attempts
+                          .slice()
+                          .reverse()
+                          .map((check) => (
+                            <details key={check.id} open={check.current || undefined}>
+                              <summary>
+                                {check.runner} · {check.platform}/{check.arch} · {check.status}
+                                {!check.current && ' (previous attempt)'}
+                              </summary>
+                              <p>
+                                <code>{check.command}</code>
+                              </p>
+                              <p>
+                                {new Date(check.started).toLocaleString()}
+                                {check.timedOut
+                                  ? ' · timed out'
+                                  : check.code != null
+                                    ? ` · exit ${check.code}`
+                                    : ''}
+                              </p>
+                              {check.input && (
+                                <p>
+                                  Tested input <code>{check.input}</code>
+                                </p>
+                              )}
+                              {check.output && (
+                                <p>
+                                  Output digest <code>{check.output}</code>
+                                </p>
+                              )}
+                              {check.runId && (
+                                <Button
+                                  onClick={async () => {
+                                    try {
+                                      const manifest = await api(
+                                        '/tasks/' + selectedTask.id + '/checks/' + check.id,
+                                      );
+                                      const url = URL.createObjectURL(
+                                        new Blob([JSON.stringify(manifest, null, 2)], {
+                                          type: 'application/json',
+                                        }),
+                                      );
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = 'paired-check-' + check.id + '.json';
+                                      a.click();
+                                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                                    } catch (error) {
+                                      setToast({ text: (error as Error).message, error: true });
+                                    }
+                                  }}
+                                >
+                                  Export signed result
+                                </Button>
+                              )}
+                              {check.release && (
+                                <p>
+                                  {check.platform} {check.release} · runner Node {check.runtime}
+                                </p>
+                              )}
+                              {check.error && <p className="error-text">{check.error}</p>}
+                              {check.current &&
+                                check.repeatable &&
+                                selectedTask.status === 'review' && (
+                                  <Button
+                                    disabled={pending}
+                                    onClick={async () => {
+                                      if (
+                                        !window.confirm(
+                                          `Sync this worktree to ${check.runner} and run ${check.command} again?`,
+                                        )
+                                      )
+                                        return;
+                                      await perform(
+                                        'machine-check',
+                                        `/tasks/${selectedTask.id}/machine-check`,
+                                        { checkId: check.id },
+                                        'Paired-machine check finished.',
+                                      );
+                                      setReviewRefresh((n) => n + 1);
+                                    }}
+                                  >
+                                    Rerun on {check.runner}
+                                  </Button>
+                                )}
+                            </details>
+                          ))}
+                      </section>
+                    )}
                     <pre className="diff-stat">{diff.stat || 'No file changes yet.'}</pre>
                     {diff.diff && (
                       <pre className="diff-view">
@@ -2107,7 +2223,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                     </Button>
                     <Button
                       primary
-                      disabled={pending || !diff || !!diffError}
+                      disabled={
+                        pending || !diff || !!diffError || diff.machineChecks?.passed === false
+                      }
                       onClick={() => void acceptTask(selectedTask)}
                     >
                       <GitMerge size={15} /> Accept & integrate

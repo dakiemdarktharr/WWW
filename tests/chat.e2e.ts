@@ -260,6 +260,67 @@ try {
     fullPage: true,
     animations: 'disabled',
   });
+  // Exercise Reviews controls with a deterministic response. The runner/Git test covers the real receipt.
+  const reviewed = store.addTask({
+    projectId: project.id,
+    title: 'Paired check UI',
+    kind: 'code',
+    scope: ['value.txt'],
+    description: '',
+    priority: 'medium',
+    dependsOn: [],
+    acceptance: '',
+  });
+  store.updateTask(reviewed.id, { worktree: root, status: 'review' });
+  let status = 'stale';
+  const checkId = randomUUID();
+  await page.route('**/api/tasks/' + reviewed.id + '/diff', (route) =>
+    route.fulfill({
+      json: {
+        stat: '1 file',
+        files: ['value.txt'],
+        diff: '',
+        truncated: false,
+        machineChecks: {
+          passed: status === 'passed',
+          attempts: [
+            {
+              id: checkId,
+              current: true,
+              status,
+              runner: 'Test Mac',
+              platform: 'darwin',
+              arch: 'arm64',
+              command: 'node test.cjs',
+              started: new Date().toISOString(),
+              code: 0,
+              input: 'a'.repeat(64),
+              repeatable: true,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await page.route('**/api/tasks/' + reviewed.id + '/machine-check', (route) => {
+    assert.deepEqual(route.request().postDataJSON(), { checkId });
+    status = 'passed';
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.getByRole('button', { name: 'Reviews', exact: true }).click();
+  await page
+    .locator('.review-card')
+    .filter({ hasText: 'Paired check UI' })
+    .getByRole('button')
+    .click();
+  const checks = page.getByRole('region', { name: 'Paired-machine checks' });
+  await expect(checks).toContainText('darwin/arm64 · stale');
+  const accept = page.getByRole('button', { name: 'Accept & integrate' });
+  await expect(accept).toBeDisabled();
+  page.once('dialog', (dialog) => dialog.accept());
+  await checks.getByRole('button', { name: 'Rerun on Test Mac' }).click();
+  await expect(checks).toContainText('darwin/arm64 · passed');
+  await expect(accept).toBeEnabled();
   assert.deepEqual(errors, []);
   console.log(
     'Chat UI passed: mention keyboard, quota allowance, pending prompt, activity, auto Sessions, live model settings, reaction, reply, search; no model turns.',

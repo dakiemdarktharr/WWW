@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { lstat, readFile, mkdir, writeFile, unlink } from 'node:fs/promises';
+import { lstat, readFile, chmod, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { git } from './git.ts';
 import { inside, normalizeScope, scopesOverlap } from './security.ts';
@@ -10,6 +10,7 @@ export interface RunnerFile {
   path: string;
   data: string;
   hash: string;
+  executable?: true;
 }
 type SnapshotLimits = { file: number; total: number; scanCredentials?: boolean };
 const inlineLimits: SnapshotLimits = { file: 512 * 1024, total: 2 * 1024 * 1024 };
@@ -33,9 +34,15 @@ function checkCredentials(data: Buffer) {
     );
 }
 export function snapshotDigest(files: RunnerFile[]) {
-  return digest(Buffer.from(JSON.stringify(files.map(({ path, hash }) => [path, hash]))));
+  return digest(
+    Buffer.from(
+      JSON.stringify(
+        files.map(({ path, hash, executable }) => (executable ? [path, hash, 1] : [path, hash])),
+      ),
+    ),
+  );
 }
-function safeFile(name: string) {
+export function safeRunnerFile(name: string) {
   if (
     isPrivateCredentialPath(name) ||
     name.includes('\\') ||
@@ -70,25 +77,37 @@ async function regularParents(root: string, name: string) {
     current = path.dirname(current);
   }
 }
-export async function exportRunnerFiles(
+async function readRunnerFiles(
   root: string,
-  limits = inlineLimits,
+  limits: SnapshotLimits,
+  includeData: boolean,
 ): Promise<RunnerFile[]> {
   const names = (await git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']))
     .split('\0')
     .filter(Boolean);
+  // Windows exposes executable Git modes through the index, not the filesystem.
+  const index = process.platform === 'win32' ? await git(root, ['ls-files', '--stage', '-z']) : '';
+  const executables = new Set(
+    index
+      .split('\0')
+      .filter((line) => line.startsWith('100755 '))
+      .map((line) => line.slice(line.indexOf('\t') + 1)),
+  );
   let bytes = 0;
   const output: RunnerFile[] = [];
   for (const name of [...new Set(names)].sort()) {
     try {
-      safeFile(name);
+      safeRunnerFile(name);
     } catch {
       continue;
     }
     const location = path.resolve(root, name);
     if (!inside(root, location)) throw new DomainError('Runner path escaped repository.');
     await regularParents(root, name);
-    const stat = await lstat(location).catch(() => null);
+    const stat = await lstat(location).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
     if (!stat) continue;
     if (!stat.isFile() || stat.isSymbolicLink())
       throw new DomainError('Remote execution requires regular repository files.');
@@ -103,9 +122,21 @@ export async function exportRunnerFiles(
       throw new DomainError(
         `Remote source snapshot exceeds ${limits.total / 1024 ** 2} MiB or 2,000 files.`,
       );
-    output.push({ path: name, data: data.toString('base64'), hash: digest(data) });
+    const executable = process.platform === 'win32' ? executables.has(name) : !!(stat.mode & 0o100);
+    output.push({
+      path: name,
+      data: includeData ? data.toString('base64') : '',
+      hash: digest(data),
+      ...(executable ? { executable: true } : {}),
+    });
   }
   return output;
+}
+export function exportRunnerFiles(root: string, limits = inlineLimits) {
+  return readRunnerFiles(root, limits, true);
+}
+export async function machineInput(root: string) {
+  return snapshotDigest(await readRunnerFiles(root, machineSnapshotLimits, false));
 }
 export function validateRunnerFiles(raw: unknown, limits = inlineLimits): RunnerFile[] {
   if (!Array.isArray(raw) || raw.length > 2000) throw new DomainError('Invalid runner snapshot.');
@@ -117,10 +148,11 @@ export function validateRunnerFiles(raw: unknown, limits = inlineLimits): Runner
       typeof file.path !== 'string' ||
       typeof file.data !== 'string' ||
       typeof file.hash !== 'string' ||
+      (file.executable !== undefined && file.executable !== true) ||
       !/^[a-f0-9]{64}$/.test(file.hash)
     )
       throw new DomainError('Invalid runner file.');
-    safeFile(file.path);
+    safeRunnerFile(file.path);
     const key = file.path.toLowerCase();
     if (names.has(key)) throw new DomainError('Duplicate runner path.');
     names.add(key);
@@ -134,7 +166,12 @@ export function validateRunnerFiles(raw: unknown, limits = inlineLimits): Runner
     )
       throw new DomainError('Runner snapshot integrity check failed.');
     if (limits.scanCredentials) checkCredentials(data);
-    return { path: file.path, data: file.data, hash: file.hash };
+    return {
+      path: file.path,
+      data: file.data,
+      hash: file.hash,
+      ...(file.executable ? { executable: true as const } : {}),
+    };
   });
 }
 export async function applyRunnerFiles(
@@ -149,10 +186,12 @@ export async function applyRunnerFiles(
   const initial = new Map(before.map((file) => [file.path, file]));
   const final = new Map(after.map((file) => [file.path, file]));
   const changes = [...new Set([...initial.keys(), ...final.keys()])].filter(
-    (name) => initial.get(name)?.hash !== final.get(name)?.hash,
+    (name) =>
+      initial.get(name)?.hash !== final.get(name)?.hash ||
+      initial.get(name)?.executable !== final.get(name)?.executable,
   );
   for (const name of changes) {
-    safeFile(name);
+    safeRunnerFile(name);
     if (!scopesOverlap([name], scopes))
       throw new DomainError(`Remote change outside its owned scope: ${name}`);
     await regularParents(root, name);
@@ -173,6 +212,22 @@ export async function applyRunnerFiles(
       await mkdir(path.dirname(target), { recursive: true });
       guard();
       await writeFile(target, Buffer.from(file.data, 'base64'));
+      if (!!file.executable !== !!initial.get(name)?.executable) {
+        guard();
+        if (process.platform === 'win32')
+          await git(root, [
+            '--literal-pathspecs',
+            'update-index',
+            '--add',
+            file.executable ? '--chmod=+x' : '--chmod=-x',
+            '--',
+            name,
+          ]);
+        else {
+          const mode = (await lstat(target)).mode;
+          await chmod(target, file.executable ? mode | 0o100 : mode & ~0o111);
+        }
+      }
     } else await unlink(target);
   }
 }
