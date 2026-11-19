@@ -117,10 +117,10 @@ function fixture(
       },
       deviceId,
     ) as {
+      supportsReviewRevision?: true;
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
-      supportsReviewRevision?: true;
       reviews: { jobId: string; digest: string }[];
       updates?: { jobId: string; notes: { sequence: number; text: string }[] }[];
     };

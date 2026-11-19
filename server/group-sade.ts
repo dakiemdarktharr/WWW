@@ -407,7 +407,13 @@ export class GroupSade {
       )
       .all(group.id)
       .reverse()
-      .map((row) => JSON.parse(String(row.data)) as Run);
+      .map((row) => {
+        const run = JSON.parse(String(row.data)) as Run;
+        return {
+          ...run,
+          jobs: run.jobs.map(({ canReviseReview, reviewRevision, rejectedDigest, ...job }) => job),
+        };
+      });
   }
   private usable(grant: Grant, group: SharedGroup, checkBudget = true) {
     let device;
@@ -448,9 +454,6 @@ export class GroupSade {
             change,
             reviewOf,
             reviewGrantId,
-            canReviseReview,
-            reviewRevision,
-            rejectedDigest,
             reviewedDigest,
             clarification,
             portable,
@@ -1037,11 +1040,11 @@ export class GroupSade {
       if (touched) this.store.put('sharedSadeRun', run);
     }
     return {
+      supportsReviewRevision: true as const,
       active,
       delivery,
       reviews,
       revisionHandoff: true as const,
-      supportsReviewRevision: true as const,
       ...(command.taskUpdates ? { updates } : {}),
     };
   }
