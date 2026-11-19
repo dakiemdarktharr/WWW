@@ -222,6 +222,12 @@ Các kế hoạch đã lưu ở pilot thứ hai được phát lại sau sửa h
 
 Lượt corpus đầu dùng Qwen thật và đúng 747/1.000 câu, với 0 lỗi gọi model. Độ trễ CPU là p50 3,02 giây và p95 5,02 giây. Theo cách nhắn, điểm là 159/200 casual, 145/200 không dấu, 154/200 người mới, 153/200 kỹ thuật và 136/200 song ngữ. Ca Mac đạt 200/200 nếu gộp cả thiếu máy. Ca review đạt 73/200. Ca về quota đạt 7/50. [Dữ liệu corpus với prompt ban đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44542052380)
 
+Trên cùng 1.000 ID và cùng digest model, prompt có thứ tự ưu tiên đạt 557/1.000 và 0 lỗi gọi model. Prompt này sửa được 69 ca mà prompt ban đầu đoán sai và làm sai thêm 259 ca mà prompt ban đầu đoán đúng. Nó nhận nhầm 311 yêu cầu làm việc thành tin chat, so với 10 ca ở prompt ban đầu. Điểm review tăng từ 73/200 lên 99/200, còn điểm Mac giảm từ 200/200 xuống 143/200. Độ trễ quan sát trên các runner CPU là p50 4,60 giây và p95 5,47 giây. [Dữ liệu corpus với prompt có thứ tự ưu tiên](https://github.com/dakiemdarktharr/WWW/actions/runs/44544731216)
+
+Thử riêng prompt lập kế hoạch có thêm ràng buộc tăng điểm quota từ 1/5 lên 3/5. Câu casual và tiếng Anh kỹ thuật giữ tác vụ chỉ đọc và phương án dự phòng. Câu không dấu vẫn tạo hai tác vụ. Câu giao Sade tự chọn lại gắn Claude cố định. Ca Mac không dấu gửi một việc sửa đúng hệ điều hành và thêm một review người gửi chưa yêu cầu, khiến bước giao việc bị chặn. Prompt thử vẫn dùng offline. [Lượt thử prompt lập kế hoạch](https://github.com/dakiemdarktharr/WWW/actions/runs/44546215018)
+
+Cấu hình dùng trong Shared Groups tiếp tục giao lượt lập kế hoạch có cấu trúc cho harness đã được cấp quyền, ưu tiên reasoning cao theo catalog. Bộ điều phối xác thực quyền, scope, quota, thứ tự, người dự phòng và review độc lập trước khi thi hành. Dữ liệu Qwen 4B phù hợp để chấm offline. Tỉ lệ nhận nhầm chat và tác vụ ghi sai ý định khiến model này chưa phù hợp để quyết định giao việc tự động.
+
 ### Qwen lập kế hoạch A–D qua công cụ thật
 
 Dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ và 18 tin tổng hợp. Mỗi tình huống có ba cách nhắn thường, không dấu và kỹ thuật song ngữ. Model nhận prompt và schema của planner. Kế hoạch đi qua bộ kiểm tra của Shared Groups với grant thử nghiệm. Bài chấm đo đúng người, phạm vi file, dependency, số việc review và yêu cầu macOS. Phần thực thi provider, sửa code và quyền trên máy của người dùng được kiểm tra riêng.
