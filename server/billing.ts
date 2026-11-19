@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { CloudUser } from './cloud-auth.ts';
 import { DomainError, type Store } from './store.ts';
 import { DesktopIdentity } from './desktop-auth.ts';
+import { bankEntitlement } from './bank-checkout.ts';
 
 export const FUJI_CHAIN_ID = 43113;
 export const FUJI_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc';
@@ -100,8 +101,14 @@ function unixSeconds(value: number) {
   return Math.floor(value / 1000);
 }
 
+function latestEntitlement(store: Store, userId: string) {
+  const chain = store.lookup<Entitlement>('billingEntitlement', userId);
+  const bank = bankEntitlement(store, userId);
+  return bank && (!chain || bank.latestPaidAt >= Date.parse(chain.updatedAt)) ? bank : chain;
+}
+
 function tierFor(store: Store, userId: string, now = Date.now()): Tier {
-  const entitlement = store.lookup<Entitlement>('billingEntitlement', userId);
+  const entitlement = latestEntitlement(store, userId);
   return entitlement && entitlement.paidUntil > now ? entitlement.tier : 'free';
 }
 
@@ -261,7 +268,7 @@ export function registerBillingRoutes(
   app.get('/api/billing/summary', async (request) => {
     const user = await userFor(request);
     const binding = findBinding(user.id);
-    const entitlement = store.lookup<Entitlement>('billingEntitlement', user.id);
+    const entitlement = latestEntitlement(store, user.id);
     return {
       account: user,
       wallet: binding?.address || null,
@@ -277,7 +284,8 @@ export function registerBillingRoutes(
         tokenDecimals: 6,
         contractAddress: contractAddress || null,
         treasuryAddress,
-        available: await configured(),
+        available:
+          (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),
       },
     };
   });

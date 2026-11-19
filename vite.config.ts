@@ -13,6 +13,11 @@ const demoRoutes = new Set([
   '/api/auth/sign-up/email',
   '/api/auth/sign-out',
   '/api/billing/summary',
+  '/api/billing/bank/config',
+  '/api/billing/bank/order',
+  '/api/billing/bank/status',
+  '/api/billing/bank/simulate',
+  '/api/billing/bank/proof',
   '/api/billing/profiles',
   '/api/billing/profiles/select',
   '/api/billing/wallet/unlock',
@@ -24,6 +29,7 @@ const demoRoutes = new Set([
 
 export default defineConfig({
   plugins: [react()],
+  define: { 'import.meta.env.KIVUNO_BANK_DEMO': JSON.stringify(localCloudDemo) },
   server: {
     host: '127.0.0.1',
     port: 5173,

@@ -13,6 +13,7 @@ import { Contract, Signature, keccak256, getAddress, hexlify, randomBytes } from
 import { api, ApiError, resetApiSession } from './api';
 import { BillingWallet, balance, fuji, legacySigner, type WalletMode } from './BillingWallet';
 import { walletForAccount } from './embedded-wallet';
+import { BankCheckout } from './BankCheckout';
 import './billing.css';
 
 type Plan = 'plus' | 'max';
@@ -84,10 +85,9 @@ const EIP3009_TYPES = {
     { name: 'nonce', type: 'bytes32' },
   ],
 };
-const planFacts: Record<Plan, { vnd: string; usdc: string; cap: string; people: string }> = {
-  plus: { vnd: '50.000', usdc: '2', cap: '10 profile', people: '10 người/group' },
+const planFacts: Record<Plan, { usdc: string; cap: string; people: string }> = {
+  plus: { usdc: '2', cap: '10 profile', people: '10 người/group' },
   max: {
-    vnd: '150.000',
     usdc: '6',
     cap: 'Không giới hạn profile',
     people: 'Không giới hạn người/group',
@@ -183,7 +183,8 @@ function rejected(error: unknown) {
   return inspect(error, 0);
 }
 
-export default function Billing() {
+export default function Billing({ rail = 'fuji' }: { rail?: 'bank' | 'fuji' }) {
+  const bank = rail === 'bank';
   const [user, setUser] = useState<AuthUser | null>(null);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [billingProfiles, setBillingProfiles] = useState<BillingProfiles | null>(null);
@@ -217,7 +218,9 @@ export default function Billing() {
   }, []);
 
   const refreshSummary = useCallback(async () => {
-    const value = await api<BillingSummary>('/billing/summary');
+    const value = await api<BillingSummary>(
+      bank ? '/billing/summary?rail=bank' : '/billing/summary',
+    );
     setSummary(value);
     if (value.account) setUser(value.account);
     try {
@@ -226,7 +229,7 @@ export default function Billing() {
       // The billing summary remains useful when profile records are temporarily unavailable.
     }
     return value;
-  }, []);
+  }, [bank]);
 
   useEffect(() => {
     let mounted = true;
@@ -259,7 +262,7 @@ export default function Billing() {
     setPending(false);
     setIntentId('');
     setTxHash('');
-    if (!user?.id) return;
+    if (bank || !user?.id) return;
     try {
       const saved = JSON.parse(localStorage.getItem(pendingKey(user.id)) || 'null');
       const validHash = /^0x[0-9a-f]{64}$/i;
@@ -271,7 +274,7 @@ export default function Billing() {
     } catch {
       /* The browser may have disabled local storage. */
     }
-  }, [user?.id]);
+  }, [user?.id, bank]);
 
   const beginAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -624,8 +627,9 @@ export default function Billing() {
           </span>
           <h1 id="billing-title">Chọn đúng không gian cho đội của bạn.</h1>
           <p>
-            Chọn gói dùng trong 30 ngày. Kiểm tra số tiền và xác nhận thanh toán bằng ví Kivuno trên
-            Avalanche Fuji.
+            {bank
+              ? 'Chọn gói 30 ngày để nhận mã QR và thông tin chuyển khoản. Bản demo sử dụng ngân hàng mô phỏng trên máy này.'
+              : 'Chọn gói 30 ngày và xác nhận thanh toán bằng test USDC trên Avalanche Fuji.'}
           </p>
           <div className="billing-current">
             <span className="billing-current-icon">
@@ -674,7 +678,11 @@ export default function Billing() {
               <div className="billing-panel-heading">
                 <span className="billing-step">Tài khoản Kivuno</span>
                 <h2>{authMode === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}</h2>
-                <p>Kivuno tạo ví thanh toán riêng khi bạn mở trang này sau khi đăng nhập.</p>
+                <p>
+                  {bank
+                    ? 'Đăng nhập để chọn gói và xem biên nhận chuyển khoản thử.'
+                    : 'Kivuno tạo ví thanh toán riêng sau khi bạn đăng nhập.'}
+                </p>
               </div>
               {authMode === 'signup' && (
                 <label className="billing-field">
@@ -761,49 +769,62 @@ export default function Billing() {
                 </button>
               </div>
 
-              {summary?.account?.id === user.id && (
-                <BillingWallet
-                  key={user.id}
-                  account={user.id}
-                  bound={boundWallet}
-                  token={config?.tokenAddress}
-                  busy={busy !== ''}
-                  onMode={setWalletMode}
-                  refresh={refreshSummary}
-                />
+              {bank && summary?.account?.id === user.id && (
+                <BankCheckout key={user.id} onPaid={refreshSummary} />
               )}
+              {bank && error && (
+                <p className="billing-alert" role="alert">
+                  {error}
+                </p>
+              )}
+              {!bank && (
+                <>
+                  {summary?.account?.id === user.id && (
+                    <BillingWallet
+                      key={user.id}
+                      account={user.id}
+                      bound={boundWallet}
+                      token={config?.tokenAddress}
+                      busy={busy !== ''}
+                      onMode={setWalletMode}
+                      refresh={refreshSummary}
+                    />
+                  )}
 
-              <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
-                {(['plus', 'max'] as Plan[]).map((plan) => {
-                  const selected = selectedPlan === plan;
-                  return (
-                    <button
-                      className={`billing-plan ${selected ? 'is-selected' : ''} ${plan === 'max' ? 'is-max' : ''}`}
-                      type="button"
-                      key={plan}
-                      aria-pressed={selected}
-                      onClick={() => setSelectedPlan(plan)}
-                      disabled={busy !== '' || !!preparedIntent}
-                    >
-                      <span className="billing-plan-radio" aria-hidden="true">
-                        {selected && <span />}
-                      </span>
-                      <span className="billing-plan-name">{plan === 'plus' ? 'Plus' : 'Max'}</span>
-                      <span className="billing-plan-price">
-                        <strong>{planFacts[plan].vnd}₫</strong>
-                        <small>/ tháng</small>
-                      </span>
-                      <span className="billing-plan-token">{planFacts[plan].usdc} test USDC</span>
-                      <span className="billing-plan-limit">
-                        {planFacts[plan].cap}
-                        <br />
-                        {planFacts[plan].people}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+                  <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
+                    {(['plus', 'max'] as Plan[]).map((plan) => {
+                      const selected = selectedPlan === plan;
+                      return (
+                        <button
+                          className={`billing-plan ${selected ? 'is-selected' : ''} ${plan === 'max' ? 'is-max' : ''}`}
+                          type="button"
+                          key={plan}
+                          aria-pressed={selected}
+                          onClick={() => setSelectedPlan(plan)}
+                          disabled={busy !== '' || !!preparedIntent}
+                        >
+                          <span className="billing-plan-radio" aria-hidden="true">
+                            {selected && <span />}
+                          </span>
+                          <span className="billing-plan-name">
+                            {plan === 'plus' ? 'Plus' : 'Max'}
+                          </span>
+                          <span className="billing-plan-price">
+                            <strong>{planFacts[plan].usdc} test USDC</strong>
+                            <small>/ tháng</small>
+                          </span>
 
+                          <span className="billing-plan-limit">
+                            {planFacts[plan].cap}
+                            <br />
+                            {planFacts[plan].people}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
               {billingProfiles &&
                 billingProfiles.profiles.length > 0 &&
                 billingProfiles.profiles.some((profile) => !profile.selected) && (
@@ -855,164 +876,174 @@ export default function Billing() {
                   </section>
                 )}
 
-              {!paymentReady && (
-                <p className="billing-config-note" role="status">
-                  <CircleAlert size={16} />
-                  {Number(config?.chainId ?? FIJI_CHAIN_ID) !== FIJI_CHAIN_ID
-                    ? 'Cấu hình thanh toán không trỏ tới Fuji. Giao dịch đã bị khóa để tránh gửi nhầm mạng.'
-                    : 'Thanh toán Fuji đang chờ địa chỉ token và hợp đồng. Bạn có thể liên kết ví; chưa thể tạo giao dịch.'}
-                </p>
-              )}
-              {preparedIntent && (
-                <section className="billing-review" aria-labelledby="billing-review-title">
-                  <div className="billing-review-heading">
-                    <div>
-                      <span className="billing-step">Xác nhận trước khi ký</span>
-                      <h3 id="billing-review-title">Kiểm tra yêu cầu thanh toán</h3>
-                    </div>
-                    <span className="billing-review-chain">Fuji · 43113</span>
-                  </div>
-                  <div className="billing-review-price">
-                    <strong>{planFacts[preparedIntent.plan].usdc} test USDC</strong>
-                    <span>{planFacts[preparedIntent.plan].vnd}₫ / 30 ngày</span>
-                  </div>
-                  <dl className="billing-review-details">
-                    <div>
-                      <dt>Gói</dt>
-                      <dd>{preparedIntent.plan === 'plus' ? 'Plus' : 'Max'}</dd>
-                    </div>
-                    <div>
-                      <dt>Ví trả tiền</dt>
-                      <dd>
-                        <code>{getAddress(preparedIntent.payer)}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Token USDC</dt>
-                      <dd>
-                        <code>{getAddress(preparedIntent.token)}</code>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Hợp đồng nhận giao dịch</dt>
-                      <dd>
-                        <code>{getAddress(preparedIntent.contract)}</code>
-                      </dd>
-                    </div>
-                    {config?.treasuryAddress && (
-                      <div>
-                        <dt>Kho nhận USDC</dt>
-                        <dd>
-                          <code>{getAddress(config.treasuryAddress)}</code>
-                        </dd>
+              {!bank && (
+                <>
+                  {!paymentReady && (
+                    <p className="billing-config-note" role="status">
+                      <CircleAlert size={16} />
+                      {Number(config?.chainId ?? FIJI_CHAIN_ID) !== FIJI_CHAIN_ID
+                        ? 'Cấu hình thanh toán không trỏ tới Fuji. Giao dịch đã bị khóa để tránh gửi nhầm mạng.'
+                        : 'Thanh toán Fuji đang chờ địa chỉ token và hợp đồng. Bạn có thể liên kết ví; chưa thể tạo giao dịch.'}
+                    </p>
+                  )}
+                  {preparedIntent && (
+                    <section className="billing-review" aria-labelledby="billing-review-title">
+                      <div className="billing-review-heading">
+                        <div>
+                          <span className="billing-step">Xác nhận trước khi ký</span>
+                          <h3 id="billing-review-title">Kiểm tra yêu cầu thanh toán</h3>
+                        </div>
+                        <span className="billing-review-chain">Fuji · 43113</span>
                       </div>
-                    )}
-                    <div>
-                      <dt>Yêu cầu hết hạn</dt>
-                      <dd>
-                        <time dateTime={preparedIntent.expiresAt}>
-                          {new Intl.DateTimeFormat('vi-VN', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          }).format(new Date(preparedIntent.expiresAt))}
-                        </time>
-                      </dd>
+                      <div className="billing-review-price">
+                        <strong>{planFacts[preparedIntent.plan].usdc} test USDC</strong>
+                        <span>30 ngày</span>
+                      </div>
+                      <dl className="billing-review-details">
+                        <div>
+                          <dt>Gói</dt>
+                          <dd>{preparedIntent.plan === 'plus' ? 'Plus' : 'Max'}</dd>
+                        </div>
+                        <div>
+                          <dt>Ví trả tiền</dt>
+                          <dd>
+                            <code>{getAddress(preparedIntent.payer)}</code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Token USDC</dt>
+                          <dd>
+                            <code>{getAddress(preparedIntent.token)}</code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Hợp đồng nhận giao dịch</dt>
+                          <dd>
+                            <code>{getAddress(preparedIntent.contract)}</code>
+                          </dd>
+                        </div>
+                        {config?.treasuryAddress && (
+                          <div>
+                            <dt>Kho nhận USDC</dt>
+                            <dd>
+                              <code>{getAddress(config.treasuryAddress)}</code>
+                            </dd>
+                          </div>
+                        )}
+                        <div>
+                          <dt>Yêu cầu hết hạn</dt>
+                          <dd>
+                            <time dateTime={preparedIntent.expiresAt}>
+                              {new Intl.DateTimeFormat('vi-VN', {
+                                dateStyle: 'medium',
+                                timeStyle: 'short',
+                              }).format(new Date(preparedIntent.expiresAt))}
+                            </time>
+                          </dd>
+                        </div>
+                      </dl>
+                      <p className="billing-review-note">
+                        Hợp đồng nhận chữ ký USDC đúng số tiền này rồi chuyển vào kho nhận. Giao
+                        dịch cần thêm test AVAX để trả gas; không có gia hạn tự động.
+                      </p>
+                      <div className="billing-review-actions">
+                        <button
+                          className="billing-primary"
+                          type="button"
+                          onClick={() => void confirmPayment()}
+                          disabled={busy !== ''}
+                        >
+                          {busy === 'pay' ? (
+                            <LoaderCircle className="billing-spin" size={17} />
+                          ) : (
+                            <ShieldCheck size={17} />
+                          )}
+                          Thanh toán {planFacts[preparedIntent.plan].usdc} test USDC
+                        </button>
+                        <button
+                          className="billing-secondary"
+                          type="button"
+                          onClick={cancelPayment}
+                          disabled={busy !== ''}
+                        >
+                          Hủy yêu cầu
+                        </button>
+                      </div>
+                    </section>
+                  )}
+                  {error && (
+                    <p className="billing-alert" role="alert">
+                      <CircleAlert size={16} /> {error}
+                    </p>
+                  )}
+                  {notice && (
+                    <p className="billing-notice" role="status">
+                      {notice}
+                    </p>
+                  )}
+                  {txHash && (
+                    <div className="billing-tx-row">
+                      <span>Transaction</span>
+                      <a
+                        href={`https://build.avax.network/explorer/fuji/c-chain/tx/${encodeURIComponent(txHash)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {shortAddress(txHash)} <ExternalLink size={14} />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void verifyPending()}
+                        disabled={busy !== ''}
+                      >
+                        {busy === 'verify' ? (
+                          <LoaderCircle className="billing-spin" size={14} />
+                        ) : (
+                          <ArrowUpRight size={14} />
+                        )}
+                        Kiểm tra quyền
+                      </button>
                     </div>
-                  </dl>
-                  <p className="billing-review-note">
-                    Hợp đồng nhận chữ ký USDC đúng số tiền này rồi chuyển vào kho nhận. Giao dịch
-                    cần thêm test AVAX để trả gas; không có gia hạn tự động.
-                  </p>
-                  <div className="billing-review-actions">
+                  )}
+                  {!preparedIntent && (
                     <button
-                      className="billing-primary"
+                      className="billing-primary billing-buy"
                       type="button"
-                      onClick={() => void confirmPayment()}
-                      disabled={busy !== ''}
+                      onClick={() => void preparePayment(selectedPlan)}
+                      disabled={
+                        !boundWallet || !walletMode || pending || busy !== '' || !paymentReady
+                      }
                     >
-                      {busy === 'pay' ? (
+                      {busy === 'prepare' ? (
                         <LoaderCircle className="billing-spin" size={17} />
                       ) : (
-                        <ShieldCheck size={17} />
+                        <ArrowUpRight size={17} />
                       )}
-                      Thanh toán {planFacts[preparedIntent.plan].usdc} test USDC
+                      Tiếp tục với {planFacts[selectedPlan].usdc} test USDC
                     </button>
-                    <button
-                      className="billing-secondary"
-                      type="button"
-                      onClick={cancelPayment}
-                      disabled={busy !== ''}
-                    >
-                      Hủy yêu cầu
-                    </button>
-                  </div>
-                </section>
-              )}
-              {error && (
-                <p className="billing-alert" role="alert">
-                  <CircleAlert size={16} /> {error}
-                </p>
-              )}
-              {notice && (
-                <p className="billing-notice" role="status">
-                  {notice}
-                </p>
-              )}
-              {txHash && (
-                <div className="billing-tx-row">
-                  <span>Transaction</span>
-                  <a
-                    href={`https://build.avax.network/explorer/fuji/c-chain/tx/${encodeURIComponent(txHash)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {shortAddress(txHash)} <ExternalLink size={14} />
-                  </a>
-                  <button type="button" onClick={() => void verifyPending()} disabled={busy !== ''}>
-                    {busy === 'verify' ? (
-                      <LoaderCircle className="billing-spin" size={14} />
-                    ) : (
-                      <ArrowUpRight size={14} />
-                    )}
-                    Kiểm tra quyền
-                  </button>
-                </div>
-              )}
-              {!preparedIntent && (
-                <button
-                  className="billing-primary billing-buy"
-                  type="button"
-                  onClick={() => void preparePayment(selectedPlan)}
-                  disabled={!boundWallet || !walletMode || pending || busy !== '' || !paymentReady}
-                >
-                  {busy === 'prepare' ? (
-                    <LoaderCircle className="billing-spin" size={17} />
-                  ) : (
-                    <ArrowUpRight size={17} />
                   )}
-                  Tiếp tục với {planFacts[selectedPlan].usdc} test USDC
-                </button>
+                  <div className="billing-terms">
+                    <p>
+                      <ShieldCheck size={15} /> Mỗi lần mua cần bạn xác nhận. Người mua trả gas bằng
+                      test AVAX.
+                    </p>
+                    <p>
+                      Không tự gia hạn. Gia hạn cùng gói sớm sẽ nối thêm 30 ngày; đổi tier bắt đầu
+                      kỳ mới ngay, thời gian cũ không được cộng hoặc hoàn lại.
+                    </p>
+                    <p>
+                      Fuji USDC chỉ dùng để thử nghiệm, không có giá trị tiền thật. Hãy sao lưu ví
+                      trước khi đổi thiết bị.
+                    </p>
+                  </div>
+                  <div className="billing-config-foot">
+                    <span>
+                      <LockKeyhole size={13} /> Ví thanh toán Fuji
+                    </span>
+                    <span>Avalanche Fuji · chain {config?.chainId ?? FIJI_CHAIN_ID}</span>
+                  </div>
+                </>
               )}
-              <div className="billing-terms">
-                <p>
-                  <ShieldCheck size={15} /> Mỗi lần mua cần bạn xác nhận. Người mua trả gas bằng
-                  test AVAX.
-                </p>
-                <p>
-                  Không tự gia hạn. Gia hạn cùng gói sớm sẽ nối thêm 30 ngày; đổi tier bắt đầu kỳ
-                  mới ngay, thời gian cũ không được cộng hoặc hoàn lại.
-                </p>
-                <p>
-                  Fuji USDC chỉ dùng để thử nghiệm, không có giá trị tiền thật. Hãy sao lưu ví trước
-                  khi đổi thiết bị.
-                </p>
-              </div>
-              <div className="billing-config-foot">
-                <span>
-                  <LockKeyhole size={13} /> Ví thanh toán Fuji
-                </span>
-                <span>Avalanche Fuji · chain {config?.chainId ?? FIJI_CHAIN_ID}</span>
-              </div>
             </>
           )}
         </div>
@@ -1020,8 +1051,9 @@ export default function Billing() {
 
       <footer className="billing-footer">
         <span>
-          Phí 50.000₫/tháng và 150.000₫/tháng là giá niêm yết; số test USDC là thông số riêng cho
-          demo Fuji.
+          {bank
+            ? 'Dữ liệu, số tiền và tài khoản ngân hàng trong bản mô phỏng chỉ dùng để thử.'
+            : 'Fuji là mạng thử nghiệm. Plus 2 test USDC và Max 6 test USDC cho mỗi kỳ 30 ngày.'}
         </span>
         <a href="https://build.avax.network" target="_blank" rel="noreferrer">
           Avalanche <ExternalLink size={13} />

@@ -29,7 +29,7 @@ try {
     await route.continue();
   });
 
-  await page.goto('http://127.0.0.1:5173/billing');
+  await page.goto('http://127.0.0.1:5173/billing?demo=fuji');
   await page.getByRole('button', { name: /Chưa có tài khoản/ }).click();
   await page.getByLabel('Tên của bạn').fill('Local Fuji Smoke');
   await page.getByLabel('Email').fill(`fuji-smoke-${randomUUID()}@example.test`);

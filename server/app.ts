@@ -23,6 +23,8 @@ import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
 import { registerBillingRoutes } from './billing.ts';
+import { registerBankCheckout } from './bank-checkout.ts';
+import { registerBankProof } from './bank-proof.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -198,6 +200,11 @@ export async function buildApp(
         '/api/desktop/request',
         '/api/desktop/approve',
         '/api/billing/summary',
+        '/api/billing/bank/config',
+        '/api/billing/bank/order',
+        '/api/billing/bank/status',
+        '/api/billing/bank/simulate',
+        '/api/billing/bank/proof',
         '/api/billing/profiles',
         '/api/billing/profiles/select',
         '/api/billing/wallet/unlock',
@@ -285,13 +292,13 @@ export async function buildApp(
       const user = options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
-  if (options.cloud)
-    registerBillingRoutes(
-      app,
-      workspace.store,
-      (request) => options.cloud!.auth.currentUser(request.headers),
-      desktopIdentity,
-    );
+  if (options.cloud) {
+    const auth = options.cloud.auth;
+    const currentUser = (request: FastifyRequest) => auth.currentUser(request.headers);
+    registerBillingRoutes(app, workspace.store, currentUser, desktopIdentity);
+    registerBankCheckout(app, workspace.store, currentUser);
+    registerBankProof(app, workspace.store, currentUser);
+  }
   registerAegisRoutes(app, workspace.aegis);
   if (!options.cloud) registerExternalRoutes(app, external);
   app.get('/api/desktop/release', async () => {

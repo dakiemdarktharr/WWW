@@ -2,15 +2,17 @@
 
 **Trạng thái:** KivunoPlans đã triển khai trên Fuji. Dịch vụ xác minh giao dịch và cấp quyền chạy được trong môi trường demo local. Bằng chứng triển khai contract và tiêu chí nghiệm thu một lần mua nằm trong [runbook Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 **Ngày kiểm tra nguồn:** 19/11/2026.
-**Phạm vi hiện tại:** Fuji C-Chain, USDC testnet, demo cuộc thi. Mainnet và nhận tiền thật chưa được chốt hoặc cho phép.
+**Phạm vi hiện tại.** Demo mua gói qua ngân hàng mô phỏng và kiểm chứng biên nhận trên EVM cục bộ. Một luồng riêng dùng test USDC trên Fuji C-Chain.
 
 ## Tóm tắt đề xuất
 
 Dùng mẫu Stripe để học các ranh giới tin cậy và xử lý vòng đời thanh toán: máy chủ tạo yêu cầu giá có kiểm soát; xác nhận từ trình duyệt không tự cấp quyền; xác thực nguồn sự kiện; xử lý lặp an toàn; entitlement là trạng thái riêng được cập nhật sau khi giao dịch đã được xác minh. Stripe Billing tự thu tiền định kỳ nên không bê nguyên luồng subscription của Stripe: Kivuno yêu cầu người dùng ký/xác nhận riêng cho mỗi tháng và không tự gia hạn.
 
-Kivuno tạo ví thanh toán trong trình duyệt khi tài khoản lần đầu mở trang mua gói. Người dùng xem mạng, gói, số USDC, địa chỉ nhận và người trả gas trước khi xác nhận từng lần mua. Ví ký cho đúng giao dịch đó. Máy chủ kiểm tra chain, token, contract, payer, amount, plan, receipt và event trước khi cấp quyền.
+Trang mua gói cục bộ mở QR và thông tin ngân hàng mô phỏng sau khi chọn Plus hoặc Max. Máy chủ đối soát giao dịch rồi cấp quyền. Xem [cách chạy demo QR](KIVUNO-BANK-DEMO.md), [quy định tại Việt Nam](KIVUNO-VN-PAYMENTS.md) và [đối chiếu yêu cầu UniHack](KIVUNO-UNIHACK-CHECK.md).
 
-Fuji C-Chain dùng chain ID `43113`; Circle Fuji USDC là `0x5425890298aed601595a70AB815c96711a31Bc65`, 6 decimals. Người dùng chốt 2 USDC test cho Plus và 6 USDC test cho Max; đây là testnet units, không phải giá trị quy đổi từ 50.000/150.000 VND. Người mua tự trả gas bằng test AVAX.
+Trong luồng thanh toán test USDC trên Fuji, Kivuno tạo ví thanh toán trong trình duyệt khi tài khoản lần đầu mở trang mua gói. Người dùng xem mạng, gói, số USDC, địa chỉ nhận và người trả gas trước khi xác nhận từng lần mua. Ví ký cho đúng giao dịch đó. Máy chủ kiểm tra chain, token, contract, payer, amount, plan, receipt và event trước khi cấp quyền.
+
+Fuji C-Chain dùng chain ID `43113`; Circle Fuji USDC là `0x5425890298aed601595a70AB815c96711a31Bc65`, 6 decimals. Giá mỗi 30 ngày là 2 test USDC cho Plus và 6 test USDC cho Max. Trên Fuji, người mua trả gas bằng test AVAX.
 
 ## Yêu cầu và quyết định hiện có
 
@@ -21,7 +23,7 @@ Fuji C-Chain dùng chain ID `43113`; Circle Fuji USDC là `0x5425890298aed601595
 | Giới hạn Free                  | 3 provider profile/người; 3 người/group                                                                           |
 | Gói Plus                       | Thay tên Pro; 10 profile/người; 10 người/group                                                                    |
 | Gói Max                        | Không giới hạn profile và thành viên group                                                                        |
-| Giá VND                        | Người dùng chốt Plus 50.000 VND/tháng, Max 150.000 VND/tháng                                                      |
+| Báo giá VND trong demo QR      | Máy chủ tính từ mức tham chiếu 2 hoặc 6 USDC theo tỷ lệ minh họa và giữ số VND cho đơn trong 15 phút.             |
 | Tên gói                        | Đã chốt Plus thay Pro, giữ hạn mức 10/10                                                                          |
 | Tài sản demo                   | Fuji test USDC                                                                                                    |
 | Lượng USDC test                | Plus 2 USDC; Max 6 USDC; Fuji test token only                                                                     |
@@ -178,7 +180,7 @@ Chain là nguồn sự thật về khoản thanh toán và thời hạn đã ghi
 
 Người dùng mục tiêu giả định: người dùng Kivuno kết nối nhiều profile AI provider và nhóm cần cộng tác. Vấn đề “profile Kivuno” khác với quota/token của provider; thanh toán Kivuno chỉ thay đổi giới hạn tính năng Kivuno, không bán thêm quota Codex/Gemini/Claude.
 
-Bằng chứng thị trường hiện chỉ là khảo sát rộng, không phải nghiên cứu người dùng Kivuno hay khảo sát Việt Nam: Stack Overflow 2025 có 49.009 phản hồi từ 177 quốc gia; HackerRank 2025 có 13.732 người trả lời từ 102 quốc gia, gồm vai trò/seniority khác nhau. Hai báo cáo giúp hiểu bối cảnh dùng công cụ AI nhưng không chứng minh người dùng Kivuno sẵn sàng trả 50.000/150.000 VND. Chưa có phỏng vấn, usability test hay dữ liệu tỷ lệ gia hạn. Mức giá là quyết định của người dùng, không phải WTP đã kiểm chứng.
+Bằng chứng thị trường hiện chỉ là khảo sát rộng, không phải nghiên cứu người dùng Kivuno hay khảo sát Việt Nam: Stack Overflow 2025 có 49.009 phản hồi từ 177 quốc gia; HackerRank 2025 có 13.732 người trả lời từ 102 quốc gia, gồm vai trò/seniority khác nhau. Hai báo cáo giúp hiểu bối cảnh dùng công cụ AI nhưng không chứng minh người dùng Kivuno sẵn sàng trả tiền cho gói Plus hoặc Max. Chưa có phỏng vấn, usability test hay dữ liệu tỷ lệ gia hạn. Mức giá là quyết định của người dùng, không phải WTP đã kiểm chứng.
 
 Nghiên cứu nên làm sau demo: phỏng vấn 5–8 người dùng hiện hữu; xem họ có cần nhiều profile/group không; đo thời gian hoàn tất connect-wallet→paid→feature; kiểm thử đọc hiểu phí/chain; ghi tỷ lệ bỏ ở wallet/gas; hỏi lý do gia hạn/hủy. Theo dõi: task success, thời gian đến profile đầu tiên, invite success, entitlement mismatch, payment completion/pending/error, renew rate và lý do không gia hạn.
 
@@ -212,7 +214,7 @@ Không quay/đưa private key, seed phrase, email hoặc nội dung cá nhân v�
 
 ## Pháp lý và giới hạn vận hành
 
-Nghị quyết 05/2025/NQ-CP về thí điểm thị trường tài sản mã hóa có điều khoản về tài sản mã hóa dùng thanh toán bằng VND và giới hạn dịch vụ cho tổ chức được cấp phép. Việc áp dụng cụ thể cho SaaS Kivuno nhận USDC đổi quyền truy cập phần mềm chưa được xác định; không diễn giải đây là cho phép hay cấm trong tài liệu này. Cần luật sư Việt Nam rà soát bằng văn bản trước mainnet/thu tiền thật. Wallet address gắn với tài khoản có thể là dữ liệu cá nhân theo ngữ cảnh; giữ mapping off-chain, giảm thiểu và công khai mục đích xử lý. Chính sách testnet “không hoàn tiền” không được tự động đưa thành điều khoản cho production.
+Đối với khách hàng trong nước, hướng thiết kế thương mại là niêm yết và thu VND qua ngân hàng cho dịch vụ phần mềm của Kivuno. Kết quả đối soát có thể được chứng thực bằng một mã cam kết trên chuỗi. Khung thí điểm tài sản mã hóa chưa cung cấp căn cứ để thu USDC hoặc USDT cho gói SaaS trong nước. Phần triển khai cục bộ sử dụng tài khoản ngân hàng và số VND mô phỏng. [Phân tích pháp lý và văn bản gốc](KIVUNO-VN-PAYMENTS.md).
 
 Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; không xem cấu hình hiện tại là hạ tầng production billing SLA. Payment records cần durable storage, retry/reconciliation và backup trước khi vận hành thật.
 
