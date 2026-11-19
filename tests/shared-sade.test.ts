@@ -670,6 +670,7 @@ test(
       'project',
       receivingDesktop.projectId,
     );
+    assert.ok(receivingProject.memberIds);
     receivingDesktop.store.put('project', {
       ...receivingProject,
       memberIds: [...receivingProject.memberIds, observer.id],
