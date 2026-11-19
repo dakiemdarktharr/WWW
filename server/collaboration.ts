@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -189,6 +190,7 @@ export class SharedGroups {
           throw new DomainError('The group owner cannot leave the group.', 409);
         if (target !== owner.id && !isOwner)
           throw new DomainError('Only the group owner can remove accounts.', 403);
+        this.sade.revokeOwnerGrants(group, target);
         group.people = group.people.filter((person) => person.id !== target);
         group.teammates = group.teammates.filter((member) => member.ownerId !== target);
         return this.saveGroup(group);
@@ -235,6 +237,7 @@ export class SharedGroups {
           group: { ...group, seatLimit: this.seatLimit(group.ownerId) },
           messages: rows.slice(0, 100).map((row) => JSON.parse(String(row.data)) as SharedMessage),
           hasMore: rows.length > 100,
+          sadeSharingId: true as const,
           ...this.sade.view(group, owner.id),
         };
       }
@@ -250,12 +253,30 @@ export class SharedGroups {
           throw new DomainError(`This plan supports up to ${limit} active group seats.`, 429);
         group.people.push({ ...target, state: 'invited' });
       } else if (input.action === 'teammates') {
-        const localIds = new Set(input.teammates.map((member) => member.localId));
-        if (localIds.size !== input.teammates.length)
+        const submitted = new Map(input.teammates.map((member) => [member.localId, member]));
+        if (submitted.size !== input.teammates.length)
           throw new DomainError('Choose each teammate once.', 400);
+        const previous = new Map(
+          group.teammates
+            .filter((member) => member.ownerId === owner.id)
+            .map((member) => [member.localId, member]),
+        );
+        const withdrawn = new Set(
+          [...previous.values()]
+            .filter((member) => submitted.get(member.localId)?.provider !== member.provider)
+            .map((member) => member.localId),
+        );
+        if (withdrawn.size) this.sade.revokeOwnerGrants(group, owner.id, withdrawn);
         group.teammates = [
           ...group.teammates.filter((member) => member.ownerId !== owner.id),
-          ...input.teammates.map((member) => ({ ...member, ownerId: owner.id })),
+          ...input.teammates.map((member) => {
+            const shared = previous.get(member.localId);
+            return {
+              ...member,
+              ownerId: owner.id,
+              sharingId: shared?.provider === member.provider ? shared.sharingId : randomUUID(),
+            };
+          }),
         ];
       } else if (input.action === 'message') {
         const existing = this.store.db

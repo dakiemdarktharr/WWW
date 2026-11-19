@@ -25,6 +25,7 @@ export const groupSadeGrant = z
     id,
     groupId: id,
     teammateId: id,
+    sharingId: id.optional(),
     projectKey,
     projectName: short,
     role: z.enum(['engineer', 'designer', 'researcher', 'reviewer']),
@@ -155,7 +156,7 @@ export const groupSadeCommands = [
 export type GroupSadeCommand = z.infer<(typeof groupSadeCommands)[number]>;
 export type SharedFinish = z.infer<typeof sharedFinish>;
 export type SharedPrincipal = { ownerId: string; deviceId: string };
-type Grant = SharedHarnessGrant & { deviceId: string; revoked?: boolean };
+type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
   deadline?: number;
   awaitingReceipt?: true;
@@ -461,7 +462,10 @@ export class GroupSade {
         (person) => person.id === grant.ownerId && person.state === 'active' && !person.quotaLocked,
       ) &&
       group.teammates.some(
-        (member) => member.ownerId === grant.ownerId && member.localId === grant.teammateId,
+        (member) =>
+          member.ownerId === grant.ownerId &&
+          member.localId === grant.teammateId &&
+          (!grant.sharingId || grant.sharingId === (member.sharingId ?? member.localId)),
       ),
     );
   }
@@ -470,7 +474,7 @@ export class GroupSade {
     return {
       sadeGrants: grants
         .filter((grant) => this.usable(grant, group, false))
-        .map(({ deviceId, revoked, ...view }) => view),
+        .map(({ deviceId, sharingId, revoked, ...view }) => view),
       sadeRuns: this.runs(group).map(
         ({ authorId, content, roster, unavailableGrants, ...run }) => ({
           ...run,
@@ -572,12 +576,15 @@ export class GroupSade {
         (person) => person.ownerId === actor.ownerId && person.localId === command.teammateId,
       );
       if (!member) throw new DomainError('Share your own teammate in this group first.', 403);
+      if (command.sharingId && command.sharingId !== (member.sharingId ?? member.localId))
+        throw new DomainError('The teammate’s sharing changed. Confirm the grant again.', 409);
       const existing = this.grants(group).find((grant) => grant.id === command.id);
       if (existing) {
         if (
           existing.ownerId !== actor.ownerId ||
           existing.deviceId !== actor.deviceId ||
           existing.teammateId !== command.teammateId ||
+          existing.sharingId !== command.sharingId ||
           existing.projectKey !== command.projectKey ||
           existing.projectName !== command.projectName ||
           existing.role !== command.role ||
@@ -704,6 +711,15 @@ export class GroupSade {
   }
   private actorGrant(grant: Grant, actor: SharedPrincipal) {
     return grant.ownerId === actor.ownerId && grant.deviceId === actor.deviceId;
+  }
+  revokeOwnerGrants(group: SharedGroup, ownerId: string, teammateIds?: ReadonlySet<string>) {
+    for (const grant of this.grants(group))
+      if (
+        grant.ownerId === ownerId &&
+        !grant.revoked &&
+        (!teammateIds || teammateIds.has(grant.teammateId))
+      )
+        this.store.put('sharedSadeGrant', { ...grant, revoked: true });
   }
   revokeGrant(groupId: string, grantId: string, actor: SharedPrincipal) {
     const grant = this.store.lookup<Grant>('sharedSadeGrant', grantId);

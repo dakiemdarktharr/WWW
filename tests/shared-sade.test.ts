@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import type { CodexSession, Project, ProviderId, PlanTask, Task } from '../shared/types.ts';
-import type { SharedSadeRun } from '../shared/collaboration.ts';
+import type { SharedSadeRun, SharedTeammate } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
 import {
   parseSharedGroupPlan,
@@ -2087,6 +2087,104 @@ test('the desktop polls all valid grants across project pages', async (t) => {
   assert.equal(next.grants.length, 32);
   assert.ok(next.grants.every((grantId) => grantId !== first.nextGrantCursor));
   assert.deepEqual(new Set([...first.grants, ...next.grants]), new Set(grants));
+});
+
+for (const departure of ['leave', 'remove'] as const) {
+  test(`${departure} ends Shared Sade grants even when the member rejoins before the next poll`, (t) => {
+    const f = fixture();
+    t.after(() => f.store.close());
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Nhờ Mây đọc tài liệu rồi báo kết quả.',
+      sade: { projectKey: key },
+    });
+    const plan = f.poll(0).delivery!;
+    f.finish(0, plan.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Let the named teammate check the document.',
+        tasks: [work('check', { preferredMemberId: f.grants[1] })],
+      },
+    });
+    const oldJob = f.poll(1).delivery!;
+    assert.equal(oldJob.grantId, f.grants[1]);
+    f.call(departure === 'leave' ? 1 : 0, {
+      action: departure,
+      groupId: f.groupId,
+      ...(departure === 'remove' ? { userId: 'owner-B' } : {}),
+    });
+    f.call(0, { action: 'invite', groupId: f.groupId, account: 'owner-B' });
+    f.call(1, { action: 'accept', groupId: f.groupId });
+    f.call(1, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [{ localId: f.members[1], name: 'Mây', provider: 'codex' }],
+    });
+    const retried = f.poll(1, [oldJob.id]);
+    assert.deepEqual(retried.active, []);
+    assert.equal(retried.delivery, undefined);
+    assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    assert.throws(
+      () => f.finish(1, oldJob.id, { kind: 'done', summary: 'A late result' }),
+      /grant is no longer valid/,
+    );
+    const listing = f.call(0, { action: 'read', groupId: f.groupId });
+    assert.deepEqual(
+      listing.sadeGrants.map(({ id }: { id: string }) => id),
+      [f.grants[0]],
+    );
+  });
+}
+
+test('sharing the same profile again requires fresh Sade approval', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const teammate = { localId: f.members[1], name: 'Mây', provider: 'codex' };
+  const share = (teammates: object[]) =>
+    f.call(1, { action: 'teammates', groupId: f.groupId, teammates });
+  const read = () => f.call(0, { action: 'read', groupId: f.groupId });
+  const sharingId = () =>
+    read().group.teammates.find((member: SharedTeammate) => member.localId === teammate.localId)
+      .sharingId as string;
+  const initial = sharingId();
+  assert.ok(initial);
+  assert.equal(read().sadeSharingId, true);
+  const prior = f.store.get('sharedSadeGrant', f.grants[1]);
+  share([{ ...teammate, name: 'Mây kiểm thử' }]);
+  assert.deepEqual(f.store.get('sharedSadeGrant', f.grants[1]), prior);
+  assert.equal(sharingId(), initial);
+  share([]);
+  share([teammate]);
+  assert.equal(f.store.get<{ revoked?: boolean }>('sharedSadeGrant', f.grants[1]).revoked, true);
+  const current = sharingId();
+  assert.notEqual(current, initial);
+  const grantIds = () => read().sadeGrants.map(({ id }: { id: string }) => id);
+  assert.deepEqual(grantIds(), [f.grants[0]]);
+  const delayed = {
+    action: 'sade-grant',
+    groupId: f.groupId,
+    id: randomUUID(),
+    teammateId: teammate.localId,
+    sharingId: initial,
+    projectKey: key,
+    projectName: 'Fixture project',
+    role: 'reviewer',
+    platform: 'win32',
+    allowWrites: true,
+    turns: 8,
+  };
+  assert.throws(() => f.call(1, delayed), /Confirm the grant again/);
+  assert.equal(f.store.lookup('sharedSadeGrant', delayed.id), undefined);
+  const fresh = { ...delayed, id: randomUUID(), sharingId: current };
+  f.call(1, fresh);
+  assert.deepEqual(grantIds(), [f.grants[0], fresh.id]);
+  assert.ok(read().sadeGrants.every((grant: object) => !('sharingId' in grant)));
+  share([{ ...teammate, provider: 'claude' }]);
+  assert.notEqual(sharingId(), current);
+  assert.equal(f.store.get<{ revoked?: boolean }>('sharedSadeGrant', fresh.id).revoked, true);
+  assert.deepEqual(grantIds(), [f.grants[0]]);
 });
 
 test('an owner can finish syncing a revocation after leaving and being invited back', (t) => {

@@ -30,6 +30,8 @@ const reportedRevocations: { grantId: string; groupId: string }[] = [];
 let allowSharedRevocations = false;
 const grantResponses: number[] = [];
 const reportedGrants: { id: string }[] = [];
+const fixtureSharingId = randomUUID();
+let sharedTeammateId: string | undefined;
 let releaseFirstSharedFinish!: () => void;
 const firstSharedFinish = new Promise<void>((resolve) => {
   releaseFirstSharedFinish = resolve;
@@ -131,9 +133,21 @@ const fixture = createServer(async (request, response) => {
       ),
     );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'read') {
-    response.end(JSON.stringify({ group: { id: payload.groupId, name: 'Consent fixture' } }));
+    response.end(
+      JSON.stringify({
+        group: {
+          id: payload.groupId,
+          name: 'Consent fixture',
+          teammates: [
+            { ownerId: accountId, localId: sharedTeammateId, sharingId: fixtureSharingId },
+          ],
+        },
+        sadeSharingId: true,
+      }),
+    );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-grant') {
     assert.doesNotMatch(JSON.stringify(payload), /tokenHash|private-profile|accessToken|projectId/);
+    assert.equal(payload.sharingId, fixtureSharingId);
     reportedGrants.push(payload);
     const status = grantResponses.shift() ?? 200;
     if (!status) {
@@ -437,6 +451,7 @@ try {
     return member;
   };
   const member = await addProfile('Browser fixture', 'researcher');
+  sharedTeammateId = member.id;
   const project = await post('/hackathons', {
     memberId: member.id,
     name: 'Browser test project',

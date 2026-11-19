@@ -1016,6 +1016,15 @@ function registerIpc() {
       );
       if (!room.response.ok || !room.body.group?.id || !current())
         throw new Error('This shared group is unavailable.');
+      let sharingId;
+      if (room.body.sadeSharingId) {
+        const member = room.body.group.teammates?.find(
+          (candidate) =>
+            candidate.ownerId === owner.owner.id && candidate.localId === grant.teammateId,
+        );
+        if (!member) throw new Error('Share your own teammate in this group first.');
+        sharingId = member.sharingId ?? member.localId;
+      }
       const consent = await dialog.showMessageBox(window, {
         type: 'question',
         title: 'Allow Sade to use your teammate?',
@@ -1039,7 +1048,7 @@ function registerIpc() {
         if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id }, localContext);
         throw new Error('The workspace changed during approval. Review the grant again.');
       }
-      cloudInput = { action: 'sade-grant', ...approved };
+      cloudInput = { action: 'sade-grant', ...approved, ...(sharingId ? { sharingId } : {}) };
     } else if (input.action === 'sade-revoke') {
       await localSharedSade(
         { action: 'revoke', grantId: input.grantId, groupId: input.groupId },

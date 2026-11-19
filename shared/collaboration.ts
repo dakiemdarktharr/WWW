@@ -15,6 +15,8 @@ export interface SharedTeammate {
   name: string;
   provider: ProviderId;
   ownerId: string;
+  /** Identifies this publication of the profile in this group. */
+  sharingId?: string;
 }
 export interface SharedGroup {
   updatedAt?: string;
@@ -94,7 +96,11 @@ export type GroupCommand =
   | { action: 'accept' | 'decline' | 'leave'; groupId: string }
   | { action: 'remove'; groupId: string; userId: string }
   | { action: 'seats'; groupId: string; userIds: string[] }
-  | { action: 'teammates'; groupId: string; teammates: Omit<SharedTeammate, 'ownerId'>[] }
+  | {
+      action: 'teammates';
+      groupId: string;
+      teammates: Omit<SharedTeammate, 'ownerId' | 'sharingId'>[];
+    }
   | {
       action: 'message';
       groupId: string;
