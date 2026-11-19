@@ -11,6 +11,8 @@ import { buildApp } from '../server/app.ts';
 import { SharedGroups } from '../server/collaboration.ts';
 import { CodexClient } from '../server/codex.ts';
 import { randomUUID } from 'node:crypto';
+import type { SharedDelivery } from '../server/group-sade.ts';
+import type { SharedGroup } from '../shared/collaboration.ts';
 
 class LoginClient extends CodexClient {
   override readonly provider: 'codex' | 'gemini';
@@ -72,6 +74,13 @@ const workspaces: Workspace[] = [];
 const errors: string[] = [];
 const fixture = async (index: number) => {
   const user = users[index];
+  const deviceId = randomUUID();
+  cloud.put('desktopDevice', {
+    id: deviceId,
+    owner: user,
+    revoked: false,
+    expiresAt: new Date(Date.now() + 120_000).toISOString(),
+  });
   const directory = path.join(dir, user.id);
   await mkdir(directory);
   const store = new Store(path.join(directory, 'workspace.db'));
@@ -115,7 +124,7 @@ const fixture = async (index: number) => {
       url = new URL(req.url());
     if (url.pathname === '/__groups') {
       try {
-        await route.fulfill({ json: groups.execute(user, req.postDataJSON()) });
+        await route.fulfill({ json: groups.execute(user, req.postDataJSON(), deviceId) });
       } catch (cause) {
         await route.fulfill({ status: 403, json: { error: (cause as Error).message } });
       }
@@ -172,7 +181,7 @@ const fixture = async (index: number) => {
     console.error(await page.locator('body').innerText(), errors);
     throw error;
   }
-  return { page, store, workspace };
+  return { page, store, workspace, deviceId };
 };
 try {
   const a = await fixture(0),
@@ -214,6 +223,73 @@ try {
   await b.page.getByRole('button', { name: 'Groups', exact: true }).click();
   await b.page.getByRole('button', { name: 'Shared research', exact: true }).click();
   await expect(b.page.getByRole('log')).toContainText('Hello from Alice');
+
+  const group = cloud.all<SharedGroup>('sharedGroup')[0];
+  const grantId = randomUUID();
+  const projectKey = 'a'.repeat(64);
+  const dispatch = (input: object) => groups.execute(users[0], input, a.deviceId);
+  dispatch({
+    action: 'sade-grant',
+    groupId: group.id,
+    id: grantId,
+    teammateId: group.teammates.find((member) => member.ownerId === users[0].id)!.localId,
+    projectKey,
+    projectName: 'Group demo',
+    role: 'engineer',
+    platform: 'win32',
+    allowWrites: false,
+    turns: 4,
+  });
+  await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await a.page.getByLabel('Ask Sade in this group').selectOption(projectKey);
+  await a.page.getByLabel('Message group', { exact: true }).fill('Check the current plan.');
+  await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+  const poll = (active: string[] = [], readUpdates?: { jobId: string; through: number }[]) =>
+    dispatch({ action: 'sade-poll', grants: [grantId], active, taskUpdates: true, readUpdates });
+  const plan = (poll() as { delivery: SharedDelivery }).delivery;
+  dispatch({
+    action: 'sade-finish',
+    jobId: plan.id,
+    result: {
+      kind: 'plan',
+      plan: {
+        summary: 'Check the current plan.',
+        tasks: [
+          {
+            key: 'inspect',
+            title: 'Check the current plan',
+            description: 'Read the project plan.',
+            kind: 'research',
+            effort: 1,
+            scope: ['README.md'],
+            acceptance: 'Summarize the current plan.',
+            dependsOn: [],
+            stage: 'Review',
+          },
+        ],
+      },
+    },
+  });
+  const task = (poll() as { delivery: SharedDelivery }).delivery;
+  const progress = a.page.getByRole('region', { name: 'Sade progress' });
+  await progress.getByRole('button', { name: 'Update task', exact: true }).click();
+  await progress.getByLabel('Task update', { exact: true }).fill('Use the revised checklist.');
+  await progress.getByRole('button', { name: 'Send update', exact: true }).click();
+  await expect(progress.getByText('0/1 task updates read')).toBeVisible();
+  const notes = (poll([task.id]) as { updates: { jobId: string; notes: { text: string }[] }[] })
+    .updates;
+  assert.equal(notes[0]?.jobId, task.id);
+  assert.equal(notes[0]?.notes[0]?.text, 'Use the revised checklist.');
+  poll([task.id], [{ jobId: task.id, through: 1 }]);
+  await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(progress.getByText('1/1 task updates read')).toBeVisible();
+  const peerProgress = b.page.getByRole('region', { name: 'Sade progress' });
+  await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(peerProgress.getByText('1/1 task updates read')).toBeVisible();
+  await expect(peerProgress.getByRole('button', { name: 'Update task', exact: true })).toHaveCount(
+    0,
+  );
+
   await a.page.getByRole('button', { name: 'Members', exact: true }).click();
   await a.page.getByRole('button', { name: 'Remove Bob', exact: true }).click();
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -263,7 +339,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, own teammates from both users, messages both ways, reload persistence, membership revocation; Codex/Gemini confirmation before slow catalogs, automatic skills loading. No model turns.',
+    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, messages, task updates and read receipts, reload persistence, membership revocation, Codex/Gemini login and skills loading. No model turns.',
   );
 } finally {
   await browser.close();

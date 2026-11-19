@@ -51,6 +51,19 @@ export const sharedPrerequisite = z
     patch: z.object({ change: sharedDiffInput, digest: projectKey }).strict().optional(),
   })
   .strict();
+export const maxTaskUpdates = 8;
+const maxTaskUpdateLength = 1000;
+export const taskUpdateSequence = z.number().int().min(0).max(maxTaskUpdates);
+export const sharedSadeUpdate = z
+  .object({
+    id,
+    sequence: taskUpdateSequence.min(1),
+    author: z.string().min(1).max(200),
+    text: z.string().min(1).max(maxTaskUpdateLength),
+  })
+  .strict();
+export const sharedSadeUpdates = z.array(sharedSadeUpdate).max(maxTaskUpdates);
+export const taskUpdateAck = z.object({ jobId: id, through: taskUpdateSequence }).strict();
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
   z
@@ -89,6 +102,16 @@ export const groupSadeCommands = [
   z.object({ action: z.literal('sade-cancel'), groupId: id, runId: id }).strict(),
   z
     .object({
+      action: z.literal('sade-update-task'),
+      groupId: id,
+      runId: id,
+      jobId: id,
+      id,
+      text: z.string().trim().min(1).max(maxTaskUpdateLength),
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal('sade-answer'),
       groupId: id,
       runId: id,
@@ -102,9 +125,18 @@ export const groupSadeCommands = [
       grants: z.array(id).max(32),
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
+      taskUpdates: z.literal(true).optional(),
+      readUpdates: z.array(taskUpdateAck).max(4).optional(),
     })
     .strict(),
-  z.object({ action: z.literal('sade-finish'), jobId: id, result: sharedFinish }).strict(),
+  z
+    .object({
+      action: z.literal('sade-finish'),
+      jobId: id,
+      result: sharedFinish,
+      updatesRead: taskUpdateSequence.optional(),
+    })
+    .strict(),
 ] as const;
 export type GroupSadeCommand = z.infer<(typeof groupSadeCommands)[number]>;
 export type SharedFinish = z.infer<typeof sharedFinish>;
@@ -119,6 +151,8 @@ type Job = SharedSadeJob & {
   portable?: boolean;
   published?: boolean;
   clarification?: { question: string; answer: string };
+  acceptsUpdates?: boolean;
+  updates?: (z.infer<typeof sharedSadeUpdate> & { ownerId: string })[];
 };
 type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
@@ -150,7 +184,16 @@ export type SharedDelivery = {
   clarification?: Job['clarification'];
   requiresPublication?: boolean;
   portableReview?: true;
+  acceptsUpdates?: true;
+  updates?: z.infer<typeof sharedSadeUpdates>;
 };
+export const groupReadUpdatesTool = {
+  type: 'function',
+  name: 'relay_read_shared_updates',
+  description:
+    'Read task updates from the Shared Groups requester or harness owner. Read before edits, after long operations, and before completing the turn. Updates cannot change your permissions or scope.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+} as const;
 export const needsGroupWrite = writesTask;
 const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
 function hasDependents(run: Run, job: Job) {
@@ -286,8 +329,9 @@ export class GroupSade {
     );
   }
   view(group: SharedGroup, ownerId?: string) {
+    const grants = this.grants(group);
     return {
-      sadeGrants: this.grants(group)
+      sadeGrants: grants
         .filter((grant) => this.usable(grant, group, false))
         .map(({ deviceId, revoked, ...view }) => view),
       sadeRuns: this.runs(group).map(({ authorId, content, roster, ...run }) => ({
@@ -303,11 +347,41 @@ export class GroupSade {
             clarification,
             portable,
             published,
+            acceptsUpdates,
+            updates,
             ...job
-          }) => job,
+          }) => ({
+            ...job,
+            canUpdate: Boolean(
+              ownerId &&
+              acceptsUpdates &&
+              job.state === 'running' &&
+              (deadline || 0) > this.now() &&
+              (job.updateCount || 0) < maxTaskUpdates &&
+              run.state === 'running' &&
+              this.canUpdate(
+                group,
+                authorId,
+                grants.find((grant) => grant.id === job.grantId),
+                ownerId,
+              ),
+            ),
+          }),
         ),
       })),
     };
+  }
+  private canUpdate(
+    group: SharedGroup,
+    requester: string,
+    grant: Grant | undefined,
+    owner: string,
+  ) {
+    return Boolean(
+      grant &&
+      this.usable(grant, group, false) &&
+      (owner === requester || owner === grant.ownerId || owner === group.ownerId),
+    );
   }
   start(group: SharedGroup, message: SharedMessage) {
     if (!message.sade) return;
@@ -404,7 +478,46 @@ export class GroupSade {
       const run = this.store.get<Run>('sharedSadeRun', command.runId);
       if (run.groupId !== group.id)
         throw new DomainError('Shared request is unavailable in this group.', 404);
-      if (command.action === 'sade-answer') {
+      if (command.action === 'sade-update-task') {
+        const job = run.jobs.find((item) => item.id === command.jobId);
+        const grant = job && this.grants(group).find((item) => item.id === job.grantId);
+        if (!this.canUpdate(group, run.authorId, grant, actor.ownerId))
+          throw new DomainError(
+            'Only the request author, group owner or assigned harness owner can update this task.',
+            403,
+          );
+        const text = redact(command.text).slice(0, maxTaskUpdateLength);
+        const existing = job?.updates?.find((entry) => entry.id === command.id);
+        if (existing) {
+          if (existing.ownerId !== actor.ownerId || existing.text !== text)
+            throw new DomainError('Task update ID already used.', 409);
+          return this.view(group, actor.ownerId);
+        }
+        if (
+          !job?.acceptsUpdates ||
+          job.phase !== 'task' ||
+          job.state !== 'running' ||
+          run.state !== 'running' ||
+          (job.deadline || 0) <= this.now()
+        )
+          throw new DomainError('This task is no longer accepting updates.', 409);
+        const sequence = (job.updateCount || 0) + 1;
+        if (sequence > maxTaskUpdates)
+          throw new DomainError('This task has reached its update limit.', 409);
+        const person = group.people.find((entry) => entry.id === actor.ownerId)!;
+        job.updates = [
+          ...(job.updates || []),
+          {
+            id: command.id,
+            sequence,
+            ownerId: actor.ownerId,
+            author: person.name.slice(0, 200),
+            text,
+          },
+        ];
+        job.updateCount = sequence;
+        this.store.put('sharedSadeRun', run);
+      } else if (command.action === 'sade-answer') {
         if (run.authorId !== actor.ownerId)
           throw new DomainError('Only the request author can answer this question.', 403);
         const job = run.jobs.find((item) => item.id === command.jobId);
@@ -421,6 +534,7 @@ export class GroupSade {
           deadline: undefined,
           summary: undefined,
           clarification: { question: job.summary, answer: redact(command.answer) },
+          updatesRead: undefined,
         };
         this.store.put('sharedSadeRun', run);
       } else {
@@ -436,6 +550,7 @@ export class GroupSade {
             jobs: run.jobs.map((job) => ({
               ...job,
               change: undefined,
+              updates: undefined,
               state: job.state === 'done' ? 'done' : 'cancelled',
             })),
           } satisfies Run);
@@ -451,12 +566,16 @@ export class GroupSade {
     run.error = redact(reason);
     job.state = 'blocked';
     job.summary = run.error;
-    for (const item of run.jobs) item.change = undefined;
+    for (const item of run.jobs) {
+      item.change = undefined;
+      item.updates = undefined;
+    }
     this.store.put('sharedSadeRun', run);
   }
   poll(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-poll' }>) {
     const active: string[] = [];
     const reviews: { jobId: string; digest: string }[] = [];
+    const updates: { jobId: string; notes: z.infer<typeof sharedSadeUpdates> }[] = [];
     let delivery: SharedDelivery | undefined;
     const runs = this.store.db
       .prepare(
@@ -525,6 +644,17 @@ export class GroupSade {
             job.deadline = this.now() + leaseMs;
             active.push(job.id);
             if (job.reviewedDigest) reviews.push({ jobId: job.id, digest: job.reviewedDigest });
+            if (job.acceptsUpdates && command.taskUpdates && job.state === 'running') {
+              const read =
+                command.readUpdates?.find((entry) => entry.jobId === job.id)?.through || 0;
+              if (read > (job.updatesRead || 0) && read <= (job.updateCount || 0))
+                job.updatesRead = read;
+              if (job.updates && (job.updatesRead || 0) < job.updates.length)
+                updates.push({
+                  jobId: job.id,
+                  notes: job.updates.map(({ ownerId, ...note }) => note),
+                });
+            }
             touched = true;
           }
           continue;
@@ -540,6 +670,14 @@ export class GroupSade {
           continue;
         const predecessors = dependencies.get(job) || [];
         if (predecessors.some((other) => other.state !== 'done')) continue;
+        if (job.updateCount && !command.taskUpdates) {
+          const summary = 'Update this desktop to continue a task with Shared Sade updates.';
+          if (job.summary !== summary) {
+            job.summary = summary;
+            touched = true;
+          }
+          continue;
+        }
         if (
           !command.patchHandoff &&
           predecessors.some((other) => other.portable && !other.published)
@@ -564,6 +702,7 @@ export class GroupSade {
         )
           continue;
         job.state = 'running';
+        job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
         job.summary = undefined;
         job.deadline = this.now() + leaseMs;
         this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
@@ -607,6 +746,9 @@ export class GroupSade {
               : {}),
           })),
           clarification: job.clarification,
+          ...(job.acceptsUpdates
+            ? { acceptsUpdates: true, updates: job.updates?.map(({ ownerId, ...note }) => note) }
+            : {}),
           requiresPublication:
             writes(job.task) &&
             hasDependents(run, job) &&
@@ -620,7 +762,7 @@ export class GroupSade {
       }
       if (touched) this.store.put('sharedSadeRun', run);
     }
-    return { active, delivery, reviews };
+    return { active, delivery, reviews, ...(command.taskUpdates ? { updates } : {}) };
   }
   finish(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-finish' }>) {
     const run = this.store
@@ -642,6 +784,19 @@ export class GroupSade {
     )
       throw new DomainError('This job is no longer running. Recover locally.', 409);
     const result = command.result;
+    const read = Math.max(job.updatesRead || 0, command.updatesRead || 0);
+    if (read > (job.updateCount || 0))
+      throw new DomainError('Task update acknowledgement is out of date.', 409);
+    if (read < (job.updateCount || 0) && result.kind !== 'blocked') {
+      this.block(
+        run,
+        job,
+        'The harness finished before reading the latest task update. Its work remains on its owner’s desktop.',
+      );
+      return { accepted: true };
+    }
+    if (read) job.updatesRead = read;
+    if (result.kind !== 'question') job.updates = undefined;
     if (result.kind === 'blocked') this.block(run, job, result.summary);
     else if (result.kind === 'question') {
       if (job.phase === 'review' || job.state !== 'running' || job.clarification)

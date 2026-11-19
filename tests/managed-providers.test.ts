@@ -8,6 +8,7 @@ import { AntigravityClient } from '../server/antigravity.ts';
 import { readAccount, readModels, startTask, relayDynamicTools } from '../server/codex.ts';
 import { chooseModel } from '../server/autonomy.ts';
 import { providerFileTool } from '../server/provider-files.ts';
+import { groupReadUpdatesTool } from '../server/group-sade.ts';
 import { isExternalMember } from '../shared/providers.ts';
 
 for (const Client of [ClaudeClient, AntigravityClient]) {
@@ -44,7 +45,8 @@ for (const Client of [ClaudeClient, AntigravityClient]) {
       assert.equal(chosen.reasoningEffort, 'high');
       if (client.provider === 'claude') assert.equal(chosen.model, 'sonnet');
       let approvals = 0,
-        reports = 0;
+        reports = 0,
+        updateReads = 0;
       client.on('request', async (request) => {
         try {
           if (request.method === 'item/fileChange/requestApproval') {
@@ -56,6 +58,12 @@ for (const Client of [ClaudeClient, AntigravityClient]) {
           if (request.params.tool === 'relay_report') {
             reports++;
             result = { accepted: true };
+          } else if (request.params.tool === 'relay_read_shared_updates') {
+            updateReads++;
+            result = {
+              updates: [{ sequence: 1, text: 'Use the saved registration contract.' }],
+              through: 1,
+            };
           } else
             result = await providerFileTool(
               request.params.tool,
@@ -78,10 +86,10 @@ for (const Client of [ClaudeClient, AntigravityClient]) {
       );
       const started = await startTask(client, {
         cwd,
-        prompt: 'edit-file',
+        prompt: 'edit-file read-task-update',
         readOnly: false,
         scopes: ['sample.txt'],
-        dynamicTools: relayDynamicTools,
+        dynamicTools: [...relayDynamicTools, groupReadUpdatesTool],
         model: chosen.model,
         reasoningEffort: chosen.reasoningEffort,
       });
@@ -89,6 +97,7 @@ for (const Client of [ClaudeClient, AntigravityClient]) {
       assert.equal((await completed).status, 'completed');
       assert.equal(approvals, 1);
       assert.equal(reports, 1);
+      assert.equal(updateReads, 1);
       assert.equal(await readFile(path.join(cwd, 'sample.txt'), 'utf8'), 'reviewed change');
       if (client.provider === 'antigravity')
         assert.equal(await readFile(path.join(home, 'permission-denied'), 'utf8'), 'true');

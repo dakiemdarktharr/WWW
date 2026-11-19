@@ -29,9 +29,9 @@ Kỳ vọng: một workflow, các bước có dependency; frontend nhận kết 
 
 ## Demo B — chống trùng và mâu thuẫn
 
-Cho hai yêu cầu cùng sửa `src/registration.ts`. Gửi lại cùng HTTP request ID khi giả lập mất kết nối. Khi một nhánh đang làm, báo: “Phần này tôi đã commit; đừng làm lại, kiểm tra commit mới trước.”
+Cho hai yêu cầu cùng sửa `src/registration.ts`. Gửi lại cùng HTTP request ID khi giả lập mất kết nối. Khi một nhiệm vụ đang chạy trong Shared Groups, chọn **Update task** và gửi “Phần này tôi đã commit rồi. Kiểm tra commit mới trước khi sửa tiếp nhé.”
 
-Kỳ vọng: retry không tạo workflow thứ hai và chỉ một lease ghi vào phạm vi trùng. Trong Chat của project, AI đọc thông tin cập nhật qua room. Trong Shared Groups, theo dõi việc phân công và thu hồi quyền trong nhóm. Kiểm thử tiếp nhận chỉ đạo giữa lượt của từng provider cần chạy riêng. Code nằm trong worktree riêng và tích hợp kiểm tra trạng thái Git cùng phạm vi.
+Khi gửi lại cùng yêu cầu, nhóm chỉ thấy một workflow. Các nhiệm vụ ghi vào cùng phạm vi chạy lần lượt. Chỉ đạo mới được chuyển đến harness trong lượt đang chạy. Nếu harness kết thúc lượt trước khi đọc chỉ đạo, nhóm thấy nhiệm vụ bị chặn. Code nằm trong worktree riêng và bước tích hợp kiểm tra trạng thái Git cùng phạm vi.
 
 Đo: workflow trùng = 0; concurrent write lease chồng scope = 0; commit đã làm bị lặp = 0 qua kiểm tra thực tế. Phát hiện _tương đương ngữ nghĩa_ giữa hai commit không được bảo đảm chỉ bằng so tên task; vẫn cần agent đọc history và review diff.
 

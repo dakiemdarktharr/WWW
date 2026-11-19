@@ -138,7 +138,8 @@ export class SharedGroups {
         input.action === 'sade-grant' ||
         input.action === 'sade-revoke' ||
         input.action === 'sade-cancel' ||
-        input.action === 'sade-answer'
+        input.action === 'sade-answer' ||
+        input.action === 'sade-update-task'
       ) {
         if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
         return this.sade.groupCommand(group, actor, input);

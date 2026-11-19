@@ -45,6 +45,9 @@ export default function SharedGroups({
   const [machineId, setMachineId] = useState('');
   const [projectKey, setProjectKey] = useState('');
   const [answer, setAnswer] = useState('');
+  const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
+    null,
+  );
   const selectedRef = useRef(initialGroupId);
   const messageDraft = useRef<{
     id: string;
@@ -105,6 +108,7 @@ export default function SharedGroups({
     setMachineId('');
     setProjectKey('');
     setAnswer('');
+    setTaskUpdate(null);
     messageDraft.current = null;
     if (!selected) return;
     const read = async () => {
@@ -574,6 +578,70 @@ export default function SharedGroups({
                         'Assigned teammate'}{' '}
                       · {job.state}
                       {job.summary && <p>{job.summary}</p>}
+                      {Boolean(job.updateCount) && (
+                        <p aria-live="polite">
+                          {job.updatesRead || 0}/{job.updateCount} task updates read
+                        </p>
+                      )}
+                      {job.canUpdate &&
+                        (taskUpdate?.jobId === job.id ? (
+                          <form
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void run(async () => {
+                                await request({
+                                  action: 'sade-update-task',
+                                  groupId: room.id,
+                                  runId: latestSade.id,
+                                  jobId: job.id,
+                                  id: taskUpdate.id,
+                                  text: taskUpdate.text.trim(),
+                                });
+                                setTaskUpdate(null);
+                              });
+                            }}
+                          >
+                            <label>
+                              Task update
+                              <input
+                                value={taskUpdate.text}
+                                maxLength={1000}
+                                required
+                                onChange={(event) =>
+                                  setTaskUpdate({
+                                    jobId: job.id,
+                                    id: crypto.randomUUID(),
+                                    text: event.target.value,
+                                  })
+                                }
+                              />
+                            </label>
+                            <button
+                              className="button compact"
+                              disabled={busy || !taskUpdate.text.trim()}
+                            >
+                              Send update
+                            </button>
+                            <button
+                              className="text-button"
+                              type="button"
+                              onClick={() => setTaskUpdate(null)}
+                            >
+                              Close
+                            </button>
+                          </form>
+                        ) : (
+                          <button
+                            className="button compact"
+                            disabled={busy}
+                            type="button"
+                            onClick={() =>
+                              setTaskUpdate({ jobId: job.id, id: crypto.randomUUID(), text: '' })
+                            }
+                          >
+                            Update task
+                          </button>
+                        ))}
                     </li>
                   ))}
                 </ul>

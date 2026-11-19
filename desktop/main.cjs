@@ -633,11 +633,11 @@ async function sharedSadeLoop(generation, owner) {
         continue;
       }
       const acknowledged = [];
-      for (const { jobId, version, result } of snapshot.results.slice(0, 2)) {
+      for (const { jobId, version, result, updatesRead } of snapshot.results.slice(0, 2)) {
         if (!current()) return;
         const { response } = await cloudRequest(
           '/api/desktop/groups',
-          { action: 'sade-finish', jobId, result },
+          { action: 'sade-finish', jobId, result, updatesRead },
           owner.accessToken,
         );
         if (response.ok || [403, 404, 409].includes(response.status))
@@ -648,6 +648,8 @@ async function sharedSadeLoop(generation, owner) {
         {
           action: 'sade-poll',
           patchHandoff: true,
+          taskUpdates: true,
+          readUpdates: snapshot.readUpdates,
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -660,6 +662,7 @@ async function sharedSadeLoop(generation, owner) {
           active: body.active,
           delivery: body.delivery,
           reviews: body.reviews,
+          updates: body.updates,
           acknowledged,
         });
       else delay = 5000;
@@ -878,6 +881,7 @@ function registerIpc() {
         'sade-revoke',
         'sade-cancel',
         'sade-answer',
+        'sade-update-task',
       ].includes(input.action) ||
       Buffer.byteLength(JSON.stringify(input)) > 64 * 1024
     )

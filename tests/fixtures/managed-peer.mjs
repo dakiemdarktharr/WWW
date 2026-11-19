@@ -79,6 +79,10 @@ async function tool(bridge, name, args) {
 async function turn(bridge, prompt) {
   if (prompt.includes('hold-turn')) return new Promise(() => {});
   const read = await tool(bridge, 'workspace_read_file', { path: 'sample.txt' });
+  if (prompt.includes('read-task-update')) {
+    const updates = await tool(bridge, 'relay_read_shared_updates', {});
+    assert.match(JSON.stringify(updates.result), /Use the saved registration contract/);
+  }
   if (prompt.includes('edit-file')) {
     const edit = await tool(bridge, 'workspace_write_file', {
       path: 'sample.txt',

@@ -179,6 +179,7 @@ export class SessionManager {
         const session = this.get(id);
         if (
           session.projectId !== projectId ||
+          this.host.store.get<Task>('task', session.taskId).sharedSadeJobId ||
           active.finished ||
           active.stopping ||
           !active.threadId ||
@@ -206,6 +207,26 @@ export class SessionManager {
     } finally {
       this.notifying.delete(projectId);
     }
+  }
+  async signalSharedUpdate(id: string, jobId: string) {
+    const active = this.active.get(id);
+    if (!active || active.finished || active.stopping || !active.threadId || !active.turnId)
+      return false;
+    const session = this.get(id);
+    if (this.host.store.get<Task>('task', session.taskId).sharedSadeJobId !== jobId) return false;
+    this.host.sharedSade.assertCurrent(jobId);
+    this.assertLease(session, active.token);
+    if (active.client.provider === 'codex')
+      await active.client
+        .request('turn/steer', {
+          threadId: active.threadId,
+          expectedTurnId: active.turnId,
+          input: input(
+            'A Shared Groups task update is waiting. Call relay_read_shared_updates before continuing in your current granted scope.',
+          ),
+        })
+        .catch(() => {});
+    return true;
   }
   get(id: string) {
     return this.host.store.get<CodexSession>('session', id);
@@ -997,7 +1018,20 @@ export class SessionManager {
             : params.arguments || {};
         let result: unknown;
         let readThrough: number | undefined;
-        if (sharedJob && params.tool === 'relay_submit_plan') {
+        let sharedReadThrough: number | undefined;
+        if (sharedJob && params.tool === 'relay_read_shared_updates') {
+          const updates = this.host.sharedSade.readUpdates(sharedJob, args);
+          sharedReadThrough = updates.at(-1)?.sequence || 0;
+          result = { updates, through: sharedReadThrough };
+        } else if (
+          sharedJob &&
+          this.host.sharedSade.hasPendingUpdates(sharedJob) &&
+          (params.tool === 'workspace_write_file' || params.tool === 'machine_use')
+        ) {
+          throw new DomainError(
+            'Read the latest task update with relay_read_shared_updates before continuing.',
+          );
+        } else if (sharedJob && params.tool === 'relay_submit_plan') {
           result = this.host.sharedSade.submit(sharedJob, args);
         } else if (sharedJob && params.tool === 'relay_submit_shared_review') {
           result = this.host.sharedSade.submitReview(sharedJob, args);
@@ -1175,10 +1209,27 @@ export class SessionManager {
         } else if (params.tool === 'mesh_ack') {
           result = this.host.mesh.ack(session.projectId, session.memberId, args.sequence);
         } else throw new DomainError('This tool is unavailable in this session.');
+        const updatePending =
+          sharedJob &&
+          sharedReadThrough === undefined &&
+          this.host.sharedSade.hasPendingUpdates(sharedJob);
+        const updateNotice = 'A task update is waiting. Call relay_read_shared_updates.';
+        // Managed adapters unwrap the first JSON item when forwarding tool results.
+        const body =
+          updatePending && client.provider !== 'codex'
+            ? { result, taskUpdate: updateNotice }
+            : result;
         client.respond(request.id, {
-          contentItems: [{ type: 'inputText', text: JSON.stringify(result) }],
+          contentItems: [
+            { type: 'inputText', text: JSON.stringify(body) },
+            ...(updatePending && client.provider === 'codex'
+              ? [{ type: 'inputText', text: updateNotice }]
+              : []),
+          ],
           success: true,
         });
+        if (sharedJob && sharedReadThrough !== undefined)
+          this.host.sharedSade.markUpdatesRead(sharedJob, sharedReadThrough);
         if (readThrough !== undefined)
           this.host.mesh.markRead(session.projectId, session.memberId, readThrough);
         if (params.tool === 'mesh_read' || params.tool === 'relay_read_room')

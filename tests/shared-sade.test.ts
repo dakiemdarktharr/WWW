@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import type { CodexSession, ProviderId, PlanTask, Task } from '../shared/types.ts';
 import type { SharedSadeRun } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
-import type { SharedDelivery, SharedFinish } from '../server/group-sade.ts';
+import { sharedSadeUpdates, type SharedDelivery, type SharedFinish } from '../server/group-sade.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
@@ -34,6 +34,7 @@ function fixture(
     key?: string;
     members?: string[];
     patchHandoff?: boolean;
+    taskUpdates?: boolean;
   } = {},
 ) {
   const store = new Store(':memory:');
@@ -88,6 +89,7 @@ function fixture(
     active: string[] = [],
     grantIds = [grants[index]],
     deviceId = devices[index],
+    readUpdates: { jobId: string; through: number }[] = [],
   ) =>
     call(
       index,
@@ -96,15 +98,17 @@ function fixture(
         grants: grantIds,
         active,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
+        ...(options.taskUpdates ? { taskUpdates: true, readUpdates } : {}),
       },
       deviceId,
     ) as {
       delivery?: SharedDelivery;
       active: string[];
       reviews: { jobId: string; digest: string }[];
+      updates?: { jobId: string; notes: { sequence: number; text: string }[] }[];
     };
-  const finish = (index: number, jobId: string, result: SharedFinish) =>
-    call(index, { action: 'sade-finish', jobId, result });
+  const finish = (index: number, jobId: string, result: SharedFinish, updatesRead?: number) =>
+    call(index, { action: 'sade-finish', jobId, result, updatesRead });
   const view = () =>
     call(0, { action: 'read', groupId }) as {
       sadeRuns: SharedSadeRun[];
@@ -292,7 +296,7 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
 class DesktopPeer extends CodexClient {
   override readonly provider;
   calls: { method: string; params: any }[] = [];
-  responded?: { success: boolean };
+  responded?: { success: boolean; contentItems?: { text: string }[] };
   constructor(cwd: string, provider: ProviderId) {
     super({ home: cwd, cwd });
     this.provider = provider;
@@ -443,6 +447,7 @@ test(
       key: fingerprint,
       members: setups.map((entry) => entry.memberId),
       patchHandoff: true,
+      taskUpdates: true,
     });
     const remoteHead = () => git(root, ['--git-dir', remote, 'rev-parse', 'refs/heads/main']);
     const startingRevision = await remoteHead();
@@ -462,8 +467,15 @@ test(
     const pump = async (index: number) => {
       const worker = setups[index].workspace.sharedSade;
       const hello = (await worker.execute({ action: 'snapshot' })) as any;
-      for (const result of hello.results) cloud.finish(index, result.jobId, result.result);
-      const packet = cloud.poll(index, hello.active, hello.grants);
+      for (const result of hello.results)
+        cloud.finish(index, result.jobId, result.result, result.updatesRead);
+      const packet = cloud.poll(
+        index,
+        hello.active,
+        hello.grants,
+        cloud.devices[index],
+        hello.readUpdates,
+      );
       assert.doesNotMatch(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
@@ -499,7 +511,7 @@ test(
         `Harness never started for ${job.phase}: ${JSON.stringify(await entry.workspace.sharedSade.execute({ action: 'snapshot' }))}`,
       );
     }
-    const submit = async (
+    const callTool = async (
       index: number,
       session: CodexSession,
       peer: DesktopPeer,
@@ -511,7 +523,12 @@ test(
         method: 'item/tool/call',
         params: { threadId: session.threadId, turnId: session.turnId, tool, arguments: args },
       });
-      assert.equal(peer.responded?.success, true, JSON.stringify(peer.responded));
+      return peer.responded;
+    };
+    const submit = async (...args: Parameters<typeof callTool>) => {
+      const result = await callTool(...args);
+      assert.equal(result?.success, true, JSON.stringify(result));
+      return result;
     };
     const complete = async (
       index: number,
@@ -577,6 +594,45 @@ test(
     const writer = (await pump(0))!;
     assert.equal(writer.task?.key, 'architecture');
     const author = await sessionFor(0, writer);
+    const sendUpdate = (jobId: string, text: string) => ({
+      action: 'sade-update-task',
+      groupId: cloud.groupId,
+      runId: chat.id,
+      jobId,
+      text,
+      id: randomUUID(),
+    });
+    const architectureUpdate = sendUpdate(writer.id, 'Giữ đúng tên trường đăng ký trong contract.');
+    assert.throws(() => cloud.call(1, architectureUpdate), /assigned harness owner/);
+    cloud.call(0, architectureUpdate);
+    cloud.call(0, architectureUpdate);
+    assert.equal(cloud.view().sadeRuns[0].jobs.find((job) => job.id === writer.id)?.updateCount, 1);
+    assert.equal(await pump(0), undefined);
+    assert.equal(author.peer.calls.filter((call) => call.method === 'turn/steer').length, 0);
+    const inboxHint = await submit(0, author.session, author.peer, 'workspace_read_file', {
+      path: 'README.md',
+    });
+    assert.match(
+      JSON.parse(inboxHint.contentItems?.[0]?.text || '{}').taskUpdate,
+      /relay_read_shared_updates/,
+    );
+    const denied = await callTool(0, author.session, author.peer, 'workspace_write_file', {
+      path: 'architecture.txt',
+      content: 'stale',
+    });
+    assert.equal(denied?.success, false);
+    assert.match(denied?.contentItems?.[0]?.text || '', /Read the latest task update/);
+    const authorRead = await submit(
+      0,
+      author.session,
+      author.peer,
+      'relay_read_shared_updates',
+      {},
+    );
+    assert.match(authorRead.contentItems?.[0]?.text || '', /Giữ đúng tên trường/);
+    assert.equal(author.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
+    assert.equal(await pump(0), undefined);
+    assert.equal(cloud.view().sadeRuns[0].jobs.find((job) => job.id === writer.id)?.updatesRead, 1);
     await writeFile(
       path.join(author.task.worktree!, 'architecture.txt'),
       'Shared verified contract\n',
@@ -626,6 +682,23 @@ test(
       await readFile(path.join(reader.task.worktree!, 'architecture.txt'), 'utf8'),
       /Shared verified contract/,
     );
+    const frontendUpdate = sendUpdate(
+      frontend.id,
+      'Giữ contract đã duyệt và dùng nhãn form tiếng Việt.',
+    );
+    cloud.call(1, frontendUpdate);
+    assert.equal(await pump(1), undefined);
+    assert.equal(await pump(1), undefined);
+    assert.equal(reader.peer.calls.filter((call) => call.method === 'turn/steer').length, 1);
+    assert.equal(reader.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
+    const frontendRead = await submit(
+      1,
+      reader.session,
+      reader.peer,
+      'relay_read_shared_updates',
+      {},
+    );
+    assert.match(frontendRead.contentItems?.[0]?.text || '', /nhãn form tiếng Việt/);
     await submit(1, reader.session, reader.peer, 'relay_ask_shared_requester', {
       summary: 'Bạn muốn chọn phong cách giao diện hay để Mây tự chọn?',
     });
@@ -657,6 +730,14 @@ test(
     assert.equal(continued.task?.key, 'frontend');
     const resumed = await sessionFor(1, continued);
     assert.match(JSON.stringify(resumed.peer.calls), /tự chọn phong cách nhé/);
+    const resumedRead = await submit(
+      1,
+      resumed.session,
+      resumed.peer,
+      'relay_read_shared_updates',
+      {},
+    );
+    assert.match(resumedRead.contentItems?.[0]?.text || '', /nhãn form tiếng Việt/);
     await writeFile(
       path.join(resumed.task.worktree!, 'frontend.txt'),
       'Frontend uses the contract\n',
@@ -973,6 +1054,61 @@ test('a completed author can revoke permission before a reviewed prerequisite re
     assert.equal(f.poll(1).delivery, undefined);
     assert.match(f.view().sadeRuns[0].error || '', /withdrew permission/);
     assert.doesNotMatch(JSON.stringify(f.store.get('sharedSadeRun', runId)), /export const value/);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('an unread task update blocks a stale completion without releasing dependent work', () => {
+  const f = fixture(['claude', 'antigravity'], { taskUpdates: true });
+  try {
+    const runId = randomUUID();
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: runId,
+      content: 'Read the contract before continuing.',
+      sade: { projectKey: key },
+    });
+    const plan = f.poll(0).delivery!;
+    f.finish(0, plan.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Verify the contract before the next task starts.',
+        tasks: [
+          work('contract', { preferredMemberId: f.grants[0] }),
+          work('interface', { dependsOn: ['contract'], preferredMemberId: f.grants[1] }),
+        ],
+      },
+    });
+    const job = f.poll(0).delivery!;
+    const text = `Use the existing commit instead of repeating the task. ${'password=x '.repeat(85)}`;
+    f.call(0, {
+      action: 'sade-update-task',
+      groupId: f.groupId,
+      runId,
+      jobId: job.id,
+      id: randomUUID(),
+      text,
+    });
+    const notes = sharedSadeUpdates.parse(f.poll(0, [job.id]).updates?.[0]?.notes);
+    assert.match(notes[0].text, /password=\[REDACTED\]/);
+    assert.doesNotMatch(notes[0].text, /password=x/);
+    const wrongOwner = f.poll(1, [job.id], [f.grants[0]], f.devices[1], [
+      { jobId: job.id, through: 1 },
+    ]);
+    assert.deepEqual(wrongOwner.updates, []);
+    assert.equal(
+      f.view().sadeRuns[0].jobs.find((entry) => entry.id === job.id)?.updatesRead,
+      undefined,
+    );
+    f.finish(0, job.id, { kind: 'done', summary: 'Completed using stale instructions.' });
+    assert.match(f.view().sadeRuns[0].error || '', /before reading the latest/);
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(f.store.get('sharedSadeRun', runId)),
+      /Use the existing commit/,
+    );
   } finally {
     f.store.close();
   }

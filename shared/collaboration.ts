@@ -59,6 +59,9 @@ export interface SharedSadeJob {
   task?: PlanTask;
   state: 'queued' | 'running' | 'waiting' | 'reviewing' | 'done' | 'blocked' | 'cancelled';
   summary?: string;
+  canUpdate?: boolean;
+  updateCount?: number;
+  updatesRead?: number;
 }
 
 export interface SharedSadeRun {
@@ -101,4 +104,12 @@ export type GroupCommand =
     }
   | { action: 'sade-revoke'; groupId: string; grantId: string }
   | { action: 'sade-cancel'; groupId: string; runId: string }
-  | { action: 'sade-answer'; groupId: string; runId: string; jobId: string; answer: string };
+  | { action: 'sade-answer'; groupId: string; runId: string; jobId: string; answer: string }
+  | {
+      action: 'sade-update-task';
+      groupId: string;
+      runId: string;
+      jobId: string;
+      id: string;
+      text: string;
+    };
