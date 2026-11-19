@@ -121,6 +121,52 @@ test('human allowance resumes the queued request, replaces older limits, dedupli
   assert.throws(() => host.quota.assertCanRun(atlas.id, project.id));
 });
 
+test('a redacted chat retry reuses its original message and rejects changed routing', async (t) => {
+  const store = new Store(':memory:');
+  const host = new Workspace(store, process.cwd(), process.cwd());
+  t.after(async () => {
+    await host.close();
+    store.close();
+  });
+  const a = host.autonomy.addAccount(),
+    b = host.autonomy.addAccount();
+  const project = store.put('project', {
+    id: randomUUID(),
+    name: 'Inbox',
+    path: process.cwd(),
+    goal: '',
+    memberIds: [a.id, b.id],
+    createdAt: new Date().toISOString(),
+  } satisfies Project);
+  const other = store.put('project', { ...project, id: randomUUID() });
+  const request = {
+    projectId: project.id,
+    clientRequestId: randomUUID(),
+    content: 'Look at password=fixture-only',
+    mentions: [b.id, a.id],
+  };
+  const original = postHumanChat(host, request, []);
+  assert.doesNotMatch(original.content, /fixture-only/);
+  assert.equal(postHumanChat(host, { ...request, mentions: [a.id, b.id] }, []).id, original.id);
+  assert.throws(() => postHumanChat(host, { ...request, mentions: [b.id] }, []), /target changed/);
+  assert.throws(
+    () => postHumanChat(host, { ...request, replyTo: original.id }, []),
+    /target changed/,
+  );
+  assert.throws(
+    () => postHumanChat(host, { ...request, taskId: randomUUID() }, []),
+    /target changed/,
+  );
+  assert.throws(
+    () => postHumanChat(host, { ...request, content: 'Different request' }, []),
+    /content changed/,
+  );
+  assert.notEqual(postHumanChat(host, { ...request, projectId: other.id }, []).id, original.id);
+  // Older messages stored the inferred recipients without the original explicit mention set.
+  store.put('message', { ...original, requestedMentions: undefined });
+  assert.equal(postHumanChat(host, request, []).id, original.id);
+});
+
 test('ambiguous allowance asks in chat, agents cannot grant, and an outsider cannot receive a project allowance', async (t) => {
   const store = new Store(':memory:');
   const host = new Workspace(store, process.cwd(), process.cwd());

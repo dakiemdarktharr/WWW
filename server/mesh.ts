@@ -86,25 +86,10 @@ export class Mesh {
     if (member.removedAt) throw new DomainError('This teammate was removed.', 410);
     return member;
   }
-  private messages(projectId: string): RoomMessage[] {
-    // Record order provides a read-compatible view of databases written before sequences existed.
-    // Store migrates/persists canonical global sequences for all newly written messages.
-    return this.store
-      .all<RoomMessage>('message')
-      .map((message, index) => ({
-        ...message,
-        sequence:
-          positiveSequence(message.sequence ?? -1) && message.sequence! > 0
-            ? message.sequence
-            : index + 1,
-      }))
-      .filter((message) => message.projectId === projectId)
-      .sort((a, b) => a.sequence! - b.sequence!);
-  }
   private cursor(projectId: string, memberId: string): MeshCursor {
     const key = cursorId(projectId, memberId);
     return (
-      this.store.all<MeshCursor>('meshCursor').find((cursor) => cursor.id === key) || {
+      this.store.lookup<MeshCursor>('meshCursor', key) || {
         id: key,
         projectId,
         memberId,
@@ -119,7 +104,7 @@ export class Mesh {
     this.member(memberId);
     return this.store.transaction(() => {
       const id = cursorId(projectId, memberId);
-      const existing = this.store.all<MeshCursor>('meshCursor').find((cursor) => cursor.id === id);
+      const existing = this.store.lookup<MeshCursor>('meshCursor', id);
       introduce(this.store, projectId, memberId);
       if (existing) return existing;
       const cursor = this.store.put('meshCursor', this.cursor(projectId, memberId));
@@ -289,7 +274,7 @@ export class Mesh {
     });
     this.notify(message);
     this.host.notifyMesh?.(input.projectId);
-    return this.messages(input.projectId).find((entry) => entry.id === message.id)!;
+    return this.store.get<RoomMessage>('message', message.id);
   }
   private command(projectId: string, content: string, catalog: CodexModel[]) {
     const match = /^(?:!!\s*)?\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(content);
@@ -475,29 +460,26 @@ export class Mesh {
     options: { after?: number; limit?: number; sessionId?: string } = {},
   ) {
     const project = this.project(projectId);
-    const cursor = this.ensureMember(projectId, memberId);
-    const after = options.after ?? cursor.readThrough;
-    const limit = options.limit ?? 50;
-    if (!positiveSequence(after) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
-      throw new DomainError('Use a valid sequence and a page size of 1–100.', 400);
-    const all = this.messages(projectId);
-    const messages = all.filter((message) => message.sequence! > after).slice(0, limit);
-    // Reading a page records delivery, but neither read nor acknowledgement. A client cannot
-    // skip unread pages and then falsely acknowledge the omitted history as read-through.
-    if (messages.length && after <= cursor.readThrough) {
-      this.store.transaction(() => {
+    const page = this.store.transaction(() => {
+      const cursor = this.ensureMember(projectId, memberId);
+      const after = options.after ?? cursor.readThrough;
+      const limit = options.limit ?? 50;
+      if (!positiveSequence(after) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+        throw new DomainError('Use a valid sequence and a page size of 1–100.', 400);
+      const messages = this.store.roomPage(projectId, after, limit);
+      // Only contiguous delivery can advance the range eligible for acknowledgement.
+      if (messages.length && after <= cursor.readThrough) {
         const id = cursor.id;
-        const previous = this.store
-          .all<Delivery>('meshDelivery')
-          .find((delivery) => delivery.id === id);
+        const previous = this.store.lookup<Delivery>('meshDelivery', id);
         this.store.put('meshDelivery', {
           id,
           projectId,
           memberId,
           deliveredThrough: Math.max(previous?.deliveredThrough || 0, messages.at(-1)!.sequence!),
         } satisfies Delivery);
-      });
-    }
+      }
+      return { messages, cursor, unread: this.store.unreadMessages(projectId, cursor.readThrough) };
+    });
     return {
       project,
       agreement: workingAgreement,
@@ -508,9 +490,7 @@ export class Mesh {
             entry.projectId === projectId &&
             groupMembers(this.store, projectId).some((member) => member.id === entry.memberId),
         ),
-      messages,
-      cursor,
-      unread: all.filter((message) => message.sequence! > cursor.readThrough).length,
+      ...page,
       ...this.signals(projectId, memberId, options.sessionId),
       members: groupMembers(this.store, projectId).map((member) => ({
         ...(({ id, name, role, color, status, owner, account }) => ({
@@ -543,7 +523,7 @@ export class Mesh {
   private validateSequence(projectId: string, sequence: number) {
     if (
       !positiveSequence(sequence) ||
-      (sequence !== 0 && !this.messages(projectId).some((message) => message.sequence === sequence))
+      (sequence !== 0 && !this.store.roomHasSequence(projectId, sequence))
     )
       throw new DomainError('The message sequence does not belong to this project.', 400);
   }
@@ -553,8 +533,7 @@ export class Mesh {
     return this.store.transaction(() => {
       const cursor = this.cursor(projectId, memberId);
       const delivered =
-        this.store.all<Delivery>('meshDelivery').find((entry) => entry.id === cursor.id)
-          ?.deliveredThrough || 0;
+        this.store.lookup<Delivery>('meshDelivery', cursor.id)?.deliveredThrough || 0;
       if (sequence > delivered)
         throw new DomainError('Read the inbox page before marking it read.');
       return this.store.put('meshCursor', {

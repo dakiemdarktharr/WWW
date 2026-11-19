@@ -268,6 +268,56 @@ if (!isMainThread && (workerData as ClaimInput).operation === 'mesh-claim') {
     );
   });
 
+  test('legacy room history retains global sequence and delivery boundaries on reopen', async (t) => {
+    const f = await fixture(t);
+    f.mesh.ensureMember(f.project.id, f.first.id);
+    const makeLegacy = (id: string, projectId: string) =>
+      f.store.put('message', {
+        id,
+        projectId,
+        authorId: null,
+        kind: 'system',
+        content: id,
+        taskId: null,
+      });
+    makeLegacy('local-old', f.project.id);
+    makeLegacy('foreign-old', f.otherProject.id);
+    makeLegacy('local-newer', f.project.id);
+    f.reopen();
+    const first = f.mesh.readRoom(f.project.id, f.first.id, { limit: 2 });
+    assert.deepEqual(
+      first.messages.map((entry) => entry.sequence),
+      [1, 2],
+    );
+    assert.equal(first.unread, 3);
+    assert.throws(() => f.mesh.markRead(f.project.id, f.first.id, 3), /does not belong/);
+    assert.throws(() => f.mesh.markRead(f.project.id, f.first.id, 4), /Read the inbox page/);
+    f.mesh.markRead(f.project.id, f.first.id, 2);
+    f.reopen();
+    assert.equal(f.human('Ordinary append').sequence, 5);
+    const next = f.mesh.readRoom(f.project.id, f.first.id);
+    assert.deepEqual(
+      next.messages.map((entry) => entry.sequence),
+      [4, 5],
+    );
+    assert.equal(next.unread, 2);
+  });
+
+  test('partially migrated messages cannot shadow an issued cursor', async (t) => {
+    const f = await fixture(t);
+    const a = f.human('Legacy');
+    const issued = f.human('Issued cursor');
+    f.store.put('message', { ...a, sequence: undefined });
+    f.store.put('message', { ...issued, sequence: 1 });
+    f.reopen();
+    assert.equal(f.store.get<RoomMessage>('message', issued.id).sequence, 1);
+    assert.deepEqual(
+      f.store.roomPage(f.project.id, 1, 1).map((row) => row.id),
+      [a.id],
+    );
+    assert.equal(f.human('Next message').sequence, 3);
+  });
+
   test('independent SQLite workers racing to accept one user request produce one claim and announcement', async (t) => {
     const f = await fixture(t);
     f.mesh.ensureMember(f.project.id, f.first.id);

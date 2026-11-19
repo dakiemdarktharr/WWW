@@ -12,6 +12,11 @@ import type {
 } from '../shared/types.ts';
 import { normalizeScope, scopesOverlap } from './security.ts';
 
+const messageSequence = "json_extract(data,'$.sequence')";
+const projectMessages = "FROM records WHERE kind='message' AND json_extract(data,'$.projectId')=?";
+const clientRequest = "json_extract(data,'$.clientRequestId')";
+const humanRequests = `${projectMessages} AND json_extract(data,'$.authorId') IS NULL AND json_extract(data,'$.kind')='message'`;
+
 export class DomainError extends Error {
   constructor(
     message: string,
@@ -39,6 +44,9 @@ export class Store extends EventEmitter {
     this.db = new DatabaseSync(filename);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
+      CREATE INDEX IF NOT EXISTS room_message_sequence ON records(kind,${messageSequence}) WHERE kind='message';
+      CREATE INDEX IF NOT EXISTS room_message_project_sequence ON records(json_extract(data,'$.projectId'),${messageSequence}) WHERE kind='message';
+      CREATE INDEX IF NOT EXISTS room_message_request ON records(json_extract(data,'$.projectId'),${clientRequest},${messageSequence}) WHERE kind='message' AND ${clientRequest} IS NOT NULL;
       CREATE TABLE IF NOT EXISTS leases (taskId TEXT PRIMARY KEY, memberId TEXT UNIQUE NOT NULL, projectId TEXT NOT NULL, token TEXT NOT NULL, scopes TEXT NOT NULL, heartbeat INTEGER NOT NULL, orphaned INTEGER NOT NULL DEFAULT 0);`);
     const columns = this.db.prepare('PRAGMA table_info(leases)').all() as { name: string }[];
     if (!columns.some((column) => column.name === 'sessionId'))
@@ -48,11 +56,29 @@ export class Store extends EventEmitter {
         INSERT INTO leases(taskId,memberId,sessionId,projectId,token,scopes,heartbeat,orphaned) SELECT taskId,memberId,memberId,projectId,token,scopes,heartbeat,orphaned FROM leases_v1;
         DROP TABLE leases_v1;`);
       });
-    let sequence = 0;
-    for (const message of this.all<RoomMessage>('message')) {
-      sequence = Math.max(sequence + 1, message.sequence || 0);
-      if (!message.sequence) this.put('message', { ...message, sequence });
-    }
+    // The oldest databases assigned no sequence. Keep their original global row order.
+    const first = this.db
+      .prepare(
+        `SELECT ${messageSequence} AS sequence FROM records WHERE kind='message' ORDER BY ${messageSequence} LIMIT 1`,
+      )
+      .get();
+    if (first && (first.sequence === null || Number(first.sequence) <= 0))
+      this.transaction(() => {
+        const messages = this.all<RoomMessage>('message');
+        const assigned = new Set(messages.map((message) => message.sequence));
+        let sequence = 0;
+        for (const message of messages) {
+          if (Number.isSafeInteger(message.sequence) && message.sequence! > 0) {
+            sequence = Math.max(sequence, message.sequence!);
+            continue;
+          }
+          // A partially upgraded database may already have issued this number to a later row.
+          do {
+            sequence++;
+          } while (assigned.has(sequence));
+          this.put('message', { ...message, sequence });
+        }
+      });
     for (const member of this.members())
       if (!member.provider) this.put('member', { ...member, provider: 'codex' });
     for (const session of this.sessions())
@@ -428,6 +454,61 @@ export class Store extends EventEmitter {
       .get(message.id, JSON.stringify(message)) as { data: string };
     this.emit('change');
     return JSON.parse(row.data) as RoomMessage;
+  }
+  roomPage(projectId: string, after: number, limit: number): RoomMessage[] {
+    return this.db
+      .prepare(
+        `SELECT data ${projectMessages} AND ${messageSequence}>? ORDER BY ${messageSequence}, rowid LIMIT ?`,
+      )
+      .all(projectId, after, limit)
+      .map((row) => JSON.parse(String(row.data)) as RoomMessage);
+  }
+  unreadMessages(projectId: string, readThrough: number) {
+    return Number(
+      this.db
+        .prepare(`SELECT COUNT(*) AS n ${projectMessages} AND ${messageSequence}>?`)
+        .get(projectId, readThrough)!.n,
+    );
+  }
+  latestRoomSequence(projectId: string) {
+    return Number(
+      this.db
+        .prepare(`SELECT MAX(${messageSequence}) AS sequence ${projectMessages}`)
+        .get(projectId)!.sequence ?? 0,
+    );
+  }
+  roomHasSequence(projectId: string, sequence: number) {
+    return !!this.db
+      .prepare(`SELECT 1 ${projectMessages} AND ${messageSequence}=? LIMIT 1`)
+      .get(projectId, sequence);
+  }
+  humanMessageByRequest(projectId: string, requestId: string): RoomMessage | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT data ${projectMessages} AND ${clientRequest}=? AND json_extract(data,'$.authorId') IS NULL ORDER BY ${messageSequence}, rowid LIMIT 1`,
+      )
+      .get(projectId, requestId);
+    return row ? JSON.parse(String(row.data)) : undefined;
+  }
+  recentAddressedRequest(projectId: string, since: number): RoomMessage | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT data ${humanRequests} AND json_array_length(data,'$.mentions')>0
+        AND unixepoch(json_extract(data,'$.createdAt'),'subsec')*1000>?
+        ORDER BY ${messageSequence} DESC, rowid DESC LIMIT 1`,
+      )
+      .get(projectId, since);
+    return row ? JSON.parse(String(row.data)) : undefined;
+  }
+  firstOpenRequest(projectId: string, memberId: string, before: number): RoomMessage | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT data ${humanRequests} AND ${messageSequence}<? AND json_extract(data,'$.requestStatus')='open'
+        AND (COALESCE(json_array_length(data,'$.mentions'),0)=0 OR EXISTS (SELECT 1 FROM json_each(records.data,'$.mentions') WHERE value=?))
+        ORDER BY ${messageSequence}, rowid LIMIT 1`,
+      )
+      .get(projectId, before, memberId);
+    return row ? JSON.parse(String(row.data)) : undefined;
   }
   activity(input: Omit<Activity, 'id' | 'createdAt'>) {
     const result = this.put('activity', {
