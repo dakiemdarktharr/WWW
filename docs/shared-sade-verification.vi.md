@@ -12,6 +12,12 @@ Sade dùng tên chủ tài khoản và quyền của project để phân biệt 
 
 Khi project có hơn 32 harness đã cấp quyền, planner tra cứu theo từng trang bằng tên, chủ tài khoản, provider hoặc hệ điều hành. Kết quả dùng mã teammate của lượt lập kế hoạch và nhận được tên tiếng Việt không dấu. Nếu desktop chưa hỗ trợ tra cứu, yêu cầu chờ ở trạng thái xếp hàng và giữ nguyên số lượt. Bài kiểm thử hai workspace dùng 33 harness, gồm hai harness trùng tên của hai chủ khác nhau. Planner tìm đúng harness thứ 33 và giao việc cho desktop đã cấp quyền. Kết quả là bằng chứng giao thức với harness mô phỏng.
 
+Windows chạy 340 bài và bỏ qua một bài theo nền tảng ở commit `912401f`. Build, Electron, giao diện Shared Groups và bộ 1.000 tin đều đạt. macOS arm64 chạy 335 bài, bỏ qua sáu bài theo nền tảng và qua các bài giao diện. [Kiểm thử macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44507015451)
+
+Lượt bàn giao qua mạng chạy ở commit `17d038b`. Máy Mac arm64 ghép cặp tái hiện lỗi đường dẫn, chạy lại thành công sau khi sửa và trả đúng tệp được cấp quyền về Windows. Commit `912401f` bổ sung kiểm tra kiểu cho dữ liệu bài thử. [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44506869643)
+
+GPT-6-Luna với reasoning `high` qua Codex CLI đã đăng nhập chọn đúng Astra của Bình ở cả hai câu tổng hợp, gồm cách nói có dấu và casual không dấu. Model gọi công cụ tra cứu MCP chỉ đọc và trả mã `member-33`, với đúng phạm vi `README.md`. Phép đo dùng prompt cùng bộ kiểm tra kế hoạch của Sade và danh sách 33 harness mô phỏng. Chỉ công cụ tra cứu của bài thử được cho phép trong phiên CLI tạm. Kết quả đo khả năng chọn đúng chủ sở hữu, phần giao việc giữa nhiều tài khoản vẫn dùng bài hồi quy giao thức ở trên. [Thiết lập quyền cho từng công cụ MCP](https://learn.chatgpt.com/docs/config-file/config-reference)
+
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
 Khi chia việc, Sade tính khối lượng của các tác vụ đã chỉ định trước khi chọn harness cho việc còn trống. Với tác vụ review trong kế hoạch, Sade lần theo cả các bước phụ thuộc gián tiếp và loại profile của chủ tài khoản đã nhận quyền ghi vào các file thuộc phạm vi review. Người chỉ chạy test hoặc viết file ngoài phạm vi đó vẫn đủ điều kiện. Sade kiểm tra lại trước khi giao một lượt review đã được lập từ bản cũ.
