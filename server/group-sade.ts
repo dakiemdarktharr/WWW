@@ -9,7 +9,13 @@ import {
   type SharedSadeRun,
 } from '../shared/collaboration.ts';
 import type { PlanTask, TaskDiff } from '../shared/types.ts';
-import { allocatePlan, collectPrerequisites, parseTeamPlan, planTool } from './workflow-plan.ts';
+import {
+  allocatePlan,
+  collectPrerequisites,
+  parseTeamPlan,
+  permitsPlanAssignee,
+  planTool,
+} from './workflow-plan.ts';
 import { redact, scopesOverlap } from './security.ts';
 import { DomainError, type Store } from './store.ts';
 import { reviewDigest } from './sade.ts';
@@ -160,6 +166,7 @@ export type SharedFinish = z.infer<typeof sharedFinish>;
 export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
+  fallbackMemberId?: string;
   deadline?: number;
   awaitingReceipt?: true;
   revision?: string;
@@ -313,6 +320,13 @@ export const groupPlanTool = {
               description:
                 'Copy the exact ref of the named teammate from team. Use auto only if the requester did not name a teammate.',
             },
+            fallbackMemberId: {
+              type: 'string',
+              minLength: 4,
+              maxLength: 36,
+              description:
+                'Use none unless the requester explicitly authorized a backup. Copy the exact ref of the named backup, or use auto only if the requester lets Sade choose a backup. A backup requires a different named primary.',
+            },
             requiredPlatform: {
               type: 'string',
               enum: ['any', 'win32', 'darwin', 'linux'],
@@ -323,6 +337,7 @@ export const groupPlanTool = {
           required: [
             ...planTool.inputSchema.properties.tasks.items.required,
             'preferredMemberId',
+            'fallbackMemberId',
             'requiredPlatform',
           ],
         },
@@ -335,6 +350,7 @@ const sharedPlanRouting = z
   .object({
     kind: z.string(),
     preferredMemberId: z.string().min(4).max(36),
+    fallbackMemberId: z.string().min(4).max(36).optional(),
     requiredPlatform: z
       .enum(['any', 'win32', 'darwin', 'linux'])
       .transform((value) => (value === 'any' ? undefined : value)),
@@ -347,15 +363,27 @@ export const sharedPlanMemberRef = (index: number) => `member-${index + 1}`;
 
 export function parseSharedGroupPlan(input: unknown, roster: readonly string[]) {
   const plan = sharedPlanInput.parse(input);
-  const tasks = plan.tasks.map((task) => {
-    const choice = task.preferredMemberId;
+  const resolve = (choice: string) => {
     const member = roster.find(
       (id, index) => choice === id || choice === sharedPlanMemberRef(index),
     );
-    if (choice !== 'auto' && !member)
-      throw new DomainError('Use a teammate reference from the supplied team or auto.');
+    if (!member) throw new DomainError('Use a teammate reference from the supplied team or auto.');
+    return member;
+  };
+  const tasks = plan.tasks.map(({ fallbackMemberId: choice, ...task }) => {
+    const preferred =
+      task.preferredMemberId === 'auto' ? undefined : resolve(task.preferredMemberId);
+    const backup =
+      choice && choice !== 'none' ? (choice === 'auto' ? choice : resolve(choice)) : undefined;
+    if (backup && (!preferred || backup === preferred))
+      throw new DomainError('A backup needs a different named primary teammate.');
     const kind = Object.entries(sharedPlanKinds).find(([action]) => action === task.kind)?.[1];
-    return { ...task, kind: kind ?? task.kind, preferredMemberId: member };
+    return {
+      ...task,
+      kind: kind ?? task.kind,
+      preferredMemberId: preferred,
+      ...(backup ? { fallbackMemberId: backup } : {}),
+    };
   });
   return parseTeamPlan({ ...plan, tasks });
 }
@@ -484,6 +512,7 @@ export class GroupSade {
           jobs: run.jobs.map(
             ({
               deadline,
+              fallbackMemberId,
               awaitingReceipt,
               revision,
               change,
@@ -817,7 +846,9 @@ export class GroupSade {
         );
       return;
     }
-    if (job.task?.preferredMemberId) {
+    const preferredMemberId = job.task?.preferredMemberId;
+    const fallbackMemberId = job.fallbackMemberId;
+    if (preferredMemberId && !fallbackMemberId) {
       this.block(run, job, 'The requested harness did not have enough provider quota to start.');
       return;
     }
@@ -839,6 +870,7 @@ export class GroupSade {
       .filter(
         (entry) =>
           run.roster.includes(entry.id) &&
+          permitsPlanAssignee({ preferredMemberId, fallbackMemberId }, entry.id) &&
           this.usableForRun(entry, group, run) &&
           unreservedTurns(run, entry, job) > 0 &&
           supportsTask(entry, job.task) &&
@@ -847,7 +879,10 @@ export class GroupSade {
           (!writer || !grant.patchHandoff || entry.patchHandoff || !hasDependents(run, job)),
       )
       .sort(
-        (a, b) => Number(b.role === grant.role) - Number(a.role === grant.role) || a.used - b.used,
+        (a, b) =>
+          Number(b.id === preferredMemberId) - Number(a.id === preferredMemberId) ||
+          Number(b.role === grant.role) - Number(a.role === grant.role) ||
+          a.used - b.used,
       )
       .find((entry) => {
         if (!writer) return true;
@@ -1347,11 +1382,12 @@ export class GroupSade {
         );
         job.state = 'done';
         job.summary = redact(plan.summary);
-        const planned = plan.tasks.map((task, index): Job => ({
+        const planned = plan.tasks.map(({ fallbackMemberId, ...task }, index): Job => ({
           id: randomUUID(),
           runId: run.id,
           grantId: allocations[index].memberId,
           phase: 'task',
+          fallbackMemberId,
           task: {
             ...task,
             description: redact(task.description),

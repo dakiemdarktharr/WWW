@@ -145,6 +145,7 @@ export interface Task {
 export interface PlanTask {
   requiredPlatform?: 'win32' | 'darwin' | 'linux';
   preferredMemberId?: string;
+  fallbackMemberId?: string;
   key: string;
   title: string;
   description: string;

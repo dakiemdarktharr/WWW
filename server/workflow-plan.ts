@@ -28,6 +28,7 @@ const planTaskSchema = suggestion
     dependsOn: z.array(z.string().regex(keyPattern)).max(31),
     stage: z.string().trim().min(1).max(60),
     preferredMemberId: z.string().min(1).max(100).optional(),
+    fallbackMemberId: z.string().min(1).max(100).optional(),
     requiredPlatform: z.enum(['win32', 'darwin', 'linux']).optional(),
   })
   .strict();
@@ -145,6 +146,21 @@ export function collectPrerequisites<T>(
 
 const maxSharedAllocationRetries = 1024;
 
+const fixedAssignee = (task: PlanTask) =>
+  task.fallbackMemberId ? undefined : task.preferredMemberId;
+
+export function permitsPlanAssignee(
+  task: Pick<PlanTask, 'preferredMemberId' | 'fallbackMemberId'>,
+  memberId: string,
+) {
+  return (
+    !task.preferredMemberId ||
+    task.preferredMemberId === memberId ||
+    task.fallbackMemberId === memberId ||
+    task.fallbackMemberId === 'auto'
+  );
+}
+
 /** Use role and load ranking, with alternate assignments for Shared Groups. */
 export function allocatePlan(
   plan: TeamPlan,
@@ -166,15 +182,16 @@ export function allocatePlan(
   const remaining = options.turns && new Map(options.turns);
   const requested = new Map<string, number>();
   if (remaining)
-    for (const task of plan.tasks)
-      if (task.preferredMemberId)
-        requested.set(task.preferredMemberId, (requested.get(task.preferredMemberId) || 0) + 1);
-  // Allocate implementations before reviews, and count named work before filling open assignments.
+    for (const task of plan.tasks) {
+      const assignee = fixedAssignee(task);
+      if (assignee) requested.set(assignee, (requested.get(assignee) || 0) + 1);
+    }
+  // Allocate implementations before reviews and reserve turns for binding assignments.
   const byEffort = [...plan.tasks].sort(
     (a, b) =>
       Number(a.kind === 'review') - Number(b.kind === 'review') ||
       (options.preferSpecialists
-        ? Number(Boolean(b.preferredMemberId)) - Number(Boolean(a.preferredMemberId))
+        ? Number(Boolean(fixedAssignee(b))) - Number(Boolean(fixedAssignee(a)))
         : 0) ||
       b.effort - a.effort ||
       compareKey(a.key, b.key),
@@ -211,16 +228,16 @@ export function allocatePlan(
           ? 'Independent review needs another connected teammate.'
           : `No authorized teammate can run “${task.title}”.`,
       );
-    if (task.preferredMemberId && !capable.some((member) => member.id === task.preferredMemberId))
+    const authorized = capable.filter((member) => permitsPlanAssignee(task, member.id));
+    if (!authorized.length)
       return new DomainError(
         'The requested teammate is unavailable or would review their own work.',
       );
-    const eligible = capable.filter(
+    const fixed = fixedAssignee(task);
+    const eligible = authorized.filter(
       (member) =>
-        (!task.preferredMemberId || member.id === task.preferredMemberId) &&
-        (!remaining ||
-          (remaining.get(member.id) || 0) >
-            (member.id === task.preferredMemberId ? 0 : requested.get(member.id) || 0)),
+        !remaining ||
+        (remaining.get(member.id) || 0) > (member.id === fixed ? 0 : requested.get(member.id) || 0),
     );
     return eligible.length
       ? eligible
@@ -238,6 +255,7 @@ export function allocatePlan(
       Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]);
     eligible.sort(
       (a, b) =>
+        Number(b.id === task.preferredMemberId) - Number(a.id === task.preferredMemberId) ||
         (options.available
           ? Number(options.available.has(b.id)) - Number(options.available.has(a.id))
           : 0) ||
@@ -247,6 +265,7 @@ export function allocatePlan(
         compareKey(a.id, b.id),
     );
     let firstFailure: DomainError | undefined;
+    const fixed = fixedAssignee(task);
     for (const { id } of eligible) {
       if (firstFailure) {
         if (retries <= 0) break;
@@ -256,7 +275,7 @@ export function allocatePlan(
       load.set(id, load.get(id)! + task.effort);
       if (remaining) {
         remaining.set(id, remaining.get(id)! - 1);
-        if (task.preferredMemberId) requested.set(id, requested.get(id)! - 1);
+        if (fixed) requested.set(fixed, requested.get(fixed)! - 1);
       }
       // A writer or a spent turn can remove the last option for later work.
       const blocked = options.ownerByMember
@@ -273,7 +292,7 @@ export function allocatePlan(
       load.set(id, load.get(id)! - task.effort);
       if (remaining) {
         remaining.set(id, remaining.get(id)! + 1);
-        if (task.preferredMemberId) requested.set(id, requested.get(id)! + 1);
+        if (fixed) requested.set(fixed, requested.get(fixed)! + 1);
       }
     }
     return firstFailure;

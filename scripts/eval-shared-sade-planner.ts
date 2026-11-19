@@ -128,11 +128,44 @@ const intentContrasts = [
       'Windows works. I’m asking Bếp now to reproduce and fix the src/window.ts issue on the authorized paired Mac. The owner supplies tools only.',
   },
 ] as const;
+const quotaFallbacks = [
+  {
+    id: 'quota/named-casual',
+    scenario: 'quota-named',
+    message:
+      'Ê, nhờ Gemini của mình đọc src/menu.ts rồi nói ngắn gọn file đó làm gì nha. Nếu Gemini hết lượt thì cho Claude của Bình đọc thay. Chỉ xem file đó thôi.',
+  },
+  {
+    id: 'quota/named-unaccented',
+    scenario: 'quota-named',
+    message:
+      'mn oi nho gemini cua an doc rieng src/menu.ts va tom tat y chinh. het luot thi claude cua binh lam thay nha, dung sua file.',
+  },
+  {
+    id: 'quota/named-expert',
+    scenario: 'quota-named',
+    message:
+      'Create one read-only task for src/menu.ts with Gemini under An as primary. If Gemini cannot take it because its provider quota is exhausted, dispatch the same task to Claude under Bình. Keep the scope to that file.',
+  },
+  {
+    id: 'quota/delegated',
+    scenario: 'quota-delegated',
+    message:
+      'Cho Gemini của mình đọc src/menu.ts rồi giải thích nhanh nha. Nếu hết quota thì Sade tự chọn một AI khác đã được cấp quyền để đọc file đó.',
+  },
+  {
+    id: 'quota/pinned',
+    scenario: 'quota-pinned',
+    message:
+      'Claude của Bình để dành lần khác nhé. Hôm nay chỉ Gemini của An đọc và tóm tắt src/menu.ts thôi. Nếu Gemini hết lượt thì báo mình.',
+  },
+] as const;
 type Case =
   | keyof typeof messages
   | 'full-handoff'
   | (typeof ownerHandoffs)[number]['scenario']
-  | (typeof intentContrasts)[number]['scenario'];
+  | (typeof intentContrasts)[number]['scenario']
+  | (typeof quotaFallbacks)[number]['scenario'];
 const workshop = {
   architecture: 'docs/workshop-contract.md',
   frontend: 'src/workshop/Form.tsx',
@@ -197,22 +230,24 @@ const variedHandoffs = [
 ];
 
 const endpoint = 'http://127.0.0.1:11565';
-const model = 'qwen3:4b-instruct-2507-q4_K_M';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     replay: { type: 'string' },
+    model: { type: 'string', default: 'qwen3:4b-instruct-2507-q4_K_M' },
     case: { type: 'string' },
     'export-prompt': { type: 'boolean' },
     'external-plan': { type: 'string' },
     'external-decision': { type: 'string' },
     'owner-handoff': { type: 'boolean' },
     'intent-contrasts': { type: 'boolean' },
+    'quota-fallback': { type: 'boolean' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
   },
 });
+const model = values.model;
 assert.ok(
   [
     values['handoff-holdout'],
@@ -220,6 +255,7 @@ assert.ok(
     values['full-handoff'],
     values['owner-handoff'],
     values['intent-contrasts'],
+    values['quota-fallback'],
   ].filter(Boolean).length <= 1,
   'Choose one evaluation suite.',
 );
@@ -287,6 +323,7 @@ async function withGroup<T>(
   const store = new Store(':memory:');
   try {
     const fullHandoff = scenario === 'full-handoff';
+    const quotaFallback = scenario.startsWith('quota-');
     const names =
       scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['Gemini', 'Gemini']
@@ -294,7 +331,9 @@ async function withGroup<T>(
           ? ['Gemini', 'Astra', 'Astra']
           : fullHandoff
             ? ['Gemini', 'Astra', 'Claude', 'Antigravity']
-            : ['Bếp', 'Mây'];
+            : quotaFallback
+              ? ['Gemini', 'Claude']
+              : ['Bếp', 'Mây'];
     const roles = fullHandoff
       ? ['engineer', 'designer', 'engineer', 'reviewer']
       : ['engineer', 'reviewer', 'designer'];
@@ -303,7 +342,9 @@ async function withGroup<T>(
         ? ['gemini', 'gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
           ? ['gemini', 'codex', 'codex']
-          : ['gemini', 'codex', 'claude', 'antigravity'];
+          : quotaFallback
+            ? ['gemini', 'claude']
+            : ['gemini', 'codex', 'claude', 'antigravity'];
     const groups = new SharedGroups(
       store,
       (value) => people.find((person) => person.id === value) || null,
@@ -468,7 +509,17 @@ function assess(
   }
   assert.equal(run.state, 'running', run.error || 'a valid plan should be queued');
   const jobs = run.jobs.filter((job) => job.phase === 'task');
-  if (scenario === 'full-handoff') {
+  if (scenario.startsWith('quota-')) {
+    assert.equal(jobs.length, 1, 'one scoped task regardless of backup');
+    assert.equal(jobs[0].grantId, grants[0], 'try Gemini first');
+    assert.deepEqual(jobs[0].task?.scope, ['src/menu.ts']);
+    assert.ok(!needsGroupWrite(jobs[0].task), 'keep the task read-only');
+    assert.equal(
+      plan.tasks[0].fallbackMemberId,
+      scenario === 'quota-named' ? grants[1] : scenario === 'quota-delegated' ? 'auto' : undefined,
+      'preserve only the fallback the requester authorized',
+    );
+  } else if (scenario === 'full-handoff') {
     assert.equal(jobs.length, 5, 'architecture, frontend, backend, tests and a defensive review');
     const architecture = scopedWriter(jobs, workshop.architecture);
     const frontend = scopedWriter(jobs, workshop.frontend);
@@ -580,36 +631,38 @@ const cases: {
   id: string;
   message: string;
   handoff?: typeof defaultHandoff;
-}[] = values['intent-contrasts']
-  ? [...intentContrasts]
-  : values['owner-handoff']
-    ? [...ownerHandoffs]
-    : values['full-handoff']
-      ? fullHandoffs.map((message, index) => ({
-          scenario: 'full-handoff',
-          id: `full-handoff/${index + 1}`,
-          message,
-        }))
-      : values['handoff-varied']
-        ? variedHandoffs.map(({ message, ...handoff }, index) => ({
-            scenario: 'handoff',
-            id: `handoff/varied-${index + 1}`,
+}[] = values['quota-fallback']
+  ? [...quotaFallbacks]
+  : values['intent-contrasts']
+    ? [...intentContrasts]
+    : values['owner-handoff']
+      ? [...ownerHandoffs]
+      : values['full-handoff']
+        ? fullHandoffs.map((message, index) => ({
+            scenario: 'full-handoff',
+            id: `full-handoff/${index + 1}`,
             message,
-            handoff,
           }))
-        : values['handoff-holdout']
-          ? handoffHoldout.map((message, index) => ({
-              scenario: 'handoff' as const,
-              id: `handoff/holdout-${index + 1}`,
+        : values['handoff-varied']
+          ? variedHandoffs.map(({ message, ...handoff }, index) => ({
+              scenario: 'handoff',
+              id: `handoff/varied-${index + 1}`,
               message,
+              handoff,
             }))
-          : Object.entries(messages).flatMap(([scenario, inputs]) =>
-              inputs.map((message, index) => ({
-                scenario: scenario as Case,
-                id: `${scenario}/${index + 1}`,
+          : values['handoff-holdout']
+            ? handoffHoldout.map((message, index) => ({
+                scenario: 'handoff' as const,
+                id: `handoff/holdout-${index + 1}`,
                 message,
-              })),
-            );
+              }))
+            : Object.entries(messages).flatMap(([scenario, inputs]) =>
+                inputs.map((message, index) => ({
+                  scenario: scenario as Case,
+                  id: `${scenario}/${index + 1}`,
+                  message,
+                })),
+              );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved && !values.case)

@@ -1957,6 +1957,87 @@ for (const backupProject of [key, 'c'.repeat(64)]) {
   });
 }
 
+for (const unavailable of ['before allocation', 'before starting', 'both exhausted'] as const) {
+  test(`Shared Sade honors the named backup when quota is unavailable ${unavailable}`, (t) => {
+    const f = fixture(['gemini', 'claude'], {
+      turnsA: unavailable === 'before allocation' ? 1 : 3,
+    });
+    t.after(() => f.store.close());
+    const observer = randomUUID();
+    const observerGrant = randomUUID();
+    f.call(0, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [
+        { localId: f.members[0], provider: 'gemini', name: 'Bếp' },
+        { localId: observer, provider: 'codex', name: 'Sổ tay' },
+      ],
+    });
+    f.call(0, {
+      action: 'sade-grant',
+      id: observerGrant,
+      groupId: f.groupId,
+      teammateId: observer,
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      turns: 3,
+      allowWrites: false,
+    });
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Nhờ Gemini bên tui coi src/check.ts nha. Hết lượt thì để Claude của Bình coi giùm.',
+      sade: { projectKey: key },
+    };
+    f.call(0, request);
+    const planner = f.poll(0).delivery!;
+    const roster = planner.team.map(({ id }) => id);
+    const plan = parseSharedGroupPlan(
+      {
+        summary: 'Read src/check.ts and send a short explanation.',
+        tasks: [
+          {
+            ...work('check'),
+            preferredMemberId: sharedPlanMemberRef(roster.indexOf(f.grants[0])),
+            fallbackMemberId: sharedPlanMemberRef(roster.indexOf(f.grants[1])),
+            requiredPlatform: 'any',
+          },
+        ],
+      },
+      roster,
+    );
+    f.finish(0, planner.id, { kind: 'plan', plan });
+    if (unavailable !== 'before allocation') {
+      const first = f.poll(0).delivery;
+      assert.equal(first?.grantId, f.grants[0]);
+      assert.equal(f.poll(1).delivery, undefined);
+      f.finish(0, first.id, { kind: 'provider-unavailable' });
+      assert.throws(() => f.finish(0, first.id, { kind: 'provider-unavailable' }), /unavailable/);
+    }
+    assert.equal(f.poll(0, [], [observerGrant]).delivery, undefined);
+    const retry = f.poll(1).delivery;
+    assert.equal(retry?.grantId, f.grants[1]);
+    assert.deepEqual(retry.task?.scope, ['src/check.ts']);
+    assert.doesNotMatch(JSON.stringify(retry.task), /fallbackMemberId/);
+    if (unavailable === 'both exhausted') {
+      f.finish(1, retry.id, { kind: 'provider-unavailable' });
+      assert.equal(f.poll(0, [], [observerGrant]).delivery, undefined);
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    } else {
+      f.finish(1, retry.id, { kind: 'done', summary: 'Reported the file contents once.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+    }
+    f.call(0, request);
+    assert.equal(f.view().messages.length, 1);
+    assert.equal(f.view().sadeRuns.length, 1);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', observerGrant).used, 0);
+  });
+}
+
 for (const pinned of ['named harness', 'required OS'] as const) {
   test(`quota failover preserves the ${pinned}`, () => {
     const f = fixture(['gemini', 'codex'], { mac: pinned === 'required OS' });
@@ -3075,6 +3156,15 @@ test('planner references resolve only to the supplied roster and preserve explic
     /requiredPlatform/,
   );
   assert.throws(() => parseSharedGroupPlan(draft, []), /teammate reference/);
+  for (const fallbackMemberId of [randomUUID(), 'member-1']) {
+    assert.throws(
+      () =>
+        parseSharedGroupPlan({ ...draft, tasks: [{ ...draft.tasks[1], fallbackMemberId }] }, [
+          reviewer,
+        ]),
+      /teammate reference|different named primary/,
+    );
+  }
   assert.throws(
     () =>
       parseSharedGroupPlan(
