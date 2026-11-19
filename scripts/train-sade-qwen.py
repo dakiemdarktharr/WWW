@@ -10,8 +10,11 @@ import time
 
 import torch
 import torch.nn.functional as functional
-from peft import LoraConfig, TaskType, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from accelerate import init_empty_weights
+from accelerate.utils import set_module_tensor_to_device
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
+from safetensors import safe_open
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 ROUTES = ("general", "mac", "handoff", "review", "scope", "chat")
@@ -47,6 +50,28 @@ def prepare(tokenizer, rows):
             raise ValueError(f"{row['id']} exceeds the 320-token limit.")
         result.append((row, ids, ROUTES.index(row["route"])))
     return result
+
+
+def load_base(directory):
+    config = AutoConfig.from_pretrained(directory, local_files_only=True)
+    with init_empty_weights():
+        model = AutoModelForCausalLM.from_config(
+            config, dtype=torch.bfloat16, attn_implementation="sdpa"
+        )
+
+    # Reading each tensor directly avoids the memory-mapped storage slice used
+    # by the Transformers loader, which crashed on this Windows/PyTorch setup.
+    for shard in sorted(directory.glob("model-*-of-*.safetensors")):
+        with safe_open(shard, framework="pt", device="cpu") as source:
+            for name in source.keys():
+                set_module_tensor_to_device(
+                    model, name, "cuda:0", value=source.get_tensor(name)
+                )
+        print(json.dumps({"stage": "load", "shard": shard.name}), flush=True)
+    model.tie_weights()
+    if any(parameter.is_meta for parameter in model.parameters()):
+        raise RuntimeError("The checkpoint is missing required weights.")
+    return model.to("cuda:0")
 
 
 def logits_for(model, batch, pad_id, option_tokens):
@@ -105,6 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--adapter", type=Path, help="Evaluate a saved LoRA checkpoint.")
     parser.add_argument("--epochs", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--batch", type=int, choices=(1, 2, 4), default=4)
     args = parser.parse_args()
@@ -137,10 +163,17 @@ def main():
     training = prepare(tokenizer, balanced_rows)
     holdout = prepare(tokenizer, holdout_rows)
     args.output.mkdir(parents=True, exist_ok=False)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.root / "base", dtype=torch.bfloat16, use_safetensors=True,
-        local_files_only=True, device_map={"": "cuda"}, attn_implementation="sdpa",
-    )
+    model = load_base(args.root / "base")
+    if args.adapter:
+        model = PeftModel.from_pretrained(model, args.adapter, local_files_only=True)
+        restored = evaluate(model, holdout, tokenizer.pad_token_id, option_tokens)
+        (args.output / "reloaded.json").write_text(json.dumps(restored, indent=2), encoding="utf-8")
+        print(json.dumps({
+            "stage": "reloaded",
+            "correct": restored["correct"],
+            "total": restored["total"],
+        }), flush=True)
+        return
     baseline = evaluate(model, holdout, tokenizer.pad_token_id, option_tokens)
     (args.output / "baseline.json").write_text(json.dumps(baseline, indent=2), encoding="utf-8")
     print(json.dumps({

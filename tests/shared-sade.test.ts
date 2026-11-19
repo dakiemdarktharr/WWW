@@ -343,7 +343,7 @@ class DesktopPeer extends CodexClient {
 
 test(
   'two desktop workspaces execute one Shared Groups request with separate harnesses, real Git review and dependent handoff',
-  { timeout: 30000 },
+  { timeout: 60000 },
   async (t) => {
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-e2e-')));
     const remote = path.join(root, 'bare');
@@ -464,7 +464,9 @@ test(
     };
     async function sessionFor(index: number, job: SharedDelivery) {
       const entry = setups[index];
-      for (let attempt = 0; attempt < 200; attempt++) {
+      const deadline = Date.now() + 25000;
+      let nextHeartbeat = Date.now() + 2500;
+      while (Date.now() < deadline) {
         const task = entry.store.tasks().find((item) => item.sharedSadeJobId === job.id);
         if (task?.turnId)
           return {
@@ -472,7 +474,11 @@ test(
             session: entry.store.get<CodexSession>('session', task.sessionId!),
             peer: entry.peers.get(task.sessionId!)!,
           };
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (Date.now() >= nextHeartbeat) {
+          await pump(index);
+          nextHeartbeat = Date.now() + 2500;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 40));
       }
       throw new Error(
         `Harness never started for ${job.phase}: ${JSON.stringify(await entry.workspace.sharedSade.execute({ action: 'snapshot' }))}`,

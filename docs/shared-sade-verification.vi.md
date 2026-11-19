@@ -51,3 +51,17 @@ python scripts/train-sade-qwen.py --root .local/sade-qwen --output .local/sade-q
 ```
 
 Checkpoint dùng định dạng Safetensors. `metrics.json` ghi phiên bản model, seed, dấu vân tay dữ liệu, đỉnh VRAM, kết quả theo nhãn và ID mẫu dự đoán sai. Trọng số và log nằm trong `.local` trên máy thử.
+
+Trên RTX 5050 Laptop 8 GB, lần chạy thành công dùng LoRA rank 8, 350 mẫu, hai epoch và 176 bước. Tổng thời gian là 82,9 giây, tính cả nạp model và chấm. PyTorch ghi nhận đỉnh VRAM cấp phát 3.916 MiB. Trình nạp đọc từng tensor để tránh lỗi truy cập bộ nhớ khi nạp shard trên Windows.
+
+| Cùng tập chấm 144 mẫu            | Kết quả         |
+| -------------------------------- | --------------- |
+| Qwen3 1.7B trước train           | 45/144 (31,25%) |
+| Qwen3 1.7B + LoRA                | 108/144 (75%)   |
+| Nạp adapter từ file rồi chấm lại | 108/144 (75%)   |
+
+Điểm theo ý định gồm chạy trên Mac 23/24, bàn giao 22/24, review 21/24, tránh sửa trùng 17/24, yêu cầu chung 16/24 và chat không giao việc 9/24. Điểm tiếng Việt không dấu là 30/48. Hạn chế lớn nhất là nhận ra yêu cầu không chạy AI. Cấu hình chạy hiện tại dùng lựa chọn **Ask Sade** của người gửi và các kiểm tra quyền của bộ điều phối. Adapter hiện dùng cho đánh giá offline.
+
+```powershell
+python scripts/train-sade-qwen.py --root .local/sade-qwen --adapter .local/sade-qwen/experiment-3/epoch-2 --output .local/sade-qwen/recheck-epoch-2
+```
