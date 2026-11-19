@@ -24,6 +24,8 @@ Nếu một tác vụ ghi hoàn tất với worktree nguyên trạng, Sade dùng
 
 Nếu kế hoạch đã giao review cho một chủ tài khoản khác, với đúng phạm vi và chỉ phụ thuộc vào một tác vụ sửa, chính tác vụ review đó nhận diff khi bản sửa sẵn sàng. Sade giữ người được giao và tiêu chí review. Reviewer nhận tên, mô tả, tiêu chí nghiệm thu của tác vụ sửa và câu trả lời gần nhất của người gửi nếu có. Nếu cùng một diff có nhiều lượt review, mỗi lượt phải chấp thuận trước khi tích hợp. Nhiệm vụ phụ thuộc vẫn chờ kết quả tích hợp. Nếu tác vụ sửa kết thúc với worktree nguyên trạng, phần review đã yêu cầu tiếp tục dưới dạng kiểm tra chỉ đọc trên file hiện có.
 
+Khi workflow có grant của nhiều chủ tài khoản, Sade giữ một lượt review độc lập trước khi giao mỗi tác vụ ghi mà kế hoạch chưa có reviewer. Lượt được giữ trong ngân sách của nhóm và chỉ tính đã dùng khi giao review. Tác vụ ghi khác chờ nếu chưa có lượt review trống. Nếu tác vụ trước kết thúc với worktree nguyên trạng, lượt review trở lại ngân sách. Nếu lượt đã dành cho review thực tế, tác vụ đang review vẫn có thể hoàn thành và tích hợp trước khi Sade báo thiếu lượt cho việc tiếp theo. Với kế hoạch đã dành hết lượt của bên review cho công việc khác, Sade báo thiếu lượt trước khi mở harness sửa file.
+
 Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác tập file và byte trên nhánh đích. AEGIS có thể chặn tích hợp nhiệm vụ phụ thuộc nếu nhánh đích còn thiếu patch đầu vào.
 
 ## Kết quả A–D
