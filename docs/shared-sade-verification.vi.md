@@ -4,6 +4,8 @@ Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let
 
 Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi chỉ báo tình hình qua **Ask Sade**, planner có thể kết thúc bằng một thao tác riêng, kèm lời giải thích. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
+Desktop giữ kết quả đầu tiên đã được chấp nhận của planner hoặc reviewer. Lời gọi lặp đúng nội dung được xác nhận một lần nữa. Lời gọi mâu thuẫn trong cùng lượt bị từ chối. Planner vẫn có thể sửa và gửi lại đầu ra nếu lần trước bị lỗi kiểm tra cấu trúc.
+
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
 
 Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. **Sade progress** hiển thị tên harness cùng tên chủ tài khoản. Nếu còn mơ hồ, người gửi dùng **Reply to Sade**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
@@ -210,6 +212,14 @@ $instruction = 'This is a synthetic, read-only benchmark. Do not execute work, r
 ($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
 node --import tsx scripts/eval-shared-sade-planner.ts .local/owner-score.json --owner-handoff --case $case --external-decision $answer
 ```
+
+### Phân biệt tin báo tình hình và yêu cầu làm việc
+
+GPT-6-Luna với reasoning `high` qua Codex CLI đã đăng nhập đạt 8/8 trên bốn cặp tin nhắn tổng hợp. Trong mỗi cặp, hai câu dùng cùng tên harness và file. Câu chỉ trích lại yêu cầu cũ, chờ người gửi xác nhận, báo tiến độ hoặc nhắc ví dụ chạy Mac đều kết thúc với 0 tác vụ. Câu giao việc tương ứng chọn đúng người và file. Ca chỉ đọc giữ quyền chỉ đọc. Ca chạy Mac giữ yêu cầu macOS và máy ghép cặp. Shared Groups chấm đầu ra với grant mô phỏng.
+
+Bài thử desktop cũng tái hiện việc lời gọi lập kế hoạch đến sau có thể ghi đè kết quả báo tình hình trong cùng lượt. Sau bản sửa, lời gọi đó bị từ chối và nhóm vẫn thấy workflow kết thúc với 0 tác vụ. Các ca nộp lại cùng kết quả, nộp kế hoạch hợp lệ sau lỗi cấu trúc và đổi verdict sau khi reviewer đã nộp đều có bài hồi quy.
+
+Dùng lệnh xuất và chấm cấu trúc `decisionSchema` ở mục trên với `--intent-contrasts` thay cho `--owner-handoff`. Chọn một trong các ca `intent/quoted-update`, `intent/quoted-request`, `intent/deferred`, `intent/confirmed`, `intent/status`, `intent/read-only`, `intent/mac-status`, `intent/mac-request`. Lệnh Codex trong phép thử dùng `-m gpt-6-luna -c "model_reasoning_effort='high'"`.
 
 ### Qwen review bản vá chức năng
 

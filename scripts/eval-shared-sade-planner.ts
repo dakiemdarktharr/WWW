@@ -78,7 +78,61 @@ const ownerHandoffs = [
       'Gemini của Bình viết docs/contract.md trước nhé, xong Gemini của mình làm src/signup.ts theo đúng file đó.',
   },
 ] as const;
-type Case = keyof typeof messages | 'full-handoff' | (typeof ownerHandoffs)[number]['scenario'];
+const intentContrasts = [
+  {
+    id: 'intent/quoted-update',
+    scenario: 'chat',
+    message:
+      'ê hôm qua tin “Mây sửa src/menu.ts nha” là tui chép lại cho mn hiểu vụ trùng commit á. giờ tui báo tiến độ thôi.',
+  },
+  {
+    id: 'intent/quoted-request',
+    scenario: 'menu-edit',
+    message:
+      'ê hôm qua tui chỉ chép lại. giờ nhờ Mây sửa src/menu.ts thật nha, coi commit trước rồi bỏ qua phần đã làm.',
+  },
+  {
+    id: 'intent/deferred',
+    scenario: 'chat',
+    message:
+      'may se sua src/menu.ts khi nao minh nhan OK o tin khac nha. tin nay chi thong bao quy trinh de team biet.',
+  },
+  {
+    id: 'intent/confirmed',
+    scenario: 'menu-edit',
+    message:
+      'OK toi xac nhan bat dau tu tin nay. May sua src/menu.ts, kiem commit cu roi giu dung mot nguoi sua nhe.',
+  },
+  {
+    id: 'intent/status',
+    scenario: 'chat',
+    message:
+      'Mình mới dùng AI nên đang kể cách Mây đọc src/menu.ts cho nhóm hiểu. Phần đó đã xong, mình chỉ báo mọi người thôi nhé.',
+  },
+  {
+    id: 'intent/read-only',
+    scenario: 'read-menu',
+    message:
+      'Mình mới dùng AI, chỉ nhờ Mây đọc src/menu.ts và nói giúp file này làm gì nha. Đừng sửa file.',
+  },
+  {
+    id: 'intent/mac-status',
+    scenario: 'chat',
+    message:
+      'FYI, “Bếp should run src/window.ts on the paired Mac” was an example from the meeting. Windows is fine. No new run was authorized here.',
+  },
+  {
+    id: 'intent/mac-request',
+    scenario: 'mac',
+    message:
+      'Windows works. I’m asking Bếp now to reproduce and fix the src/window.ts issue on the authorized paired Mac. The owner supplies tools only.',
+  },
+] as const;
+type Case =
+  | keyof typeof messages
+  | 'full-handoff'
+  | (typeof ownerHandoffs)[number]['scenario']
+  | (typeof intentContrasts)[number]['scenario'];
 const workshop = {
   architecture: 'docs/workshop-contract.md',
   frontend: 'src/workshop/Form.tsx',
@@ -153,6 +207,7 @@ const { values, positionals } = parseArgs({
     'external-plan': { type: 'string' },
     'external-decision': { type: 'string' },
     'owner-handoff': { type: 'boolean' },
+    'intent-contrasts': { type: 'boolean' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
@@ -164,8 +219,9 @@ assert.ok(
     values['handoff-varied'],
     values['full-handoff'],
     values['owner-handoff'],
+    values['intent-contrasts'],
   ].filter(Boolean).length <= 1,
-  'Choose one handoff suite',
+  'Choose one evaluation suite.',
 );
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
@@ -446,13 +502,19 @@ function assess(
     assert.equal(source.grantId, grants[handoff.sourceOwner], 'preserve the named producer');
     assert.equal(target.grantId, grants[1 - handoff.sourceOwner], 'preserve the named recipient');
     assert.deepEqual(target.task?.dependsOn, [source.task?.key], 'schedule the producer first');
-  } else if (scenario === 'duplicate') {
-    scopedWriter(jobs, 'src/menu.ts');
+  } else if (scenario === 'duplicate' || scenario === 'menu-edit') {
+    const writer = scopedWriter(jobs, 'src/menu.ts');
     assert.equal(
       jobs.filter((job) => needsGroupWrite(job.task)).length,
       1,
       'do not schedule a duplicate write',
     );
+    if (scenario === 'menu-edit') assert.equal(writer.grantId, grants[1], 'keep the named editor');
+  } else if (scenario === 'read-menu') {
+    assert.equal(jobs.length, 1, 'reading one file needs one task');
+    assert.equal(jobs[0].grantId, grants[1], 'keep the named reader');
+    assert.deepEqual(jobs[0].task?.scope, ['src/menu.ts'], 'keep the scoped file');
+    assert.ok(!needsGroupWrite(jobs[0].task), 'keep the task read-only');
   } else if (scenario === 'review') {
     const writer = scopedWriter(jobs, 'src/total.ts');
     assert.equal(writer.grantId, grants[0], 'preserve the named author');
@@ -514,34 +576,36 @@ const cases: {
   id: string;
   message: string;
   handoff?: typeof defaultHandoff;
-}[] = values['owner-handoff']
-  ? [...ownerHandoffs]
-  : values['full-handoff']
-    ? fullHandoffs.map((message, index) => ({
-        scenario: 'full-handoff',
-        id: `full-handoff/${index + 1}`,
-        message,
-      }))
-    : values['handoff-varied']
-      ? variedHandoffs.map(({ message, ...handoff }, index) => ({
-          scenario: 'handoff',
-          id: `handoff/varied-${index + 1}`,
+}[] = values['intent-contrasts']
+  ? [...intentContrasts]
+  : values['owner-handoff']
+    ? [...ownerHandoffs]
+    : values['full-handoff']
+      ? fullHandoffs.map((message, index) => ({
+          scenario: 'full-handoff',
+          id: `full-handoff/${index + 1}`,
           message,
-          handoff,
         }))
-      : values['handoff-holdout']
-        ? handoffHoldout.map((message, index) => ({
-            scenario: 'handoff' as const,
-            id: `handoff/holdout-${index + 1}`,
+      : values['handoff-varied']
+        ? variedHandoffs.map(({ message, ...handoff }, index) => ({
+            scenario: 'handoff',
+            id: `handoff/varied-${index + 1}`,
             message,
+            handoff,
           }))
-        : Object.entries(messages).flatMap(([scenario, inputs]) =>
-            inputs.map((message, index) => ({
-              scenario: scenario as Case,
-              id: `${scenario}/${index + 1}`,
+        : values['handoff-holdout']
+          ? handoffHoldout.map((message, index) => ({
+              scenario: 'handoff' as const,
+              id: `handoff/holdout-${index + 1}`,
               message,
-            })),
-          );
+            }))
+          : Object.entries(messages).flatMap(([scenario, inputs]) =>
+              inputs.map((message, index) => ({
+                scenario: scenario as Case,
+                id: `${scenario}/${index + 1}`,
+                message,
+              })),
+            );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved && !values.case)
@@ -554,7 +618,6 @@ const externalDecision = z.object({
 });
 if (exportPrompt) {
   const { scenario, id, message } = selectedCases[0];
-  assert.notEqual(scenario, 'chat', 'Choose a case that requests a plan.');
   await withGroup(scenario, message, async ({ delivery }) => {
     const prompt = sharedGroupPlanningPrompt(delivery);
     const decisionSchema = {
