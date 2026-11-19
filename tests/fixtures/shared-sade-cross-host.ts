@@ -10,6 +10,7 @@ import { DesktopIdentity } from '../../server/desktop-auth.ts';
 import { registerDesktopRoutes } from '../../server/desktop-routes.ts';
 import { runMachine, type RunnerConfig } from '../../server/runner-agent.ts';
 import type { Workspace } from '../../server/service.ts';
+import type { RunnerEvent } from '../../server/runners.ts';
 import { safeEqual } from '../../server/security.ts';
 import { Store } from '../../server/store.ts';
 
@@ -33,7 +34,14 @@ export async function startCrossHostBridge(
   workspace: Workspace,
   projectId: string,
   node: { id: string; token: string },
-  options: { origin: string; port: number; workflowRef: string; sha: string },
+  options: {
+    origin: string;
+    port: number;
+    workflowRef: string;
+    sha: string;
+    runId?: string;
+    dropExchange?: (body: { epoch: string; events: RunnerEvent[] }) => boolean;
+  },
 ) {
   const origin = tunnelOrigin(options.origin);
   const response = await fetch(`${issuer}/.well-known/jwks`, { signal: AbortSignal.timeout(5000) });
@@ -59,6 +67,7 @@ export async function startCrossHostBridge(
         claims.exp > now &&
         claims.workflow_ref === options.workflowRef &&
         claims.sha === options.sha &&
+        (!options.runId || claims.run_id === options.runId) &&
         claims.event_name === 'workflow_dispatch' &&
         claims.runner_environment === 'github-hosted'
       );
@@ -97,6 +106,18 @@ export async function startCrossHostBridge(
     if (verified) acknowledged = true;
     return { verified };
   });
+  if (options.dropExchange) {
+    edge.addHook('preHandler', async (request, reply) => {
+      if (
+        request.url.split('?')[0] === exchangePath &&
+        options.dropExchange!(request.body as { epoch: string; events: RunnerEvent[] })
+      ) {
+        // Cut the actual origin socket before the desktop bridge forwards the receipt.
+        reply.hijack();
+        request.raw.socket.destroy();
+      }
+    });
+  }
   edge.post(bootstrapPath, { bodyLimit: 256 }, async (request, reply) => {
     if (provisioned || !trusted(request.headers.authorization))
       return reply.code(403).send({ error: 'An unused, matching CI identity is required.' });
