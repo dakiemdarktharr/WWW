@@ -547,7 +547,8 @@ export class GroupSade {
     if (
       similar.some(
         (run) =>
-          run.state !== 'done' && run.jobs.some((job) => job.deadline && job.deadline > this.now()),
+          run.state !== 'done' &&
+          run.jobs.some((job) => job.state !== 'done' && (job.deadline || 0) > this.now()),
       )
     )
       throw new DomainError(
@@ -1431,12 +1432,16 @@ export class GroupSade {
       job.state = 'done';
       job.summary = redact(result.summary);
       if (result.verdict === 'changes') {
-        if (!this.reviseAfterReview(run, source, group, grants, job.summary))
+        if (!this.reviseAfterReview(run, source, group, grants, job.summary)) {
+          // The author finished its turn when it submitted the patch. An
+          // unapproved patch cannot be integrated while waiting for review.
+          if (!source.reviewedDigest) source.deadline = undefined;
           this.block(
             run,
             source,
             'Independent reviewer requested changes. Read the review before continuing.',
           );
+        }
       } else {
         if (run.jobs.every((other) => other.reviewOf !== source.id || other.state === 'done')) {
           source.reviewedDigest = reviewDigest(source.change);

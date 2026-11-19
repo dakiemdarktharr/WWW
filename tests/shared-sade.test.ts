@@ -3189,6 +3189,67 @@ test('Shared Sade reports a missing review turn before dispatching a writer', ()
   }
 });
 
+for (const siblingRunning of [false, true]) {
+  test(`Shared Sade releases a rejected workflow ${siblingRunning ? 'after its running sibling expires' : 'as soon as its review finishes'}`, (t) => {
+    const f = fixture();
+    t.after(() => f.store.close());
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Nhờ Bếp sửa file rồi Mây kiểm tra giúp.',
+      sade: { projectKey: key },
+    };
+    f.call(0, request);
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Prepare the change and review it before integration.',
+        tasks: [
+          work('edit', { kind: 'code', preferredMemberId: f.grants[0], scope: patch.files }),
+          ...(siblingRunning ? [work('notes', { preferredMemberId: f.grants[0] })] : []),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'Draft ready.' });
+    const sibling = siblingRunning ? f.poll(0, [writer.id]).delivery : undefined;
+    if (siblingRunning) assert.equal(sibling?.task?.key, 'notes');
+    const review = f.poll(1).delivery!;
+    assert.equal(review.phase, 'review');
+    f.finish(1, review.id, {
+      kind: 'review',
+      verdict: 'changes',
+      summary: 'Handle the boundary case.',
+    });
+    assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    assert.throws(
+      () => f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Old change.' }),
+      /no longer running/,
+    );
+
+    const retry = { ...request, id: randomUUID(), content: 'Sửa lại cùng file ở trường hợp biên.' };
+    if (sibling) {
+      assert.throws(() => f.call(0, retry), /previous Sade request is stopping/);
+      assert.equal(f.view().messages.length, 1);
+      assert.deepEqual(f.poll(0, [sibling.id]).active, []);
+      const record = f.store.get<{ id: string; jobs: { id: string; deadline?: number }[] }>(
+        'sharedSadeRun',
+        request.id,
+      );
+      record.jobs.find((job) => job.id === sibling.id)!.deadline = 0;
+      f.store.put('sharedSadeRun', record);
+    }
+
+    f.call(0, retry);
+    assert.equal(f.view().messages.length, 2);
+    const next = f.poll(0).delivery!;
+    assert.equal(next.phase, 'plan');
+    assert.notEqual(next.id, planner.id);
+  });
+}
+
 for (const scenario of [
   'author exhausted',
   'reviewer exhausted',
