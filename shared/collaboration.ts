@@ -39,7 +39,7 @@ export interface SharedMessage {
   content: string;
   createdAt: string;
   sequence: number;
-  sade?: { projectKey: string };
+  sade?: { projectKey: string; readOnly?: true };
 }
 export type SharedPlatform = 'win32' | 'darwin' | 'linux';
 export interface SharedHarnessGrant {
@@ -106,7 +106,7 @@ export type GroupCommand =
       groupId: string;
       id: string;
       content: string;
-      sade?: { projectKey: string };
+      sade?: SharedMessage['sade'];
     }
   | {
       action: 'sade-connect';

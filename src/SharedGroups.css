@@ -154,6 +154,19 @@
   flex: 1;
   min-height: 75px;
 }
+.shared-group-compose-controls {
+  display: grid;
+  gap: 6px;
+}
+.shared-group-compose-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.shared-group-compose-controls input {
+  width: auto;
+}
 @media (max-width: 850px) {
   .shared-groups {
     grid-template-columns: 1fr;

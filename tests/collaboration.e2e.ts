@@ -245,14 +245,16 @@ try {
     projectName: 'Group demo',
     role: 'engineer',
     platform: 'win32',
-    allowWrites: false,
+    allowWrites: true,
     turns: 4,
   });
   await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await a.page.getByLabel('Ask Sade in this group').selectOption(projectKey);
+  await a.page.getByLabel('Read-only request').check();
   await a.page.getByLabel('Message group', { exact: true }).fill('Check the current plan.');
   await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
   await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue('');
+  await expect(a.page.getByLabel('Read-only request')).toHaveCount(0);
   await a.page.getByLabel('Message group', { exact: true }).fill('Cảm ơn, nghe rõ rồi.');
   await a.page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(b.page.getByRole('log')).toContainText('Cảm ơn, nghe rõ rồi.');
@@ -260,6 +262,8 @@ try {
   const poll = (active: string[] = [], readUpdates?: { jobId: string; through: number }[]) =>
     dispatch({ action: 'sade-poll', grants: [grantId], active, taskUpdates: true, readUpdates });
   const firstPlan = (poll() as { delivery: SharedDelivery }).delivery;
+  assert.ok(firstPlan.team.length);
+  assert.ok(firstPlan.team.every(({ allowWrites }) => !allowWrites));
   const question = 'Should Alice Codex or Bob Codex check the plan?';
   dispatch({
     action: 'sade-finish',

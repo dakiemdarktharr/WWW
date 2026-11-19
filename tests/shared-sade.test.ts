@@ -203,6 +203,45 @@ test('a lost poll response can retry the original delivery without spending anot
   assert.equal(f.view().sadeRuns[0].state, 'blocked');
 });
 
+for (const kind of ['research', 'code'] as const) {
+  test(`Shared Sade enforces a request's read-only setting for a ${kind} plan`, (t) => {
+    const f = fixture();
+    t.after(() => f.store.close());
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Đọc và tóm tắt src/check.ts, chỉ xem thôi.',
+      sade: { projectKey: key, readOnly: true },
+    };
+    f.call(0, request);
+    f.call(0, request);
+    assert.throws(() => f.call(0, { ...request, sade: { projectKey: key } }), /ID already used/);
+    const planner = f.poll(0).delivery!;
+    assert.ok(planner.team.length > 0);
+    assert.ok(planner.team.every((member) => !member.allowWrites && !member.pairedPlatform));
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Inspect the requested file.',
+        tasks: [work('check', { kind, preferredMemberId: f.grants[1] })],
+      },
+    });
+    assert.equal(f.view().messages.length, 1);
+    if (kind === 'code') {
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      assert.match(f.view().sadeRuns[0].error || '', /read.only/i);
+      assert.equal(f.poll(1).delivery, undefined);
+    } else {
+      const task = f.poll(1).delivery!;
+      assert.equal(task.task?.kind, 'research');
+      assert.deepEqual(task.task?.scope, ['src/check.ts']);
+      f.finish(1, task.id, { kind: 'done', summary: 'Read and summarized the original file.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+    }
+  });
+}
+
 test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {
   const cases = sharedSadeCorpus();
   assert.equal(new Set(cases.map((item) => item.message)).size, 1000);
@@ -1432,7 +1471,7 @@ test(
     assert.match(JSON.stringify(debugPlan.team), /pairedPlatform/);
     assert.doesNotMatch(JSON.stringify(debugPlan), new RegExp(node.id + '|' + permission.id));
     const debugPlanner = await sessionFor(0, debugPlan);
-    await submit(0, debugPlanner.session, debugPlanner.peer, 'relay_submit_plan', {
+    const platformPlan = {
       summary: 'Verify the app with the requester’s harness and the paired machine.',
       tasks: [
         work('platform-smoke', {
@@ -1442,7 +1481,29 @@ test(
           requiredPlatform: pairedPlatform,
         }),
       ],
-    });
+    };
+    const splitPlan = await callTool(
+      0,
+      debugPlanner.session,
+      debugPlanner.peer,
+      'relay_submit_plan',
+      {
+        ...platformPlan,
+        tasks: [
+          ...platformPlan.tasks,
+          work('test-on-pair', {
+            kind: 'research',
+            scope: platformPlan.tasks[0].scope,
+            preferredMemberId: nextGrant.id,
+            requiredPlatform: pairedPlatform,
+            dependsOn: ['platform-smoke'],
+          }),
+        ],
+      },
+    );
+    assert.equal(splitPlan?.success, false);
+    assert.match(splitPlan?.contentItems?.[0].text || '', /same paired machine task/i);
+    await submit(0, debugPlanner.session, debugPlanner.peer, 'relay_submit_plan', platformPlan);
     await complete(0, debugPlanner.session, debugPlanner.peer, 'Paired check planned.');
     const debugJob = (await pump(0))!;
     assert.equal(debugJob.task?.requiredPlatform, pairedPlatform);
@@ -1588,11 +1649,21 @@ test(
       ...chat,
       id: randomUUID(),
       content: 'Tui báo tình hình thôi, khoan giao việc nha.',
+      sade: { ...chat.sade, readOnly: true },
     };
     cloud.call(0, update);
     const noWorkJob = (await pump(0))!;
     assert.equal(noWorkJob.phase, 'plan');
     const noWork = await sessionFor(0, noWorkJob);
+    const writeDraft = await callTool(0, noWork.session, noWork.peer, 'relay_submit_plan', {
+      summary: 'Attempting an edit in a read-only request.',
+      tasks: [work('blocked-edit', { kind: 'code', preferredMemberId: 'auto' })].map((task) => ({
+        ...task,
+        requiredPlatform: 'any',
+      })),
+    });
+    assert.equal(writeDraft?.success, false);
+    assert.match(writeDraft?.contentItems?.[0].text || '', /no authorized writes/i);
     const empty = await callTool(0, noWork.session, noWork.peer, 'relay_submit_plan', {
       summary: 'A status update for the team.',
       tasks: [],

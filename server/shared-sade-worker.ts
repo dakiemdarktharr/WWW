@@ -4,7 +4,7 @@ import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { sharedSadePollGrantLimit } from '../shared/collaboration.ts';
-import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/types.ts';
+import type { CodexSession, Member, Project, Task, TaskDiff, TeamPlan } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { assertGroupMember } from './groups.ts';
 import {
@@ -28,10 +28,10 @@ import {
   type SharedFinish,
 } from './group-sade.ts';
 import { createWorktree, git } from './git.ts';
-import { normalizeScope, redact } from './security.ts';
+import { normalizeScope, redact, scopesOverlap } from './security.ts';
 import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
-import { parsePlanTask } from './workflow-plan.ts';
+import { collectPrerequisites, parsePlanTask, permitsPlanAssignee } from './workflow-plan.ts';
 import { reviewDigest } from './sade.ts';
 import { inspectMachineChecks } from './machine-checks.ts';
 import { machineTool, machineTools, parseMachineOperation } from './machine-tools.ts';
@@ -114,7 +114,7 @@ export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
   const instructions = `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
 ${teamInstructions} A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
 Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform.
-For each deliverable identify the action, the file and who was asked to produce it. Set preferredMemberId to a teammate ref only when the requester identified the assignee by name or ownership. Set preferredMemberId to auto for every unassigned writer, tester and reviewer, including when the requester asks Sade to choose.
+For each deliverable identify the action, the file and who was asked to produce it. Reading or summarizing an existing file is research-read-only. A request for read-only work never authorizes edits. Set preferredMemberId to a teammate ref only when the requester identified the assignee by name or ownership. Use auto for unassigned tasks.
 Keep one task when the requester names a primary and explicitly permits a backup if the primary cannot take it. Set preferredMemberId to the primary and fallbackMemberId to the named backup's ref. Use auto as fallbackMemberId only when the requester delegates the backup choice. Use none for all other tasks. If the primary has no grant and the requester explicitly allows the available backup in that situation, use the granted backup as the primary.
 In a handoff, make the producer a separate task and use its key in the receiving task's dependsOn. When asked to add tests after implementation, give those tests their own file scope and a dependency on the implementation task. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.
 When asked to consult the requester about frontend style, put both options in that task's acceptance: ask for a preferred style or offer to let the assigned frontend harness choose. If the requester has already supplied a preference or delegated the choice, carry that decision into the task.
@@ -379,7 +379,9 @@ export class SharedSadeWorker {
     const tools = phase === 'plan' ? [groupPlanTool, groupNoWorkTool] : machine ? machineTools : [];
     return [
       ...tools,
-      ...(this.planRosters.has(jobId) ? [groupRosterLookupTool] : []),
+      ...((this.planRosters.get(jobId)?.length || 0) > inlineSharedSadeTeamLimit
+        ? [groupRosterLookupTool]
+        : []),
       ...(acceptsUpdates ? [groupReadUpdatesTool] : []),
       ...(clarified ? [] : [groupQuestionTool]),
     ];
@@ -387,7 +389,8 @@ export class SharedSadeWorker {
   findTeammates(jobId: string, input: unknown) {
     this.assertCurrent(jobId);
     const planRoster = this.planRosters.get(jobId);
-    if (!planRoster) throw new DomainError('This job has no Shared Groups harness directory.');
+    if (!planRoster || planRoster.length <= inlineSharedSadeTeamLimit)
+      throw new DomainError('This job has no Shared Groups harness directory.');
     const query = rosterLookupInput.parse(input);
     const searchKey = (text: string) => withoutDiacritics(text).toLowerCase();
     const name = query.name ? searchKey(query.name) : '';
@@ -493,9 +496,46 @@ export class SharedSadeWorker {
     const plan = noWork
       ? parseGroupNoWork(input)
       : parseSharedGroupPlan(input, receipt.planMembers || []);
+    if (!this.host.store.lookup('sharedSadeLocalPlan', jobId))
+      this.checkDraftCapabilities(jobId, plan, receipt.planMembers || []);
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
       throw new DomainError('The plan is too large.');
     return this.recordDecision('sharedSadeLocalPlan', { id: jobId, plan });
+  }
+  private checkDraftCapabilities(jobId: string, plan: TeamPlan, ids: readonly string[]) {
+    const roster = this.planRosters.get(jobId);
+    if (!roster?.length) return;
+    if (plan.tasks.some(needsGroupWrite) && !roster.some(({ allowWrites }) => allowWrites))
+      throw new DomainError(
+        'This request has no authorized writes. Plan read-only work or ask if edits are needed.',
+      );
+    const byKey = new Map(plan.tasks.map((task) => [task.key, task]));
+    for (const task of plan.tasks) {
+      if (needsGroupWrite(task) || (!task.requiredPlatform && task.kind !== 'review')) continue;
+      const writers = collectPrerequisites(
+        task.dependsOn,
+        byKey,
+        (prior) => prior.dependsOn,
+      ).filter((prior) => needsGroupWrite(prior) && scopesOverlap(prior.scope, task.scope));
+      if (task.kind === 'review' && roster.length === 1 && writers.length)
+        throw new DomainError(
+          'An independent review needs another person’s harness. Ask for access if requested, or let Sade handle its integration review.',
+        );
+      if (
+        task.requiredPlatform &&
+        !roster.some(
+          (member, index) =>
+            member.platform === task.requiredPlatform && permitsPlanAssignee(task, ids[index]),
+        ) &&
+        writers.some((prior) => prior.requiredPlatform === task.requiredPlatform) &&
+        roster.some(
+          (member) => member.allowWrites && member.pairedPlatform === task.requiredPlatform,
+        )
+      )
+        throw new DomainError(
+          'Keep checks on the same paired machine task as the edit, with all requested validation in its acceptance criteria.',
+        );
+    }
   }
   submitReview(jobId: string, input: unknown) {
     this.assertCurrent(jobId);
@@ -914,7 +954,7 @@ export class SharedSadeWorker {
           return { ok: true };
         }
         this.leases.set(delivery.id, Date.now() + 15_000);
-        if (needsRosterLookup(delivery))
+        if (delivery.phase === 'plan')
           this.planRosters.set(
             delivery.id,
             delivery.team.map((member, index) => plannerMember(member, index)),

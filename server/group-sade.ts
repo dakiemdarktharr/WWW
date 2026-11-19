@@ -187,6 +187,7 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
   content: string;
   roster: string[];
+  readOnly?: true;
   unavailableGrants?: string[];
   jobs: Job[];
 };
@@ -506,7 +507,7 @@ export class GroupSade {
         .filter((grant) => this.usable(grant, group, false))
         .map(({ deviceId, sharingId, revoked, ...view }) => view),
       sadeRuns: this.runs(group).map(
-        ({ authorId, content, roster, unavailableGrants, ...run }) => ({
+        ({ authorId, content, roster, readOnly, unavailableGrants, ...run }) => ({
           ...run,
           canAnswer: ownerId === authorId,
           jobs: run.jobs.map(
@@ -591,6 +592,7 @@ export class GroupSade {
       projectKey: message.sade.projectKey,
       authorId: message.ownerId,
       content: redact(message.content),
+      ...(message.sade.readOnly ? { readOnly: true } : {}),
       roster: grants.map((grant) => grant.id),
       state: 'planning',
       jobs: [
@@ -1214,8 +1216,8 @@ export class GroupSade {
                     provider: teammate.provider,
                     role: entry.role,
                     platform: entry.platform,
-                    pairedPlatform: entry.pairedPlatform,
-                    allowWrites: entry.allowWrites,
+                    pairedPlatform: run.readOnly ? undefined : entry.pairedPlatform,
+                    allowWrites: !run.readOnly && entry.allowWrites,
                     owner: group.people.find((person) => person.id === entry.ownerId)!.name,
                     ownedByRequester: entry.ownerId === run.authorId,
                   },
@@ -1358,6 +1360,10 @@ export class GroupSade {
       if (job.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
       try {
         const plan = parseTeamPlan(result.plan, { allowEmpty: true });
+        if (run.readOnly && plan.tasks.some(writes))
+          throw new DomainError(
+            'This is a read-only request. The plan cannot write project files.',
+          );
         if (plan.tasks.length === 0) {
           job.state = 'done';
           job.summary = redact(plan.summary);

@@ -45,6 +45,7 @@ export default function SharedGroups({
   const [machines, setMachines] = useState<Machine[]>([]);
   const [machineId, setMachineId] = useState('');
   const [projectKey, setProjectKey] = useState('');
+  const [readOnlyRequest, setReadOnlyRequest] = useState(false);
   const [answer, setAnswer] = useState('');
   const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
     null,
@@ -54,7 +55,7 @@ export default function SharedGroups({
     id: string;
     content: string;
     groupId: string;
-    sade?: { projectKey: string };
+    sade?: SharedMessage['sade'];
   } | null>(null);
   const refreshList = async () => {
     const next = await request<GroupListing>({ action: 'list' });
@@ -121,6 +122,7 @@ export default function SharedGroups({
     setAllowWrites(false);
     setMachineId('');
     setProjectKey('');
+    setReadOnlyRequest(false);
     setAnswer('');
     setTaskUpdate(null);
     messageDraft.current = null;
@@ -844,22 +846,27 @@ export default function SharedGroups({
                 event.preventDefault();
                 void run(async () => {
                   const draft = messageDraft.current;
-                  const next =
+                  const readOnly = Boolean(projectKey) && readOnlyRequest;
+                  const next: NonNullable<typeof messageDraft.current> =
                     draft?.content === content &&
                     draft.groupId === room.id &&
-                    (draft.sade?.projectKey || '') === projectKey
+                    (draft.sade?.projectKey || '') === projectKey &&
+                    Boolean(draft.sade?.readOnly) === readOnly
                       ? draft
                       : {
                           id: crypto.randomUUID(),
                           content,
                           groupId: room.id,
-                          ...(projectKey ? { sade: { projectKey } } : {}),
+                          ...(projectKey
+                            ? { sade: { projectKey, ...(readOnly ? { readOnly: true } : {}) } }
+                            : {}),
                         };
                   messageDraft.current = next;
                   await request({ action: 'message', ...next });
                   messageDraft.current = null;
                   setContent('');
                   setProjectKey('');
+                  setReadOnlyRequest(false);
                 });
               }}
             >
@@ -872,18 +879,30 @@ export default function SharedGroups({
                 required
               />
               {linkedProjects.length > 0 && (
-                <select
-                  aria-label="Ask Sade in this group"
-                  value={projectKey}
-                  onChange={(event) => setProjectKey(event.target.value)}
-                >
-                  <option value="">Send a group message</option>
-                  {linkedProjects.map(([key, name]) => (
-                    <option key={key} value={key}>
-                      Ask Sade · {name}
-                    </option>
-                  ))}
-                </select>
+                <div className="shared-group-compose-controls">
+                  <select
+                    aria-label="Ask Sade in this group"
+                    value={projectKey}
+                    onChange={(event) => setProjectKey(event.target.value)}
+                  >
+                    <option value="">Send a group message</option>
+                    {linkedProjects.map(([key, name]) => (
+                      <option key={key} value={key}>
+                        Ask Sade · {name}
+                      </option>
+                    ))}
+                  </select>
+                  {projectKey && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={readOnlyRequest}
+                        onChange={(event) => setReadOnlyRequest(event.target.checked)}
+                      />
+                      Read-only request
+                    </label>
+                  )}
+                </div>
               )}
               <button className="button primary" disabled={busy || !content.trim()}>
                 {projectKey ? 'Ask Sade' : 'Send'}
