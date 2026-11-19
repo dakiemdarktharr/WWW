@@ -9,6 +9,7 @@ import type {
   QuotaWindow,
   RoomMessage,
   ProviderTurnGrant,
+  Task,
 } from '../shared/types.ts';
 import { readRateLimits, type CodexClient } from './codex.ts';
 import { Store, DomainError } from './store.ts';
@@ -107,6 +108,7 @@ interface Host {
   ): unknown;
   sessions?: { interrupt(id: string, reason?: string): Promise<CodexSession> };
   handoffs?: { automatic(sessionId: string): Promise<unknown> };
+  sharedSade?: { assertCurrent(jobId: string): void; consumeProviderTurn(jobId: string): void };
 }
 export class QuotaManager {
   private refreshing = new Map<string, Promise<AccountQuota>>();
@@ -116,6 +118,13 @@ export class QuotaManager {
   constructor(private host: Host) {}
   private get store() {
     return this.host.store;
+  }
+  private sharedJob(memberId: string, projectId: string, sessionId?: string) {
+    if (!sessionId || !this.host.sharedSade) return undefined;
+    const session = this.store.sessions().find((entry) => entry.id === sessionId);
+    if (session?.memberId === memberId && session.projectId === projectId)
+      return this.store.get<Task>('task', session.taskId).sharedSadeJobId;
+    return undefined;
   }
   snapshot(): AccountQuota[] {
     return this.store.members().map((member) => this.current(member.id));
@@ -207,12 +216,15 @@ export class QuotaManager {
   assertCanRun(memberId: string, projectId: string, sessionId?: string) {
     const quota = this.current(memberId);
     const member = this.store.get<Member>('member', memberId);
+    const sharedJob = this.sharedJob(memberId, projectId, sessionId);
+    if (sharedJob) this.host.sharedSade!.assertCurrent(sharedJob);
     if (
       member.provider !== 'codex' &&
       !!member.provider &&
       !isExternalMember(member) &&
       quota.status === 'unknown'
     ) {
+      if (sharedJob) return quota;
       const grants = this.store
         .all<ProviderTurnGrant>('providerTurnGrant')
         .filter(
@@ -325,6 +337,11 @@ export class QuotaManager {
       isExternalMember(this.store.get<Member>('member', memberId))
     )
       return;
+    const sharedJob = this.sharedJob(memberId, projectId, sessionId);
+    if (sharedJob) {
+      this.host.sharedSade!.consumeProviderTurn(sharedJob);
+      return;
+    }
     this.store.transaction(() => {
       const grant = this.store
         .all<ProviderTurnGrant>('providerTurnGrant')

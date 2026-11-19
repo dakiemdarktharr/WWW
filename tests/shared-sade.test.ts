@@ -1,0 +1,694 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import type { CodexSession, ProviderId, PlanTask, Task } from '../shared/types.ts';
+import type { SharedSadeRun } from '../shared/collaboration.ts';
+import { SharedGroups } from '../server/collaboration.ts';
+import type { SharedDelivery, SharedFinish } from '../server/group-sade.ts';
+import { reviewDigest } from '../server/sade.ts';
+import { Store } from '../server/store.ts';
+import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
+import { mkdir, mkdtemp, writeFile, readFile, rm, realpath } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { CodexClient } from '../server/codex.ts';
+import { Workspace } from '../server/service.ts';
+import { git } from '../server/git.ts';
+import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
+
+const key = 'a'.repeat(64);
+const sha = 'b'.repeat(40);
+const patch = {
+  files: ['src/example.ts'],
+  diff: '+export const value = 1;\n',
+  stat: 'one file',
+  truncated: false,
+};
+function fixture(
+  providers: readonly [ProviderId, ProviderId] = ['gemini', 'codex'],
+  options: {
+    grantB?: boolean;
+    turnsB?: number;
+    mac?: boolean;
+    key?: string;
+    members?: string[];
+  } = {},
+) {
+  const store = new Store(':memory:');
+  const people = [
+    { id: 'owner-A', name: 'An' },
+    { id: 'owner-B', name: 'Bình' },
+  ];
+  const devices = [randomUUID(), randomUUID()];
+  const members = options.members || [randomUUID(), randomUUID()];
+  const grants = [randomUUID(), randomUUID()];
+  const groupId = randomUUID();
+  for (const [index, device] of devices.entries())
+    store.put('desktopDevice', {
+      id: device,
+      owner: people[index],
+      revoked: false,
+      expiresAt: new Date(Date.now() + 7200000).toISOString(),
+      tokenHash: `private-token-hash-${index}`,
+    });
+  const groups = new SharedGroups(
+    store,
+    (value) => people.find((person) => person.id === value) || null,
+  );
+  const call = (index: number, action: object, deviceId = devices[index]) =>
+    groups.execute(people[index], action, deviceId) as any;
+  call(0, { action: 'create', id: groupId, name: 'Shared Sade fixture' });
+  call(0, { action: 'invite', groupId, account: people[1].id });
+  call(1, { action: 'accept', groupId });
+  for (const [index, member] of members.entries()) {
+    call(index, {
+      action: 'teammates',
+      groupId,
+      teammates: [{ localId: member, provider: providers[index], name: index ? 'Mây' : 'Bếp' }],
+    });
+    if (!index || options.grantB !== false)
+      call(index, {
+        action: 'sade-grant',
+        groupId,
+        id: grants[index],
+        teammateId: member,
+        projectKey: options.key || key,
+        projectName: 'Fixture project',
+        role: index ? 'reviewer' : 'engineer',
+        platform: index && options.mac ? 'darwin' : 'win32',
+        allowWrites: true,
+        turns: index ? options.turnsB || 8 : 8,
+      });
+  }
+  const poll = (
+    index: number,
+    active: string[] = [],
+    grantIds = [grants[index]],
+    deviceId = devices[index],
+  ) =>
+    call(index, { action: 'sade-poll', grants: grantIds, active }, deviceId) as {
+      delivery?: SharedDelivery;
+      active: string[];
+      reviews: { jobId: string; digest: string }[];
+    };
+  const finish = (index: number, jobId: string, result: SharedFinish) =>
+    call(index, { action: 'sade-finish', jobId, result });
+  const view = () =>
+    call(0, { action: 'read', groupId }) as {
+      sadeRuns: SharedSadeRun[];
+      messages: { id: string }[];
+    };
+  return { store, call, poll, finish, view, groupId, grants, members, devices };
+}
+
+function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
+  return {
+    key,
+    title: `Verify ${key} project output`,
+    description: 'Carry out the scoped task and report a checkable result.',
+    kind: 'research',
+    effort: 1,
+    scope: [`src/${key}.ts`],
+    acceptance: 'Provide a concise result grounded in the shared project.',
+    dependsOn: [],
+    stage: 'Verify',
+    ...patch,
+  };
+}
+
+test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {
+  const cases = sharedSadeCorpus();
+  assert.equal(new Set(cases.map((item) => item.message)).size, 1000);
+  const counts: Record<string, number> = {};
+  for (const item of cases) {
+    const f = fixture(item.providers, {
+      grantB: item.scenario !== 'no-access',
+      turnsB: item.scenario === 'budget' ? 1 : 8,
+      mac: item.scenario === 'platform',
+    });
+    try {
+      const msgId = randomUUID();
+      const message = {
+        action: 'message',
+        groupId: f.groupId,
+        id: msgId,
+        content: item.message,
+        ...(item.scenario === 'chat' ? {} : { sade: { projectKey: key } }),
+      };
+      f.call(0, message);
+      f.call(0, message);
+      assert.equal(f.view().messages.length, 1);
+      if (item.scenario === 'chat') {
+        assert.equal(f.view().sadeRuns.length, 0);
+        assert.equal(f.poll(0).delivery, undefined);
+      } else {
+        assert.equal(f.view().sadeRuns.length, 1);
+        const plan = f.poll(0).delivery!;
+        assert.equal(plan.phase, 'plan');
+        assert.equal(plan.request, item.message.trim());
+        assert.equal(f.poll(0).delivery, undefined, 'Do not redeliver an uncertain planner turn');
+        const [a, b] = f.grants;
+        if (item.scenario === 'lost') {
+          // Simulate a persisted lease deadline after desktop loss. Never start it twice.
+          const current = f.store.get<any>('sharedSadeRun', msgId);
+          current.jobs[0].deadline = 0;
+          f.store.put('sharedSadeRun', current);
+          assert.equal(f.poll(0).delivery, undefined);
+          assert.equal(f.view().sadeRuns[0].state, 'blocked');
+          counts[item.scenario] = (counts[item.scenario] || 0) + 1;
+          continue;
+        }
+        const tasks =
+          item.scenario === 'budget'
+            ? [work('one', { preferredMemberId: b }), work('two', { preferredMemberId: b })]
+            : item.scenario === 'platform' || item.scenario === 'no-platform'
+              ? [work('mac', { requiredPlatform: 'darwin' })]
+              : item.scenario === 'handoff'
+                ? [
+                    work('arch', { preferredMemberId: a }),
+                    work('ui', { preferredMemberId: b, dependsOn: ['arch'] }),
+                  ]
+                : item.scenario === 'review'
+                  ? [work('implementation', { kind: 'code', preferredMemberId: a, scope: ['src'] })]
+                  : item.scenario === 'scope'
+                    ? [
+                        work('one', { kind: 'code', preferredMemberId: a, scope: ['src'] }),
+                        work('two', {
+                          kind: 'code',
+                          preferredMemberId: b,
+                          scope: ['src/example.ts'],
+                        }),
+                      ]
+                    : [work('verify', { preferredMemberId: b })];
+        f.finish(0, plan.id, {
+          kind: 'plan',
+          plan: {
+            summary: 'Controlled structured fixture authored independently of the allocator.',
+            tasks,
+          },
+        });
+        if (['no-platform', 'no-access', 'budget'].includes(item.scenario)) {
+          assert.equal(f.view().sadeRuns[0].state, 'blocked');
+          assert.equal(f.poll(1).delivery, undefined);
+        } else if (item.scenario === 'handoff') {
+          assert.equal(f.poll(1).delivery, undefined);
+          const arch = f.poll(0).delivery!;
+          assert.equal(arch.task?.key, 'arch');
+          f.finish(0, arch.id, { kind: 'done', summary: 'Data contract verified by Bếp.' });
+          const frontend = f.poll(1).delivery!;
+          assert.equal(frontend.task?.key, 'ui');
+          assert.match(frontend.prerequisites[0].summary!, /Data contract/);
+          f.finish(1, frontend.id, {
+            kind: 'done',
+            summary: 'Mây used the contract to verify the interface.',
+          });
+          assert.equal(f.view().sadeRuns[0].state, 'done');
+        } else if (item.scenario === 'scope' || item.scenario === 'review') {
+          const writer = f.poll(0).delivery!;
+          assert.equal(
+            f.poll(1).delivery,
+            undefined,
+            'No overlapping writer and no self-selected reviewer',
+          );
+          assert.throws(
+            () =>
+              f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Unreviewed claim' }),
+            /independent review/,
+          );
+          f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'Validated change' });
+          const reviewer = f.poll(1).delivery!;
+          assert.equal(reviewer.phase, 'review');
+          assert.equal(reviewer.review?.diff, patch.diff);
+          assert.throws(
+            () =>
+              f.finish(0, reviewer.id, {
+                kind: 'review',
+                verdict: 'approved',
+                summary: 'Wrong owner',
+              }),
+            /grant/,
+          );
+          f.finish(1, reviewer.id, {
+            kind: 'review',
+            verdict: 'approved',
+            summary: 'Checked the bounded patch.',
+          });
+          assert.equal(f.poll(0, [writer.id]).reviews[0].digest, reviewDigest(patch));
+          f.finish(0, writer.id, {
+            kind: 'done',
+            revision: sha,
+            summary: 'Published reviewed revision',
+          });
+          if (item.scenario === 'scope') assert.equal(f.poll(1).delivery?.task?.key, 'two');
+          else assert.equal(f.view().sadeRuns[0].state, 'done');
+        } else {
+          const assigned = f.poll(1).delivery!;
+          assert.equal(assigned.grantId, b);
+          if (item.scenario === 'revoked') {
+            f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: b });
+            assert.deepEqual(f.poll(1, [assigned.id]).active, []);
+            assert.throws(
+              () => f.finish(1, assigned.id, { kind: 'done', summary: 'Late result' }),
+              /grant/,
+            );
+            assert.equal(f.view().sadeRuns[0].state, 'blocked');
+          } else {
+            assert.equal(assigned.task?.requiredPlatform, 'darwin');
+            f.finish(1, assigned.id, {
+              kind: 'done',
+              summary: 'Controlled macOS grant fixture, not macOS execution.',
+            });
+            assert.equal(f.view().sadeRuns[0].state, 'done');
+          }
+        }
+      }
+      assert.doesNotMatch(JSON.stringify(f.view()), /private-token-hash|"deviceId"/);
+      counts[item.scenario] = (counts[item.scenario] || 0) + 1;
+    } catch (error) {
+      throw new Error(`${item.id}: ${item.message}`, { cause: error });
+    } finally {
+      f.store.close();
+    }
+  }
+  assert.equal(
+    Object.values(counts).reduce((sum, count) => sum + count, 0),
+    1000,
+  );
+  console.log('Shared Sade corpus (fixture, not live model semantics):', JSON.stringify(counts));
+});
+
+class DesktopPeer extends CodexClient {
+  override readonly provider;
+  calls: { method: string; params: any }[] = [];
+  responded?: { success: boolean };
+  constructor(cwd: string, provider: ProviderId) {
+    super({ home: cwd, cwd });
+    this.provider = provider;
+  }
+  override async start() {}
+  override async stop() {}
+  override async request<T = any>(method: string, params: any = {}): Promise<T> {
+    this.calls.push({ method, params });
+    let value: unknown = {};
+    if (method === 'account/read')
+      value = {
+        account: {
+          type: this.provider === 'gemini' ? 'gemini-google' : 'chatgpt',
+          email: 'provider-private@example.test',
+        },
+      };
+    else if (method === 'account/rateLimits/read')
+      value =
+        this.provider === 'gemini'
+          ? { rateLimits: null }
+          : {
+              ordinaryUsageAllowed: true,
+              rateLimits: {
+                primary: {
+                  usedPercent: 10,
+                  windowDurationMins: 300,
+                  resetsAt: Math.floor(Date.now() / 1000) + 3600,
+                },
+              },
+            };
+    else if (method === 'model/list')
+      value = {
+        data: [
+          {
+            id: 'fixture',
+            model: 'fixture',
+            displayName: 'Fixture model',
+            defaultReasoningEffort: '',
+            supportedReasoningEfforts: [],
+            isDefault: true,
+          },
+        ],
+      };
+    else if (method === 'thread/start')
+      value = {
+        thread: { id: randomUUID() },
+        model: params.model,
+        approvalsReviewer: 'user',
+        approvalPolicy: 'on-request',
+        sandbox: { type: params.sandbox === 'read-only' ? 'readOnly' : 'workspaceWrite' },
+        toolPolicy: { kind: 'scoped-mcp', readOnly: params.sandbox === 'read-only' },
+      };
+    else if (method === 'turn/start') value = { turn: { id: randomUUID() } };
+    return value as T;
+  }
+  override respond(_id: string | number, value: any) {
+    this.responded = value;
+  }
+}
+
+test(
+  'two desktop workspaces execute one Shared Groups request with separate harnesses, real Git review and dependent handoff',
+  { timeout: 30000 },
+  async (t) => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-e2e-')));
+    const remote = path.join(root, 'bare');
+    await mkdir(remote);
+    await git(remote, ['init', '--bare', '-b', 'main']);
+    const origin = 'https://example.test/shared/fixture.git';
+    const fixtureIdentity = [
+      '-c',
+      'user.name=Shared fixture',
+      '-c',
+      'user.email=fixture@example.test',
+    ];
+    const setups: {
+      workspace: Workspace;
+      store: Store;
+      repo: string;
+      projectId: string;
+      memberId: string;
+      peers: Map<string, DesktopPeer>;
+    }[] = [];
+    t.after(async () => {
+      for (const entry of setups) {
+        await entry.workspace.close();
+        entry.store.close();
+      }
+      assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+    for (const [index, provider] of (['gemini', 'codex'] as const).entries()) {
+      const repo = path.join(root, `project ${index}`);
+      if (!index) {
+        await mkdir(repo);
+        await git(repo, ['init', '-b', 'main']);
+        await writeFile(path.join(repo, 'README.md'), 'Shared project\n');
+        await git(repo, ['add', 'README.md']);
+        await git(repo, [...fixtureIdentity, 'commit', '-m', 'Initial']);
+        await git(repo, ['remote', 'add', 'origin', remote]);
+        await git(repo, ['push', '-u', 'origin', 'main']);
+      } else await git(root, ['clone', '--', remote, repo]);
+      await git(repo, ['remote', 'set-url', 'origin', origin]);
+      await git(repo, ['config', `url.${remote}.insteadOf`, origin]);
+      await writeFile(path.join(repo, '.env.local'), 'PRIVATE_TEST=local-only');
+      await git(repo, ['config', 'core.excludesFile', path.join(root, 'ignore')]);
+      await writeFile(path.join(root, 'ignore'), '.env.local\n');
+      const data = path.join(root, `desktop-${index}`);
+      await mkdir(data);
+      const store = new Store(path.join(data, 'db.sqlite'));
+      const workspace = new Workspace(store, data, repo);
+      const member = store.addMember({
+        name: index ? 'Mây' : 'Bếp',
+        role: index ? 'reviewer' : 'engineer',
+        provider,
+      });
+      const account = {
+        type: provider === 'gemini' ? ('gemini-google' as const) : ('chatgpt' as const),
+        email: 'provider-private@example.test',
+      };
+      store.updateMember(member.id, { status: 'ready', account });
+      const projectId = randomUUID();
+      store.put('project', {
+        id: projectId,
+        path: repo,
+        name: 'Project fixture',
+        goal: 'Shared project',
+        memberIds: [member.id],
+        createdAt: new Date().toISOString(),
+      });
+      const control = new DesktopPeer(repo, provider);
+      workspace.client = async () => control;
+      workspace.refresh = async () => store.get('member', member.id);
+      const peers = new Map<string, DesktopPeer>();
+      workspace.sessions.createClient = (session) => {
+        const peer = new DesktopPeer(repo, provider);
+        peers.set(session.id, peer);
+        return peer;
+      };
+      setups.push({ workspace, store, repo, projectId, memberId: member.id, peers });
+    }
+    const fingerprint = canonicalSharedRepository(origin, 'main');
+    assert.equal(
+      fingerprint,
+      canonicalSharedRepository('git@example.test:shared/fixture.git', 'main'),
+    );
+    const cloud = fixture(['gemini', 'codex'], {
+      key: fingerprint,
+      members: setups.map((entry) => entry.memberId),
+    });
+    t.after(() => cloud.store.close());
+    for (const [index, entry] of setups.entries()) {
+      const grant = await entry.workspace.sharedSade.execute({
+        action: 'grant',
+        groupId: cloud.groupId,
+        id: cloud.grants[index],
+        projectId: entry.projectId,
+        teammateId: entry.memberId,
+        turns: 8,
+        allowWrites: true,
+      });
+      assert.equal((grant as any).projectKey, fingerprint);
+    }
+    const pump = async (index: number) => {
+      const worker = setups[index].workspace.sharedSade;
+      const hello = (await worker.execute({ action: 'snapshot' })) as any;
+      for (const result of hello.results) cloud.finish(index, result.jobId, result.result);
+      const packet = cloud.poll(index, hello.active, hello.grants);
+      assert.doesNotMatch(
+        JSON.stringify(packet),
+        /provider-private|accessToken|tokenHash|projectId/,
+      );
+      await worker.execute({
+        action: 'exchange',
+        ...packet,
+        acknowledged: hello.results.map(
+          ({ jobId, version }: { jobId: string; version: number }) => ({ jobId, version }),
+        ),
+      });
+      return packet.delivery;
+    };
+    async function sessionFor(index: number, job: SharedDelivery) {
+      const entry = setups[index];
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const task = entry.store.tasks().find((item) => item.sharedSadeJobId === job.id);
+        if (task?.turnId)
+          return {
+            task,
+            session: entry.store.get<CodexSession>('session', task.sessionId!),
+            peer: entry.peers.get(task.sessionId!)!,
+          };
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error(
+        `Harness never started for ${job.phase}: ${JSON.stringify(await entry.workspace.sharedSade.execute({ action: 'snapshot' }))}`,
+      );
+    }
+    const submit = async (
+      index: number,
+      session: CodexSession,
+      peer: DesktopPeer,
+      tool: string,
+      args: unknown,
+    ) => {
+      await setups[index].workspace.sessions.request(session.id, peer, {
+        id: randomUUID(),
+        method: 'item/tool/call',
+        params: { threadId: session.threadId, turnId: session.turnId, tool, arguments: args },
+      });
+      assert.equal(peer.responded?.success, true, JSON.stringify(peer.responded));
+    };
+    const complete = async (
+      index: number,
+      session: CodexSession,
+      peer: DesktopPeer,
+      summary: string,
+    ) => {
+      const manager = setups[index].workspace.sessions;
+      await manager.notification(session.id, peer, 'item/completed', {
+        threadId: session.threadId,
+        turnId: session.turnId,
+        item: { type: 'agentMessage', text: summary },
+      });
+      await manager.notification(session.id, peer, 'turn/completed', {
+        threadId: session.threadId,
+        turn: { id: session.turnId, status: 'completed' },
+      });
+    };
+    const chat = {
+      action: 'message',
+      groupId: cloud.groupId,
+      id: randomUUID(),
+      content: 'Bếp dựng cấu trúc rồi Mây đọc cấu trúc và xác nhận frontend.',
+      sade: { projectKey: fingerprint },
+    };
+    cloud.call(0, chat);
+    cloud.call(0, chat);
+    const plan = await pump(0);
+    assert.ok(plan && plan.phase === 'plan');
+    const planner = await sessionFor(0, plan);
+    assert.throws(
+      () => setups[0].workspace.quota.assertCanRun(setups[0].memberId, setups[0].projectId),
+      /bounded number/,
+    );
+    assert.throws(
+      () => setups[0].workspace.sharedSade.consumeProviderTurn(plan.id),
+      /already used/,
+    );
+    await assert.rejects(readFile(path.join(planner.task.worktree!, '.env.local')), {
+      code: 'ENOENT',
+    });
+    await submit(0, planner.session, planner.peer, 'relay_submit_plan', {
+      summary: 'Build architecture then inspect the result in another harness.',
+      tasks: [
+        work('architecture', {
+          kind: 'code',
+          scope: ['architecture.txt'],
+          preferredMemberId: cloud.grants[0],
+        }),
+        work('frontend', {
+          scope: ['architecture.txt'],
+          preferredMemberId: cloud.grants[1],
+          dependsOn: ['architecture'],
+        }),
+      ],
+    });
+    await complete(0, planner.session, planner.peer, 'Plan submitted.');
+    const writer = (await pump(0))!;
+    assert.equal(writer.task?.key, 'architecture');
+    const author = await sessionFor(0, writer);
+    await writeFile(
+      path.join(author.task.worktree!, 'architecture.txt'),
+      'Shared verified contract\n',
+    );
+    await complete(0, author.session, author.peer, 'Architecture contract prepared.');
+    assert.equal(await pump(1), undefined);
+    await assert.rejects(setups[0].workspace.accept(author.task.id), /Wait for independent/);
+    await pump(0);
+    let reviewer: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !reviewer; attempt++) {
+      await pump(0);
+      reviewer = await pump(1);
+      if (!reviewer) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(reviewer && reviewer.phase === 'review');
+    const check = await sessionFor(1, reviewer);
+    assert.match(JSON.stringify(check.peer.calls), /Shared verified contract/);
+    await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
+      verdict: 'approved',
+      summary: 'Contract is present and scoped.',
+    });
+    await complete(1, check.session, check.peer, 'Reviewed the architecture text.');
+    assert.equal(await pump(1), undefined, 'Dependency still needs verified Git publication');
+    await pump(0);
+    await setups[0].workspace.accept(author.task.id);
+    await assert.rejects(setups[0].workspace.sharedSade.shareRevision(author.task.id), /Publish/);
+    await git(setups[0].repo, ['push', 'origin', 'main']);
+    await git(setups[1].repo, ['pull', '--ff-only', 'origin', 'main']);
+    await setups[0].workspace.sharedSade.shareRevision(author.task.id);
+    await pump(0);
+    const frontend = (await pump(1))!;
+    assert.equal(frontend.task?.key, 'frontend');
+    const reader = await sessionFor(1, frontend);
+    assert.match(
+      await readFile(path.join(reader.task.worktree!, 'architecture.txt'), 'utf8'),
+      /Shared verified contract/,
+    );
+    await submit(1, reader.session, reader.peer, 'relay_ask_shared_requester', {
+      summary: 'Bạn muốn chọn phong cách giao diện hay để Mây tự chọn?',
+    });
+    await complete(1, reader.session, reader.peer, 'Waiting for style preference.');
+    assert.equal(await pump(1), undefined);
+    assert.equal(
+      cloud.view().sadeRuns[0].jobs.find((job) => job.id === frontend.id)?.state,
+      'waiting',
+    );
+    const reply = {
+      action: 'sade-answer',
+      groupId: cloud.groupId,
+      runId: chat.id,
+      jobId: frontend.id,
+      answer: 'Mây tự chọn phong cách nhé.',
+    };
+    assert.throws(() => cloud.call(1, reply), /request author/);
+    cloud.call(0, reply);
+    assert.throws(() => cloud.call(0, reply), /no longer waiting/);
+    const continued = (await pump(1))!;
+    assert.notEqual(continued.id, frontend.id);
+    assert.equal(continued.task?.key, 'frontend');
+    const resumed = await sessionFor(1, continued);
+    assert.match(JSON.stringify(resumed.peer.calls), /tự chọn phong cách nhé/);
+    await complete(1, resumed.session, resumed.peer, 'Frontend has the correct contract.');
+    await pump(1);
+    assert.equal(cloud.view().sadeRuns[0].state, 'done');
+    assert.equal(setups[0].store.get<Task>('task', author.task.id).status, 'done');
+  },
+);
+
+test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
+  const f = fixture();
+  try {
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Sade plan this project.',
+      sade: { projectKey: key },
+    });
+    assert.equal(f.poll(0, [], [f.grants[0]], randomUUID()).delivery, undefined);
+    assert.equal(f.poll(1, [], [f.grants[0]]).delivery, undefined);
+    assert.throws(
+      () => f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[0] }),
+      /owner/,
+    );
+    assert.ok(f.poll(0).delivery);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a revoked assignment blocks pending deliveries and a clean writing result does not reserve a reviewer', () => {
+  const f = fixture();
+  try {
+    const start = () => {
+      const id = randomUUID();
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id,
+        content: 'Phần này đã có trong commit. Kiểm tra rồi tránh làm lại nhé.',
+        sade: { projectKey: key },
+      });
+      return f.poll(0).delivery!;
+    };
+    const first = start();
+    f.finish(0, first.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Check existing code before making changes.',
+        tasks: [work('already-done', { kind: 'code', preferredMemberId: f.grants[0] })],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, {
+      kind: 'unchanged',
+      summary: 'The expected patch is already in the project.',
+    });
+    assert.equal(f.view().sadeRuns.at(-1)?.state, 'done');
+    assert.equal(f.poll(1).delivery, undefined);
+    const second = start();
+    f.finish(0, second.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Coordinate each owner’s part of the remaining work.',
+        tasks: [
+          work('first', { preferredMemberId: f.grants[0] }),
+          work('second', { preferredMemberId: f.grants[1] }),
+        ],
+      },
+    });
+    f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[1] });
+    assert.equal(
+      f.poll(0).delivery,
+      undefined,
+      'Check all queued permissions before dispatching the first task',
+    );
+    assert.equal(f.view().sadeRuns.at(-1)?.state, 'blocked');
+  } finally {
+    f.store.close();
+  }
+});

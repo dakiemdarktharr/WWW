@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import type { GroupListing, SharedGroup, SharedMessage } from '../shared/collaboration.ts';
 import { DomainError, type Store } from './store.ts';
 import { type DesktopOwner, DesktopIdentity } from './desktop-auth.ts';
+import { GroupSade, groupSadeCommands, projectKey } from './group-sade.ts';
 
 const groupId = z.string().uuid();
 const command = z.discriminatedUnion('action', [
@@ -41,22 +42,33 @@ const command = z.discriminatedUnion('action', [
       groupId,
       id: groupId,
       content: z.string().trim().min(1).max(8000),
+      sade: z.object({ projectKey }).strict().optional(),
     })
     .strict(),
+  ...groupSadeCommands,
 ]);
 
 export class SharedGroups {
+  private sade: GroupSade;
   constructor(
     private store: Store,
     private findUser: (account: string) => DesktopOwner | null,
   ) {
+    this.sade = new GroupSade(store);
     store.db.exec(
       "CREATE INDEX IF NOT EXISTS shared_message_group_sequence ON records(json_extract(data,'$.groupId'),json_extract(data,'$.sequence')) WHERE kind='sharedMessage'",
     );
   }
-  execute(owner: DesktopOwner, raw: unknown): unknown {
+  execute(owner: DesktopOwner, raw: unknown, deviceId?: string): unknown {
     const input = command.parse(raw);
     return this.store.transaction(() => {
+      const actor = { ownerId: owner.id, deviceId: deviceId || '' };
+      if (input.action === 'sade-poll' || input.action === 'sade-finish') {
+        if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
+        return input.action === 'sade-poll'
+          ? this.sade.poll(actor, input)
+          : this.sade.finish(actor, input);
+      }
       const all = this.store.all<SharedGroup>('sharedGroup');
       if (input.action === 'list')
         return {
@@ -122,6 +134,15 @@ export class SharedGroups {
       }
       if (person.state !== 'active')
         throw new DomainError('Accept the group invitation first.', 403);
+      if (
+        input.action === 'sade-grant' ||
+        input.action === 'sade-revoke' ||
+        input.action === 'sade-cancel' ||
+        input.action === 'sade-answer'
+      ) {
+        if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
+        return this.sade.groupCommand(group, actor, input);
+      }
       if (input.action === 'read') {
         // Query only this group's records; never return other groups' history.
         const messages = this.store.db
@@ -130,7 +151,12 @@ export class SharedGroups {
           )
           .all(group.id, input.after || 0)
           .map((row) => JSON.parse(String(row.data)) as SharedMessage);
-        return { group, messages, hasMore: messages.length === 100 };
+        return {
+          group,
+          messages,
+          hasMore: messages.length === 100,
+          ...this.sade.view(group, owner.id),
+        };
       }
       if (input.action === 'invite') {
         if (group.ownerId !== owner.id)
@@ -165,7 +191,8 @@ export class SharedGroups {
           if (
             message.ownerId !== owner.id ||
             message.groupId !== group.id ||
-            message.content !== input.content
+            message.content !== input.content ||
+            message.sade?.projectKey !== input.sade?.projectKey
           )
             throw new DomainError('Message ID already used.', 409);
           return message;
@@ -179,7 +206,7 @@ export class SharedGroups {
         );
         if (count >= 10000)
           throw new DomainError('Group history limit reached. Create a new group.', 429);
-        return this.store.put('sharedMessage', {
+        const message = this.store.put('sharedMessage', {
           id: input.id,
           groupId: group.id,
           ownerId: owner.id,
@@ -187,7 +214,10 @@ export class SharedGroups {
           content: input.content,
           createdAt: new Date().toISOString(),
           sequence: count + 1,
+          ...(input.sade ? { sade: input.sade } : {}),
         } satisfies SharedMessage);
+        this.sade.start(group, message);
+        return message;
       }
       return this.store.put('sharedGroup', { ...group, updatedAt: new Date().toISOString() });
     });
@@ -203,13 +233,15 @@ export function registerCollaboration(
   const groups = new SharedGroups(store, findUser);
   const limits = new Map<string, { count: number; at: number }>();
   app.post('/api/desktop/groups', async (request) => {
-    const owner = identity.publicDevice(identity.authenticate(request.headers.authorization)).owner;
+    const { owner, deviceId } = identity.publicDevice(
+      identity.authenticate(request.headers.authorization),
+    );
     const now = Date.now();
     for (const [key, value] of limits) if (now - value.at > 60_000) limits.delete(key);
     const window = limits.get(owner.id) || { count: 0, at: now };
     if (++window.count > 180)
       throw new DomainError('Too many group requests. Retry in a minute.', 429);
     limits.set(owner.id, window);
-    return groups.execute(owner, request.body);
+    return groups.execute(owner, request.body, deviceId);
   });
 }

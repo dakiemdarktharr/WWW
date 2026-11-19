@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Member } from '../shared/types';
+import type { Member, Project } from '../shared/types';
 import type {
   GroupCommand,
   GroupListing,
   SharedGroup,
   SharedMessage,
+  SharedHarnessGrant,
+  SharedSadeRun,
 } from '../shared/collaboration';
 import './SharedGroups.css';
 
 const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(input);
 export default function SharedGroups({
   members,
+  projects,
   addTeammate,
   initialGroupId = '',
 }: {
   members: Member[];
+  projects: Project[];
   addTeammate: () => void;
   initialGroupId?: string;
 }) {
@@ -29,8 +33,21 @@ export default function SharedGroups({
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
+  const [grants, setGrants] = useState<SharedHarnessGrant[]>([]);
+  const [sadeRuns, setSadeRuns] = useState<SharedSadeRun[]>([]);
+  const [grantMember, setGrantMember] = useState('');
+  const [grantProject, setGrantProject] = useState('');
+  const [grantTurns, setGrantTurns] = useState(3);
+  const [allowWrites, setAllowWrites] = useState(false);
+  const [projectKey, setProjectKey] = useState('');
+  const [answer, setAnswer] = useState('');
   const selectedRef = useRef(initialGroupId);
-  const messageDraft = useRef<{ id: string; content: string; groupId: string } | null>(null);
+  const messageDraft = useRef<{
+    id: string;
+    content: string;
+    groupId: string;
+    sade?: { projectKey: string };
+  } | null>(null);
   const refreshList = async () => {
     const next = await request<GroupListing>({ action: 'list' });
     setListing(next);
@@ -76,6 +93,13 @@ export default function SharedGroups({
     setEditing(false);
     setContent('');
     setAccount('');
+    setGrants([]);
+    setSadeRuns([]);
+    setGrantMember('');
+    setGrantProject('');
+    setAllowWrites(false);
+    setProjectKey('');
+    setAnswer('');
     messageDraft.current = null;
     if (!selected) return;
     const read = async () => {
@@ -88,9 +112,13 @@ export default function SharedGroups({
           group: SharedGroup;
           messages: SharedMessage[];
           hasMore: boolean;
+          sadeGrants?: SharedHarnessGrant[];
+          sadeRuns?: SharedSadeRun[];
         }>({ action: 'read', groupId: selected, after: cursor });
         if (active) {
           setRoom(next.group);
+          setGrants(next.sadeGrants || []);
+          setSadeRuns(next.sadeRuns || []);
           setError('');
           if (next.messages.length) {
             cursor = next.messages[next.messages.length - 1].sequence;
@@ -102,6 +130,8 @@ export default function SharedGroups({
         if (active) {
           setRoom(undefined);
           setMessages([]);
+          setGrants([]);
+          setSadeRuns([]);
           cursor = 0;
           setError((cause as Error).message);
         }
@@ -137,6 +167,12 @@ export default function SharedGroups({
   };
   const ownerId = listing?.owner.id;
   const isOwner = room?.ownerId === ownerId;
+  const localGrants = grants.filter((grant) => grant.ownerId === ownerId);
+  const linkedProjects = [
+    ...new Map(localGrants.map((grant) => [grant.projectKey, grant.projectName])).entries(),
+  ];
+  const latestSade = sadeRuns.at(-1);
+  const waiting = latestSade?.jobs.find((job) => job.state === 'waiting');
   return (
     <section className="shared-groups" aria-label="Kivuno groups">
       <aside className="shared-group-list">
@@ -305,22 +341,24 @@ export default function SharedGroups({
                   </form>
                 )}
                 <h3>Your teammates</h3>
-                {members.map((member) => (
-                  <label key={member.id}>
-                    <input
-                      type="checkbox"
-                      checked={chosen.includes(member.id)}
-                      onChange={(event) =>
-                        setChosen((previous) =>
-                          event.target.checked
-                            ? [...previous, member.id]
-                            : previous.filter((id) => id !== member.id),
-                        )
-                      }
-                    />
-                    {member.name} · {member.provider || 'codex'}
-                  </label>
-                ))}
+                <div role="group" aria-label="Your teammates">
+                  {members.map((member) => (
+                    <label key={member.id}>
+                      <input
+                        type="checkbox"
+                        checked={chosen.includes(member.id)}
+                        onChange={(event) =>
+                          setChosen((previous) =>
+                            event.target.checked
+                              ? [...previous, member.id]
+                              : previous.filter((id) => id !== member.id),
+                          )
+                        }
+                      />
+                      {member.name} · {member.provider || 'codex'}
+                    </label>
+                  ))}
+                </div>
                 <div className="shared-group-actions">
                   <button
                     className="button"
@@ -349,6 +387,98 @@ export default function SharedGroups({
                     Connect a teammate
                   </button>
                 </div>
+                <h3>Let Sade use your teammate</h3>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void run(async () => {
+                      await request({
+                        action: 'sade-connect',
+                        groupId: room.id,
+                        projectId: grantProject,
+                        teammateId: grantMember,
+                        allowWrites,
+                        turns: grantTurns,
+                      });
+                    });
+                  }}
+                >
+                  <select
+                    aria-label="Sade teammate"
+                    value={grantMember}
+                    onChange={(event) => setGrantMember(event.target.value)}
+                    required
+                  >
+                    <option value="">Choose your teammate</option>
+                    {room.teammates
+                      .filter(
+                        (member) =>
+                          member.ownerId === ownerId &&
+                          members.some((local) => local.id === member.localId && local.account),
+                      )
+                      .map((member) => (
+                        <option value={member.localId} key={member.localId}>
+                          {member.name}
+                        </option>
+                      ))}
+                  </select>
+                  <select
+                    aria-label="Sade local project"
+                    value={grantProject}
+                    onChange={(event) => setGrantProject(event.target.value)}
+                    required
+                  >
+                    <option value="">Link a local Git project</option>
+                    {projects.map((project) => (
+                      <option value={project.id} key={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                  <label>
+                    Prompt limit{' '}
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={grantTurns}
+                      onChange={(event) => setGrantTurns(Number(event.target.value))}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={allowWrites}
+                      onChange={(event) => setAllowWrites(event.target.checked)}
+                    />{' '}
+                    Allow local file changes
+                  </label>
+                  <button className="button" disabled={busy || !grantMember || !grantProject}>
+                    Review one-hour access
+                  </button>
+                </form>
+                {localGrants.map((grant) => (
+                  <div key={grant.id}>
+                    {grant.label} · {grant.projectName} · {grant.used}/{grant.turns} turns
+                    <button
+                      className="text-button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await request({
+                            action: 'sade-revoke',
+                            groupId: room.id,
+                            grantId: grant.id,
+                          });
+                          setGrants((previous) => previous.filter((item) => item.id !== grant.id));
+                        })
+                      }
+                    >
+                      Revoke
+                    </button>
+                  </div>
+                ))}
                 {!isOwner && (
                   <button
                     className="text-button"
@@ -373,6 +503,71 @@ export default function SharedGroups({
                 </span>
               ))}
             </div>
+            {latestSade && (
+              <section aria-label="Sade progress" className="shared-group-members">
+                <strong>Sade · {latestSade.state}</strong>
+                {latestSade.error && <p>{latestSade.error}</p>}
+                <ul>
+                  {latestSade.jobs.map((job) => (
+                    <li key={job.id}>
+                      {job.task?.title || (job.phase === 'review' ? 'Independent review' : 'Plan')}{' '}
+                      ·{' '}
+                      {grants.find((grant) => grant.id === job.grantId)?.label ||
+                        'Assigned teammate'}{' '}
+                      · {job.state}
+                      {job.summary && <p>{job.summary}</p>}
+                    </li>
+                  ))}
+                </ul>
+                {waiting && latestSade.canAnswer && (
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void run(async () => {
+                        await request({
+                          action: 'sade-answer',
+                          groupId: room.id,
+                          runId: latestSade.id,
+                          jobId: waiting.id,
+                          answer: answer.trim(),
+                        });
+                        setAnswer('');
+                      });
+                    }}
+                  >
+                    <label>
+                      Reply to Sade
+                      <input
+                        value={answer}
+                        maxLength={1000}
+                        onChange={(event) => setAnswer(event.target.value)}
+                        required
+                      />
+                    </label>
+                    <button className="button compact" disabled={busy || !answer.trim()}>
+                      Send reply
+                    </button>
+                  </form>
+                )}
+                {['planning', 'running'].includes(latestSade.state) && (
+                  <button
+                    className="button compact"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        await request({
+                          action: 'sade-cancel',
+                          groupId: room.id,
+                          runId: latestSade.id,
+                        });
+                      })
+                    }
+                  >
+                    Cancel Sade request
+                  </button>
+                )}
+              </section>
+            )}
             <div
               className="shared-group-history"
               role="log"
@@ -399,9 +594,16 @@ export default function SharedGroups({
                 void run(async () => {
                   const draft = messageDraft.current;
                   const next =
-                    draft?.content === content && draft.groupId === room.id
+                    draft?.content === content &&
+                    draft.groupId === room.id &&
+                    (draft.sade?.projectKey || '') === projectKey
                       ? draft
-                      : { id: crypto.randomUUID(), content, groupId: room.id };
+                      : {
+                          id: crypto.randomUUID(),
+                          content,
+                          groupId: room.id,
+                          ...(projectKey ? { sade: { projectKey } } : {}),
+                        };
                   messageDraft.current = next;
                   await request({ action: 'message', ...next });
                   messageDraft.current = null;
@@ -417,8 +619,22 @@ export default function SharedGroups({
                 maxLength={8000}
                 required
               />
+              {linkedProjects.length > 0 && (
+                <select
+                  aria-label="Ask Sade in this group"
+                  value={projectKey}
+                  onChange={(event) => setProjectKey(event.target.value)}
+                >
+                  <option value="">Send a group message</option>
+                  {linkedProjects.map(([key, name]) => (
+                    <option key={key} value={key}>
+                      Ask Sade · {name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button className="button primary" disabled={busy || !content.trim()}>
-                Send
+                {projectKey ? 'Ask Sade' : 'Send'}
               </button>
             </form>
           </>

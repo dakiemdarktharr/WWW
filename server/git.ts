@@ -439,6 +439,7 @@ export async function integrate(
         root: repo,
         phase: 'committed',
       });
+    return await git(repo, ['rev-parse', 'HEAD']);
   } catch (error) {
     // --squash does not create MERGE_HEAD, so merge --abort cannot clean up its
     // conflicts. --merge restores the initial index/tree without a hard reset.

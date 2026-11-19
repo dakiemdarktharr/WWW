@@ -896,6 +896,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           {view === 'mesh' && state && chatMode === 'groups' && window.relayDesktop && (
             <SharedGroups
               members={state.members}
+              projects={state.projects}
               addTeammate={() => setModal({ type: 'connect' })}
               initialGroupId={selectedShared}
             />
@@ -2118,6 +2119,23 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                     <CircleCheck size={16} /> Complete
                   </span>
                 )}
+                {selectedTask.status === 'done' &&
+                  selectedTask.sharedSadeNeedsPublication &&
+                  selectedTask.worktree && (
+                    <Button
+                      disabled={pending}
+                      onClick={() =>
+                        void perform(
+                          'share-sade-revision',
+                          `/tasks/${selectedTask.id}/share-sade-revision`,
+                          {},
+                          'Shared the reviewed Git revision with the group.',
+                        )
+                      }
+                    >
+                      Share published revision
+                    </Button>
+                  )}
               </div>
             </div>
           </div>

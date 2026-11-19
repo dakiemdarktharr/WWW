@@ -1,0 +1,730 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import type {
+  SharedGroup,
+  SharedHarnessGrant,
+  SharedMessage,
+  SharedSadeJob,
+  SharedSadeRun,
+} from '../shared/collaboration.ts';
+import type { PlanTask, TaskDiff } from '../shared/types.ts';
+import { allocatePlan, parseTeamPlan, planTool } from './workflow-plan.ts';
+import { redact, scopesOverlap } from './security.ts';
+import { DomainError, type Store } from './store.ts';
+import { reviewDigest } from './sade.ts';
+
+const id = z.string().uuid();
+export const projectKey = z.string().regex(/^[a-f0-9]{64}$/);
+const short = z.string().trim().min(1).max(100);
+const platform = z.enum(['win32', 'darwin', 'linux']);
+export const groupSadeGrant = z
+  .object({
+    action: z.literal('sade-grant'),
+    id,
+    groupId: id,
+    teammateId: id,
+    projectKey,
+    projectName: short,
+    role: z.enum(['engineer', 'designer', 'researcher', 'reviewer']),
+    platform,
+    allowWrites: z.boolean(),
+    turns: z.number().int().min(1).max(10),
+  })
+  .strict();
+const diffInput = z
+  .object({
+    files: z.array(z.string().max(500)).max(100),
+    diff: z.string().max(12000),
+    stat: z.string().max(6000),
+    truncated: z.boolean(),
+  })
+  .strict();
+export const sharedFinish = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
+  z
+    .object({
+      kind: z.literal('done'),
+      summary: z.string().trim().min(1).max(4000),
+      revision: z
+        .string()
+        .regex(/^[a-f0-9]{40,64}$/)
+        .optional(),
+      published: z.literal(true).optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('blocked'), summary: z.string().trim().min(1).max(4000) }).strict(),
+  z.object({ kind: z.literal('question'), summary: z.string().trim().min(1).max(500) }).strict(),
+  z.object({ kind: z.literal('unchanged'), summary: z.string().trim().min(1).max(4000) }).strict(),
+  z
+    .object({
+      kind: z.literal('change'),
+      diff: diffInput,
+      summary: z.string().trim().min(1).max(4000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('review'),
+      verdict: z.enum(['approved', 'changes']),
+      summary: z.string().trim().min(1).max(4000),
+    })
+    .strict(),
+]);
+export const groupSadeCommands = [
+  groupSadeGrant,
+  z.object({ action: z.literal('sade-revoke'), groupId: id, grantId: id }).strict(),
+  z.object({ action: z.literal('sade-cancel'), groupId: id, runId: id }).strict(),
+  z
+    .object({
+      action: z.literal('sade-answer'),
+      groupId: id,
+      runId: id,
+      jobId: id,
+      answer: z.string().trim().min(1).max(1000),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('sade-poll'),
+      grants: z.array(id).max(32),
+      active: z.array(id).max(4),
+    })
+    .strict(),
+  z.object({ action: z.literal('sade-finish'), jobId: id, result: sharedFinish }).strict(),
+] as const;
+export type GroupSadeCommand = z.infer<(typeof groupSadeCommands)[number]>;
+export type SharedFinish = z.infer<typeof sharedFinish>;
+export type SharedPrincipal = { ownerId: string; deviceId: string };
+type Grant = SharedHarnessGrant & { deviceId: string; revoked?: boolean };
+type Job = SharedSadeJob & {
+  deadline?: number;
+  revision?: string;
+  change?: TaskDiff;
+  reviewOf?: string;
+  reviewedDigest?: string;
+  clarification?: { question: string; answer: string };
+};
+type Run = Omit<SharedSadeRun, 'jobs'> & {
+  authorId: string;
+  content: string;
+  roster: string[];
+  jobs: Job[];
+};
+export type SharedDelivery = {
+  id: string;
+  grantId: string;
+  groupId: string;
+  projectKey: string;
+  phase: SharedSadeJob['phase'];
+  request: string;
+  team: {
+    id: string;
+    name: string;
+    provider: string;
+    role: string;
+    platform: string;
+    allowWrites: boolean;
+    owner: string;
+    ownedByRequester: boolean;
+  }[];
+  task?: PlanTask;
+  prerequisites: { title: string; summary?: string; revision?: string }[];
+  review?: TaskDiff;
+  clarification?: Job['clarification'];
+  requiresPublication?: boolean;
+};
+export const needsGroupWrite = writesTask;
+const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
+function hasDependents(run: Run, job: Job) {
+  return !!job.task && run.jobs.some((other) => other.task?.dependsOn.includes(job.task!.key));
+}
+function writesTask(task?: PlanTask) {
+  return task?.kind === 'code' || task?.kind === 'design';
+}
+const writes = writesTask;
+const leaseMs = 30_000;
+const grantMs = 60 * 60_000;
+
+export const groupPlanTool = {
+  ...planTool,
+  inputSchema: {
+    ...planTool.inputSchema,
+    properties: {
+      ...planTool.inputSchema.properties,
+      tasks: {
+        ...planTool.inputSchema.properties.tasks,
+        items: {
+          ...planTool.inputSchema.properties.tasks.items,
+          properties: {
+            ...planTool.inputSchema.properties.tasks.items.properties,
+            requiredPlatform: {
+              type: 'string',
+              enum: ['win32', 'darwin', 'linux'],
+              description: 'Use only when the human asks for real verification on this OS.',
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+export const groupReviewTool = {
+  type: 'function',
+  name: 'relay_submit_shared_review',
+  description:
+    'Report independent review findings for the supplied diff. Approve only if the change is ready for human integration.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      verdict: { type: 'string', enum: ['approved', 'changes'] },
+      summary: { type: 'string', minLength: 1, maxLength: 4000 },
+    },
+    required: ['verdict', 'summary'],
+    additionalProperties: false,
+  },
+} as const;
+
+export const groupQuestionTool = {
+  type: 'function',
+  name: 'relay_ask_shared_requester',
+  description:
+    'Ask the group requester one necessary question before making any file changes, then end this turn. A reply consumes another granted turn.',
+  inputSchema: {
+    type: 'object',
+    properties: { summary: { type: 'string', minLength: 1, maxLength: 500 } },
+    required: ['summary'],
+    additionalProperties: false,
+  },
+} as const;
+
+/** The cloud schedules bounded jobs. It has no provider credential or command-execution API. */
+export class GroupSade {
+  constructor(
+    private store: Store,
+    private now: () => number = Date.now,
+  ) {
+    store.db.exec(`
+      CREATE INDEX IF NOT EXISTS shared_sade_grant_group ON records(json_extract(data,'$.groupId')) WHERE kind='sharedSadeGrant';
+      CREATE INDEX IF NOT EXISTS shared_sade_run_group ON records(json_extract(data,'$.groupId')) WHERE kind='sharedSadeRun';
+      CREATE INDEX IF NOT EXISTS shared_sade_active ON records(json_extract(data,'$.groupId'))
+        WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running');
+    `);
+  }
+  private grants(group: SharedGroup) {
+    return this.store.db
+      .prepare(
+        "SELECT data FROM records WHERE kind='sharedSadeGrant' AND json_extract(data,'$.groupId')=? ORDER BY rowid",
+      )
+      .all(group.id)
+      .map((row) => JSON.parse(String(row.data)) as Grant);
+  }
+  private runs(group: SharedGroup) {
+    return this.store.db
+      .prepare(
+        "SELECT data FROM records WHERE kind='sharedSadeRun' AND json_extract(data,'$.groupId')=? ORDER BY rowid DESC LIMIT 20",
+      )
+      .all(group.id)
+      .reverse()
+      .map((row) => JSON.parse(String(row.data)) as Run);
+  }
+  private usable(grant: Grant, group: SharedGroup, checkBudget = true) {
+    let device;
+    try {
+      device = this.store.get<{ revoked: boolean; expiresAt: string }>(
+        'desktopDevice',
+        grant.deviceId,
+      );
+    } catch {
+      return false;
+    }
+    return Boolean(
+      device &&
+      !device.revoked &&
+      Date.parse(device.expiresAt) > this.now() &&
+      !grant.revoked &&
+      grant.expiresAt > this.now() &&
+      (!checkBudget || grant.used < grant.turns) &&
+      group.people.some((person) => person.id === grant.ownerId && person.state === 'active') &&
+      group.teammates.some(
+        (member) => member.ownerId === grant.ownerId && member.localId === grant.teammateId,
+      ),
+    );
+  }
+  view(group: SharedGroup, ownerId?: string) {
+    return {
+      sadeGrants: this.grants(group)
+        .filter((grant) => this.usable(grant, group, false))
+        .map(({ deviceId, revoked, ...view }) => view),
+      sadeRuns: this.runs(group).map(({ authorId, content, roster, ...run }) => ({
+        ...run,
+        canAnswer: ownerId === authorId,
+        jobs: run.jobs.map(
+          ({ deadline, revision, change, reviewOf, reviewedDigest, clarification, ...job }) => job,
+        ),
+      })),
+    };
+  }
+  start(group: SharedGroup, message: SharedMessage) {
+    if (!message.sade) return;
+    const grants = this.grants(group).filter(
+      (grant) => grant.projectKey === message.sade?.projectKey && this.usable(grant, group),
+    );
+    if (!grants.some((grant) => grant.ownerId === message.ownerId))
+      throw new DomainError('Link your project and grant a teammate access before asking Sade.');
+    const similar = this.store
+      .all<Run>('sharedSadeRun')
+      .filter((run) => run.projectKey === message.sade?.projectKey || run.groupId === group.id);
+    if (similar.some((run) => !final(run)))
+      throw new DomainError(
+        'Finish or cancel the active Sade request for this group or project first.',
+      );
+    if (
+      similar.some(
+        (run) =>
+          run.state !== 'done' && run.jobs.some((job) => job.deadline && job.deadline > this.now()),
+      )
+    )
+      throw new DomainError(
+        'The previous Sade request is stopping. Wait for its desktop lease to expire before starting again.',
+        409,
+      );
+    const lead = grants.find((grant) => grant.ownerId === message.ownerId)!;
+    this.store.put('sharedSadeRun', {
+      id: message.id,
+      groupId: group.id,
+      projectKey: message.sade.projectKey,
+      authorId: message.ownerId,
+      content: redact(message.content),
+      roster: grants.map((grant) => grant.id),
+      state: 'planning',
+      jobs: [
+        { id: randomUUID(), runId: message.id, grantId: lead.id, phase: 'plan', state: 'queued' },
+      ],
+    } satisfies Run);
+  }
+  groupCommand(
+    group: SharedGroup,
+    actor: SharedPrincipal,
+    command: Extract<GroupSadeCommand, { groupId: string }>,
+  ) {
+    if (command.action === 'sade-grant') {
+      const member = group.teammates.find(
+        (person) => person.ownerId === actor.ownerId && person.localId === command.teammateId,
+      );
+      if (!member) throw new DomainError('Share your own teammate in this group first.', 403);
+      const existing = this.grants(group).find((grant) => grant.id === command.id);
+      if (existing) {
+        if (
+          existing.ownerId !== actor.ownerId ||
+          existing.deviceId !== actor.deviceId ||
+          existing.teammateId !== command.teammateId ||
+          existing.projectKey !== command.projectKey ||
+          existing.projectName !== command.projectName ||
+          existing.role !== command.role ||
+          existing.platform !== command.platform ||
+          existing.allowWrites !== command.allowWrites ||
+          existing.turns !== command.turns
+        )
+          throw new DomainError('Grant ID already used.', 409);
+        return this.view(group, actor.ownerId);
+      }
+      if (this.store.all<Grant>('sharedSadeGrant').some((grant) => grant.id === command.id))
+        throw new DomainError('Grant ID already used.');
+      for (const previous of this.grants(group))
+        if (
+          previous.ownerId === actor.ownerId &&
+          previous.teammateId === member.localId &&
+          previous.projectKey === command.projectKey &&
+          !previous.revoked
+        )
+          this.store.put('sharedSadeGrant', { ...previous, revoked: true });
+      const { action, ...grant } = command;
+      this.store.put('sharedSadeGrant', {
+        ...grant,
+        ...actor,
+        label: member.name,
+        expiresAt: this.now() + grantMs,
+        used: 0,
+      } satisfies Grant);
+      return this.view(group, actor.ownerId);
+    }
+    if (command.action === 'sade-revoke') {
+      const grant = this.grants(group).find((item) => item.id === command.grantId);
+      if (!grant || grant.ownerId !== actor.ownerId)
+        throw new DomainError('Only this harness owner can revoke its grant.', 403);
+      this.store.put('sharedSadeGrant', { ...grant, revoked: true });
+    } else {
+      const run = this.store.get<Run>('sharedSadeRun', command.runId);
+      if (run.groupId !== group.id)
+        throw new DomainError('Shared request is unavailable in this group.', 404);
+      if (command.action === 'sade-answer') {
+        if (run.authorId !== actor.ownerId)
+          throw new DomainError('Only the request author can answer this question.', 403);
+        const job = run.jobs.find((item) => item.id === command.jobId);
+        if (!job || job.state !== 'waiting' || !job.summary || final(run))
+          throw new DomainError('This question is no longer waiting.', 409);
+        const grant = this.grants(group).find((item) => item.id === job.grantId);
+        if (!grant || !this.usable(grant, group))
+          throw new DomainError('The harness needs a remaining granted turn to continue.', 409);
+        // Each attempt has its own receipt. The task key still identifies dependencies.
+        run.jobs[run.jobs.indexOf(job)] = {
+          ...job,
+          id: randomUUID(),
+          state: 'queued',
+          deadline: undefined,
+          summary: undefined,
+          clarification: { question: job.summary, answer: redact(command.answer) },
+        };
+        this.store.put('sharedSadeRun', run);
+      } else {
+        if (run.authorId !== actor.ownerId && group.ownerId !== actor.ownerId)
+          throw new DomainError(
+            'Only the request author or group owner can cancel this request.',
+            403,
+          );
+        if (!final(run))
+          this.store.put('sharedSadeRun', {
+            ...run,
+            state: 'cancelled',
+            jobs: run.jobs.map((job) => ({
+              ...job,
+              change: undefined,
+              state: job.state === 'done' ? 'done' : 'cancelled',
+            })),
+          } satisfies Run);
+      }
+    }
+    return this.view(group, actor.ownerId);
+  }
+  private actorGrant(grant: Grant, actor: SharedPrincipal) {
+    return grant.ownerId === actor.ownerId && grant.deviceId === actor.deviceId;
+  }
+  private block(run: Run, job: Job, reason: string) {
+    run.state = 'blocked';
+    run.error = redact(reason);
+    job.state = 'blocked';
+    job.summary = run.error;
+    for (const item of run.jobs) item.change = undefined;
+    this.store.put('sharedSadeRun', run);
+  }
+  poll(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-poll' }>) {
+    const active: string[] = [];
+    const reviews: { jobId: string; digest: string }[] = [];
+    let delivery: SharedDelivery | undefined;
+    const runs = this.store.db
+      .prepare(
+        "SELECT data FROM records WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running') ORDER BY rowid",
+      )
+      .all()
+      .map((row) => JSON.parse(String(row.data)) as Run);
+    const supplied = new Set(command.grants);
+    const held = new Set(command.active);
+    for (const run of runs) {
+      const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
+      const grants = new Map(this.grants(group).map((grant) => [grant.id, grant]));
+      if (
+        !run.jobs.some(
+          (job) =>
+            supplied.has(job.grantId) &&
+            grants.has(job.grantId) &&
+            this.actorGrant(grants.get(job.grantId)!, actor),
+        )
+      )
+        continue;
+      const invalid = run.jobs.find((job) => {
+        if (!['queued', 'running', 'reviewing', 'waiting'].includes(job.state)) return false;
+        const grant = grants.get(job.grantId);
+        return (
+          !grant ||
+          !this.usable(grant, group, ['queued', 'waiting'].includes(job.state)) ||
+          (['running', 'reviewing'].includes(job.state) && (job.deadline || 0) <= this.now())
+        );
+      });
+      if (invalid) {
+        this.block(
+          run,
+          invalid,
+          'A harness grant expired, ran out of turns, was revoked, or lost contact. Work stays on its owner’s desktop.',
+        );
+        continue;
+      }
+      let touched = false;
+      for (const job of run.jobs) {
+        if (!['queued', 'running', 'reviewing'].includes(job.state)) continue;
+        const grant = grants.get(job.grantId)!;
+        if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
+        if (job.state !== 'queued') {
+          if (held.has(job.id)) {
+            job.deadline = this.now() + leaseMs;
+            active.push(job.id);
+            if (job.reviewedDigest) reviews.push({ jobId: job.id, digest: job.reviewedDigest });
+            touched = true;
+          }
+          continue;
+        }
+        if (
+          delivery ||
+          command.active.length >= 4 ||
+          run.jobs.some(
+            (other) =>
+              other.state === 'running' && grants.get(other.grantId)?.deviceId === actor.deviceId,
+          )
+        )
+          continue;
+        const predecessors =
+          job.task?.dependsOn.map((key) => run.jobs.find((other) => other.task?.key === key)) || [];
+        if (predecessors.some((other) => other?.state !== 'done')) continue;
+        if (
+          job.task &&
+          run.jobs.some(
+            (other) =>
+              ['running', 'reviewing'].includes(other.state) &&
+              other.task &&
+              writes(other.task) &&
+              writes(job.task) &&
+              scopesOverlap(other.task.scope, job.task!.scope),
+          )
+        )
+          continue;
+        job.state = 'running';
+        job.deadline = this.now() + leaseMs;
+        this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
+        touched = true;
+        const team = run.roster.flatMap((grantId) => {
+          const entry = grants.get(grantId);
+          const teammate = group.teammates.find(
+            (member) => member.ownerId === entry?.ownerId && member.localId === entry?.teammateId,
+          );
+          return entry && teammate && this.usable(entry, group, false)
+            ? [
+                {
+                  id: entry.id,
+                  name: entry.label,
+                  provider: teammate.provider,
+                  role: entry.role,
+                  platform: entry.platform,
+                  allowWrites: entry.allowWrites,
+                  owner: group.people.find((person) => person.id === entry.ownerId)!.name,
+                  ownedByRequester: entry.ownerId === run.authorId,
+                },
+              ]
+            : [];
+        });
+        delivery = {
+          id: job.id,
+          grantId: grant.id,
+          groupId: group.id,
+          projectKey: run.projectKey,
+          phase: job.phase,
+          request: run.content,
+          team,
+          task: job.task,
+          prerequisites: predecessors.map((other) => ({
+            title: other!.task!.title,
+            summary: other!.summary?.slice(0, 500),
+            revision: other!.revision,
+          })),
+          clarification: job.clarification,
+          requiresPublication: writes(job.task) && hasDependents(run, job),
+          ...(job.reviewOf
+            ? { review: run.jobs.find((other) => other.id === job.reviewOf)?.change }
+            : {}),
+        };
+      }
+      if (touched) this.store.put('sharedSadeRun', run);
+    }
+    return { active, delivery, reviews };
+  }
+  finish(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-finish' }>) {
+    const run = this.store
+      .all<Run>('sharedSadeRun')
+      .find((item) => item.jobs.some((job) => job.id === command.jobId));
+    if (!run) throw new DomainError('Shared job is unavailable.', 404);
+    const job = run.jobs.find((item) => item.id === command.jobId)!;
+    const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
+    const grants = this.grants(group);
+    const grant = grants.find((item) => item.id === job.grantId)!;
+    if (!grant || !this.actorGrant(grant, actor) || !this.usable(grant, group, false))
+      throw new DomainError('The harness grant is no longer valid.', 403);
+    if (job.state === 'done' || (job.state === 'waiting' && command.result.kind === 'question'))
+      return { accepted: true };
+    if (
+      !['running', 'reviewing'].includes(job.state) ||
+      final(run) ||
+      (job.deadline || 0) <= this.now()
+    )
+      throw new DomainError('This job is no longer running. Recover locally.', 409);
+    const result = command.result;
+    if (result.kind === 'blocked') this.block(run, job, result.summary);
+    else if (result.kind === 'question') {
+      if (job.phase === 'review' || job.state !== 'running' || job.clarification)
+        throw new DomainError('This job cannot ask another question.', 409);
+      const reserved = run.jobs.filter(
+        (other) => other.state === 'queued' && other.grantId === grant.id,
+      ).length;
+      if (grant.turns - grant.used <= reserved)
+        this.block(run, job, 'The harness has no spare granted turn for a clarification.');
+      else {
+        job.state = 'waiting';
+        job.deadline = undefined;
+        job.summary = redact(result.summary);
+        this.store.put('sharedSadeRun', run);
+      }
+    } else if (result.kind === 'plan') {
+      if (job.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
+      try {
+        const plan = parseTeamPlan(result.plan);
+        const eligible = grants.filter(
+          (entry) => run.roster.includes(entry.id) && this.usable(entry, group),
+        );
+        const allocations = allocatePlan(
+          plan,
+          eligible.map((entry) => ({ id: entry.id, role: entry.role })),
+          {
+            preferSpecialists: true,
+            turns: new Map(eligible.map((entry) => [entry.id, entry.turns - entry.used])),
+            supports: (grantId, task) =>
+              eligible.some(
+                (entry) =>
+                  entry.id === grantId &&
+                  (!writes(task) || entry.allowWrites) &&
+                  (!task.requiredPlatform || entry.platform === task.requiredPlatform),
+              ),
+          },
+        );
+        job.state = 'done';
+        job.summary = redact(plan.summary);
+        run.jobs.push(
+          ...plan.tasks.map((task, index): Job => ({
+            id: randomUUID(),
+            runId: run.id,
+            grantId: allocations[index].memberId,
+            phase: 'task',
+            task: {
+              ...task,
+              description: redact(task.description),
+              acceptance: redact(task.acceptance),
+            },
+            state: 'queued',
+          })),
+        );
+        run.state = 'running';
+        this.store.put('sharedSadeRun', run);
+      } catch (error) {
+        this.block(run, job, error instanceof Error ? error.message : 'Sade rejected the plan.');
+      }
+    } else if (result.kind === 'change') {
+      if (job.phase !== 'task' || !writes(job.task) || !grant.allowWrites)
+        throw new DomainError('Only a granted writing task can share a diff.');
+      let digest: string;
+      try {
+        digest = reviewDigest(result.diff);
+      } catch {
+        this.block(
+          run,
+          job,
+          'The diff cannot be safely shared for review. Inspect the change locally.',
+        );
+        return { accepted: true };
+      }
+      if (job.state === 'reviewing') {
+        if (!job.change || reviewDigest(job.change) !== digest)
+          throw new DomainError('The diff changed after review submission.');
+        return { accepted: true };
+      }
+      if (
+        result.diff.files.some(
+          (file) =>
+            !job.task!.scope.some(
+              (scope) => scope === '.' || file === scope || file.startsWith(`${scope}/`),
+            ),
+        )
+      ) {
+        this.block(run, job, 'A changed file falls outside the task scope.');
+        return { accepted: true };
+      }
+      const reviewer = grants
+        .filter(
+          (entry) =>
+            run.roster.includes(entry.id) &&
+            entry.ownerId !== grant.ownerId &&
+            this.usable(entry, group),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.role === 'reviewer') - Number(a.role === 'reviewer') || a.used - b.used,
+        )
+        .find(
+          (entry) =>
+            run.jobs.filter((other) => other.state === 'queued' && other.grantId === entry.id)
+              .length <
+            entry.turns - entry.used,
+        );
+      if (!reviewer) {
+        this.block(
+          run,
+          job,
+          'Independent review needs another owner’s teammate with a remaining turn. The change stays local.',
+        );
+        return { accepted: true };
+      }
+      job.state = 'reviewing';
+      job.change = result.diff;
+      job.summary = 'Waiting for independent review.';
+      run.jobs.push({
+        id: randomUUID(),
+        runId: run.id,
+        grantId: reviewer.id,
+        phase: 'review',
+        reviewOf: job.id,
+        state: 'queued',
+      });
+      this.store.put('sharedSadeRun', run);
+    } else if (result.kind === 'review') {
+      const source = run.jobs.find((item) => item.id === job.reviewOf);
+      if (job.phase !== 'review' || !source?.change || source.state !== 'reviewing')
+        throw new DomainError('No current change to review.');
+      job.state = 'done';
+      job.summary = redact(result.summary);
+      if (result.verdict === 'changes')
+        this.block(
+          run,
+          source,
+          'Independent reviewer requested changes. Read the review before continuing.',
+        );
+      else {
+        source.reviewedDigest = reviewDigest(source.change);
+        source.summary = hasDependents(run, source)
+          ? 'Reviewed. Integrate and share the Git revision from the author’s workspace.'
+          : 'Reviewed. The author can integrate the changes locally.';
+        this.store.put('sharedSadeRun', run);
+      }
+    } else if (result.kind === 'unchanged') {
+      if (job.phase !== 'task' || !writes(job.task) || job.state !== 'running')
+        throw new DomainError('Only a running writing task can report an unchanged worktree.', 409);
+      job.state = 'done';
+      job.summary = redact(result.summary);
+      if (run.jobs.every((item) => item.state === 'done')) run.state = 'done';
+      this.store.put('sharedSadeRun', run);
+    } else {
+      if (
+        job.phase !== 'task' ||
+        (writes(job.task) &&
+          (!result.revision ||
+            !job.reviewedDigest ||
+            (hasDependents(run, job) && !result.published)))
+      )
+        throw new DomainError(
+          'A writing task needs independent review and a verified shared Git revision.',
+        );
+      job.state = 'done';
+      job.summary = redact(result.summary);
+      job.revision = result.published ? result.revision : undefined;
+      job.change = undefined;
+      if (run.jobs.every((item) => item.state === 'done')) run.state = 'done';
+      this.store.put('sharedSadeRun', run);
+    }
+    return { accepted: true };
+  }
+}

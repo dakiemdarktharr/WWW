@@ -108,6 +108,8 @@ export interface CodexModel {
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
 }
 export interface Task {
+  sharedSadeJobId?: string;
+  sharedSadeNeedsPublication?: boolean;
   reviewOfTaskId?: string;
   humanQuestionId?: string;
   id: string;
@@ -139,6 +141,7 @@ export interface Task {
   sessionId?: string;
 }
 export interface PlanTask {
+  requiredPlatform?: 'win32' | 'darwin' | 'linux';
   preferredMemberId?: string;
   key: string;
   title: string;

@@ -189,7 +189,9 @@ try {
     .getByRole('button', { name: 'Accept invitation', exact: true })
     .click({ timeout: 15000 });
   await b.page.getByRole('button', { name: 'Members', exact: true }).click();
-  await expect(b.page.getByRole('checkbox')).toHaveCount(1);
+  await expect(
+    b.page.getByRole('group', { name: 'Your teammates' }).getByRole('checkbox'),
+  ).toHaveCount(1);
   await b.page.getByRole('checkbox', { name: 'Bob Codex · codex', exact: true }).check();
   await b.page.getByRole('button', { name: 'Save my teammates', exact: true }).click();
   await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));

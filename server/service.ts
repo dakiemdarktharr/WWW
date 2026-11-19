@@ -32,6 +32,7 @@ import { createWorktree, git, integrate, taskDiff, prepareProjectRepo } from './
 import { inside, privateDirectory, redact, safeDetails } from './security.ts';
 import { Workflows, planningTask } from './workflows.ts';
 import { Sade } from './sade.ts';
+import { SharedSadeWorker } from './shared-sade-worker.ts';
 import { sadeAskTool } from './sade-policy.ts';
 import { SessionManager } from './sessions.ts';
 import { QuotaManager } from './quota.ts';
@@ -70,6 +71,7 @@ interface PendingApproval {
 
 export class Workspace {
   clients = new Map<string, CodexClient>();
+  sharedSade: SharedSadeWorker;
   connecting = new Map<string, Promise<CodexClient>>();
   running = new Map<string, Running>();
   approvals = new Map<string, PendingApproval>();
@@ -122,6 +124,7 @@ export class Workspace {
     this.runners = new Runners(this);
     this.aegis = new Aegis(store, dataDir);
     this.sade = new Sade(this);
+    this.sharedSade = new SharedSadeWorker(this);
   }
   async initialize() {
     await this.aegis.initialize();
@@ -773,6 +776,8 @@ export class Workspace {
   async run(taskId: string, memberId: string) {
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
     const task = this.store.get<Task>('task', taskId);
+    if (task.sharedSadeJobId)
+      throw new DomainError('Shared Sade jobs can start only from the owning desktop queue.');
     if (task.reviewOfTaskId) throw new DomainError('Use Retry review on the Sade source task.');
     await this.research.prepare(task.projectId);
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
@@ -1433,14 +1438,20 @@ export class Workspace {
           );
       };
       await validateDiff(await taskDiff(task.worktree, task.baseCommit || 'HEAD'));
-      await integrate(project.path, task.worktree, task.branch, task.title, {
+      const revision = await integrate(project.path, task.worktree, task.branch, task.title, {
         baseCommit: task.baseCommit || undefined,
-        ...(task.workflowId &&
-        this.store.get<Workflow>('workflow', task.workflowId).orchestrator === 'sade'
-          ? { verifyReview: (diff) => this.sade.assertReviewed(task, diff) }
-          : {}),
+        ...(task.sharedSadeJobId
+          ? {
+              verifyReview: async (diff) =>
+                this.sharedSade.assertReviewed(task.sharedSadeJobId!, diff),
+            }
+          : task.workflowId &&
+              this.store.get<Workflow>('workflow', task.workflowId).orchestrator === 'sade'
+            ? { verifyReview: (diff) => this.sade.assertReviewed(task, diff) }
+            : {}),
         validateDiff,
       });
+      if (task.sharedSadeJobId) this.sharedSade.recordIntegration(task.sharedSadeJobId, revision);
       const lease = this.store.lease(taskId);
       if (lease) this.store.release(taskId, lease.token);
       const updated = this.store.updateTask(taskId, { status: 'done', error: null });
@@ -1481,6 +1492,7 @@ export class Workspace {
   async close() {
     if (this.closing) return;
     this.closing = true;
+    this.sharedSade.close();
     await this.research.close();
     this.loginGeneration++;
     clearTimeout(this.loginTimer);

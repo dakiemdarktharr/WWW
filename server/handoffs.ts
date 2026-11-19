@@ -86,6 +86,10 @@ export class Handoffs {
   }): Promise<Handoff> {
     const source = this.host.store.get<CodexSession>('session', input.sessionId);
     const sourceTask = this.host.store.get<Task>('task', source.taskId);
+    if (sourceTask.sharedSadeJobId)
+      throw new DomainError(
+        'Integrate the independent Shared Sade review before sharing the Git revision.',
+      );
     if (sourceTask.phase === 'proposal' || sourceTask.phase === 'plan')
       throw new DomainError(
         'Planning ownership belongs to the team workflow. Resume that workflow instead.',

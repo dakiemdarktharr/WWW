@@ -217,7 +217,11 @@ export async function buildApp(
       request.headers['sec-fetch-user'] === '?1';
     if (!cloud && request.headers['sec-fetch-site'] === 'cross-site' && !userDocumentNavigation)
       return reply.code(403).send({ error: 'Cross-site requests are not allowed.' });
-    if (!cloud && options.desktopSecret && pathname === '/api/desktop/bridge-config') {
+    if (
+      !cloud &&
+      options.desktopSecret &&
+      ['/api/desktop/bridge-config', '/api/desktop/shared-sade'].includes(pathname)
+    ) {
       if (!safeEqual(String(request.headers['x-relay-control'] || ''), options.desktopSecret))
         return reply
           .code(403)
@@ -421,6 +425,14 @@ export async function buildApp(
     reply.raw.on('close', cleanup);
   });
   const params = (request: FastifyRequest) => z.object({ id }).parse(request.params).id;
+  if (!options.cloud && options.desktopSecret)
+    app.post('/api/desktop/shared-sade', async (request) =>
+      workspace.sharedSade.execute(request.body),
+    );
+  if (!options.cloud)
+    app.post('/api/tasks/:id/share-sade-revision', async (request) =>
+      workspace.sharedSade.shareRevision(params(request)),
+    );
   app.get('/api/runners', async () => workspace.runners.list());
   app.post('/api/runners', async (request) => {
     const input = z

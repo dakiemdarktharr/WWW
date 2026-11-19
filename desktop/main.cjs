@@ -527,6 +527,7 @@ async function bridgeLoop() {
       signal: AbortSignal.timeout(10000),
     });
     if (!configured.ok) throw new Error('Desktop bridge configuration failed.');
+    void sharedSadeLoop(generation, identity);
   } catch {
     if (generation !== bridgeGeneration || !identity) return;
     await pause(10000);
@@ -599,6 +600,72 @@ async function bridgeLoop() {
     } catch {
       await pause(10000);
     }
+  }
+}
+
+async function localSharedSade(payload) {
+  const result = await fetch(backendOrigin + '/api/desktop/shared-sade', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: backendOrigin,
+      'X-Relay-Desktop': desktopSecret,
+      'X-Relay-Control': desktopSecret,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await result.json();
+  if (!result.ok) throw new Error(body.error || 'Shared Sade is not available on this desktop.');
+  return body;
+}
+
+async function sharedSadeLoop(generation, owner) {
+  const current = () =>
+    !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
+  while (current()) {
+    let delay = 2500;
+    try {
+      const snapshot = await localSharedSade({ action: 'snapshot' });
+      if (!current()) return;
+      if (!snapshot.grants?.length && !snapshot.active?.length && !snapshot.results?.length) {
+        await pause(4000);
+        continue;
+      }
+      const acknowledged = [];
+      for (const { jobId, version, result } of snapshot.results.slice(0, 2)) {
+        if (!current()) return;
+        const { response } = await cloudRequest(
+          '/api/desktop/groups',
+          { action: 'sade-finish', jobId, result },
+          owner.accessToken,
+        );
+        if (response.ok || [403, 404, 409].includes(response.status))
+          acknowledged.push({ jobId, version });
+      }
+      const { response, body } = await cloudRequest(
+        '/api/desktop/groups',
+        {
+          action: 'sade-poll',
+          grants: snapshot.grants,
+          active: snapshot.active,
+        },
+        owner.accessToken,
+      );
+      if (!current()) return;
+      if (response.ok)
+        await localSharedSade({
+          action: 'exchange',
+          active: body.active,
+          delivery: body.delivery,
+          reviews: body.reviews,
+          acknowledged,
+        });
+      else delay = 5000;
+    } catch {
+      delay = 5000;
+    }
+    if (current()) await pause(delay);
   }
 }
 
@@ -806,12 +873,62 @@ function registerIpc() {
         'remove',
         'teammates',
         'message',
+        'sade-connect',
+        'sade-revoke',
+        'sade-cancel',
+        'sade-answer',
       ].includes(input.action) ||
       Buffer.byteLength(JSON.stringify(input)) > 64 * 1024
     )
       throw new Error('Invalid group request.');
     const generation = signInGeneration;
-    const { response, body } = await cloudRequest('/api/desktop/groups', input, owner.accessToken);
+    const current = () =>
+      identity === owner && generation === signInGeneration && !identityTransition;
+    let cloudInput = input;
+    if (input.action === 'sade-connect') {
+      const grant = {
+        id: randomUUID(),
+        groupId: input.groupId,
+        projectId: input.projectId,
+        teammateId: input.teammateId,
+        allowWrites: input.allowWrites,
+        turns: input.turns,
+      };
+      const preview = await localSharedSade({ action: 'preview', ...grant });
+      const room = await cloudRequest(
+        '/api/desktop/groups',
+        { action: 'read', groupId: grant.groupId, after: 10000 },
+        owner.accessToken,
+      );
+      if (!room.response.ok || !room.body.group?.id || !current())
+        throw new Error('This shared group is unavailable.');
+      const consent = await dialog.showMessageBox(window, {
+        type: 'question',
+        title: 'Allow Sade to use your teammate?',
+        message: `${preview.teammateName} · ${preview.projectName}`,
+        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes and sharing the proposed diff with an independent reviewer in your group. You control integration and publication.' : 'The teammate can read the linked project and share a short result.'} Your provider sign-in stays on this computer.`,
+        buttons: ['Cancel', 'Allow'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (consent.response !== 1 || !current()) return null;
+      const { teammateName, ...approved } = await localSharedSade({ action: 'grant', ...grant });
+      if (approved.projectKey !== preview.projectKey || !current()) {
+        if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id });
+        throw new Error('The workspace changed during approval. Review the grant again.');
+      }
+      cloudInput = { action: 'sade-grant', ...approved };
+    } else if (input.action === 'sade-revoke') {
+      await localSharedSade({ action: 'revoke', grantId: input.grantId });
+    }
+    if (!current()) throw new Error('Account changed. Open your current workspace.');
+    const { response, body } = await cloudRequest(
+      '/api/desktop/groups',
+      cloudInput,
+      owner.accessToken,
+    );
+    if (!response.ok && input.action === 'sade-connect' && current())
+      await localSharedSade({ action: 'revoke', grantId: cloudInput.id });
     if (identity !== owner || generation !== signInGeneration)
       throw new Error('Account changed. Open your current workspace.');
     if (response.status === 401) {

@@ -28,9 +28,14 @@ const planTaskSchema = suggestion
     dependsOn: z.array(z.string().regex(keyPattern)).max(31),
     stage: z.string().trim().min(1).max(60),
     preferredMemberId: z.string().min(1).max(100).optional(),
+    requiredPlatform: z.enum(['win32', 'darwin', 'linux']).optional(),
   })
   .strict();
 const planSchema = z.object({ summary, tasks: z.array(planTaskSchema).min(1).max(32) }).strict();
+export const parsePlanTask = (value: unknown) => {
+  const task = planTaskSchema.parse(value);
+  return { ...task, scope: normalizePlanScopes(task.scope) };
+};
 
 function normalizePlanScopes(values: string[]): string[] {
   const normalized = new Map<string, string>();
@@ -116,14 +121,25 @@ const compareKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** Balance estimated effort first; specialism only breaks equal-load ties. */
 export function allocatePlan(
   plan: TeamPlan,
-  members: Member[],
-  options: { preferSpecialists?: boolean; available?: ReadonlySet<string> } = {},
+  members: Pick<Member, 'id' | 'role'>[],
+  options: {
+    preferSpecialists?: boolean;
+    available?: ReadonlySet<string>;
+    supports?: (memberId: string, task: PlanTask) => boolean;
+    turns?: ReadonlyMap<string, number>;
+  } = {},
 ): { key: string; memberId: string }[] {
   if (!members.length) throw new DomainError('A workflow needs at least one teammate.', 400);
   if (new Set(members.map((member) => member.id)).size !== members.length)
     throw new DomainError('The workflow roster contains a duplicate teammate.', 400);
   const load = new Map(members.map((member) => [member.id, 0]));
   const assignments = new Map<string, string>();
+  const remaining = options.turns && new Map(options.turns);
+  const requested = new Map<string, number>();
+  if (remaining)
+    for (const task of plan.tasks)
+      if (task.preferredMemberId)
+        requested.set(task.preferredMemberId, (requested.get(task.preferredMemberId) || 0) + 1);
   // Allocate implementations first so reviews can exclude their authors.
   const byEffort = [...plan.tasks].sort(
     (a, b) =>
@@ -135,14 +151,31 @@ export function allocatePlan(
     const authors = new Set(
       task.kind === 'review' ? task.dependsOn.map((key) => assignments.get(key)) : [],
     );
-    const eligible = members.filter((member) => !authors.has(member.id));
-    if (!eligible.length)
-      throw new DomainError('Independent review needs another connected teammate.');
-    if (task.preferredMemberId && !eligible.some((member) => member.id === task.preferredMemberId))
+    const capable = members.filter(
+      (member) => !authors.has(member.id) && (options.supports?.(member.id, task) ?? true),
+    );
+    if (!capable.length)
+      throw new DomainError(
+        task.kind === 'review'
+          ? 'Independent review needs another connected teammate.'
+          : `No authorized teammate can run “${task.title}”.`,
+      );
+    if (task.preferredMemberId && !capable.some((member) => member.id === task.preferredMemberId))
       throw new DomainError(
         'The requested teammate is unavailable or would review their own work.',
       );
-    const role = (a: Member, b: Member) =>
+    const eligible = capable.filter(
+      (member) =>
+        !remaining ||
+        (remaining.get(member.id) || 0) >
+          (member.id === task.preferredMemberId ? 0 : requested.get(member.id) || 0),
+    );
+    if (
+      !eligible.length ||
+      (task.preferredMemberId && !eligible.some((member) => member.id === task.preferredMemberId))
+    )
+      throw new DomainError('The plan needs more prompt turns than a teammate granted.');
+    const role = (a: Pick<Member, 'role'>, b: Pick<Member, 'role'>) =>
       Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]);
     const member = [...eligible].sort(
       (a, b) =>
@@ -157,6 +190,10 @@ export function allocatePlan(
     )[0];
     assignments.set(task.key, member.id);
     load.set(member.id, load.get(member.id)! + task.effort);
+    if (remaining) {
+      remaining.set(member.id, remaining.get(member.id)! - 1);
+      if (task.preferredMemberId) requested.set(member.id, requested.get(member.id)! - 1);
+    }
   }
   return plan.tasks.map((task) => ({ key: task.key, memberId: assignments.get(task.key)! }));
 }
