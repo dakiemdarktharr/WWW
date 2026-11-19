@@ -130,9 +130,14 @@ const english: Record<string, string> = {
   'Windows x64 · Chưa ký chứng chỉ': 'Windows x64 · Unsigned installer',
   'Linux x64 · Cần Git, keyring và desktop Linux hỗ trợ sandbox.':
     'Linux x64 · Requires Git, a keyring, and a Linux desktop with sandbox support.',
-  'macOS Apple Silicon · Chưa ký, chưa notarize':
-    'macOS Apple Silicon · Unsigned and not notarized',
+  'macOS Apple Silicon · Chưa có chứng chỉ Developer ID hoặc notarization':
+    'macOS Apple Silicon · No Developer ID certificate or notarization',
   'macOS Apple Silicon · Chưa có bản tải': 'macOS Apple Silicon · Download not available yet',
+  'macOS Apple Silicon': 'macOS Apple Silicon',
+  'Mở DMG, kéo Kivuno vào Applications rồi mở app.':
+    'Open the DMG, drag Kivuno to Applications, then open the app.',
+  'Nếu macOS báo chưa xác minh nhà phát triển, mở System Settings → Privacy & Security → Open Anyway.':
+    'If macOS says it cannot verify the developer, go to System Settings → Privacy & Security → Open Anyway.',
   'Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.': 'Sign-in is unavailable. Please try again.',
   'Bạn đã thử nhiều lần. Vui lòng đợi một phút.': 'Too many attempts. Please wait a minute.',
   'Email hoặc mật khẩu không đúng.': 'The email or password is incorrect.',

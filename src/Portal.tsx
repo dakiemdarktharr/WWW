@@ -49,6 +49,7 @@ interface Download {
   size?: number;
   platform?: string;
   signed?: boolean;
+  notarized?: boolean;
 }
 interface Release extends Download {
   version: string;
@@ -539,7 +540,7 @@ function PortalContent() {
           )}
         </span>
         <span>
-          {platformNames[platform]}
+          {platform === 'macos' ? t('macOS Apple Silicon') : platformNames[platform]}
           {item?.version && item.version !== release?.version ? ` · ${item.version}` : ''}
         </span>
         <ArrowDownToLine size={18} />
@@ -958,6 +959,15 @@ function PortalContent() {
                 {downloadLink('windows')}
                 {downloadLink('linux')}
                 {downloadLink('macos')}
+                {download('macos')?.available && (
+                  <p className="kp-macos-install">
+                    {t('Mở DMG, kéo Kivuno vào Applications rồi mở app.')}{' '}
+                    {!download('macos')?.notarized &&
+                      t(
+                        'Nếu macOS báo chưa xác minh nhà phát triển, mở System Settings → Privacy & Security → Open Anyway.',
+                      )}
+                  </p>
+                )}
                 <details>
                   <summary>{t('Thông tin bản cài')}</summary>
                   <p>{t('Windows x64 · Chưa ký chứng chỉ')}</p>
@@ -965,7 +975,7 @@ function PortalContent() {
                   <p>
                     {t(
                       download('macos')?.available
-                        ? 'macOS Apple Silicon · Chưa ký, chưa notarize'
+                        ? 'macOS Apple Silicon · Chưa có chứng chỉ Developer ID hoặc notarization'
                         : 'macOS Apple Silicon · Chưa có bản tải',
                     )}
                   </p>

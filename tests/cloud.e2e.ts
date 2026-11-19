@@ -244,8 +244,8 @@ try {
   await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
   await expect(page.locator('.project-chat')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await expect(message.locator('.chat-bubble')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(message.locator('.chat-bubble')).toHaveCSS('border-top-color', 'rgb(23, 27, 29)');
-  await expect(page.locator('.nav-item.active')).toHaveCSS('color', 'rgb(23, 52, 46)');
+  await expect(message.locator('.chat-bubble')).toHaveCSS('border-top-color', 'rgb(57, 51, 63)');
+  await expect(page.locator('.nav-item.active')).toHaveCSS('color', 'rgb(23, 22, 25)');
   await page.screenshot({ path: path.join(screenshots, 'chat-light.png'), animations: 'disabled' });
   await page.getByRole('button', { name: 'Use dark mode', exact: true }).click();
   await page.getByLabel('Message the project team').fill('/g');

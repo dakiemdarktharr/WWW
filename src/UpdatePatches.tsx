@@ -36,8 +36,8 @@ const patches = [
         en: 'Renamed the conversation area to Chat and simplified project folder and goal setup.',
       },
       {
-        vi: 'Thêm Sade trong Chat: chia việc theo yêu cầu, kiểm tra chéo bằng AI khác và yêu cầu review lại khi code thay đổi. Bản macOS hiện vẫn là 0.8.4.',
-        en: 'Added Sade in Chat: coordinated assignments, independent AI review, and renewed review when code changes. The current macOS installer remains 0.8.4.',
+        vi: 'Thêm Sade trong Chat: chia việc theo yêu cầu, kiểm tra chéo bằng AI khác và yêu cầu review lại khi code thay đổi.',
+        en: 'Added Sade in Chat: coordinated assignments, independent AI review, and renewed review when code changes.',
       },
     ],
   },

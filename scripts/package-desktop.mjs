@@ -52,24 +52,15 @@ if (hasMacosOverride) {
     size: Number(macosSizeValue),
   };
 } else {
-  try {
-    macosArtifact = JSON.parse(
-      await readFile(
-        path.join(root, 'release-artifacts', `macos-${manifest.version}.json`),
-        'utf8',
-      ),
-    );
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    // Keep the last published Mac installer available when only Windows is rebuilt.
-    const stable = JSON.parse(
-      await readFile(path.join(root, 'release-artifacts', 'macos-stable.json'), 'utf8'),
-    );
-    if (!/^\d+\.\d+\.\d+$/.test(stable.version)) throw new Error('Invalid stable macOS version.');
-    macosArtifact = JSON.parse(
-      await readFile(path.join(root, 'release-artifacts', `macos-${stable.version}.json`), 'utf8'),
-    );
-  }
+  const stable = JSON.parse(
+    await readFile(path.join(root, 'release-artifacts', 'macos-stable.json'), 'utf8'),
+  );
+  if (!/^\d+\.\d+\.\d+$/.test(stable.version)) throw new Error('Invalid stable macOS version.');
+  macosArtifact = JSON.parse(
+    await readFile(path.join(root, 'release-artifacts', `macos-${stable.version}.json`), 'utf8'),
+  );
+  if (macosArtifact.version !== stable.version)
+    throw new Error('The stable macOS metadata version does not match its pointer.');
 }
 if (hasMacosUpdateOverride) {
   macosArtifact.autoUpdate = {

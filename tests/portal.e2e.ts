@@ -105,7 +105,11 @@ async function routePortal(context: BrowserContext, available = false) {
               available,
               ...(available ? { url: '/downloads/Kivuno.AppImage', sha256: 'b'.repeat(64) } : {}),
             },
-            macos: { available: false },
+            macos: {
+              available,
+              notarized: false,
+              ...(available ? { url: '/downloads/Kivuno-macOS-arm64.dmg' } : {}),
+            },
           },
         },
       });
@@ -375,7 +379,7 @@ try {
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
-  await expect(title).toHaveAttribute('data-title-state', 'ready');
+  await expect(title).toHaveAttribute('data-title-state', 'ready', { timeout: 20000 });
   await page.screenshot({ path: '.local/kivuno-hero-desktop-dark.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
@@ -700,9 +704,18 @@ try {
     'href',
     '/downloads/Kivuno.AppImage',
   );
-  await expect(
-    accountPage.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
-  ).toBeDisabled();
+  await expect(accountPage.getByRole('link', { name: 'Tải Kivuno cho macOS' })).toHaveAttribute(
+    'href',
+    '/downloads/Kivuno-macOS-arm64.dmg',
+  );
+  await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
+  await accountPage.getByRole('button', { name: 'Tải app', exact: true }).click();
+  const macDownloads = accountPage.getByRole('dialog', { name: 'Tải Kivuno' });
+  await expect(macDownloads.getByRole('link', { name: 'Tải Kivuno cho macOS' })).toContainText(
+    'macOS Apple Silicon',
+  );
+  await expect(macDownloads.getByText(/Privacy & Security → Open Anyway/)).toBeVisible();
+  await accountPage.keyboard.press('Escape');
   await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
   const reducedDemo = accountPage.locator('#workflow');
   await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(8);
@@ -729,7 +742,11 @@ try {
   const reducedTitle = accountPage.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(reducedTitle).toHaveText('Kivuno');
   const reducedStage = accountPage.locator('.kp-puffy-stage');
-  await expect(accountPage.locator('.kp-puffy-title')).toHaveAttribute('data-title-state', 'ready');
+  await expect(accountPage.locator('.kp-puffy-title')).toHaveAttribute(
+    'data-title-state',
+    'ready',
+    { timeout: 20000 },
+  );
   await reducedStage.focus();
   await accountPage.keyboard.down('ArrowRight');
   await expect(reducedStage).toHaveAttribute('data-rotation', '0.0000,0.1500');

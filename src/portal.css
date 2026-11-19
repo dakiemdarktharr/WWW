@@ -1115,6 +1115,11 @@
 .kp-download-dialog .kp-download-link + .kp-download-link {
   margin-top: 12px;
 }
+.kp-macos-install {
+  margin: 0.65rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
 .kp-download-dialog details {
   font-size: 11px;
   color: #635c6d;

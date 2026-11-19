@@ -170,6 +170,25 @@ test('logging out one account and cancelling an old dialog never unlock another 
   assert.equal(f.workspace.loginOwner, null);
 });
 
+test('unlocking a previously connected local account restores it once without a sign-in or model turn', async (t) => {
+  const f = await fixture(t);
+  const member = f.workspace.autonomy.addAccount();
+  const neverConnected = f.workspace.autonomy.addAccount();
+  const client = (await f.workspace.client(member.id)) as ProfileClient;
+  client.signedIn = true;
+  f.store.updateMember(member.id, {
+    connectedAt: new Date().toISOString(),
+    entitlementLocked: true,
+  });
+  f.store.updateMember(neverConnected.id, { entitlementLocked: true });
+  await f.workspace.applyProfileLocks([]);
+  await f.workspace.applyProfileLocks([]);
+  assert.equal(f.store.get<Member>('member', member.id).status, 'ready');
+  assert.equal(client.calls.filter((call) => call === 'account/read').length, 1);
+  assert.ok(!client.calls.includes('turn/start') && !client.calls.includes('account/login/start'));
+  assert.ok(!f.workspace.clients.has(neverConnected.id));
+});
+
 test('restart restores identity and usage for both accounts without reading the marketplace catalog', async (t) => {
   const f = await fixture(t);
   const members = [f.workspace.autonomy.addAccount(), f.workspace.autonomy.addAccount()];

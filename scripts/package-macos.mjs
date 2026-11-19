@@ -32,7 +32,17 @@ const nodeVersion = '24.22.1';
 const nodeArchive = `node-v${nodeVersion}-darwin-arm64.tar.gz`;
 const nodeDirectory = `node-v${nodeVersion}-darwin-arm64`;
 const nodeBase = `https://nodejs.org/dist/v${nodeVersion}`;
+const gitVersion = '2.56.1';
+const gitArchive = `dugite-native-v${gitVersion}-238326e-macOS-arm64.tar.gz`;
+const gitUrl = `https://github.com/desktop/dugite-native/releases/download/v${gitVersion}/${gitArchive}`;
+const gitSha256 = 'a882ec6882416b57d212a22bac845ae27944f96cf73453a864f6a12c17863a79';
+const gitRoot = path.join(runtime, 'git');
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const stable = JSON.parse(
+  await readFile(path.join(root, 'release-artifacts/macos-stable.json'), 'utf8'),
+);
+const version = process.env.KIVUNO_MACOS_VERSION || stable.version;
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid macOS release version.');
 const npmCli = process.env.npm_execpath;
 
 if (!npmCli || !existsSync(npmCli)) throw new Error('Run macos:installer through npm.');
@@ -43,20 +53,84 @@ if (!existsSync(path.join(root, 'dist', 'index.html')))
   throw new Error('The web app build is missing. Run npm run macos:installer.');
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 
-async function download(url, maxBytes) {
-  const response = await fetch(url, {
-    redirect: 'error',
+async function download(url, maxBytes, allowReleaseRedirect = false) {
+  let response = await fetch(url, {
+    redirect: allowReleaseRedirect ? 'manual' : 'error',
     signal: AbortSignal.timeout(180000),
   });
-  if (!response.ok) throw new Error(`Node.js download failed (${response.status}).`);
+  if (allowReleaseRedirect && [301, 302, 303, 307, 308].includes(response.status)) {
+    const next = new URL(response.headers.get('location') || '', url);
+    await response.body?.cancel();
+    if (
+      next.origin !== 'https://release-assets.githubusercontent.com' ||
+      next.username ||
+      next.password
+    )
+      throw new Error('Git archive redirected to an unexpected host.');
+    response = await fetch(next, { redirect: 'error', signal: AbortSignal.timeout(180000) });
+  }
+  if (!response.ok)
+    throw new Error(`Download failed (${response.status}) from ${new URL(url).hostname}.`);
   const chunks = [];
   let size = 0;
   for await (const chunk of response.body) {
     size += chunk.length;
-    if (size > maxBytes) throw new Error('Node.js download exceeds its size limit.');
+    if (size > maxBytes) throw new Error('Runtime download exceeds its size limit.');
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+}
+
+async function stageGit() {
+  console.log(`Preparing verified portable Git ${gitVersion} for macOS arm64…`);
+  const archive = await download(gitUrl, 80 * 1024 * 1024, true);
+  if (createHash('sha256').update(archive).digest('hex') !== gitSha256)
+    throw new Error('The downloaded macOS Git archive failed SHA256 verification.');
+  const archivePath = path.join(staging, gitArchive);
+  await writeFile(archivePath, archive);
+  await mkdir(gitRoot);
+  await execute('/usr/bin/tar', ['-xzf', archivePath, '-C', gitRoot]);
+
+  const sources = [
+    {
+      license: 'git-COPYING',
+      source: 'https://github.com/git/git/tree/03b41523c576f26ad34085378717a0c1b287470f',
+      url: 'https://raw.githubusercontent.com/git/git/v2.56.1/COPYING',
+      sha256: '5b2198d1645f767585e8a88ac0499b04472164c0d2da22e75ecf97ef443ab32e',
+    },
+    {
+      license: 'git-lfs-LICENSE.md',
+      source: 'https://github.com/git-lfs/git-lfs/tree/v3.8.1',
+      url: 'https://raw.githubusercontent.com/git-lfs/git-lfs/v3.8.1/LICENSE.md',
+      sha256: '4fae9062ab5cdd5fb15486b728534d8aded8b4ae9d84b6d66a956f5162c366b6',
+    },
+    {
+      license: 'git-credential-manager-LICENSE',
+      source: 'https://github.com/git-ecosystem/git-credential-manager/tree/v2.9.1',
+      url: 'https://raw.githubusercontent.com/git-ecosystem/git-credential-manager/v2.9.1/LICENSE',
+      sha256: 'b47f1a8a744ecdc7a3da35804f88552805d33f51a726b87a2105acdfae406b07',
+    },
+  ];
+  for (const { license, url, sha256 } of sources) {
+    const content = await download(url, 128 * 1024);
+    if (createHash('sha256').update(content).digest('hex') !== sha256)
+      throw new Error(`The Git license ${license} failed SHA256 verification.`);
+    await writeFile(path.join(gitRoot, license), content);
+  }
+  await writeFile(
+    path.join(gitRoot, 'provenance.json'),
+    JSON.stringify(
+      {
+        version: gitVersion,
+        archive: gitUrl,
+        sha256: gitSha256,
+        buildSource: `https://github.com/desktop/dugite-native/tree/v${gitVersion}`,
+        sources,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
 }
 
 async function replaceIcon() {
@@ -136,6 +210,13 @@ await execute('/usr/bin/tar', [
   runtime,
   '--strip-components=2',
   `${nodeDirectory}/bin/node`,
+]);
+await execute('/usr/bin/tar', [
+  '-xzf',
+  archivePath,
+  '-C',
+  runtime,
+  '--strip-components=1',
   `${nodeDirectory}/LICENSE`,
 ]);
 const node = path.join(runtime, 'node');
@@ -148,6 +229,7 @@ await writeFile(
     2,
   ) + '\n',
 );
+await stageGit();
 
 console.log('Installing production dependencies for macOS arm64…');
 await execute(
@@ -188,13 +270,16 @@ if (!codex || !(await stat(codex)).isFile())
 if (!(await stat(esbuild)).isFile()) throw new Error('The macOS esbuild executable is missing.');
 const nodeProbe = (await execute(node, ['--version'])).stdout.trim();
 const codexProbe = (await execute(codex, ['--version'], { timeout: 30000 })).stdout.trim();
+const gitProbe = (await execute(path.join(gitRoot, 'bin', 'git'), ['--version'])).stdout.trim();
 if (nodeProbe !== `v${nodeVersion}` || !codexProbe.startsWith('codex-cli 0.166.0'))
   throw new Error('The bundled macOS runtime versions do not match the release.');
-console.log('Verified the bundled macOS Node and Codex CLI binaries.');
+if (gitProbe !== `git version ${gitVersion}`)
+  throw new Error('The bundled macOS Git version does not match the release.');
+console.log('Verified the bundled macOS Node, Git and Codex CLI binaries.');
 
 const icon = await replaceIcon();
-const artifactName = `Kivuno-${packageJson.version}-macOS-arm64.dmg`;
-const updateArtifactName = `Kivuno-${packageJson.version}-macOS-arm64.zip`;
+const artifactName = `Kivuno-${version}-macOS-arm64.dmg`;
+const updateArtifactName = `Kivuno-${version}-macOS-arm64.zip`;
 await build({
   projectDir: path.join(root, 'desktop'),
   targets: Platform.MAC.createTarget(['dmg', 'zip'], Arch.arm64),
@@ -204,7 +289,7 @@ await build({
     productName: 'Kivuno',
     electronVersion: packageJson.devDependencies.electron,
     directories: { output },
-    extraMetadata: { version: packageJson.version },
+    extraMetadata: { version: version },
     files: [
       'main.cjs',
       'preload.cjs',
@@ -219,6 +304,7 @@ await build({
       '!node_modules/**/*',
     ],
     asar: true,
+    forceCodeSigning: true,
     npmRebuild: false,
     extraResources: [
       { from: workspace, to: 'workspace' },
@@ -228,15 +314,21 @@ await build({
     ],
     mac: {
       target: ['dmg', 'zip'],
-      artifactName: `Kivuno-${packageJson.version}-macOS-arm64.\${ext}`,
+      artifactName: `Kivuno-${version}-macOS-arm64.\${ext}`,
       category: 'public.app-category.developer-tools',
       icon,
-      identity: null,
+      minimumSystemVersion: '13.5.0',
+      identity: '-',
+      // Preserve the vendors' Mach-O signatures and seal Resources with the app bundle.
+      signIgnore: '/Contents/Resources/',
       hardenedRuntime: false,
+      timestamp: 'none',
+      preAutoEntitlements: false,
       gatekeeperAssess: false,
+      notarize: false,
     },
     dmg: {
-      title: `Kivuno ${packageJson.version}`,
+      title: `Kivuno ${version}`,
       window: { width: 540, height: 380 },
       contents: [
         { x: 130, y: 220, type: 'file' },
@@ -245,19 +337,37 @@ await build({
     },
     async afterPack({ appOutDir }) {
       const resources = path.join(appOutDir, 'Kivuno.app', 'Contents', 'Resources');
+      const binaries = [
+        'runtime/node',
+        'runtime/git/bin/git',
+        'runtime/git/libexec/git-core/git-remote-http',
+        'workspace/node_modules/@esbuild/darwin-arm64/bin/esbuild',
+        path.join('workspace', path.relative(workspace, codex)),
+      ];
       for (const required of [
         'app.asar',
-        'runtime/node',
+        'runtime/git/share/git-core/templates/description',
         'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
-        'workspace/node_modules/@esbuild/darwin-arm64/bin/esbuild',
+        'workspace/node_modules/@google/gemini-cli/bundle/gemini.js',
         'mac-update-helper.sh',
-        path.join('workspace', path.relative(workspace, codex)),
+        ...binaries,
       ]) {
         if (!(await stat(path.join(resources, required))).isFile())
           throw new Error(`The packaged macOS app is missing ${required}.`);
       }
+      for (const binary of binaries) {
+        await execute('/usr/bin/codesign', ['--verify', '--strict', path.join(resources, binary)]);
+      }
+    },
+    async afterSign({ appOutDir }) {
+      await execute('/usr/bin/codesign', [
+        '--verify',
+        '--deep',
+        '--strict',
+        path.join(appOutDir, 'Kivuno.app'),
+      ]);
     },
   },
 });
@@ -278,7 +388,7 @@ await writeFile(
   path.join(output, 'macos-arm64.json'),
   JSON.stringify(
     {
-      version: packageJson.version,
+      version,
       filename: artifactName,
       sha256,
       bytes: info.size,
@@ -286,7 +396,7 @@ await writeFile(
       signed: false,
       notarized: false,
       autoUpdate: {
-        version: packageJson.version,
+        version,
         filename: updateArtifactName,
         sha256: updateSha256,
         size: updateInfo.size,

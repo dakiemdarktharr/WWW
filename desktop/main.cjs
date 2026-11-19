@@ -368,8 +368,10 @@ async function readIdentity() {
   // Retire the previous launch's device lease so normal restarts cannot fill
   // the cloud's active-device limit. A failed cleanup never authenticates UI.
   try {
+    // A new profile has no lease to retire and should not prompt for Keychain access.
+    const saved = await readFile(identityFile);
     if (secureCredentialStorage(safeStorage, process.platform)) {
-      const previous = JSON.parse(safeStorage.decryptString(await readFile(identityFile)));
+      const previous = JSON.parse(safeStorage.decryptString(saved));
       if (typeof previous.accessToken === 'string')
         void cloudRequest('/api/desktop/revoke', {}, previous.accessToken).catch(() => {});
     }
@@ -1233,16 +1235,22 @@ function runtimePaths() {
     throw new Error('The bundled Node runtime is unavailable.');
   const inheritedPath =
     Object.entries(process.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] || '';
+  const gitBin = app.isPackaged ? { win32: 'cmd', darwin: 'bin' }[process.platform] : undefined;
   const binPath = [
     path.dirname(node),
-    ...(app.isPackaged && process.platform === 'win32'
-      ? [path.join(process.resourcesPath, 'runtime', 'git', 'cmd')]
-      : []),
+    gitBin && path.join(process.resourcesPath, 'runtime', 'git', gitBin),
     inheritedPath,
   ]
     .filter(Boolean)
     .join(path.delimiter);
-  return { root, node, binPath };
+  const gitRoot = gitBin === 'bin' && path.join(process.resourcesPath, 'runtime', 'git');
+  const gitEnvironment = gitRoot
+    ? {
+        GIT_EXEC_PATH: path.join(gitRoot, 'libexec', 'git-core'),
+        GIT_TEMPLATE_DIR: path.join(gitRoot, 'share', 'git-core', 'templates'),
+      }
+    : {};
+  return { root, node, binPath, gitEnvironment };
 }
 
 function providerRuntimeEnvironment(root, node) {
@@ -1298,7 +1306,7 @@ async function startMachine(entry) {
       'A previous worker left a recovery marker. Confirm its processes stopped before recovering this machine.';
     return;
   }
-  const { root, node, binPath } = runtimePaths();
+  const { root, node, binPath, gitEnvironment } = runtimePaths();
   let runtimeConfigFile = configFile;
   if (config.executionRequest) {
     const grant = JSON.parse(
@@ -1332,6 +1340,7 @@ async function startMachine(entry) {
       env: runtimeEnvironment(process.env, {
         NODE_ENV: 'production',
         PATH: binPath,
+        ...gitEnvironment,
         ...providerRuntimeEnvironment(root, node),
       }),
     },
@@ -1430,7 +1439,7 @@ async function startBackend() {
   const workspacePath = workspaceDirectory(dataDirectory, identity?.owner.id, pinnedOwner);
   machinesDirectory = path.join(workspacePath, 'machine-links');
   machinesIndex = path.join(machinesDirectory, 'connections.json');
-  const { root, node, binPath } = runtimePaths();
+  const { root, node, binPath, gitEnvironment } = runtimePaths();
   const port = await freePort();
   backendOrigin = `http://127.0.0.1:${port}`;
   backend = spawn(node, ['--import', 'tsx', path.join(root, 'server', 'index.ts')], {
@@ -1440,6 +1449,7 @@ async function startBackend() {
     env: runtimeEnvironment(process.env, {
       NODE_ENV: testing ? 'test' : 'production',
       PATH: binPath,
+      ...gitEnvironment,
       RELAY_DATA_DIR: workspacePath,
       RELAY_PORT: String(port),
       RELAY_DESKTOP_SECRET: desktopSecret,

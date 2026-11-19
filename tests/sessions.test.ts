@@ -507,6 +507,27 @@ test('failed process stop keeps an orphan lease and recovery never starts a paid
   assert.equal(peer.calls.filter((call) => call.method === 'turn/start').length, turns);
 });
 
+test('a cleanly stopped completed chat stays idle across restarts, including older saved sessions', async (t) => {
+  const f = await fixture(t);
+  const chat = await f.create('Completed group reply', [], true);
+  await f.workspace.sessions.send(chat.id, 'Reply once.');
+  await f.complete(chat);
+  await f.workspace.sessions.close();
+  assert.equal(f.workspace.sessions.get(chat.id).pid, null);
+  const restartError =
+    'Coordinator restarted. Confirm the last observed session PID stopped before recovery.';
+  f.store.orphanAll();
+  assert.equal(f.workspace.sessions.get(chat.id).status, 'idle');
+  f.workspace.sessions.update(chat.id, { status: 'interrupted', error: restartError });
+  f.store.orphanAll();
+  assert.equal(f.workspace.sessions.hasLive(f.member.id), false);
+  assert.equal(f.workspace.sessions.get(chat.id).status, 'idle');
+  assert.equal(f.store.get<Task>('task', chat.taskId).status, 'done');
+  f.workspace.sessions.update(chat.id, { pid: 123456 });
+  f.store.orphanAll();
+  assert.equal(f.workspace.sessions.get(chat.id).status, 'interrupted');
+});
+
 test('recovery cannot reopen an accepted task or a task owned by a newer session without a lease', async (t) => {
   const f = await fixture(t),
     session = await f.create('Historical conversation', ['src']);
