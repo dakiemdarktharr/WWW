@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -53,9 +54,16 @@ export function bankCheckoutMode(store: Store): 'sandbox' | null {
   )
     return null;
   const dbPath = store.db.location();
-  return dbPath && path.relative(path.join(dataDir, 'workspace.db'), dbPath) === ''
-    ? 'sandbox'
-    : null;
+  if (!dbPath) return null;
+  try {
+    // The parent can have an OS alias such as /var. The sandbox directory and database must
+    // still be the expected final path components.
+    const parent = realpathSync(path.dirname(dataDir));
+    const expected = path.join(parent, '.relay-fuji-demo', 'workspace.db');
+    return path.relative(expected, realpathSync(dbPath)) === '' ? 'sandbox' : null;
+  } catch {
+    return null;
+  }
 }
 
 export function bankEntitlement(store: Store, userId: string): BankTerm | undefined {

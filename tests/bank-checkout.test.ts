@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
@@ -26,9 +26,10 @@ type View = {
 };
 
 async function setup(t: TestContext) {
-  const root = mkdtempSync(path.join(tmpdir(), 'kivuno-bank-test-'));
-  const dir = path.join(root, '.relay-fuji-demo');
-  mkdirSync(dir);
+  const parent = realpathSync(tmpdir());
+  const root = mkdtempSync(path.join(parent, 'kivuno-bank-test-'));
+  const dir = path.join(root, 'storage', '.relay-fuji-demo');
+  mkdirSync(dir, { recursive: true });
   const env = {
     NODE_ENV: 'development',
     RELAY_LOCAL_CLOUD_DEMO: '1',
@@ -57,7 +58,7 @@ async function setup(t: TestContext) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    assert.equal(path.dirname(root), tmpdir());
+    assert.equal(path.dirname(realpathSync(root)), parent);
     assert.ok(path.basename(root).startsWith('kivuno-bank-test-'));
     rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   });
@@ -78,6 +79,8 @@ async function setup(t: TestContext) {
   return {
     app,
     store,
+    root,
+    dir,
     post,
     order,
     confirm,
@@ -86,6 +89,15 @@ async function setup(t: TestContext) {
     },
   };
 }
+
+test('bank demo resolves an alias of the sandbox parent to the same database', async (t) => {
+  const { app, store, root, dir } = await setup(t);
+  const parentAlias = path.join(root, 'storage-alias');
+  symlinkSync(path.dirname(dir), parentAlias, process.platform === 'win32' ? 'junction' : 'dir');
+  process.env.RELAY_DATA_DIR = path.join(parentAlias, '.relay-fuji-demo');
+  assert.equal(bankCheckoutMode(store), 'sandbox');
+  assert.equal((await app.inject('/api/billing/bank/config')).json().available, true);
+});
 
 test('local bank quotes are locked, private to the buyer, and only exact simulated credits settle', async (t) => {
   const { store, app, post, order, confirm, setUser } = await setup(t);

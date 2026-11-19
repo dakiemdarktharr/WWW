@@ -68,7 +68,7 @@ Với yêu cầu “nhờ Gemini đọc file này, hết lượt thì để Clau
 
 Kiểm thử hồi quy đi qua Shared Groups và giao việc với tài khoản mô phỏng. Gemini hết lượt ở lúc lập kế hoạch hoặc trước khi bắt đầu đều chuyển đúng một tác vụ chỉ đọc cho Claude. Khi cả hai hết lượt, một harness thứ ba có quyền vẫn không nhận việc. Thử gửi lại cùng mã tin chỉ tạo một workflow. Bài thử bộ phân công xác nhận việc tự giao có effort cao vẫn nhường lượt của Gemini cho tác vụ ưu tiên đã nêu. Scope, quyền ghi, yêu cầu hệ điều hành và review độc lập vẫn được kiểm tra khi tìm harness thay thế.
 
-Tập bổ sung có năm câu viết riêng về kiểu nhắn casual, không dấu, tiếng Anh kỹ thuật, giao Sade tự chọn phương án dự phòng và giữ người thực hiện cố định. Lượt GPU Qwen 4B và 1.7B trả lỗi cấp phát. Lượt 1.7B trên CPU cũng dừng khi nạp model, kể cả sau khi thử tắt repack và bật mmap. Các lỗi này chưa có đầu ra model để chấm độ hiểu. Tài khoản Codex dùng kiểm thử cũng đang ở ngưỡng dự trữ. [Tùy chọn bộ nhớ của llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+Tập bổ sung có năm câu viết riêng về kiểu nhắn casual, không dấu, tiếng Anh kỹ thuật, giao Sade tự chọn phương án dự phòng và giữ người thực hiện cố định. Cả năm kế hoạch đầu vào đã biết đều qua parser và bộ phân công. Lượt GPU Qwen 4B và 1.7B trả lỗi cấp phát. Lượt 1.7B trên CPU cũng dừng khi nạp model, kể cả sau khi thử tắt repack và bật mmap. Các lỗi này chưa có đầu ra model để chấm độ hiểu. Tài khoản Codex dùng kiểm thử cũng đang ở ngưỡng dự trữ. [Tùy chọn bộ nhớ của llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
 
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-quota-fallback.json --quota-fallback
