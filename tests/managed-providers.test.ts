@@ -179,3 +179,66 @@ test(
     assert.equal(client.pid, undefined);
   },
 );
+
+test(
+  'Antigravity reviews only registered Kivuno tools in the active session and honors a one-time decision',
+  { timeout: 20000 },
+  async (t) => {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'kivuno-managed-review-'));
+    await writeFile(path.join(home, 'managed-fixture-account.json'), '{}');
+    const client = new AntigravityClient({
+      home,
+      cwd: home,
+      command: path.resolve('tests/fixtures/managed-peer.mjs'),
+    });
+    t.after(async () => {
+      await client.stop();
+      await rm(home, { recursive: true, force: true });
+    });
+    let reviews = 0,
+      posts = 0;
+    let decision = 'decline';
+    client.on('request', (request) => {
+      if (request.method === 'item/mcp/requestApproval') {
+        assert.equal(request.params.tool, 'mesh_post');
+        assert.equal(request.params.arguments.content, 'QA post');
+        reviews++;
+        client.respond(request.id, { decision });
+      } else {
+        assert.equal(request.method, 'item/tool/call');
+        assert.equal(request.params.tool, 'mesh_post');
+        posts++;
+        client.respond(request.id, { success: true, contentItems: [] });
+      }
+    });
+    for (const expected of ['decline', 'accept']) {
+      decision = expected;
+      const completed = new Promise<any>((resolve) => {
+        const finish = (method: string, params: any) => {
+          if (method !== 'turn/completed') return;
+          client.off('notification', finish);
+          resolve(params.turn);
+        };
+        client.on('notification', finish);
+      });
+      await startTask(client, {
+        cwd: home,
+        prompt: 'test-acp-review',
+        readOnly: true,
+        dynamicTools: [
+          {
+            type: 'function',
+            name: 'mesh_post',
+            description: 'Post a message',
+            inputSchema: { type: 'object' },
+          },
+        ],
+      });
+      const turn = await completed;
+      assert.equal(turn.status, expected === 'accept' ? 'completed' : 'failed');
+      if (expected === 'decline') assert.match(turn.error.message, /mesh_post/);
+      assert.equal(posts, expected === 'accept' ? 1 : 0);
+    }
+    assert.equal(reviews, 2);
+  },
+);

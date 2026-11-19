@@ -1426,7 +1426,8 @@ export class Workspace {
     if (
       ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(
         request.method,
-      )
+      ) ||
+      (client.provider === 'antigravity' && request.method === 'item/mcp/requestApproval')
     ) {
       const id = randomUUID();
       const approval: Approval = {

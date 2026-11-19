@@ -32,6 +32,7 @@ export class AntigravityClient extends ScopedCliClient {
   private effort: string | undefined;
   private loginId: string | null = null;
   private text = '';
+  private deniedTool = '';
   override get pid() {
     return this.transport.child?.pid;
   }
@@ -120,21 +121,8 @@ export class AntigravityClient extends ScopedCliClient {
   }
   private message(value: any) {
     if (value.method && value.id !== undefined) {
-      // Even when a CLI asks, grant no native file/shell access. The authenticated
-      // Kivuno bridge performs its own authoritative lease and approval checks.
       if (value.method === 'session/request_permission') {
-        // Display names are not an authority boundary. Known MCP tools are
-        // allowed by the launch configuration; unexpected permission requests fail closed.
-        const option = value.params?.options?.find((option: any) => option.kind === 'reject_once');
-        this.transport.write({
-          jsonrpc: '2.0',
-          id: value.id,
-          result: {
-            outcome: option
-              ? { outcome: 'selected', optionId: option.optionId }
-              : { outcome: 'cancelled' },
-          },
-        });
+        void this.reviewPermission(value);
       } else
         this.transport.write({
           jsonrpc: '2.0',
@@ -176,6 +164,50 @@ export class AntigravityClient extends ScopedCliClient {
       });
       waiting.reject(error);
     } else waiting.resolve(value.result);
+  }
+  private async reviewPermission(request: any) {
+    const { sessionId, toolCall, options } = request.params || {};
+    const choices = Array.isArray(options) ? options : [];
+    const reject = choices.find((choice) => choice?.kind === 'reject_once');
+    const allow = choices.find((choice) => choice?.kind === 'allow_once');
+    const child = this.transport.child;
+    const turn = this.turn;
+    const owned = !!turn && this.thread === sessionId && !!this.bridge;
+    // The official ACP server supplies name separately from title and model arguments.
+    // This client registers just one HTTP server for the session. Its actual tool call
+    // must still pass the authenticated bridge, task lease, scope and quota checks.
+    const tool =
+      owned && toolCall?.kind === 'other'
+        ? this.availableTools().find((tool) => toolCall.name === 'mcp_kivuno_' + tool.name)
+        : undefined;
+    let choice = reject;
+    if (tool && allow && tool.name !== this.deniedTool) {
+      try {
+        const decision = await this.ask('item/mcp/requestApproval', {
+          tool: tool.name,
+          reason:
+            tool.name === 'mesh_post'
+              ? 'Antigravity wants to post a message in this project group.'
+              : 'Antigravity wants to use the Kivuno tool ' + tool.name + '.',
+          arguments: toolCall.rawInput,
+        });
+        if (decision.decision === 'accept' && this.turn === turn && this.thread === sessionId)
+          choice = allow;
+      } catch {
+        // Expiration, interruption and stale leases must never authorize execution.
+      }
+    }
+    if (tool && (!allow || choice !== allow) && this.turn === turn) this.deniedTool ||= tool.name;
+    if (!child || child !== this.transport.child || !child.stdin.writable) return;
+    this.transport.write({
+      jsonrpc: '2.0',
+      id: request.id,
+      result: {
+        outcome: choice
+          ? { outcome: 'selected', optionId: choice.optionId }
+          : { outcome: 'cancelled' },
+      },
+    });
   }
   private exited(error: Error | null) {
     for (const item of this.cliPending.values()) {
@@ -372,6 +404,7 @@ export class AntigravityClient extends ScopedCliClient {
       const id = randomUUID();
       this.turn = id;
       this.text = '';
+      this.deniedTool = '';
       const threadId = this.thread;
       this.emit('notification', 'turn/started', { threadId, turn: { id } });
       void this.rpc(
@@ -406,8 +439,17 @@ export class AntigravityClient extends ScopedCliClient {
             threadId,
             turn: {
               id,
-              status: response.stopReason === 'end_turn' ? 'completed' : 'interrupted',
-              error: null,
+              status: this.deniedTool
+                ? 'failed'
+                : response.stopReason === 'end_turn'
+                  ? 'completed'
+                  : 'interrupted',
+              error: this.deniedTool
+                ? {
+                    message:
+                      'Permission was declined or expired for Kivuno tool ' + this.deniedTool + '.',
+                  }
+                : null,
             },
           });
         },

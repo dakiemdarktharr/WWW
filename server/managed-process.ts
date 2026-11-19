@@ -195,15 +195,18 @@ export abstract class ScopedCliClient extends CodexClient {
     super(settings);
     this.policy.cwd = settings.cwd;
   }
+  protected availableTools() {
+    return [
+      ...this.dynamicTools,
+      ...providerFileTools.filter(
+        (tool) => !this.policy.readOnly || tool.name !== 'workspace_write_file',
+      ),
+    ];
+  }
   protected async toolBridge() {
     if (this.bridge) throw new Error('Tool bridge already exists.');
     this.bridge = new GeminiTools(
-      () => [
-        ...this.dynamicTools,
-        ...providerFileTools.filter(
-          (tool) => !this.policy.readOnly || tool.name !== 'workspace_write_file',
-        ),
-      ],
+      () => this.availableTools(),
       async (name, args) => {
         if (!this.thread || !this.turn) throw new Error('No active owned turn.');
         if (name === 'workspace_write_file') {
