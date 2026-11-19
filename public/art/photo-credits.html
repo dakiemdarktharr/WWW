@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>Photographic artwork credits · Kivuno</title>
+    <script src="/art/photo-credits-theme.js"></script>
     <style>
       :root {
         color-scheme: light dark;
@@ -76,6 +77,34 @@
           border-color: #51495d;
         }
       }
+      :root[data-portal-theme='light'] {
+        color-scheme: light;
+        background: #f7f7f4;
+        color: #171619;
+      }
+      :root[data-portal-theme='light'] a {
+        color: #6a41ba;
+      }
+      :root[data-portal-theme='light'] .license {
+        background: #e9e3f4;
+      }
+      :root[data-portal-theme='light'] :is(th, td) {
+        border-color: #bab4c3;
+      }
+      :root[data-portal-theme='dark'] {
+        color-scheme: dark;
+        background: #141316;
+        color: #f7f7f4;
+      }
+      :root[data-portal-theme='dark'] a {
+        color: #cbb6ff;
+      }
+      :root[data-portal-theme='dark'] .license {
+        background: #29232f;
+      }
+      :root[data-portal-theme='dark'] :is(th, td) {
+        border-color: #51495d;
+      }
       a:focus-visible {
         outline: 3px solid #7651c8;
         outline-offset: 4px;
@@ -93,8 +122,9 @@
     <p>
       Flowers, leaves and branches were cropped and masked by hand, resized, mirrored, rotated,
       layered over photographs of forest and sky, and color graded. A deterministic displacement and
-      light blur create the glass effect. No AI-generated imagery or generative editing was used.
-      This is an imaginative montage, not a record of these plants growing together.
+      light blur prepare the image for the website's Three.js transmissive glass. No AI-generated
+      imagery or generative editing was used. This is an imaginative montage, not a record of these
+      plants growing together.
     </p>
     <img
       src="/art/kivuno-flower-collage.webp"

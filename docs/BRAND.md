@@ -26,7 +26,7 @@ Use dark text on lime buttons. Use deep violet for small accent text and focus r
 
 ## Surfaces and typography
 
-The website has light and dark appearances. Light mode uses a paper canvas; dark mode uses a near-black `#101014` canvas with violet glass panels. Both use a four-row refracted wordmark and prominent violet and lime accents. Authentication, plan selection, checkout and the group-chat demonstration follow the selected appearance.
+The website has light and dark appearances. Light mode uses a paper canvas; dark mode uses a near-black `#101014` canvas with violet glass panels. Both use four tightly packed rows of inflated Kivuno letters, modeled in Blender, with prominent violet and lime accents. Authentication, plan selection, checkout and the group-chat demonstration follow the selected appearance.
 
 The initial website appearance follows `prefers-color-scheme`. An explicit choice persists in `kivuno-portal-theme`, including across the website and billing page. The document attribute `data-portal-theme` scopes those styles and includes authentication dialogs rendered outside the page container. Keep that preference independent from the desktop's `data-workspace-theme`.
 
@@ -36,13 +36,15 @@ Use Geist for interface text and JetBrains Mono for code, checksums and short te
 
 The K symbol remains recognizable: lime strokes on a dark rounded square with a violet joint. The abstract glass artwork is an accent, not a replacement for the product interface.
 
-The botanical footer uses a collage of cropped real flower photographs from multiple sources, with source and license attribution retained. Do not substitute AI-generated botanical images. Use empty sky above the flowers for readable copy, and a translucent glass treatment that leaves the photographic details visible. Adjust the overlay and foreground for each appearance without changing the photographs' provenance.
+The botanical footer uses a collage of cropped real flower photographs from multiple sources, with source and license attribution retained. Do not substitute AI-generated botanical images. Use empty sky above the flowers for downloads and copyright information. Three.js glass refracts the photographic layer; keep the HTML controls above it, sharp and readable. Provide a CSS glass fallback when WebGL is unavailable. Adjust the overlay and foreground for each appearance without changing the photographs' provenance.
 
 ## Motion and interaction
 
 Preserve the established navigation docking, scroll-driven message reveals, hover feedback, home transition and dialog motion when their behavior remains useful. A visual refresh should not change timing or interaction contracts without a reason.
 
 Honor `prefers-reduced-motion`. Present complete, readable content when motion is reduced, disable automatic chat playback and keep manual controls available. Automatic demonstrations need pause and replay controls. Do not scroll the page when a local chat adds a message, and let readers scroll back through its transcript without being pulled to the bottom.
+
+The sculpted title responds to dragging and returns to its original pose on release. Arrow keys provide the same rotation, and Home resets it. Reduced motion makes the return immediate. The 3D canvas renders on demand and stops when offscreen; the matching Blender poster preserves the identity when WebGL cannot run. Keep vertical touch scrolling available over the artwork.
 
 Use visible keyboard focus, readable selected states and accessible control labels. A translucent surface must still distinguish hover, focus, disabled, loading and error states.
 

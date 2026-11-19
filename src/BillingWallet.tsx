@@ -164,16 +164,46 @@ export function BillingWallet({
         {bound && mode === 'embedded' && (
           <button
             type="button"
+            className="billing-secondary"
             disabled={locked}
             onClick={() => void act(() => backupWallet(account, bound))}
           >
             Tải bản sao lưu mã hóa
           </button>
         )}
+        {bound && !working && !mode && (
+          <>
+            <p>
+              Ví này đã liên kết với tài khoản. Trên thiết bị mới, chọn bản sao lưu để mở lại ví.
+            </p>
+            <label>
+              Khôi phục ví{' '}
+              <input
+                type="file"
+                accept=".json,application/json"
+                disabled={locked}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (file)
+                    void act(async () => {
+                      await restoreWallet(account, bound, file);
+                      retry((n) => n + 1);
+                    });
+                }}
+              />
+            </label>
+          </>
+        )}
         {error && (
-          <p role="alert">
+          <p role="alert" className="billing-alert">
             {error}{' '}
-            <button type="button" disabled={locked} onClick={() => retry((n) => n + 1)}>
+            <button
+              type="button"
+              className="billing-switch"
+              disabled={locked}
+              onClick={() => retry((n) => n + 1)}
+            >
               Thử lại
             </button>
           </p>

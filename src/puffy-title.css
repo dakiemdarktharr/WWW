@@ -1,0 +1,116 @@
+.kp-portal .kp-hero .kp-title-accessible {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.kp-portal .kp-puffy-title {
+  position: relative;
+  width: min(100%, 960px);
+  aspect-ratio: 3 / 2;
+  margin: 0 0 24px;
+  isolation: isolate;
+}
+.kp-puffy-poster,
+.kp-puffy-stage,
+.kp-puffy-stage canvas {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.kp-puffy-poster {
+  object-fit: contain;
+  pointer-events: none;
+}
+.kp-puffy-title[data-title-state='ready'] .kp-puffy-poster {
+  visibility: hidden;
+}
+.kp-puffy-stage {
+  border-radius: 22px;
+  touch-action: pan-y pinch-zoom;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.kp-puffy-title[data-title-state='ready'] .kp-puffy-stage {
+  cursor: grab;
+}
+.kp-puffy-stage.is-dragging {
+  cursor: grabbing !important;
+}
+.kp-puffy-stage:focus-visible {
+  outline: 2px solid #7651c8;
+  outline-offset: 4px;
+}
+.kp-puffy-controls {
+  position: absolute;
+  bottom: -20px;
+  left: 6%;
+  right: 6%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #67478c;
+  font-size: 10px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.kp-puffy-controls button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #7952d54d;
+  border-radius: 50%;
+  background: #e3d7fa80;
+  color: inherit;
+  cursor: pointer;
+}
+.kp-puffy-controls button:hover {
+  background: #d5ff5f;
+  color: #293118;
+}
+.kp-puffy-controls button:focus-visible {
+  outline: 2px solid #7651c8;
+  outline-offset: 3px;
+}
+html[data-portal-theme='dark'] .kp-puffy-controls {
+  color: #d6c1f5;
+}
+html[data-portal-theme='dark'] .kp-puffy-controls button {
+  background: #3f295c80;
+  border-color: #bda1f680;
+}
+html[data-portal-theme='dark'] .kp-puffy-controls button:hover {
+  background: #d5ff5f;
+  color: #293118;
+}
+html[data-portal-theme='dark'] :is(.kp-puffy-stage, .kp-puffy-controls button):focus-visible {
+  outline-color: #d5ff5f;
+}
+@media (min-width: 1700px) {
+  .kp-portal .kp-puffy-title {
+    width: min(70vw, 1120px);
+  }
+}
+@media (min-width: 701px) and (max-height: 900px) {
+  .kp-portal .kp-puffy-title {
+    width: min(76%, 870px);
+  }
+}
+@media (max-width: 700px) {
+  .kp-portal .kp-puffy-title {
+    width: 100%;
+    margin: 4px 0 32px;
+  }
+  .kp-puffy-controls {
+    bottom: -32px;
+    right: 0;
+  }
+}

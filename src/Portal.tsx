@@ -33,6 +33,8 @@ import {
 import PortalAuth from './PortalAuth';
 import UpdatePatches from './UpdatePatches';
 import PortalGroupChat from './PortalGroupChat';
+import PuffyTitle from './PuffyTitle';
+import FooterGlass from './FooterGlass';
 import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
 import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
@@ -59,84 +61,6 @@ const platformNames: Record<Platform, string> = {
 };
 const initialCode = new URLSearchParams(location.search).get('activate') || '';
 const spring = { type: 'spring' as const, stiffness: 420, damping: 30 };
-
-function Scramble({ iteration }: { iteration: number }) {
-  const reduced = useReducedMotion();
-  const [text, setText] = useState('Kivuno');
-  useEffect(() => {
-    if (reduced) {
-      setText('Kivuno');
-      return;
-    }
-    const target = 'Kivuno',
-      letters = 'abcdefghijklmnopqrstuvwxyz';
-    let frame = 0,
-      start = 0,
-      last = 0;
-    const tick = (now: number) => {
-      start ||= now;
-      const progress = Math.min(1, (now - start) / 740);
-      if (now - last > 42) {
-        last = now;
-        setText(
-          [...target]
-            .map((char, i) =>
-              i < Math.floor(progress * 8)
-                ? char
-                : letters[(Math.floor(now / 42) * 7 + i * 13) % letters.length],
-            )
-            .join(''),
-        );
-      }
-      if (progress < 1) frame = requestAnimationFrame(tick);
-      else setText(target);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [iteration, reduced]);
-  return (
-    <svg className="kp-stacked-title" viewBox="0 -40 1120 730" aria-hidden="true" focusable="false">
-      <defs>
-        <linearGradient id="title-prism" x1="0" y1="0" x2="1" y2=".7">
-          <stop offset="0" stopColor="#7651c8" />
-          <stop offset=".2" stopColor="#a88bfa" />
-          <stop offset=".43" stopColor="#f8f5ff" />
-          <stop offset=".6" stopColor="#c5aeff" />
-          <stop offset=".8" stopColor="#d5ff5f" />
-          <stop offset="1" stopColor="#a3ce2f" />
-        </linearGradient>
-        <linearGradient id="title-edge" x1="0" y1="0" x2="0" y2="1">
-          <stop stopColor="#ffffffaa" />
-          <stop offset=".55" stopColor="#7c5ca7" />
-          <stop offset="1" stopColor="#d5ff5f88" />
-        </linearGradient>
-        {[0, 1, 2, 3].map((row) => (
-          <path
-            key={row}
-            id={`title-wave-${row}`}
-            d={`M35 ${171 + row * 149} C310 ${169 + row * 149} 740 ${61 + row * 149} 1075 ${88 + row * 149}`}
-          />
-        ))}
-      </defs>
-      {[0, 1, 2, 3].map((row) => (
-        <text
-          key={row}
-          className="kp-title-row"
-          fill="url(#title-prism)"
-          stroke="url(#title-edge)"
-          strokeWidth=".7"
-          fontSize="174"
-          fontWeight="900"
-          letterSpacing="-9"
-        >
-          <textPath href={`#title-wave-${row}`} textLength="1035" lengthAdjust="spacingAndGlyphs">
-            {text.toUpperCase()}
-          </textPath>
-        </text>
-      ))}
-    </svg>
-  );
-}
 
 const scenarios = {
   plan: [
@@ -477,7 +401,7 @@ function PortalContent() {
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [docked, setDocked] = useState(false);
   const [curtain, setCurtain] = useState<'cover' | 'reveal' | null>(null);
-  const [scramble, setScramble] = useState(0);
+  const [titleReset, setTitleReset] = useState(0);
   const [footerArtReady, setFooterArtReady] = useState(false);
   const reduced = useReducedMotion();
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -575,7 +499,7 @@ function PortalContent() {
     const reveal = () => {
       window.scrollTo({ top: 0, behavior: 'instant' });
       setDocked(false);
-      setScramble((v) => v + 1);
+      setTitleReset((v) => v + 1);
       document.getElementById('title-screen')?.focus({ preventScroll: true });
     };
     if (reduced) {
@@ -738,9 +662,15 @@ function PortalContent() {
                 style={reduced ? {} : { y: heroY, opacity: heroOpacity }}
               >
                 <p className="kp-eyebrow">{t('Không gian chung cho bạn và đội AI.')}</p>
-                <h1 id="title-screen" aria-label="Kivuno" tabIndex={-1}>
-                  <Scramble iteration={scramble} />
+                <h1
+                  id="title-screen"
+                  className="kp-title-accessible"
+                  aria-label="Kivuno"
+                  tabIndex={-1}
+                >
+                  Kivuno
                 </h1>
+                <PuffyTitle iteration={titleReset} />
                 <div className="kp-hero-downloads">
                   {downloadLink('windows', true)}
                   {downloadLink('linux', true)}
@@ -953,7 +883,7 @@ function PortalContent() {
                   height="1800"
                 />
               )}
-              <div className="kp-footer-glass" aria-hidden="true" />
+              {footerArtReady && <FooterGlass />}
               <div className="kp-footer-top">
                 <h2>
                   {t('Đến lượt bạn')}
@@ -963,15 +893,15 @@ function PortalContent() {
                 <motion.button
                   {...gestures}
                   className="kp-footer-cta"
-                  onClick={() => setAuthMode('signup')}
+                  onClick={() => setDownloadsOpen(true)}
                 >
-                  <Sparkles size={22} />
-                  {t('Bắt đầu')}
+                  <ArrowDownToLine size={22} />
+                  {t('Tải Kivuno')}
                   <ArrowRight size={22} />
                 </motion.button>
               </div>
               <div className="kp-footer-bottom">
-                <span>Kivuno · NoSleepClub</span>
+                <span>© {new Date().getFullYear()} Kivuno · NoSleepClub</span>
                 <span>{release?.version || '0.8.5'}</span>
                 <a href="#updates">Update patches</a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>

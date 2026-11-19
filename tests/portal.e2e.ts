@@ -29,7 +29,6 @@ const auth = await createCloudIdentity({
   bootstrapPassword: password,
 });
 const app = await buildApp(workspace, { cloud: { origin, gatewaySecret, auth } });
-const browser = await chromium.launch();
 const errors: string[] = [];
 const workspaceCalls: string[] = [];
 const apiCalls: string[] = [];
@@ -42,10 +41,29 @@ const mime: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.webp': 'image/webp',
+  '.glb': 'model/gltf-binary',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
 const config = JSON.parse(await readFile('vercel.json', 'utf8'));
+const titleAsset = await readFile('dist/art/kivuno-puffy-title.glb');
+assert.equal(titleAsset.toString('ascii', 0, 4), 'glTF');
+const titleModel = JSON.parse(
+  titleAsset.toString('utf8', 20, 20 + titleAsset.readUInt32LE(12)),
+) as {
+  asset: { generator: string };
+  nodes: { name?: string; mesh?: number }[];
+};
+assert.match(titleModel.asset.generator, /Blender/);
+for (let row = 1; row <= 4; row++) {
+  const prefix = `SM_Row_${String(row).padStart(2, '0')}_Letter_`;
+  const letters = titleModel.nodes.filter(
+    (node) => node.name?.startsWith(prefix) && node.mesh !== undefined,
+  );
+  assert.equal(letters.length, 6, 'Each Blender row has six real letter meshes.');
+  assert.equal(letters.map((node) => node.name!.slice(-1)).join(''), 'KIVUNO');
+}
+const browser = await chromium.launch();
 const verifier = randomBytes(32).toString('base64url');
 const start = await app.inject({
   method: 'POST',
@@ -73,7 +91,7 @@ async function routePortal(context: BrowserContext, available = false) {
       // An unpublished release must render honestly, never as a working download.
       await route.fulfill({
         json: {
-          version: '0.6.2',
+          version: '0.8.5',
           available,
           platform: 'win32-x64',
           signed: false,
@@ -172,9 +190,43 @@ try {
   await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
   const heading = page.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(heading).toBeVisible();
-  await expect(heading.locator('.kp-title-row')).toHaveCount(4);
-  for (const row of await heading.locator('.kp-title-row').all())
-    await expect(row).toHaveText('KIVUNO');
+  await expect(heading).toHaveText('Kivuno');
+  const title = page.locator('.kp-puffy-title');
+  const titleStage = page.locator('.kp-puffy-stage');
+  await expect(title).toHaveAttribute('data-title-state', 'ready', { timeout: 20000 });
+  await expect(titleStage.locator('canvas')).toBeVisible();
+  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  const titleBox = await titleStage.boundingBox();
+  assert.ok(titleBox);
+  await page.mouse.move(titleBox.x + titleBox.width / 2, titleBox.y + titleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    titleBox.x + titleBox.width / 2 + 110,
+    titleBox.y + titleBox.height / 2 + 45,
+    { steps: 10 },
+  );
+  await expect
+    .poll(async () =>
+      Math.abs(Number((await titleStage.getAttribute('data-rotation'))?.split(',')[1])),
+    )
+    .toBeGreaterThan(0.15);
+  await page.screenshot({ path: '.local/kivuno-title-drag.png' });
+  await page.mouse.up();
+  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await titleStage.focus();
+  await page.keyboard.down('ArrowRight');
+  await expect
+    .poll(async () => Number((await titleStage.getAttribute('data-rotation'))?.split(',')[1]))
+    .toBeGreaterThan(0.05);
+  await page.keyboard.up('ArrowRight');
+  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await page.keyboard.down('ArrowLeft');
+  await expect
+    .poll(async () => Number((await titleStage.getAttribute('data-rotation'))?.split(',')[1]))
+    .toBeLessThan(-0.05);
+  await page.keyboard.press('Home');
+  await page.keyboard.up('ArrowLeft');
+  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
   await expect(page.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Linux chưa có bản tải' })).toBeDisabled();
   await expect(
@@ -322,12 +374,24 @@ try {
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
+  await expect(title).toHaveAttribute('data-title-state', 'ready');
+  await page.screenshot({ path: '.local/kivuno-hero-desktop-dark.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    .toBe(true);
+  await page.screenshot({ path: '.local/kivuno-hero-mobile-dark.png' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(menu.getByRole('button', { name: 'Log in', exact: true })).toBeVisible();
   await menu.getByRole('button', { name: 'Log in', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Log in', exact: true })).toBeVisible();
   await expect(page.locator('.ka-overlay')).toBeVisible();
   await page.screenshot({ path: '.local/kivuno-auth-dark.png' });
   await page.keyboard.press('Escape');
+  await page.goto(origin + '/art/photo-credits.html');
+  await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('A forest of real photographs.');
   await page.goto(origin + '/billing');
   await expect(page.locator('[data-theme-toggle]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
@@ -456,6 +520,7 @@ try {
   }
   for (const viewport of [
     { width: 1366, height: 720 },
+    { width: 768, height: 768 },
     { width: 390, height: 667 },
     { width: 320, height: 568 },
   ]) {
@@ -479,6 +544,22 @@ try {
           );
         })
         .toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const box = await item.boundingBox();
+            const dock = await menu.boundingBox();
+            if (!box || !dock) return false;
+            return (
+              box.x >= dock.x + dock.width ||
+              box.x + box.width <= dock.x ||
+              box.y >= dock.y + dock.height ||
+              box.y + box.height <= dock.y
+            );
+          },
+          { message: 'Footer content must not be hidden behind the floating dock.' },
+        )
+        .toBe(true);
     }
     await page.screenshot({
       path: `.local/kivuno-footer-${viewport.width}x${viewport.height}.png`,
@@ -488,6 +569,18 @@ try {
     'src',
     '/art/kivuno-flower-collage.webp',
   );
+  const footerGlass = page.locator('.kp-footer-glass');
+  await expect(footerGlass).toHaveAttribute('data-glass-state', 'ready', { timeout: 20000 });
+  await expect(footerGlass.locator('[data-footer-glass-canvas]')).toBeVisible();
+  await expect(footerGlass).toHaveCSS('pointer-events', 'none');
+  await expect(page.locator('.kp-footer-bottom')).toContainText('© 2026 Kivuno · NoSleepClub');
+  const footerDownload = page.locator('.kp-footer-cta');
+  await expect(footerDownload).toContainText('Tải Kivuno');
+  await footerDownload.click();
+  await expect(page.getByRole('dialog', { name: 'Tải Kivuno' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(footerDownload).toBeFocused();
   await expect(page.locator('.kp-footer a[href="/art/photo-credits.html"]')).toBeVisible();
   const credits = await page.evaluate(async () => {
     const response = await fetch('/art/photo-credits.html');
@@ -506,10 +599,15 @@ try {
   const reduced = await browser.newContext({
     viewport: { width: 390, height: 844 },
     reducedMotion: 'reduce',
+    colorScheme: 'dark',
+    hasTouch: true,
   });
   await routePortal(reduced, true);
   const accountPage = await reduced.newPage();
   await accountPage.goto(`${origin}/?activate=${grant.userCode}`);
+  await expect(accountPage.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
+  await accountPage.emulateMedia({ colorScheme: 'light' });
+  await expect(accountPage.locator('html')).toHaveAttribute('data-portal-theme', 'light');
   const dialog = accountPage.getByRole('dialog');
   await dialog.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
   await dialog.getByLabel('Tên của bạn').fill('Ari Test');
@@ -629,12 +727,68 @@ try {
   await expect.poll(() => accountPage.evaluate(() => scrollY)).toBe(0);
   await expect(accountPage.locator('.kp-pixel-curtain')).toHaveCount(0);
   const reducedTitle = accountPage.getByRole('heading', { name: 'Kivuno', exact: true });
-  await expect(reducedTitle.locator('.kp-title-row')).toHaveCount(4);
-  for (const row of await reducedTitle.locator('.kp-title-row').all())
-    await expect(row).toHaveText('KIVUNO');
+  await expect(reducedTitle).toHaveText('Kivuno');
+  const reducedStage = accountPage.locator('.kp-puffy-stage');
+  await expect(accountPage.locator('.kp-puffy-title')).toHaveAttribute('data-title-state', 'ready');
+  await reducedStage.focus();
+  await accountPage.keyboard.down('ArrowRight');
+  await expect(reducedStage).toHaveAttribute('data-rotation', '0.0000,0.1500');
+  await accountPage.keyboard.up('ArrowRight');
+  await expect(reducedStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await expect(reducedStage).toHaveCSS('touch-action', 'pan-y pinch-zoom');
+  const touch = await reduced.newCDPSession(accountPage);
+  const touchBox = await reducedStage.boundingBox();
+  assert.ok(touchBox);
+  const touchX = touchBox.x + touchBox.width / 2,
+    touchY = touchBox.y + touchBox.height * 0.8;
+  await touch.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: touchX, y: touchY }],
+  });
+  for (let step = 1; step <= 5; step++)
+    await touch.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: touchX, y: touchY - step * 25 }],
+    });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect.poll(() => accountPage.evaluate(() => scrollY)).toBeGreaterThan(20);
+  await expect(reducedStage).not.toHaveClass(/is-dragging/);
+  await touch.detach();
   await expect(accountPage.locator('.kp-scroll-story.show-all')).toHaveCount(3);
   for (const message of await accountPage.locator('[data-scroll-message]').all())
     await expect(message).toHaveCSS('opacity', '1');
+  // A device without WebGL retains real artwork and usable download/credits controls.
+  await page.close();
+  await accountPage.close();
+  const fallbackPage = await context.newPage();
+  await fallbackPage.addInitScript(() => {
+    const prototype = HTMLCanvasElement.prototype as unknown as {
+      getContext: (type: string, ...args: unknown[]) => unknown;
+    };
+    const getContext = prototype.getContext;
+    prototype.getContext = function (type, ...args) {
+      return type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl'
+        ? null
+        : getContext.call(this, type, ...args);
+    };
+  });
+  await fallbackPage.goto(origin);
+  await expect(fallbackPage.locator('.kp-puffy-title')).toHaveAttribute(
+    'data-title-state',
+    'poster',
+  );
+  await expect(fallbackPage.locator('.kp-puffy-poster')).toBeVisible();
+  await expect(fallbackPage.locator('.kp-puffy-stage')).toHaveAttribute('tabindex', '-1');
+  await fallbackPage.locator('.kp-footer').scrollIntoViewIfNeeded();
+  await expect(fallbackPage.locator('.kp-footer-glass')).toHaveAttribute(
+    'data-glass-state',
+    'fallback',
+  );
+  await expect(fallbackPage.locator('.kp-hivemind-art')).toBeVisible();
+  await fallbackPage.locator('.kp-footer-cta').click();
+  await expect(fallbackPage.getByRole('dialog', { name: 'Tải Kivuno' })).toBeVisible();
+  await fallbackPage.keyboard.press('Escape');
+  await fallbackPage.close();
   assert.deepEqual(workspaceCalls, []);
   assert.deepEqual(cspViolations, [], 'The production CSP permits all portal resources.');
   assert.deepEqual(errors, []);
@@ -647,9 +801,13 @@ try {
       macOSUnavailableShown: true,
       interactiveDemos: true,
       noTabbedGuide: true,
-      fourRefractedTitleRows: true,
+      fourBlenderTitleRows: true,
+      dragRotationSpringReturn: true,
+      keyboardRotationAndTouchScrolling: true,
       persistedLightDarkAcrossBilling: true,
       photoCollageWithCredits: true,
+      opticalFooterAndWorkingDownload: true,
+      usableWebGLFallbacks: true,
       shortViewportFooterReachable: true,
       timedGroupChatPauseReplay: true,
       localDemoComposerAndApproval: true,
