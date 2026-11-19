@@ -202,6 +202,18 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
                         }),
                       ]
                     : [work('verify', { preferredMemberId: b })];
+        const plannedReview =
+          item.scenario === 'review' &&
+          ['informal-no-accents', 'expert-bilingual'].includes(item.style);
+        if (plannedReview)
+          tasks.push(
+            work('peer-review', {
+              kind: 'review',
+              scope: ['src'],
+              preferredMemberId: b,
+              dependsOn: ['implementation'],
+            }),
+          );
         f.finish(0, plan.id, {
           kind: 'plan',
           plan: {
@@ -240,6 +252,8 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
           f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'Validated change' });
           const reviewer = f.poll(1).delivery!;
           assert.equal(reviewer.phase, 'review');
+          if (plannedReview) assert.equal(reviewer.task?.key, 'peer-review');
+          assert.equal(f.view().sadeRuns[0].jobs.filter((job) => job.phase === 'review').length, 1);
           assert.equal(reviewer.review?.diff, patch.diff);
           assert.throws(
             () =>
@@ -259,10 +273,13 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
           f.finish(0, writer.id, {
             kind: 'done',
             revision: sha,
-            summary: 'Published reviewed revision',
+            summary: 'Integrated reviewed revision',
           });
           if (item.scenario === 'scope') assert.equal(f.poll(1).delivery?.task?.key, 'two');
-          else assert.equal(f.view().sadeRuns[0].state, 'done');
+          else {
+            assert.equal(f.view().sadeRuns[0].state, 'done');
+            assert.equal(f.poll(1).delivery, undefined);
+          }
         } else {
           const assigned = f.poll(1).delivery!;
           assert.equal(assigned.grantId, b);

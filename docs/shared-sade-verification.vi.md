@@ -33,7 +33,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `fca7edb`. `npm run check` đạt 293 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt, gồm chuyển về chế độ gửi tin thường sau **Ask Sade** và xác nhận đã đọc chỉ đạo. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 298 bài, bỏ qua một bài theo nền tảng, và các bài Electron, Shared Groups và Cloud đều đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44447535717)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `bb19a07`. `npm run check` đạt 297 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng bản runtime, Windows đạt 302 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Các biến thể review chỉ định sẵn trong bộ 1.000 tin được chạy lại trên Windows ở commit sau. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44451753544)
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
@@ -63,6 +63,8 @@ gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/shared-groups-sade
 ## Kiểm thử 1.000 tin nhắn
 
 `npm run test:shared-sade` chạy 20 tình huống × 10 cặp provider/gói × 5 cách diễn đạt. Có tiếng Việt có dấu, không dấu, người mới, kỹ thuật và chuyên gia song ngữ. Bài test đi qua Shared Groups, database, grant và bộ điều phối thật. Kế hoạch do fixture cung cấp để kiểm tra điều kiện giao việc, review, budget và phục hồi cả khi đầu ra model bị sai. Gói dịch vụ trong bộ test là nhãn mô phỏng.
+
+Trong 200 tin về review, 80 ca có reviewer được chỉ định trong kế hoạch, còn 120 ca dùng reviewer do Sade chọn. Mỗi ca xác nhận có đúng một lượt review cho diff, chủ thay đổi không gửi được verdict thay reviewer và không có lượt review phát sinh sau khi tích hợp.
 
 | Phép đo                                              | Kết quả                                                            |
 | ---------------------------------------------------- | ------------------------------------------------------------------ |
