@@ -302,6 +302,10 @@ Codex App Server có thể cung cấp connector của tài khoản trong phiên 
 
 Chạy ca hồi quy bằng `node --import tsx --test tests/codex.test.ts tests/shared-sade.test.ts`. Bản ghi hai lượt App Server thật nằm trong các tệp `scoped-native-review-defect.json` và `scoped-native-review-clean.json` ở `.local/sade-native-live` trên máy thử. Tệp `run-review.source.txt` trong cùng thư mục chứa mã chạy lại từng biến thể.
 
+Cùng App Server trên Windows, một câu tiếng Việt kiểu casual chạy phần bàn giao của ví dụ A. Shared Groups giao lượt lập kế hoạch thật cho GPT-6.2-Sol với reasoning `high`. Model gọi `relay_submit_plan` để giao `docs/contract.md` cho Gemini của An và `src/form.ts` cho Astra của Bình, kèm phụ thuộc giữa hai file và yêu cầu Astra hỏi về phong cách. Sade giao bước hợp đồng trước và giữ bước giao diện chờ. Gửi lại cùng mã tin nhắn vẫn chỉ có một tin và một workflow. Hai harness nhận việc dùng fixture. Bản ghi nằm ở `.local/sade-native-live/scoped-native-handoff.json`, với mã chạy lại trong `run-handoff.source.txt`.
+
+Windows qua 107 ca liên quan và build trên mã ứng dụng của `667e316`. macOS arm64 qua 359 ca, bỏ qua sáu ca theo nền tảng, rồi qua Electron, giao diện Shared Groups và kiểm tra dependency. Bộ 1.000 tin nhắn dùng phản hồi planner mô phỏng tiếp tục đạt trên cả hai hệ điều hành. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44523780317)
+
 Một bài hồi quy desktop tái hiện việc tiêu chí bảo mật của tác vụ gốc bị bỏ khỏi khâu chọn model cho review. Desktop giờ đưa yêu cầu đã gửi đến reviewer vào thông tin chọn model và đặt scope của review theo danh sách file trong diff. Review thường vẫn dùng model nhẹ có reasoning cao. Khi yêu cầu có tiêu chí bảo mật, chính sách dùng model mặc định của catalog với reasoning cao nếu hỗ trợ.
 
 Chạy từ repo bằng tài khoản ChatGPT đã đăng nhập. Chọn một variant mỗi lần để tái lập đúng bản vá. Tệp điểm ghi hash prompt và digest bản vá dùng để đối chiếu với bản xuất.
