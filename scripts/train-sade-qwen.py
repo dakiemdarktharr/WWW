@@ -129,8 +129,10 @@ def evaluate(model, examples, pad_id, option_tokens):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, help="Use a separate dataset with the same base model.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--adapter", type=Path, help="Evaluate a saved LoRA checkpoint.")
+    parser.add_argument("--challenge", type=Path, help="Evaluate a second, separate JSONL split.")
     parser.add_argument("--epochs", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--batch", type=int, choices=(1, 2, 4), default=4)
     args = parser.parse_args()
@@ -146,10 +148,19 @@ def main():
     started = time.monotonic()
     model_name = "Qwen/Qwen3-1.7B"
     revision = "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
-    train_file, holdout_file = (args.root / name for name in ("train.jsonl", "holdout.jsonl"))
-    train_rows, holdout_rows = read_rows(train_file), read_rows(holdout_file)
-    if {row["message"] for row in train_rows} & {row["message"] for row in holdout_rows}:
-        raise ValueError("Training examples appear in the evaluation set.")
+    data_dir = args.data_dir or args.root
+    train_file, holdout_file = (data_dir / name for name in ("train.jsonl", "holdout.jsonl"))
+    train_rows = read_rows(train_file)
+    evaluation_files = {"holdout": holdout_file}
+    if args.challenge:
+        evaluation_files["challenge"] = args.challenge
+    evaluation_rows = {name: read_rows(file) for name, file in evaluation_files.items()}
+    seen = {row["message"] for row in train_rows}
+    for name, rows in evaluation_rows.items():
+        messages = {row["message"] for row in rows}
+        if seen & messages or len(messages) != len(rows):
+            raise ValueError(f"Duplicate messages in evaluation split {name}.")
+        seen |= messages
     random.shuffle(train_rows)
     balanced_rows = []
     for route in ROUTES:
@@ -161,12 +172,24 @@ def main():
         raise ValueError("Each label must be exactly one token.")
     option_tokens = torch.tensor([ids[0] for ids in option_ids], device="cuda")
     training = prepare(tokenizer, balanced_rows)
-    holdout = prepare(tokenizer, holdout_rows)
+    evaluation = {name: prepare(tokenizer, rows) for name, rows in evaluation_rows.items()}
+
+    def scores(model):
+        return {
+            name: evaluate(model, examples, tokenizer.pad_token_id, option_tokens)
+            for name, examples in evaluation.items()
+        }
+
     args.output.mkdir(parents=True, exist_ok=False)
     model = load_base(args.root / "base")
     if args.adapter:
         model = PeftModel.from_pretrained(model, args.adapter, local_files_only=True)
-        restored = evaluate(model, holdout, tokenizer.pad_token_id, option_tokens)
+        results = scores(model)
+        restored = results["holdout"]
+        if "challenge" in results:
+            (args.output / "challenge.json").write_text(
+                json.dumps(results["challenge"], indent=2), encoding="utf-8"
+            )
         (args.output / "reloaded.json").write_text(json.dumps(restored, indent=2), encoding="utf-8")
         print(json.dumps({
             "stage": "reloaded",
@@ -174,7 +197,8 @@ def main():
             "total": restored["total"],
         }), flush=True)
         return
-    baseline = evaluate(model, holdout, tokenizer.pad_token_id, option_tokens)
+    baseline_scores = scores(model)
+    baseline = baseline_scores["holdout"]
     (args.output / "baseline.json").write_text(json.dumps(baseline, indent=2), encoding="utf-8")
     print(json.dumps({
         "stage": "baseline",
@@ -218,7 +242,8 @@ def main():
     del optimizer, parameters, logits, loss
     gc.collect()
     torch.cuda.empty_cache()
-    tuned = evaluate(model, holdout, tokenizer.pad_token_id, option_tokens)
+    tuned_scores = scores(model)
+    tuned = tuned_scores["holdout"]
     metrics = {
         "model": model_name, "revision": revision, "seed": 7013, "epochs": args.epochs,
         "batch": args.batch, "training_rows": len(training), "training_steps": step,
@@ -227,10 +252,14 @@ def main():
         "seconds": round(time.monotonic() - started, 1),
         "datasets": {
             file.name: hashlib.sha256(file.read_bytes()).hexdigest()
-            for file in (train_file, holdout_file)
+            for file in (train_file, *evaluation_files.values())
         },
         "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest(), "baseline": baseline, "tuned": tuned,
     }
+    if "challenge" in evaluation:
+        metrics["challenge"] = {
+            "baseline": baseline_scores["challenge"], "tuned": tuned_scores["challenge"],
+        }
     (args.output / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps({
         "stage": "finished",

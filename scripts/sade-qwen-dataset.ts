@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sharedSadeCorpus } from '../tests/fixtures/shared-sade-corpus.ts';
+import { challengePairs, trainingPairs } from './sade-qwen-contrast.ts';
 
 const goldens = {
   general: [
@@ -80,7 +81,10 @@ const styles = {
       .replaceAll('đ', 'd'),
   mixed: (message: string) => `Team update for the release branch. ${message}`,
 };
-const train = sharedSadeCorpus().map(({ id, message, style, scenario }) => ({
+const args = process.argv.slice(2);
+const contrastive = args.includes('--contrastive');
+const target = path.resolve(args.find((arg) => arg !== '--contrastive') || '.local/sade-qwen');
+const corpus = sharedSadeCorpus().map(({ id, message, style, scenario }) => ({
   id,
   message,
   style,
@@ -96,17 +100,28 @@ const holdout = Object.entries(goldens).flatMap(([route, messages]) =>
     })),
   ),
 );
-const all = [...train, ...holdout];
+const pairRows = (rows: typeof trainingPairs, split: string) =>
+  rows.flatMap(([route, request, chat], index) =>
+    Object.entries(styles).flatMap(([style, render]) => [
+      { id: `${split}/${index + 1}/${style}/work`, route, style, message: render(request) },
+      { id: `${split}/${index + 1}/${style}/chat`, route: 'chat', style, message: render(chat) },
+    ]),
+  );
+const train = contrastive ? [...corpus, ...pairRows(trainingPairs, 'contrastive')] : corpus;
+const challenge = contrastive ? pairRows(challengePairs, 'challenge') : [];
+const all = [...train, ...holdout, ...challenge];
 if (new Set(all.map((item) => item.message)).size !== all.length)
   throw new Error('Training and evaluation messages must be distinct.');
-const target = path.resolve(process.argv[2] || '.local/sade-qwen');
 await mkdir(target, { recursive: true });
-for (const [name, data] of [
+const splits = [
   ['train', train],
   ['holdout', holdout],
-] as const)
+] as const;
+for (const [name, data] of contrastive ? [...splits, ['challenge', challenge] as const] : splits)
   await writeFile(
     path.join(target, `${name}.jsonl`),
     `${data.map((row) => JSON.stringify(row)).join('\n')}\n`,
   );
-console.log(JSON.stringify({ train: train.length, holdout: holdout.length }));
+console.log(
+  JSON.stringify({ train: train.length, holdout: holdout.length, challenge: challenge.length }),
+);

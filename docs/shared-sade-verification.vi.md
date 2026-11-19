@@ -2,7 +2,7 @@
 
 Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let Sade use your teammate**, chọn project và xác nhận trên desktop. Hai project phải dùng cùng Git origin và nhánh. Mỗi quyền áp dụng cho một harness trên máy của chủ tài khoản, hết hạn sau một giờ và giới hạn từ một đến mười lượt. Quyền này cũng cấp lượt cho công việc của nhóm khi provider không báo quota. Quyền xem là mặc định. Tùy chọn sửa file cho phép chuẩn bị thay đổi trong worktree riêng và chuyển diff đã lọc cho người kiểm tra.
 
-Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
+Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi đã chọn **Ask Sade** nhưng chỉ báo tình hình, planner có thể kết thúc với phần giải thích và danh sách nhiệm vụ rỗng. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
 
@@ -103,4 +103,32 @@ Trên RTX 5050 Laptop 8 GB, lần chạy thành công dùng LoRA rank 8, 350 m�
 
 ```powershell
 python scripts/train-sade-qwen.py --root .local/sade-qwen --adapter .local/sade-qwen/experiment-3/epoch-2 --output .local/sade-qwen/recheck-epoch-2
+```
+
+### Phân biệt trò chuyện với yêu cầu làm việc
+
+Thử nghiệm thứ hai tăng độ đa dạng bằng 20 cặp bối cảnh giống nhau nhưng khác ý định. Một tin trong mỗi cặp yêu cầu hành động, tin còn lại là cập nhật cho người trong nhóm. Mỗi cặp được diễn đạt theo ba kiểu. Tập chấm cũ giữ nguyên từng byte. Tập mới gồm 15 cặp viết riêng theo cùng ba kiểu, tổng cộng 90 tin. Mỗi lần chấm tính đúng cả cặp khi model nhận đúng loại việc và nhận đúng tin chat trong cùng kiểu diễn đạt.
+
+| Phép đo                                   | LoRA cũ | LoRA với dữ liệu theo cặp |
+| ----------------------------------------- | ------- | ------------------------- |
+| Phân loại đúng trên tập 144 tin cũ        | 108/144 | 98/144                    |
+| Nhận đúng chat trên tập cũ                | 9/24    | 22/24                     |
+| Yêu cầu bị nhận nhầm là chat trên tập cũ  | 0/120   | 28/120                    |
+| Phân loại đúng trên tập 90 tin mới        | 38/90   | 64/90                     |
+| Nhận đúng chat trên tập mới               | 4/45    | 35/45                     |
+| Yêu cầu bị nhận nhầm là chat trên tập mới | 2/45    | 6/45                      |
+| Đúng cả hai tin trong mỗi cặp mới         | 3/45    | 23/45                     |
+
+Lượt train dùng cùng model nền, prompt và seed. Dữ liệu đầu vào gồm 1.120 dòng, trong đó script lấy 360 dòng cân bằng theo nhãn để train hai epoch. Tổng thời gian 85,6 giây, gồm nạp model và chấm cả hai tập. Bộ cấp phát PyTorch giữ đỉnh 3.916 MiB VRAM. Do số yêu cầu bị bỏ sót tăng, hai adapter tiếp tục dùng để đánh giá offline. Shared Groups dùng thao tác **Ask Sade** để xác nhận ý định.
+
+Nạp lại checkpoint epoch 2 cho cùng dự đoán trên cả 234 tin của hai tập chấm. Kết quả từng tập được ghi vào `metrics.json`, `reloaded.json` và `challenge.json` trong các thư mục đầu ra tương ứng.
+
+```powershell
+node --import tsx scripts/sade-qwen-dataset.ts .local/sade-qwen/contrastive --contrastive
+$data = '.local/sade-qwen/contrastive'
+python scripts/train-sade-qwen.py --root .local/sade-qwen --data-dir $data `
+  --challenge "$data/challenge.jsonl" --adapter .local/sade-qwen/experiment-3/epoch-2 `
+  --output .local/sade-qwen/contrastive-prior-recheck
+python scripts/train-sade-qwen.py --root .local/sade-qwen --data-dir $data `
+  --challenge "$data/challenge.jsonl" --output .local/sade-qwen/contrastive-trial-recheck
 ```
