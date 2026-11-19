@@ -118,6 +118,7 @@ function fixture(
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
+      quotaFailover?: true;
       reviews: { jobId: string; digest: string }[];
       updates?: { jobId: string; notes: { sequence: number; text: string }[] }[];
     };
@@ -362,6 +363,7 @@ console.log(process.platform);
 `;
 
 class DesktopPeer extends CodexClient {
+  quotaUsedPercent = 10;
   override readonly provider;
   calls: { method: string; params: any }[] = [];
   responded?: { success: boolean; contentItems?: { text: string }[] };
@@ -389,7 +391,7 @@ class DesktopPeer extends CodexClient {
               ordinaryUsageAllowed: true,
               rateLimits: {
                 primary: {
-                  usedPercent: 10,
+                  usedPercent: this.quotaUsedPercent,
                   windowDurationMins: 300,
                   resetsAt: Math.floor(Date.now() / 1000) + 3600,
                 },
@@ -1219,7 +1221,7 @@ test(
       groupId: cloud.groupId,
       projectId,
       teammateId: memberId,
-      turns: 2,
+      turns: 4,
       allowWrites: true,
     };
     const {
@@ -1319,8 +1321,263 @@ test(
     await pump(1);
     assert.equal(cloud.view().sadeRuns.at(-1)?.state, 'done');
     assert.equal(await remoteHead(), startingRevision);
+
+    const quotaRequest = {
+      ...chat,
+      id: randomUUID(),
+      content: 'Nhờ Sade chọn một người đọc hợp đồng và kiểm tra phần mô tả.',
+    };
+    cloud.call(0, quotaRequest);
+    const quotaPlanner = await sessionFor(0, (await pump(0))!);
+    await submit(0, quotaPlanner.session, quotaPlanner.peer, 'relay_submit_plan', {
+      summary: 'Inspect the existing contract on an available authorized teammate.',
+      tasks: [
+        work('inspect', { kind: 'review', scope: [sharedFile], preferredMemberId: 'auto' }),
+      ].map((task) => ({ ...task, requiredPlatform: 'any' })),
+    });
+    await complete(
+      0,
+      quotaPlanner.session,
+      quotaPlanner.peer,
+      'Inspecting the contract is planned.',
+    );
+    await pump(0);
+    const reviewerControl = (await setups[1].workspace.client(setups[1].memberId)) as DesktopPeer;
+    reviewerControl.quotaUsedPercent = 100;
+    const previousTurns = recipientTurns();
+    const previousPeers = setups[1].peers.size;
+    const rejected = (await pump(1))!;
+    assert.equal(rejected.task?.key, 'inspect');
+    cloud.call(0, {
+      action: 'sade-update-task',
+      groupId: cloud.groupId,
+      runId: quotaRequest.id,
+      jobId: rejected.id,
+      id: randomUUID(),
+      text: 'Chỉ đọc file hợp đồng, gửi lại số mục chưa rõ.',
+    });
+    let replacement: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !replacement; attempt++) {
+      await pump(1);
+      replacement = await pump(0);
+      if (!replacement) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(replacement);
+    assert.notEqual(replacement.id, rejected.id);
+    assert.equal(replacement.grantId, newGrant.id);
+    assert.deepEqual(replacement.task, rejected.task);
+    assert.equal(recipientTurns(), previousTurns);
+    assert.equal(setups[1].peers.size, previousPeers);
+    assert.throws(
+      () => cloud.finish(1, rejected.id, { kind: 'done', summary: 'Late result.' }),
+      /unavailable/,
+    );
+    const reassigned = await sessionFor(0, replacement);
+    assert.deepEqual(reassigned.task.scope, [sharedFile]);
+    const carriedUpdate = await submit(
+      0,
+      reassigned.session,
+      reassigned.peer,
+      'relay_read_shared_updates',
+      {},
+    );
+    assert.match(carriedUpdate.contentItems?.[0]?.text || '', /số mục chưa rõ/);
+    assert.equal(reassigned.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
+    await complete(0, reassigned.session, reassigned.peer, 'The contract was inspected.');
+    await pump(0);
+    assert.equal(cloud.view().sadeRuns.at(-1)?.state, 'done');
+    assert.equal(await remoteHead(), startingRevision);
   },
 );
+
+for (const pinned of ['named harness', 'required OS'] as const) {
+  test(`quota failover preserves the ${pinned}`, () => {
+    const f = fixture(['gemini', 'codex'], { mac: pinned === 'required OS' });
+    try {
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content: 'Kiểm tra file trong phạm vi đã chọn.',
+        sade: { projectKey: key },
+      });
+      const planner = f.poll(0).delivery!;
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Perform a read-only check with the required condition.',
+          tasks: [
+            work(
+              'check',
+              pinned === 'named harness'
+                ? { preferredMemberId: f.grants[1] }
+                : { requiredPlatform: 'darwin' },
+            ),
+          ],
+        },
+      });
+      const running = f.poll(1).delivery!;
+      assert.ok(running);
+      assert.throws(() => f.finish(0, running.id, { kind: 'provider-unavailable' }), /grant/);
+      f.finish(1, running.id, { kind: 'provider-unavailable' });
+      assert.equal(f.poll(0).delivery, undefined);
+      const final = f.view().sadeRuns[0];
+      assert.equal(final.state, 'blocked');
+      assert.match(
+        final.error || '',
+        pinned === 'named harness' ? /requested harness/ : /No eligible granted teammate/,
+      );
+      assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
+    } finally {
+      f.store.close();
+    }
+  });
+}
+
+test('an independent patch review can change providers before its first turn', () => {
+  const f = fixture();
+  try {
+    const profile = randomUUID();
+    const backup = randomUUID();
+    f.call(1, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [
+        { localId: f.members[1], provider: 'codex', name: 'Mây' },
+        { localId: profile, provider: 'claude', name: 'Backup reader' },
+      ],
+    });
+    f.call(1, {
+      action: 'sade-grant',
+      id: backup,
+      groupId: f.groupId,
+      teammateId: profile,
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    });
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Sửa file rồi review độc lập trước lúc tích hợp.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Edit the scoped file and use the automatic patch review.',
+        tasks: [
+          work('write', { kind: 'code', scope: patch.files, preferredMemberId: f.grants[0] }),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'A bounded change.' });
+    const original = f.poll(1, [], [f.grants[1], backup]).delivery!;
+    assert.equal(original.grantId, f.grants[1]);
+    f.finish(1, original.id, { kind: 'provider-unavailable' });
+    assert.equal(f.poll(0, [writer.id]).reviews.length, 0);
+    const reassigned = f.poll(1, [], [f.grants[1], backup]).delivery!;
+    assert.equal(reassigned.phase, 'review');
+    assert.equal(reassigned.grantId, backup);
+    assert.notEqual(reassigned.id, original.id);
+    assert.deepEqual(reassigned.review, original.review);
+    assert.throws(() => f.finish(1, original.id, { kind: 'provider-unavailable' }), /unavailable/);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
+    f.finish(1, reassigned.id, {
+      kind: 'review',
+      verdict: 'approved',
+      summary: 'The backup reviewer checked the scoped diff.',
+    });
+    assert.deepEqual(f.poll(0, [writer.id]).reviews, [
+      { jobId: writer.id, digest: reviewDigest(patch) },
+    ]);
+    f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a quota fallback can write the same scope using another write grant and independent review', () => {
+  for (const allowWrites of [true, false]) {
+    const f = fixture();
+    try {
+      const profile = randomUUID();
+      const backup = randomUUID();
+      f.call(0, {
+        action: 'teammates',
+        groupId: f.groupId,
+        teammates: [
+          { localId: f.members[0], provider: 'gemini', name: 'Bếp' },
+          { localId: profile, provider: 'claude', name: 'Backup writer' },
+        ],
+      });
+      f.call(0, {
+        action: 'sade-grant',
+        id: backup,
+        groupId: f.groupId,
+        teammateId: profile,
+        projectKey: key,
+        projectName: 'Fixture project',
+        role: 'designer',
+        platform: 'win32',
+        allowWrites,
+        turns: 1,
+      });
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content: 'Sửa file rồi nhờ một người khác kiểm lại.',
+        sade: { projectKey: key },
+      });
+      const planner = f.poll(0).delivery!;
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Edit one file with an independent reviewer.',
+          tasks: [
+            work('write', { kind: 'code', scope: patch.files }),
+            work('review', {
+              kind: 'review',
+              scope: patch.files,
+              dependsOn: ['write'],
+              preferredMemberId: f.grants[1],
+            }),
+          ],
+        },
+      });
+      const original = f.poll(0).delivery!;
+      assert.equal(original.grantId, f.grants[0]);
+      f.finish(0, original.id, { kind: 'provider-unavailable' });
+      const writer = f.poll(0, [], [f.grants[0], backup]).delivery;
+      if (!allowWrites) {
+        assert.equal(writer, undefined);
+        assert.equal(f.poll(1).delivery, undefined, 'the only independent reviewer cannot write');
+        assert.equal(f.view().sadeRuns[0].state, 'blocked');
+        continue;
+      }
+      assert.equal(writer?.grantId, backup);
+      assert.deepEqual(writer?.task, original.task);
+      f.finish(0, writer!.id, { kind: 'change', diff: patch, summary: 'Scoped edit.' });
+      const review = f.poll(1).delivery!;
+      assert.equal(review.phase, 'review');
+      assert.equal(review.grantId, f.grants[1]);
+      assert.deepEqual(review.review, patch);
+      f.finish(1, review.id, { kind: 'review', verdict: 'approved', summary: 'Scope verified.' });
+      f.finish(0, writer!.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+    } finally {
+      f.store.close();
+    }
+  }
+});
 
 test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
   const f = fixture();
