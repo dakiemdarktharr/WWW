@@ -77,22 +77,28 @@ Chế độ tùy chọn `paired-macos` đã có trong workflow **Verify RELAY**.
 
 Commit `62f9aa2` đã qua bài kiểm thử ở cả hai đầu. Lượt chạy đầu trên macOS trả mã thoát 1, lượt sau khi sửa trả 0. File `.env.local` trên Windows không vào snapshot. Tiến trình Node trên Mac không nhận biến môi trường provider giả của runner. Windows kéo đúng `path-label.cjs`, chạy lại thành công rồi dùng review độc lập trước khi tích hợp. SHA trên Git remote của project thử giữ nguyên. Cùng commit, `npm run check` trên Windows đạt 300 bài và bỏ qua một bài theo nền tảng, còn giao diện Shared Groups đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44450379635)
 
-Mở `cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:58173` trên Windows và lấy HTTPS origin từ đầu ra. Checkout cùng nhánh và commit sẽ chạy trên macOS, cài dependency bằng `npm ci` rồi đặt môi trường trong shell Windows.
+Commit `bc04550` của nhánh `codex/sade-shared-groups-verification` chứa các đầu PR #5–#10 tại lúc kiểm chứng. Cùng commit đó chạy trên Windows và macOS arm64. Windows qua bài kiểm tra ban đầu, macOS trả mã 1 vì lỗi tách đường dẫn, rồi trả mã 0 sau khi sửa. Bài kiểm thử xác nhận `.env.local` ở Windows nằm ngoài dữ liệu gửi, kéo đúng `path-label.cjs` vào worktree và chỉ tích hợp sau review độc lập. SHA của Git remote thử nghiệm giữ nguyên. Bên Mac xác nhận giao nhận hai chiều. Kịch bản model dùng fixture giao thức, còn lệnh Node và việc chuyển bản vá chạy trên hai hệ điều hành thật. [Lượt kiểm thử macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44499579242)
+
+Trên cùng mã nguồn, Windows đạt 340 bài khi chạy tuần tự và bỏ qua một bài theo nền tảng. macOS arm64 đạt 335 bài và bỏ qua sáu bài theo nền tảng. Hai bên đều build thành công và qua kiểm thử Electron, giao diện Shared Groups cùng bộ 1.000 tin dùng kế hoạch mô phỏng. [Bộ kiểm tra đầy đủ trên macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44500123122)
+
+Trên Windows, checkout nhánh cần thử và cài dependency bằng `npm ci`. Mở `cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:58173` trong một shell riêng và lấy HTTPS origin từ đầu ra. Dùng cùng nhánh và commit trên GitHub.
 
 ```powershell
 $env:KIVUNO_CROSS_HOST_ORIGIN = '<HTTPS origin từ cloudflared>'
 $env:KIVUNO_CROSS_HOST_PORT = '58173'
-$env:KIVUNO_CROSS_HOST_WORKFLOW = 'dakiemdarktharr/WWW/.github/workflows/ci.yml@refs/heads/codex/shared-groups-sade'
+$branch = (git branch --show-current).Trim()
+$env:KIVUNO_CROSS_HOST_WORKFLOW = "dakiemdarktharr/WWW/.github/workflows/ci.yml@refs/heads/$branch"
 $env:KIVUNO_CROSS_HOST_SHA = (git rev-parse HEAD).Trim()
+$remote = (git ls-remote --heads origin "refs/heads/$branch").Split()[0]
+if ($remote -ne $env:KIVUNO_CROSS_HOST_SHA) { throw 'Windows và GitHub phải dùng cùng commit.' }
+$run = gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $branch `
+  -f platform=paired-macos -f "paired_origin=$env:KIVUNO_CROSS_HOST_ORIGIN"
+if ($LASTEXITCODE -ne 0 -or $run -notmatch '/actions/runs/(\d+)') { throw 'Không tìm thấy lượt chạy Mac.' }
+$env:KIVUNO_MAC_RUN_ID = $Matches[1]
 node --import tsx --test --test-name-pattern 'two desktop workspaces' tests/shared-sade.test.ts
 ```
 
-Khi Windows báo `Cross-host fixture waiting`, chạy lệnh dưới đây trong shell dùng cùng giá trị origin. Dừng tunnel sau khi hai đầu kết thúc.
-
-```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/shared-groups-sade `
-  -f platform=paired-macos -f "paired_origin=$env:KIVUNO_CROSS_HOST_ORIGIN"
-```
+Đối chiếu kết quả trên Windows và ở lượt GitHub Actions đã lưu. Máy Mac nhận quyền thử nghiệm khi token OIDC khớp nhánh, commit, origin và ID lượt chạy. Dừng tunnel khi hai đầu đã kết thúc.
 
 ## Kiểm thử 1.000 tin nhắn
 
