@@ -45,6 +45,7 @@ function fixture(
     members?: string[];
     patchHandoff?: boolean;
     taskUpdates?: boolean;
+    roleA?: 'researcher';
     roleB?: 'reviewer' | 'researcher';
   } = {},
 ) {
@@ -88,7 +89,7 @@ function fixture(
         teammateId: member,
         projectKey: options.key || key,
         projectName: 'Fixture project',
-        role: index ? options.roleB || 'reviewer' : 'engineer',
+        role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
         platform: index && options.mac ? 'darwin' : 'win32',
         allowWrites: true,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
@@ -1339,6 +1340,140 @@ test('matching owner on a different device cannot receive a granted job; another
       /owner/,
     );
     assert.ok(f.poll(0).delivery);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('Shared Sade balances open implementation work without consuming the only independent reviewer', () => {
+  for (const pinBackend of [false, true]) {
+    const f = fixture(['gemini', 'codex']);
+    try {
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content:
+          'Bếp làm hợp đồng, Mây làm giao diện. Sade chia backend rồi nhờ một người độc lập kiểm tra cả giao diện và backend.',
+        sade: { projectKey: key },
+      });
+      const planner = f.poll(0).delivery!;
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Use one contract for frontend and backend, then independently review both.',
+          tasks: [
+            work('contract', {
+              kind: 'code',
+              scope: ['docs/contract.md'],
+              preferredMemberId: f.grants[0],
+            }),
+            work('frontend', {
+              kind: 'design',
+              preferredMemberId: f.grants[1],
+              dependsOn: ['contract'],
+            }),
+            work('backend', {
+              kind: 'code',
+              dependsOn: ['contract'],
+              ...(pinBackend && { preferredMemberId: f.grants[0] }),
+            }),
+            work('review', {
+              kind: 'review',
+              scope: ['src/frontend.ts', 'src/backend.ts'],
+              dependsOn: ['frontend', 'backend'],
+            }),
+          ],
+        },
+      });
+      const run = f.view().sadeRuns[0];
+      if (pinBackend) {
+        assert.equal(run.state, 'blocked');
+        assert.match(run.error || '', /Independent review needs another/);
+        assert.equal(f.poll(0).delivery, undefined);
+        assert.equal(f.poll(1).delivery, undefined);
+        continue;
+      }
+      assert.equal(run.state, 'running', run.error);
+      assert.deepEqual(
+        run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job.grantId]),
+        [
+          ['contract', f.grants[0]],
+          ['frontend', f.grants[1]],
+          ['backend', f.grants[1]],
+          ['review', f.grants[0]],
+        ],
+      );
+      const contract = f.poll(0).delivery!;
+      assert.equal(contract.task?.key, 'contract');
+      f.finish(0, contract.id, {
+        kind: 'unchanged',
+        revision: sha,
+        summary: 'The required contract already exists.',
+      });
+      for (const name of ['frontend', 'backend']) {
+        const implementation = f.poll(1).delivery!;
+        assert.equal(implementation.task?.key, name);
+        const diff = { ...patch, files: [`src/${name}.ts`] };
+        f.finish(1, implementation.id, { kind: 'change', diff, summary: `Updated ${name}.` });
+        const patchReview = f.poll(0).delivery!;
+        assert.equal(patchReview.phase, 'review');
+        assert.deepEqual(patchReview.review, diff);
+        f.finish(0, patchReview.id, {
+          kind: 'review',
+          verdict: 'approved',
+          summary: 'The patch matches the assigned scope.',
+        });
+        f.finish(1, implementation.id, {
+          kind: 'done',
+          revision: sha,
+          published: true,
+          summary: `Integrated ${name}.`,
+        });
+      }
+      const review = f.poll(0).delivery!;
+      assert.equal(review.task?.key, 'review');
+      assert.deepEqual(review.task?.scope, ['src/frontend.ts', 'src/backend.ts']);
+      f.finish(0, review.id, { kind: 'done', summary: 'Both integrated files checked.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+    } finally {
+      f.store.close();
+    }
+  }
+});
+
+test('Shared Sade saves the last turn on the desktop required by a later task', () => {
+  const f = fixture(['gemini', 'codex'], { turnsA: 2, mac: true, roleA: 'researcher' });
+  try {
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Đọc phần cấu hình chung, rồi kiểm tra lỗi mở app trên Windows.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Keep a Windows turn available for verification after checking the configuration.',
+        tasks: [
+          work('configuration', { effort: 8 }),
+          work('windows-check', { requiredPlatform: 'win32', dependsOn: ['configuration'] }),
+        ],
+      },
+    });
+    const run = f.view().sadeRuns[0];
+    assert.equal(run.state, 'running', run.error);
+    assert.equal(f.poll(0).delivery, undefined);
+    assert.equal(run.jobs.find((job) => job.task?.key === 'windows-check')?.grantId, f.grants[0]);
+    const configuration = f.poll(1).delivery!;
+    assert.equal(configuration.task?.key, 'configuration');
+    f.finish(1, configuration.id, { kind: 'done', summary: 'Read the shared configuration.' });
+    const windows = f.poll(0).delivery!;
+    assert.equal(windows.task?.key, 'windows-check');
+    f.finish(0, windows.id, { kind: 'done', summary: 'Windows check completed.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
   } finally {
     f.store.close();
   }
