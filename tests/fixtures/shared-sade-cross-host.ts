@@ -186,7 +186,8 @@ export async function runCrossHostMac(url: string) {
   const token = (await oidc.json()).value;
   const response = await fetch(`${origin}${bootstrapPath}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: '{}',
     signal: AbortSignal.timeout(10_000),
     redirect: 'error',
   });
@@ -217,7 +218,8 @@ export async function runCrossHostMac(url: string) {
     while (Date.now() < deadline) {
       const complete = await fetch(`${origin}${statusPath}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${runnerToken}` },
+        headers: { Authorization: `Bearer ${runnerToken}`, 'Content-Type': 'application/json' },
+        body: '{}',
         signal: AbortSignal.timeout(5000),
         redirect: 'error',
       });
