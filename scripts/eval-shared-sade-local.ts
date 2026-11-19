@@ -11,16 +11,20 @@ const { values } = parseArgs({
     model: { type: 'string', default: 'qwen3:1.7b-q4_K_M' },
     limit: { type: 'string', default: '1000' },
     sample: { type: 'boolean', default: false },
+    shard: { type: 'string', default: '0/1' },
     categories: { type: 'boolean', default: false },
     output: { type: 'string', default: '.local/shared-sade-local-eval.jsonl' },
   },
 });
 const port = Number(values.port);
 const limit = Number(values.limit);
+const [shard, shardCount] = values.shard.split('/').map(Number);
 if (!Number.isInteger(port) || port < 1024 || port > 65535)
   throw new Error('Choose a valid local Ollama port.');
 if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
   throw new Error('Choose a case count between 1 and 1000.');
+if (!/^\d+\/[1-9]\d*$/.test(values.shard) || shard >= shardCount || shardCount > limit)
+  throw new Error('Use a zero-based shard such as 0/5 with no more shards than cases.');
 if (!/^qwen3:(?:1\.7b|4b(?:-instruct-2507)?)(?:-q4_K_M)?$/.test(values.model))
   throw new Error('Choose an installed local Qwen3 model.');
 
@@ -56,12 +60,16 @@ const prompt = values.categories ? categoryPrompt : system;
 const promptDigest = createHash('sha256').update(prompt).digest('hex');
 const cases = sharedSadeCorpus();
 const stride = cases.length / limit;
-const selected = values.sample
+const selection = values.sample
   ? Array.from(
       { length: limit },
       (_, index) => cases[Math.floor(index * stride) + (stride >= 5 ? index % 5 : 0)],
     )
   : cases.slice(0, limit);
+const selected = selection.slice(
+  Math.floor((selection.length * shard) / shardCount),
+  Math.floor((selection.length * (shard + 1)) / shardCount),
+);
 const filename = path.resolve(values.output);
 await mkdir(path.dirname(filename), { recursive: true });
 const existing = await readFile(filename, 'utf8').catch((error) => {

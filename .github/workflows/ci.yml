@@ -8,7 +8,12 @@ on:
         description: Verification platform
         type: choice
         default: desktop
-        options: [desktop, macos, paired-macos]
+        options: [desktop, macos, paired-macos, sade-eval]
+      sade_suite:
+        description: Sade model benchmark suite
+        type: choice
+        default: pilot
+        options: [pilot, corpus]
       paired_origin:
         description: Temporary cross-host test origin for paired-macos
         type: string
@@ -17,7 +22,7 @@ permissions:
   contents: read
 jobs:
   verify:
-    if: inputs.platform != 'paired-macos'
+    if: inputs.platform == 'desktop' || inputs.platform == 'macos'
     strategy:
       fail-fast: false
       matrix:
@@ -73,3 +78,82 @@ jobs:
           node --import tsx --input-type=module -e
           "import { runCrossHostMac } from './tests/fixtures/shared-sade-cross-host.ts';
           await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN)"
+  sade-eval:
+    if: inputs.platform == 'sade-eval' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: ${{ fromJSON(inputs.sade_suite == 'corpus' && '[0,1,2,3,4]' || '[0]') }}
+    env:
+      OLLAMA_HOST: 127.0.0.1:11565
+      OLLAMA_NO_CLOUD: 'true'
+      OLLAMA_NUM_PARALLEL: '1'
+      SADE_MODEL: qwen3:4b-instruct-2507-q4_K_M
+      SADE_MODEL_DIGEST: 0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/sade-ollama
+            ${{ runner.temp }}/sade-models
+          key: sade-linux-cpu-ollama-0.40.16-qwen-0edcdef34593
+      - name: Evaluate synthetic Shared Groups messages with local inference
+        env:
+          SADE_SUITE: ${{ inputs.sade_suite }}
+          SADE_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          export OLLAMA_MODELS="$RUNNER_TEMP/sade-models"
+          ollama="$RUNNER_TEMP/sade-ollama/bin/ollama"
+          if [[ ! -x "$ollama" ]]; then
+            archive="$RUNNER_TEMP/ollama-linux-amd64.tar.zst"
+            curl --fail --show-error --silent --location --retry 3 \
+              https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst \
+              --output "$archive"
+            printf '%s  %s\n' 87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d "$archive" | sha256sum -c -
+            mkdir -p "$RUNNER_TEMP/sade-ollama"
+            tar --zstd -xf "$archive" --exclude='*/cuda*' -C "$RUNNER_TEMP/sade-ollama"
+            rm "$archive"
+          fi
+          "$ollama" serve >"$RUNNER_TEMP/sade-ollama.log" 2>&1 &
+          ollama_pid=$!
+          trap 'kill "$ollama_pid" 2>/dev/null || true; wait "$ollama_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent "http://$OLLAMA_HOST/api/version" >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent --show-error "http://$OLLAMA_HOST/api/version"
+          "$ollama" pull "$SADE_MODEL"
+          curl --fail --silent --show-error "http://$OLLAMA_HOST/api/tags" |
+            jq -e --arg model "$SADE_MODEL" --arg digest "$SADE_MODEL_DIGEST" \
+              'any(.models[]; .name == $model and .digest == $digest)'
+          results="$RUNNER_TEMP/sade-results"
+          mkdir -p "$results"
+          if [[ "$SADE_SUITE" == corpus ]]; then
+            node --import tsx scripts/eval-shared-sade-local.ts --categories --model "$SADE_MODEL" \
+              --shard "$SADE_SHARD/5" --output "$results/corpus-$SADE_SHARD.jsonl"
+          else
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota.json" --quota-fallback
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/planner.json"
+            node --import tsx scripts/eval-shared-sade-local.ts --categories --model "$SADE_MODEL" \
+              --sample --limit 40 --output "$results/pilot.jsonl"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: sade-${{ inputs.sade_suite }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/sade-results/*
+          retention-days: 7
