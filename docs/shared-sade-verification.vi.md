@@ -29,7 +29,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `94006a6`. `npm run check` đạt 292 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt, gồm gửi chỉ đạo và hiển thị xác nhận đã đọc. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 297 bài, bỏ qua một bài theo nền tảng, và các bài Electron, Shared Groups và Cloud đều đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44444107770)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `fca7edb`. `npm run check` đạt 293 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt, gồm chuyển về chế độ gửi tin thường sau **Ask Sade** và xác nhận đã đọc chỉ đạo. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 298 bài, bỏ qua một bài theo nền tảng, và các bài Electron, Shared Groups và Cloud đều đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44447535717)
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
