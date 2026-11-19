@@ -371,6 +371,31 @@
   color: var(--bill-mint);
 }
 
+.billing-wallet-box {
+  margin-block: 18px;
+  padding: 16px;
+  border: 1px solid rgb(185 221 233 / 14%);
+  border-radius: 12px;
+  min-width: 0;
+}
+.billing-wallet-box p {
+  margin: 8px 0;
+  font-size: 13px;
+}
+.billing-wallet-box summary {
+  cursor: pointer;
+  padding-block: 8px;
+}
+.billing-wallet-address {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.billing-wallet-box a {
+  color: var(--bill-mint);
+}
+.billing-wallet-box input {
+  max-width: 100%;
+}
 .billing-wallet-row {
   min-height: 66px;
   padding: 10px 0;

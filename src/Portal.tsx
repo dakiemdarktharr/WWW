@@ -743,6 +743,15 @@ function PortalContent() {
             </AnimatePresence>
             <motion.div layout className="kp-auth-nav">
               <PortalLanguage />
+              <a
+                href="/billing"
+                className="kp-nav-button"
+                title={t('Gói Kivuno')}
+                aria-label={t('Gói Kivuno')}
+              >
+                <Sparkles size={19} />
+                <span>{t('Gói Kivuno')}</span>
+              </a>
               <motion.button
                 {...gestures}
                 className="kp-nav-button"

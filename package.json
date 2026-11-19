@@ -12,6 +12,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:fuji-demo": "node scripts/dev-fuji-demo.mjs",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build && node scripts/build-cloud.mjs",

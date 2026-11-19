@@ -122,7 +122,7 @@ export async function buildApp(
       .header('Cache-Control', 'no-store');
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src https: http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.avax-test.network; frame-src https: http://127.0.0.1:* http://localhost:*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     );
     const host = request.headers.host,
       origin = request.headers.origin;
@@ -200,6 +200,7 @@ export async function buildApp(
         '/api/billing/summary',
         '/api/billing/profiles',
         '/api/billing/profiles/select',
+        '/api/billing/wallet/unlock',
         '/api/billing/wallet/challenge',
         '/api/billing/wallet/bind',
         '/api/billing/intent',
@@ -405,7 +406,7 @@ export async function buildApp(
       sessions.set(key, session);
       reply.header(
         'Set-Cookie',
-        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${options.cloud ? '; Secure' : ''}`,
+        `relay_session=${key}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${options.cloud?.origin.startsWith('https:') ? '; Secure' : ''}`,
       );
     }
     return { token: session.token };

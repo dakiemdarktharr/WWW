@@ -1,6 +1,32 @@
-# Deploy KivunoPlans on Fuji
+# Kivuno payments on Avalanche Fuji
 
-This runbook deploys the Kivuno subscription contract with the user's Core wallet. It applies only to Avalanche Fuji C-Chain, chain ID `43113`. The deployment transaction costs test AVAX for gas; it does not transfer USDC.
+The existing KivunoPlans contract accepts Plus and Max purchases on Avalanche Fuji C-Chain, chain ID `43113`. Buyers can use a Kivuno account and the wallet created by the billing page. Core is used for the separate contract deployment procedure below.
+
+## Run a purchase locally
+
+1. Install the repository dependencies and start the local application with `npm run dev:fuji-demo`. Open [Kivuno billing](http://127.0.0.1:5173/billing) in a regular browser window. The command starts the API and Vite on loopback and supplies the deployment addresses below.
+2. Sign in or create a Kivuno account. The first authenticated visit to billing creates an EVM wallet in this browser and binds its public address to the account. Download the encrypted wallet backup before funding the address. Keep the file and retain access to this Kivuno account.
+3. Copy the **buyer wallet address** from billing. Select Avalanche Fuji on the [Circle test USDC faucet](https://faucet.circle.com/) and request test USDC for that address. Send the same buyer a small amount of **Fuji C-Chain test AVAX** for gas from a funded test wallet. The operator can refill their test wallet through the [Avalanche Builder Hub faucet](https://build.avax.network/console/primary-network/faucet). A new buyer wallet starts empty. The treasury in the table below receives subscription revenue.
+4. Select Plus for 2 test USDC or Max for 6. Review the amount, recipient, network and 30-day term. Confirm the purchase on the Kivuno page. Each purchase requires a new confirmation.
+5. Open the resulting transaction in the Fuji explorer. Check success, the `PlanPaid` event and the USDC transfer to the treasury. In Kivuno, confirm the new plan, expiration date and quota. Keep the transaction hash as the evidence for this purchase.
+
+### Use the wallet on another device
+
+Sign in to the same Kivuno account, open billing and restore the encrypted backup. The page checks the restored address against the existing binding. The device record and backup contain encrypted wallet data. The server provides the account-specific wrapping key to the authenticated browser and does not receive the encrypted file or the EVM private key. Recovery needs both the encrypted wallet data and access to the same account on the same backend. Preserve the demo database in `.relay-fuji-demo/` across restarts. Clearing browser data without a backup removes that browser's copy. An existing external-wallet binding remains valid and address changes require proof from both addresses.
+
+To change a legacy external wallet to a new Kivuno wallet, first finish any pending purchase and use the current paid term. A checkout that was never submitted expires after 15 minutes. Once Fuji has advanced beyond that window and the old address has no active subscription, sign the address change with both wallets. Restoring a backup of the same address works during an active term.
+
+## Reproduce the checkout checks
+
+From the repository root, run the following with Playwright Chromium installed, or set `PLAYWRIGHT_CHANNEL=msedge` to use an installed Microsoft Edge.
+
+```sh
+node tests/embedded-wallet.e2e.mjs
+node --import tsx --test tests/billing.test.ts tests/billing-settlement.test.ts
+node --import tsx --test --test-force-exit tests/billing-checkout.e2e.ts
+```
+
+The funded browser test runs the Kivuno signup and checkout screen against the billing API and a local Avalanche-compatible EVM fixture. For the live RPC funding check, start `npm run dev:fuji-demo`, set `KIVUNO_RUN_FUJI_SMOKE=1` and run `node tests/billing-embedded-local.e2e.mjs`. This creates a local test account, reads Fuji balances and checks an unfunded Plus purchase stops before broadcast.
 
 ## Fixed deployment values
 
@@ -18,17 +44,17 @@ The deployed contract fixes the token and treasury as immutable constructor valu
 
 The user approved the contract-creation transaction in Core. Fuji C-Chain Explorer reports it as **SUCCESS** and **Final**. The local deployment tool also confirmed the deployed bytecode and read back the immutable USDC and treasury values.
 
-| Field | Verified value |
-| --- | --- |
-| Contract | `0xBA7321C1F3107b95Acec6C3490e3130aFaE7a220` |
+| Field       | Verified value                                                       |
+| ----------- | -------------------------------------------------------------------- |
+| Contract    | `0xBA7321C1F3107b95Acec6C3490e3130aFaE7a220`                         |
 | Transaction | `0x87d0e5b524d729fbe8e8bc67c57201d1729105e41a7cf0a02bb66400cb80bf1f` |
-| Deployer | `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805` |
-| Network | Avalanche Fuji C-Chain (`43113`) |
-| Confirmed | 2026-11-19 12:11:45 UTC |
+| Deployer    | `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`                         |
+| Network     | Avalanche Fuji C-Chain (`43113`)                                     |
+| Confirmed   | 2026-11-19 12:11:45 UTC                                              |
 
 The deployment transaction created the contract and transferred no USDC. Explorer evidence: [Fuji transaction](https://build.avax.network/explorer/fuji/c-chain/tx/0x87d0e5b524d729fbe8e8bc67c57201d1729105e41a7cf0a02bb66400cb80bf1f).
 
-## Prepare and deploy
+## Deploy a new contract (operator only)
 
 From the repository root:
 
@@ -51,6 +77,4 @@ $env:KIVUNO_FUJI_USDC_ADDRESS = '0x5425890298aed601595a70AB815c96711a31Bc65'
 $env:KIVUNO_FUJI_TREASURY_ADDRESS = '0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805'
 ```
 
-The server registers billing routes only when `RELAY_DEPLOYMENT=cloud`; the default local `npm run dev:server` mode does not expose them. A full browser-to-chain demo therefore needs a supported HTTPS cloud-mode environment with these variables set before startup. Vercel deployment remains deferred. `KIVUNO_FUJI_RPC_URL` defaults to Avalanche's Fuji C-Chain RPC. These values are public configuration, not secrets. Never commit a private key, seed phrase, auth secret, or wallet credential.
-
-Before calling the system ready, verify a full payment: the buyer signs the exact EIP-3009 authorization and contract call in Core; Fuji confirms the receipt and `PlanPaid` event; the server verifies chain, contract, token, payer, plan, amount and intent; then Kivuno updates the entitlement and enforces profile/group quotas. A contract deployment alone does not prove the payment flow works.
+Billing routes require `RELAY_DEPLOYMENT=cloud`. The local demo launcher enables this mode with a loopback-only development origin and its own data directory. A hosted instance requires HTTPS and the deployment addresses at startup. `KIVUNO_FUJI_RPC_URL` defaults to Avalanche's Fuji C-Chain RPC. The verifier checks chain, contract, token, payer, plan, amount and payment intent before applying an entitlement.

@@ -40,6 +40,8 @@ Mở **http://127.0.0.1:4317**. Trên Windows, có thể chạy `start-relay.cmd
 
 Phát triển giao diện: `npm run dev`, rồi mở http://127.0.0.1:5173. Chạy kiểm thử: `npm test`. Kiểm tra cả TypeScript, tests và build: `npm run check`.
 
+**Demo thanh toán Avalanche Fuji** — Chạy `npm run dev:fuji-demo` và mở [trang mua gói](http://127.0.0.1:5173/billing). Đăng nhập Kivuno để nhận ví riêng và xác nhận mua Plus hoặc Max. [Hướng dẫn nạp token thử, sao lưu ví và kiểm tra biên nhận](docs/KIVUNO-FUJI-DEPLOYMENT.md).
+
 Nếu Node hệ thống cũ, chạy công cụ bằng runtime riêng:
 
 ```sh

@@ -16,12 +16,22 @@ const lock = await acquireCoordinatorLock(dataDir);
 const store = new Store(path.join(dataDir, 'workspace.db'));
 const workspace = new Workspace(store, dataDir, projectRoot);
 await workspace.initialize();
+const port = Number(process.env.RELAY_PORT || 4317);
+if (!Number.isInteger(port) || port < 1024 || port > 65535)
+  throw new Error('RELAY_PORT must be between 1024 and 65535.');
+const localCloudDemo = process.env.RELAY_LOCAL_CLOUD_DEMO === '1';
+if (
+  localCloudDemo &&
+  (process.env.NODE_ENV !== 'development' || process.env.RELAY_DEPLOYMENT !== 'cloud')
+)
+  throw new Error('The local cloud demo is available only in development cloud mode.');
 let cloud: CloudAccess | undefined;
 if (process.env.RELAY_DEPLOYMENT === 'cloud') {
   const origin = process.env.RELAY_PUBLIC_ORIGIN || '';
   const gatewaySecret = process.env.RELAY_GATEWAY_SECRET || '';
+  const localDemoOrigin = localCloudDemo && origin === 'http://127.0.0.1:5173' && port === 4317;
   if (
-    !origin.startsWith('https://') ||
+    (!origin.startsWith('https://') && !localDemoOrigin) ||
     new URL(origin).origin !== origin ||
     gatewaySecret.length < 32
   )
@@ -40,9 +50,6 @@ if (process.env.RELAY_DEPLOYMENT === 'cloud') {
   workspace.runtime.deployment = 'cloud';
   workspace.runtime.expiresAt = cloud.expiresAt || null;
 }
-const port = Number(process.env.RELAY_PORT || 4317);
-if (!Number.isInteger(port) || port < 1024 || port > 65535)
-  throw new Error('RELAY_PORT must be between 1024 and 65535.');
 const app = await buildApp(workspace, {
   port,
   cloud,
@@ -75,7 +82,7 @@ if (process.send)
       void shutdown();
   });
 try {
-  await app.listen({ host: cloud ? '0.0.0.0' : '127.0.0.1', port });
+  await app.listen({ host: cloud && !localCloudDemo ? '0.0.0.0' : '127.0.0.1', port });
   console.log(
     `RELAY is ready at http://127.0.0.1:${port}\nCodex: ${workspace.runtime.codexVersion}\nLocal state: ${dataDir}`,
   );

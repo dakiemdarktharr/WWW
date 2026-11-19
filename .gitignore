@@ -4,6 +4,7 @@ dist/
 .vercel/
 .cloud/
 .relay/
+.relay-fuji-demo/
 .env
 .env.*
 !.env.example

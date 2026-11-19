@@ -5,6 +5,43 @@ import { Wallet } from 'ethers';
 import { effectiveTier, registerBillingRoutes } from '../server/billing.ts';
 import { Store } from '../server/store.ts';
 
+test('wallet unlock is stable per account and rejects other or expired sessions', async (t) => {
+  const app = Fastify();
+  const store = new Store(':memory:');
+  const alice = { id: 'wallet-alice', name: 'Alice', email: 'alice@example.test' };
+  const bob = { id: 'wallet-bob', name: 'Bob', email: 'bob@example.test' };
+  let session: typeof alice | null = alice;
+  registerBillingRoutes(app, store, async () => session);
+  t.after(async () => {
+    await app.close();
+    store.close();
+  });
+
+  const unlock = (accountId: string) =>
+    app.inject({ method: 'POST', url: '/api/billing/wallet/unlock', payload: { accountId } });
+  const first = await unlock(alice.id);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.headers['cache-control'], 'no-store');
+  const { accountId, wrappingKey } = first.json();
+  assert.equal(accountId, alice.id);
+  assert.match(wrappingKey, /^0x[0-9a-f]{64}$/i);
+  assert.equal((await unlock(alice.id)).json().wrappingKey, wrappingKey);
+
+  session = bob;
+  const crossAccount = await unlock(alice.id);
+  assert.equal(crossAccount.statusCode, 403);
+  assert.equal(crossAccount.json().wrappingKey, undefined);
+  const own = await unlock(bob.id);
+  assert.equal(own.statusCode, 200);
+  assert.equal(own.json().accountId, bob.id);
+  assert.notEqual(own.json().wrappingKey, wrappingKey);
+
+  session = null;
+  const anonymous = await unlock(alice.id);
+  assert.equal(anonymous.statusCode, 401);
+  assert.equal(anonymous.json().wrappingKey, undefined);
+});
+
 test('wallet binding requires ownership, both signatures for a change, and prevents reuse', async (t) => {
   const app = Fastify();
   const store = new Store(':memory:');

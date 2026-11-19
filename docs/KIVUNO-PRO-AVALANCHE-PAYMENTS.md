@@ -1,6 +1,6 @@
 # Thiết kế thanh toán Kivuno Plus/Max trên Avalanche
 
-**Trạng thái:** contract Fuji-only, compiler, verifier/API, giao diện Plus/Max và quota profile/group đã được triển khai, kiểm tra local và push trực tiếp lên GitHub `main`. Contract và ứng dụng chưa deploy; chưa có thanh toán đầu-cuối trên Fuji.
+**Trạng thái:** KivunoPlans đã triển khai trên Fuji. Dịch vụ xác minh giao dịch và cấp quyền chạy được trong môi trường demo local. Bằng chứng triển khai contract và tiêu chí nghiệm thu một lần mua nằm trong [runbook Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 **Ngày kiểm tra nguồn:** 19/11/2026.
 **Phạm vi hiện tại:** Fuji C-Chain, USDC testnet, demo cuộc thi. Mainnet và nhận tiền thật chưa được chốt hoặc cho phép.
 
@@ -8,36 +8,36 @@
 
 Dùng mẫu Stripe để học các ranh giới tin cậy và xử lý vòng đời thanh toán: máy chủ tạo yêu cầu giá có kiểm soát; xác nhận từ trình duyệt không tự cấp quyền; xác thực nguồn sự kiện; xử lý lặp an toàn; entitlement là trạng thái riêng được cập nhật sau khi giao dịch đã được xác minh. Stripe Billing tự thu tiền định kỳ nên không bê nguyên luồng subscription của Stripe: Kivuno yêu cầu người dùng ký/xác nhận riêng cho mỗi tháng và không tự gia hạn.
 
-Đề xuất dùng ví ngoài do người dùng kiểm soát, liên kết ví với tài khoản Kivuno bằng nonce ký một lần, và triển khai hợp đồng/luồng thanh toán trên Fuji. Không lưu private key trong Kivuno hoặc localStorage. Mỗi lần thanh toán phải hiện rõ Fuji, token, số USDC, người nhận, gói và phí; không cấp allowance vô hạn. Backend chỉ cấp quyền sau khi xác minh chain, token, contract, payer, amount, plan, receipt và event.
+Kivuno tạo ví thanh toán trong trình duyệt khi tài khoản lần đầu mở trang mua gói. Người dùng xem mạng, gói, số USDC, địa chỉ nhận và người trả gas trước khi xác nhận từng lần mua. Ví ký cho đúng giao dịch đó. Máy chủ kiểm tra chain, token, contract, payer, amount, plan, receipt và event trước khi cấp quyền.
 
 Fuji C-Chain dùng chain ID `43113`; Circle Fuji USDC là `0x5425890298aed601595a70AB815c96711a31Bc65`, 6 decimals. Người dùng chốt 2 USDC test cho Plus và 6 USDC test cho Max; đây là testnet units, không phải giá trị quy đổi từ 50.000/150.000 VND. Người mua tự trả gas bằng test AVAX.
 
 ## Yêu cầu và quyết định hiện có
 
-| Nội dung                       | Trạng thái hiện tại                                                                                             |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Mua gói theo tháng             | Đã chốt; thanh toán thủ công từng tháng                                                                         |
-| Tự gia hạn / agent tự chi tiền | Không; mỗi khoản chi cần người dùng xác nhận                                                                    |
-| Giới hạn Free                  | 3 provider profile/người; 3 người/group                                                                         |
-| Gói Plus                       | Thay tên Pro; 10 profile/người; 10 người/group                                                                  |
-| Gói Max                        | Không giới hạn profile và thành viên group                                                                      |
-| Giá VND                        | Người dùng chốt Plus 50.000 VND/tháng, Max 150.000 VND/tháng                                                    |
-| Tên gói                        | Đã chốt Plus thay Pro, giữ hạn mức 10/10                                                                        |
-| Tài sản demo                   | Fuji test USDC                                                                                                  |
-| Lượng USDC test                | Plus 2 USDC; Max 6 USDC; Fuji test token only                                                                   |
-| Người trả gas                  | Người mua trả gas bằng test AVAX                                                                                |
-| Custody                        | Ví Core tự quản lý; Kivuno không nắm khóa hay seed phrase                                                       |
-| Group                          | Chủ group mua gói; hạn mức theo gói của chủ group                                                               |
-| Hạ gói/quá hạn                 | Giữ dữ liệu; khóa các profile/member vượt hạn mức đến khi giảm số lượng; chủ tài khoản chọn mục còn hoạt động   |
-| Hết hạn/hoàn tiền              | Fuji testnet: hết hạn là về Free, không hoàn tiền; gia hạn thủ công, không tự gia hạn                           |
-| Gia hạn cùng gói               | Cộng 30 ngày từ `max(now, paidUntil)`                                                                           |
-| Đổi Plus/Max giữa kỳ           | Tier đổi ngay; kỳ mới 30 ngày từ thời điểm mua; không hoàn/bù thời gian còn lại                                 |
-| Offline desktop                | Khi kết nối lại, đồng bộ entitlement hiện tại; không thể thu hồi ngay khi offline                               |
-| Đổi ví                         | Cần chữ ký từ ví cũ và ví mới; mất ví cũ thì không có cơ chế khôi phục tự động                                  |
-| Ví deployer/treasury           | `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`; dùng cùng ví cho deployer và treasury Fuji theo giả định hiện tại |
-| Mainnet, tiền thật             | Chưa có quyết định; không triển khai trong phạm vi demo                                                         |
+| Nội dung                       | Trạng thái hiện tại                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| Mua gói theo tháng             | Đã chốt; thanh toán thủ công từng tháng                                                                           |
+| Tự gia hạn / agent tự chi tiền | Không; mỗi khoản chi cần người dùng xác nhận                                                                      |
+| Giới hạn Free                  | 3 provider profile/người; 3 người/group                                                                           |
+| Gói Plus                       | Thay tên Pro; 10 profile/người; 10 người/group                                                                    |
+| Gói Max                        | Không giới hạn profile và thành viên group                                                                        |
+| Giá VND                        | Người dùng chốt Plus 50.000 VND/tháng, Max 150.000 VND/tháng                                                      |
+| Tên gói                        | Đã chốt Plus thay Pro, giữ hạn mức 10/10                                                                          |
+| Tài sản demo                   | Fuji test USDC                                                                                                    |
+| Lượng USDC test                | Plus 2 USDC; Max 6 USDC; Fuji test token only                                                                     |
+| Người trả gas                  | Người mua trả gas bằng test AVAX                                                                                  |
+| Custody                        | Ví nhúng ký trong trình duyệt. Thiết bị giữ bản mã, máy chủ giữ khóa mở riêng theo tài khoản.                     |
+| Group                          | Chủ group mua gói; hạn mức theo gói của chủ group                                                                 |
+| Hạ gói/quá hạn                 | Giữ dữ liệu; khóa các profile/member vượt hạn mức đến khi giảm số lượng; chủ tài khoản chọn mục còn hoạt động     |
+| Hết hạn/hoàn tiền              | Fuji testnet: hết hạn là về Free, không hoàn tiền; gia hạn thủ công, không tự gia hạn                             |
+| Gia hạn cùng gói               | Cộng 30 ngày từ `max(now, paidUntil)`                                                                             |
+| Đổi Plus/Max giữa kỳ           | Tier đổi ngay; kỳ mới 30 ngày từ thời điểm mua; không hoàn/bù thời gian còn lại                                   |
+| Offline desktop                | Khi kết nối lại, đồng bộ entitlement hiện tại; không thể thu hồi ngay khi offline                                 |
+| Đổi ví                         | Chờ kỳ đã trả và yêu cầu mua cũ hết hạn trên Fuji, rồi ký bằng cả hai ví. Có thể khôi phục cùng địa chỉ trong kỳ. |
+| Ví deployer/treasury           | `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805` là deployer và treasury Fuji.                                        |
+| Mainnet, tiền thật             | Chưa có quyết định; không triển khai trong phạm vi demo                                                           |
 
-Các lựa chọn sản phẩm trên đã được người dùng chốt cho demo. Còn thiếu địa chỉ contract sau deploy và cấu hình môi trường cloud để mở luồng thanh toán trên Fuji. Không có private key/seed trong repo hay chat.
+Có thể chạy thử bằng `npm run dev:fuji-demo` và mở trang [thanh toán local](http://127.0.0.1:5173/billing).
 
 ## Cuộc thi Avalanche
 
@@ -58,7 +58,7 @@ Nguồn: [Team1 Vietnam UniHack](https://team1vn.xyz/), [topics.json](https://te
 | Shared Groups là mô hình cloud riêng; giới hạn hiện tại là 50 group do owner tạo và 32 người/group (`server/collaboration.ts:104-119`, `:162-174`).                               | Có thể đặt hạn mức group ở cloud API; cần tính cả lời mời đang pending để không lách hạn mức.                                       |
 | Better Auth có user ID cloud; cloud bootstrap gắn với workspace owner (`server/cloud-auth.ts:34-75`).                                                                             | Đây là khóa phù hợp hơn địa chỉ ví để biểu diễn entitlement Kivuno; wallet chỉ là phương tiện thanh toán.                           |
 | AEGIS là policy/evidence trên Fuji, không phải cổng thu tiền hay entitlement (`contracts/RelayAegis.sol`, `docs/AEGIS.md`).                                                       | Tạo module/payment contract độc lập; không tái dùng nhầm contract/key AEGIS.                                                        |
-| `contracts/KivunoPlans.sol` và `server/billing.ts` đã được triển khai, có kiểm thử local; chưa deploy/kiểm thử tích hợp Fuji.                                                     | Chỉ dùng làm demo sau khi deploy Fuji, xác minh receipt/entitlement và kiểm thử luồng quota đầu-cuối.                               |
+| `contracts/KivunoPlans.sol` đã triển khai trên Fuji, `server/billing.ts` xác minh giao dịch.                                                                                      | Khi trình diễn, đối chiếu receipt, entitlement và quota của cùng một giao dịch.                                                     |
 | `docs/SECURITY.md:11` nói public signup bị tắt, trong khi `server/cloud-auth.ts:82-127` và `tests/cloud-signup.test.ts:81-115` cho phép public email signup.                      | Cần sửa tài liệu hoặc quyết định sản phẩm trước khi dùng email identity làm nền cho thanh toán. Đây là bất nhất hiện hữu, chưa sửa. |
 
 Lưu ý thực thi: local client có thể bị sửa hoặc chạy offline. Backend phải là authority cho reservation account-wide và group quota; desktop chỉ áp dụng entitlement mới sau khi kết nối lại. Quá hạn/hạ gói không xóa dữ liệu; giữ các profile/member vượt hạn mức ở trạng thái khóa đến khi người dùng giảm số lượng.
@@ -82,7 +82,7 @@ Repo Stripe mẫu có thể dùng như tài liệu tham khảo; chưa chép code
 | Stripe pattern                                    | Kivuno/Avalanche tương đương                                                                                                       |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Server lấy plan/price hợp lệ và tạo checkout      | Backend tạo `bytes32` PaymentIntent một lần, gắn user, wallet, plan, chain, token, amount, expiry                                  |
-| Stripe Checkout redirect/success URL              | Ví ngoài hiển thị chain, token, số tiền, recipient, plan và yêu cầu người dùng xác nhận                                            |
+| Stripe Checkout redirect/success URL              | Màn hình thanh toán Kivuno hiển thị chain, token, số tiền, recipient, plan và yêu cầu người mua xác nhận.                          |
 | Webhook có chữ ký raw body                        | Backend đọc receipt/log từ Fuji RPC đã cấu hình; explorer chỉ hiển thị transaction cho người dùng, không làm nguồn xác thực        |
 | `invoice.payment_succeeded` / subscription events | Event contract `PlanPaid` + state `paidUntil`, xác minh từ receipt thành công                                                      |
 | Webhook retry/duplicate                           | Unique key `(chainId, txHash, logIndex)` cộng unique `paymentIntentId`; contract đánh dấu intent đã dùng để chặn giao dịch thứ hai |
@@ -94,11 +94,11 @@ Repo Stripe mẫu có thể dùng như tài liệu tham khảo; chưa chép code
 
 ## Custody và trả gas
 
-Đã chốt dùng Core Extension tự quản lý: Kivuno không nắm khóa, không giữ recovery key, và không lưu private key/seed phrase. Địa chỉ deployer/treasury công khai được cung cấp là `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`; giả định dùng cùng ví làm treasury testnet. Người mua trả gas bằng test AVAX. Liên kết ví với tài khoản Kivuno bằng nonce dùng một lần; đổi ví cần chữ ký của ví hiện tại và ví mới. Chữ ký liên kết không tự cấp quyền thanh toán.
+Khi người mua đăng nhập Kivuno và mở trang thanh toán lần đầu, trình duyệt sinh một khóa EVM và liên kết địa chỉ ví với tài khoản bằng chữ ký thử thách dùng một lần. Thiết bị giữ bản mã AES-GCM. Máy chủ chỉ cấp khóa mở ví cho phiên đã đăng nhập đúng tài khoản. Khi đổi máy, người dùng đăng nhập và nhập tệp sao lưu đã mã hóa. Việc khôi phục cần cả tệp sao lưu và khóa mở trong cơ sở dữ liệu của tài khoản ban đầu. Ví cũ đã liên kết vẫn yêu cầu chữ ký của cả hai ví khi đổi địa chỉ.
 
 | Cách trả gas                   | Ưu                                                                                              | Chi phí/rủi ro                                                                                                                                                                          |
 | ------------------------------ | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Người mua trả bằng test AVAX   | Ít hạ tầng, ít trust trung gian, dễ chứng minh self-custody                                     | Người dùng cần test AVAX và xác nhận giao dịch trên Fuji                                                                                                                                |
+| Người mua trả bằng test AVAX   | Không cần dịch vụ trả phí gas hộ người dùng                                                     | Ví người mua cần cả test USDC và test AVAX trên Fuji C-Chain.                                                                                                                           |
 | Kivuno/facilitator tài trợ gas | Ít ma sát; Avalanche x402 tutorial có ví dụ facilitator trả gas với USDC EIP-3009 authorization | Thêm relayer/facilitator, quota/abuse control, availability, phí và một trust boundary; cần ràng buộc authorization chính xác, one-use, nonce và deadline; plan intent cần chữ ký riêng |
 
 Avalanche Academy hướng dẫn Fuji USDC và x402 gas sponsorship bằng authorization riêng cho token/amount/recipient/nonce/time. Tuy nhiên Topic 17 là x402; x402 phục vụ payment theo HTTP 402 và facilitator, không phải mặc định cho subscription của Kivuno. Dùng nó chỉ nếu mục tiêu topic/gas sponsorship đã được chốt.
@@ -114,15 +114,20 @@ sequenceDiagram
   actor U as Kivuno user
   participant A as Kivuno app
   participant B as Kivuno billing API
-  participant W as External wallet
+  participant W as Ví nhúng của người mua
   participant C as Payment contract (Fuji)
   participant R as Configured Fuji RPC/verifier
   participant E as Entitlement + reservation store
 
-  U->>A: Chọn gói và xác nhận mua tháng này
+  U->>A: Đăng nhập và mở trang thanh toán
+  A->>B: Yêu cầu khóa mở theo phiên tài khoản
+  A->>W: Mở ví hoặc tạo ví khi tài khoản chưa liên kết
+  W-->>B: Chứng minh quyền sở hữu địa chỉ khi liên kết
+  U->>A: Chọn gói
   A->>B: Tạo payment intent
   B-->>A: plan, amount, chain, token, recipient, expiry
-  A->>W: Yêu cầu ký/gửi giao dịch chính xác
+  U->>A: Xác nhận gói và số tiền
+  A->>W: Ký ủy quyền USDC và giao dịch đã xác nhận
   W->>C: Payment giao dịch trên Fuji
   C-->>R: Receipt + PlanPaid event
   R->>R: Kiểm chain, status, contract, payer, plan, token, amount
@@ -133,7 +138,7 @@ sequenceDiagram
 
 Contract đã được viết Fuji-only: Plus/Max là 2,000,000/6,000,000 đơn vị USDC, kỳ 30 ngày, exact `receiveWithAuthorization`, immutable USDC/treasury, intent one-time, không có owner/admin, auto-renew, allowance hay refund. Cùng tier gia hạn từ `max(now, paidUntil)`; đổi tier bắt đầu 30 ngày từ thời điểm mua.
 
-Verifier/API đã được triển khai để kiểm transaction sender/input, Fuji chain, receipt success, contract, `PlanPaid`, exact USDC transfer logs, server intent, payer, plan, token, amount và expiry. Pending không cấp quyền; lỗi RPC có thể retry. Entitlement chỉ được ghi sau khi on-chain evidence được xác minh. Local tests đã qua; chưa có giao dịch Kivuno trên Fuji. Explorer chỉ là đường dẫn kiểm chứng cho người dùng, không phải authority.
+Verifier/API đối chiếu transaction sender/input, Fuji chain, receipt success, contract, `PlanPaid`, exact USDC transfer logs, server intent, payer, plan, token, amount và expiry. Giao dịch pending giữ nguyên quyền hiện có. Entitlement chỉ được ghi khi máy chủ đã xác minh giao dịch.
 
 Avalanche C-Chain là EVM, Fuji chain ID 43113; tài liệu Avalanche ghi block được consensus chấp nhận có finality khoảng một giây, nhưng receipt/log chỉ có sau khi block execution hoàn tất. Vì vậy cần phân biệt tx đã gửi, block accepted và receipt đã thực thi. Không cần đợi nhiều confirmation như Ethereum, nhưng vẫn phải chờ receipt và xử lý RPC/indexer lag.
 
@@ -150,22 +155,22 @@ Chain là nguồn sự thật về khoản thanh toán và thời hạn đã ghi
 
 ## Threat model và kiểm soát đề xuất
 
-| Mối đe dọa                                  | Kiểm soát thiết kế                                                                                                                                                   |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ví bị đổi sang attacker                     | Nonce one-time; domain/chain-bound signature; cần re-auth và quy trình đổi ví riêng; không cho bind lại chỉ bằng session cookie                                      |
-| Một ví được bind vào nhiều tài khoản Kivuno | Unique constraint trên normalized wallet address; đổi ví cần re-auth/recovery và giữ audit trail                                                                     |
-| Sai chain/token/contract                    | Backend và contract allowlist cố định Fuji/token; UI đọc chain id; verifier kiểm mọi địa chỉ/amount                                                                  |
-| Fake tx hash / success page                 | Chỉ receipt/event được verifier kiểm mới cập nhật paid                                                                                                               |
-| Duplicate event/retry                       | DB uniqueness + transaction nguyên tử; replay trả lại cùng entitlement                                                                                               |
-| Hai transaction dùng cùng payment intent    | Contract đánh dấu `paymentIntentId` đã tiêu thụ; DB đặt unique constraint trên intent ngoài unique tx/log                                                            |
-| Pending/RPC/indexer outage                  | Pending không cấp quyền; retry/reconcile theo tx và payment intent                                                                                                   |
-| Phishing/extension độc/XSS                  | Không giữ key; CSP/XSS hardening; không yêu cầu ký message mơ hồ; UI hiển thị recipient/amount/chain                                                                 |
-| Allowance rộng                              | Không approve unlimited; ưu tiên Fuji USDC `receiveWithAuthorization` exact authorization đã xác minh ở ABI/source; fallback exact amount và xử lý allowance còn lại |
-| Front-run authorization                     | Dùng recipient-bound receive path nếu đúng contract hỗ trợ; bind intent/plan; không dùng transferWithAuthorization “mù” vào contract                                 |
-| Abuse relayer/gas sponsor                   | Giới hạn domain/chain/token/amount/deadline/nonce, quota theo user, replay protection, budget cap và kill switch                                                     |
-| Sai token/treasury/giá                      | Contract Fuji-only, token/treasury immutable, giá on-chain cố định; backend xác minh địa chỉ/token/số lượng                                                          |
-| Lách profile quota bằng nhiều máy           | Reservation cloud atomic; local limit chỉ là UX, không phải authority                                                                                                |
-| Max abuse / entitlement giả                 | Max gắn với user/owner được xác minh; enforcement trên API; rate/resource controls riêng                                                                             |
+| Mối đe dọa                                   | Kiểm soát thiết kế                                                                                                                                                   |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ví bị đổi sang attacker                      | Nonce one-time; domain/chain-bound signature; cần re-auth và quy trình đổi ví riêng; không cho bind lại chỉ bằng session cookie                                      |
+| Một ví được bind vào nhiều tài khoản Kivuno  | Unique constraint trên normalized wallet address; đổi ví cần re-auth/recovery và giữ audit trail                                                                     |
+| Sai chain/token/contract                     | Backend và contract allowlist cố định Fuji/token; UI đọc chain id; verifier kiểm mọi địa chỉ/amount                                                                  |
+| Fake tx hash / success page                  | Chỉ receipt/event được verifier kiểm mới cập nhật paid                                                                                                               |
+| Duplicate event/retry                        | DB uniqueness + transaction nguyên tử; replay trả lại cùng entitlement                                                                                               |
+| Hai transaction dùng cùng payment intent     | Contract đánh dấu `paymentIntentId` đã tiêu thụ; DB đặt unique constraint trên intent ngoài unique tx/log                                                            |
+| Pending/RPC/indexer outage                   | Pending không cấp quyền; retry/reconcile theo tx và payment intent                                                                                                   |
+| XSS hoặc mã độc chạy trong origin thanh toán | CSP giới hạn nguồn script và kết nối. Ví được giải mã trong phiên để ký. XSS cùng origin vẫn là rủi ro khi phiên đang mở.                                            |
+| Allowance rộng                               | Không approve unlimited; ưu tiên Fuji USDC `receiveWithAuthorization` exact authorization đã xác minh ở ABI/source; fallback exact amount và xử lý allowance còn lại |
+| Front-run authorization                      | Dùng recipient-bound receive path nếu đúng contract hỗ trợ; bind intent/plan; không dùng transferWithAuthorization “mù” vào contract                                 |
+| Abuse relayer/gas sponsor                    | Giới hạn domain/chain/token/amount/deadline/nonce, quota theo user, replay protection, budget cap và kill switch                                                     |
+| Sai token/treasury/giá                       | Contract Fuji-only, token/treasury immutable, giá on-chain cố định; backend xác minh địa chỉ/token/số lượng                                                          |
+| Lách profile quota bằng nhiều máy            | Reservation cloud atomic; local limit chỉ là UX, không phải authority                                                                                                |
+| Max abuse / entitlement giả                  | Max gắn với user/owner được xác minh; enforcement trên API; rate/resource controls riêng                                                                             |
 
 Đây là threat model thiết kế, chưa phải audit Solidity hoặc pentest.
 
@@ -179,26 +184,26 @@ Nghiên cứu nên làm sau demo: phỏng vấn 5–8 người dùng hiện hữ
 
 ## Kế hoạch triển khai và cổng nghiệm thu
 
-| Mốc                     | Nội dung                                                                                             | Điều kiện/kiểm thử                                                               |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| 0. Yêu cầu sản phẩm     | Đã chốt Plus/Max, giá, USDC, gas, gia hạn, đổi ví, offline, group owner, downgrade                   | Không cần hỏi lại các lựa chọn đã xác nhận                                       |
-| 1. Wallet identity      | Implemented: one-time nonce, unique binding, wallet change requires two signatures                   | Browser connection and signed wallet bind still need Fuji verification           |
-| 2. Fuji contract        | Implemented, locally tested, and deployed on Fuji; transaction is Explorer-final                     | Independent security review remains                                               |
-| 3. Billing verifier     | Implemented PaymentIntent, receipt/event verifier and idempotent ledger                              | Fuji pending/revert/wrong-chain, RPC outage and live intent reconciliation       |
-| 4. Entitlement + quotas | Implemented account entitlement, group owner quotas, desktop profile reservations and lock selection | Fuji end-to-end and manual downgrade/device-sync checks                          |
-| 5. UI/wallet flow       | Implemented Plus/Max selection, wallet binding, exact amount/recipient and payment confirmation      | Manual responsive, keyboard and screen-reader review                             |
-| 6. Security review      | Solidity, authorization, key storage, API, event processing, UX                                      | Independent reviewer; address all findings and record remaining risk             |
-| 7. Fuji demo            | Contract deployment verified on Fuji; no USDC payment has been made                                  | Verify full purchase→receipt/event→entitlement→quota flow                         |
-| 8. Handoff              | Setup, architecture, limitations, video script, rubric evidence                                      | Reproducible setup; label inherited vs new work; do not submit externally        |
-| 9. Release              | Local typecheck, build and focused tests pass; Git identity verified; source pushed to `main`        | Cloud deploy and on-chain Fuji demo remain separate gates                        |
+| Mốc                     | Nội dung                                                                                             | Điều kiện/kiểm thử                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 0. Yêu cầu sản phẩm     | Đã chốt Plus/Max, giá, USDC, gas, gia hạn, đổi ví, offline, group owner, downgrade                   | Không cần hỏi lại các lựa chọn đã xác nhận                                 |
+| 1. Wallet identity      | Implemented: one-time nonce, unique binding, wallet change requires two signatures                   | Browser connection and signed wallet bind still need Fuji verification     |
+| 2. Fuji contract        | Implemented, locally tested, and deployed on Fuji; transaction is Explorer-final                     | Independent security review remains                                        |
+| 3. Billing verifier     | Implemented PaymentIntent, receipt/event verifier and idempotent ledger                              | Fuji pending/revert/wrong-chain, RPC outage and live intent reconciliation |
+| 4. Entitlement + quotas | Implemented account entitlement, group owner quotas, desktop profile reservations and lock selection | Fuji end-to-end and manual downgrade/device-sync checks                    |
+| 5. UI/wallet flow       | Implemented Plus/Max selection, wallet binding, exact amount/recipient and payment confirmation      | Manual responsive, keyboard and screen-reader review                       |
+| 6. Security review      | Solidity, authorization, key storage, API, event processing, UX                                      | Independent reviewer; address all findings and record remaining risk       |
+| 7. Fuji demo            | Contract deployment verified on Fuji                                                                 | Verify purchase receipt, treasury transfer, entitlement and quota together |
+| 8. Handoff              | Setup, architecture, limitations, video script, rubric evidence                                      | Reproducible setup; label inherited vs new work; do not submit externally  |
+| 9. Release              | Publish application source and reproducible demo instructions                                        | Record focused tests and the verified commit on main                       |
 
-Contract KivunoPlans đã được người dùng ký và triển khai lên Fuji ngày 19/11/2026; địa chỉ là `0xBA7321C1F3107b95Acec6C3490e3130aFaE7a220`, giao dịch là `0x87d0e5b524d729fbe8e8bc67c57201d1729105e41a7cf0a02bb66400cb80bf1f` và Explorer báo SUCCESS/Final. Giao dịch tạo contract, không thanh toán USDC. Ứng dụng chưa được deploy lên Vercel theo lựa chọn người dùng. Cấu hình public contract address trong backend local, rồi kiểm chứng một lần mua test USDC end-to-end; chưa tuyên bố demo thanh toán hoàn chỉnh cho tới khi entitlement và quota được xác minh. Vercel CLI không cần cho phạm vi GitHub-only hiện tại. Không dùng tài sản mainnet hoặc giá trị thật để lấy test token.
+Contract KivunoPlans đã triển khai trên Fuji tại `0xBA7321C1F3107b95Acec6C3490e3130aFaE7a220`. [Giao dịch tạo contract](https://build.avax.network/explorer/fuji/c-chain/tx/0x87d0e5b524d729fbe8e8bc67c57201d1729105e41a7cf0a02bb66400cb80bf1f) và giao dịch mua gói là hai bằng chứng riêng. Khi demo, dùng transaction hash do trang thanh toán trả về để đối chiếu chuyển USDC tới treasury và gói đã cấp.
 
 ## Kịch bản demo 2–3 phút (sau khi hệ thống thật chạy)
 
 1. Mở Kivuno, chỉ Free và minh họa giới hạn 3 profile/3 người.
 2. Chọn Plus; màn hình hiện Fuji, USDC contract, số USDC chính xác, recipient, thời hạn và gas payer.
-3. Người dùng xác nhận trong ví; không bật auto-renew hay allowance rộng.
+3. Người mua xác nhận trên trang Kivuno. Ví nhúng ký số USDC của lần mua và giao dịch tới contract.
 4. Hiện pending cho đến khi receipt/event Fuji được backend xác minh; mở transaction trên explorer.
 5. Kivuno cập nhật tier và cho tạo profile/group member thứ 4 trong đúng hạn mức.
 6. Mở entitlement record/contract event và test tự động tương ứng; kết thúc bằng giới hạn hiện biết và nhấn mạnh đây là Fuji test USDC, không phải thanh toán thật.
@@ -244,6 +249,6 @@ Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; khô
 
 Trang `tools/kivuno-fuji-deploy.html` là công cụ cục bộ đã dùng để triển khai `KivunoPlans` bằng ví Core. Explorer xác nhận giao dịch thành công ở Fuji C-Chain (43113), và trang đã kiểm tra bytecode cùng giá trị USDC/treasury sau deploy. Công cụ chỉ cho phép Fuji, không có private key/seed, không gửi token allowance và không có đường deploy mainnet. Địa chỉ contract và transaction hash đã lưu trong [hướng dẫn deploy Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 
-Backend chưa chạy ở cloud mode với `KIVUNO_FUJI_PAYMENT_CONTRACT` đã deploy. Billing routes chỉ được đăng ký khi `RELAY_DEPLOYMENT=cloud`; `npm run dev:server` mặc định không bật chúng. Một demo đầu-cuối cần môi trường HTTPS cloud-mode được cấu hình hoặc một local HTTPS harness riêng; Vercel vẫn chưa deploy theo lựa chọn người dùng. Bộ kiểm tra cấu hình chỉ bật thanh toán khi chain, bytecode và các giá trị immutable khớp. Giao dịch mua gói vẫn cần người mua xem và ký trong Core; entitlement chỉ được cập nhật sau khi verifier xác nhận receipt/event. Chưa tuyên bố demo đầu-cuối cho đến khi một lần thanh toán test USDC trên Fuji và quota được xác minh.
+Chạy `npm run dev:fuji-demo` để bật API xác thực và thanh toán trên loopback với contract Fuji đã triển khai. Xem hướng dẫn cấp tiền test cho ví người mua, phục hồi ví và kiểm tra quyền sau giao dịch trong [runbook Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 
-Ứng dụng Vercel chưa deploy theo phạm vi người dùng đã chọn. Không lưu private key/seed phrase; không dùng tiền thật hoặc tài sản mainnet trong demo.
+Ứng dụng trình diễn trên Fuji bằng tài sản testnet.

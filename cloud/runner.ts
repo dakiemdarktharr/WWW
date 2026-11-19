@@ -199,6 +199,14 @@ RELAY_HEALTH
       RELAY_DEPLOYMENT: 'cloud',
       RELAY_PUBLIC_ORIGIN: config.publicOrigin,
       RELAY_GATEWAY_SECRET: config.gatewaySecret,
+      ...(process.env.KIVUNO_FUJI_PAYMENT_CONTRACT
+        ? {
+            KIVUNO_FUJI_PAYMENT_CONTRACT: process.env.KIVUNO_FUJI_PAYMENT_CONTRACT,
+            KIVUNO_FUJI_USDC_ADDRESS: process.env.KIVUNO_FUJI_USDC_ADDRESS || '',
+            KIVUNO_FUJI_TREASURY_ADDRESS: process.env.KIVUNO_FUJI_TREASURY_ADDRESS || '',
+            KIVUNO_FUJI_RPC_URL: process.env.KIVUNO_FUJI_RPC_URL || '',
+          }
+        : {}),
       RELAY_AUTH_SECRET: config.authSecret,
       RELAY_OWNER_PASSWORD: config.password,
       RELAY_DATA_DIR: '/vercel/sandbox/state',
