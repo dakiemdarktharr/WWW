@@ -62,6 +62,19 @@ Lượt bổ sung dùng câu tiếng Việt không dấu gặp ngưỡng dự tr
 
 Ở commit `00ba51b`, Windows qua 80 bài Shared Groups, quota và session, cùng bước build. macOS arm64 qua 366 bài, bỏ qua sáu bài theo nền tảng, và qua build, Electron và giao diện Shared Groups. Bộ 1.000 tin với planner mô phỏng đạt trên cả hai. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44534005500)
 
+### Phương án dự phòng được nêu trong tin nhắn
+
+Với yêu cầu “nhờ Gemini đọc file này, hết lượt thì để Claude của Bình đọc”, Sade giữ một tác vụ với một harness chính và một harness dự phòng. Sade ưu tiên lượt còn dùng được của Gemini trước các việc người dùng để nhóm tự phân công. Nếu Gemini hết lượt được cấp hoặc bị kiểm tra quota từ chối trước khi chạy, Claude nhận cùng phạm vi và điều kiện nếu quyền của Claude còn hiệu lực. Sade chỉ tự chọn người dự phòng khi người gửi giao quyền lựa chọn đó.
+
+Kiểm thử hồi quy đi qua Shared Groups và giao việc với tài khoản mô phỏng. Gemini hết lượt ở lúc lập kế hoạch hoặc trước khi bắt đầu đều chuyển đúng một tác vụ chỉ đọc cho Claude. Khi cả hai hết lượt, một harness thứ ba có quyền vẫn không nhận việc. Thử gửi lại cùng mã tin chỉ tạo một workflow. Bài thử bộ phân công xác nhận việc tự giao có effort cao vẫn nhường lượt của Gemini cho tác vụ ưu tiên đã nêu. Scope, quyền ghi, yêu cầu hệ điều hành và review độc lập vẫn được kiểm tra khi tìm harness thay thế.
+
+Tập bổ sung có năm câu viết riêng về kiểu nhắn casual, không dấu, tiếng Anh kỹ thuật, giao Sade tự chọn phương án dự phòng và giữ người thực hiện cố định. Lượt GPU Qwen 4B và 1.7B trả lỗi cấp phát. Lượt 1.7B trên CPU cũng dừng khi nạp model, kể cả sau khi thử tắt repack và bật mmap. Các lỗi này chưa có đầu ra model để chấm độ hiểu. Tài khoản Codex dùng kiểm thử cũng đang ở ngưỡng dự trữ. [Tùy chọn bộ nhớ của llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-quota-fallback.json --quota-fallback
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-quota-fallback-1.7b.json --quota-fallback --model qwen3:1.7b-q4_K_M
+```
+
 Sau review độc lập, chủ máy kiểm tra và tích hợp thay đổi cục bộ. Sade bàn giao patch đã duyệt cho nhiệm vụ phụ thuộc qua Shared Groups. Desktop nhận kiểm tra digest và danh sách file, rồi áp dụng patch trong worktree riêng trước khi mở harness. Nhánh Git của người nhận chỉ nhận thay đổi khi chủ máy chọn tích hợp. Quyền cũ vẫn sử dụng **Share published revision**. Cấp lại quyền trên desktop mới để cho phép bàn giao patch.
 
 **Share published revision** kiểm tra commit đã duyệt còn trong lịch sử nhánh remote và các file được review vẫn giữ nguyên nội dung và mode Git. Một commit mới chỉ sửa file khác vẫn cho phép bàn giao commit đã duyệt. Nếu nhánh remote đã đổi file được review hoặc đã bỏ commit khỏi lịch sử, Sade giữ bước bàn giao để người dùng kiểm tra. Bài thử dùng hai clone và một bare remote, bao gồm trường hợp máy tác giả chưa có object của commit mới. Khi cần tải object để đối chiếu, máy tác giả giữ nguyên nhánh hiện tại, các ref và `FETCH_HEAD`.

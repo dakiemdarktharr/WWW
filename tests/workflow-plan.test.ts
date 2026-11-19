@@ -132,6 +132,27 @@ test('Sade assigns unspecified work to usable specialists while preserving a nam
   );
 });
 
+test('Shared Sade uses an available named primary before spending its turn on open work', () => {
+  const result = allocatePlan(
+    plan(
+      task('open', { effort: 8 }),
+      task('preferred', { effort: 1, preferredMemberId: 'a', fallbackMemberId: 'b' }),
+    ),
+    [member('a'), member('b')],
+    {
+      preferSpecialists: true,
+      turns: new Map([
+        ['a', 1],
+        ['b', 1],
+      ]),
+    },
+  );
+  assert.deepEqual(
+    result.map(({ memberId }) => memberId),
+    ['b', 'a'],
+  );
+});
+
 test('Shared Sade accounts for named work and assigns a review outside the authors’ accounts', () => {
   const roster = [
     member('a-gemini', 'engineer'),

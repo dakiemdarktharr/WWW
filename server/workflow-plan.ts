@@ -191,7 +191,8 @@ export function allocatePlan(
     (a, b) =>
       Number(a.kind === 'review') - Number(b.kind === 'review') ||
       (options.preferSpecialists
-        ? Number(Boolean(fixedAssignee(b))) - Number(Boolean(fixedAssignee(a)))
+        ? Number(Boolean(fixedAssignee(b))) - Number(Boolean(fixedAssignee(a))) ||
+          Number(Boolean(b.preferredMemberId)) - Number(Boolean(a.preferredMemberId))
         : 0) ||
       b.effort - a.effort ||
       compareKey(a.key, b.key),
