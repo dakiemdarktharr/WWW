@@ -234,6 +234,13 @@ const writes = writesTask;
 const leaseMs = 30_000;
 const grantMs = 60 * 60_000;
 
+const sharedPlanKinds = {
+  'edit-files': 'code',
+  'edit-design': 'design',
+  'research-read-only': 'research',
+  'review-read-only': 'review',
+} as const satisfies Record<string, PlanTask['kind']>;
+
 export const groupPlanTool = {
   ...planTool,
   description:
@@ -250,8 +257,9 @@ export const groupPlanTool = {
             ...planTool.inputSchema.properties.tasks.items.properties,
             kind: {
               ...planTool.inputSchema.properties.tasks.items.properties.kind,
+              enum: Object.keys(sharedPlanKinds),
               description:
-                'Use code for a file change (including documents) or paired OS tools. Research and review are read-only.',
+                'Choose by action and permissions: edit-files creates or updates files such as docs, code or config, or uses paired OS tools. edit-design edits visual assets. research-read-only investigates without editing. review-read-only inspects existing work without editing.',
             },
             preferredMemberId: {
               type: 'string',
@@ -280,6 +288,7 @@ export const groupPlanTool = {
 
 const sharedPlanRouting = z
   .object({
+    kind: z.string(),
     preferredMemberId: z.string().min(4).max(36),
     requiredPlatform: z
       .enum(['any', 'win32', 'darwin', 'linux'])
@@ -300,7 +309,8 @@ export function parseSharedGroupPlan(input: unknown, roster: readonly string[]) 
     );
     if (choice !== 'auto' && !member)
       throw new DomainError('Use a teammate reference from the supplied team or auto.');
-    return { ...task, preferredMemberId: member };
+    const kind = Object.entries(sharedPlanKinds).find(([action]) => action === task.kind)?.[1];
+    return { ...task, kind: kind ?? task.kind, preferredMemberId: member };
   });
   return parseTeamPlan({ ...plan, tasks });
 }

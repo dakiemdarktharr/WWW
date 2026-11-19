@@ -55,13 +55,63 @@ const handoffHoldout = [
   'Cho Bep dien quy uoc vao docs/contract.md. Khi nao nhan dung file thi May moi sua src/signup.ts nha.',
   'Have Mây implement src/signup.ts only once Bếp has written the required signup rules to docs/contract.md.',
 ];
+const defaultHandoff = { source: 'docs/contract.md', target: 'src/signup.ts', sourceOwner: 0 };
+const variedHandoffs = [
+  {
+    message:
+      'May chot bang mau vao assets/palette.json giup nha. Xong Bep lay no ra chinh src/theme.css. Bep doi co bang mau roi moi chinh.',
+    source: 'assets/palette.json',
+    target: 'src/theme.css',
+    sourceOwner: 1,
+  },
+  {
+    message:
+      'Nhờ Bếp thêm các trường hồ sơ vào config/fields.yaml. Mây cập nhật src/profile.ts theo cấu hình Bếp gửi sau khi đã hoàn tất.',
+    source: 'config/fields.yaml',
+    target: 'src/profile.ts',
+    sourceOwner: 0,
+  },
+  {
+    message:
+      'Mây should add tests/widget.test.ts against the contract Bếp will write to docs/widget-api.md first. Mây needs the actual document before writing the tests.',
+    source: 'docs/widget-api.md',
+    target: 'tests/widget.test.ts',
+    sourceOwner: 0,
+  },
+  {
+    message:
+      'Ê Bếp chờ Mây cập nhật data/columns.csv xong thì hãy sửa src/importer.ts theo tên cột mới giùm tui nhe.',
+    source: 'data/columns.csv',
+    target: 'src/importer.ts',
+    sourceOwner: 1,
+  },
+  {
+    message:
+      'Bếp: implement the invoice total in src/invoice.ts. Mây: update docs/invoice.md once Bếp’s implementation is ready so the examples reflect the final behavior.',
+    source: 'src/invoice.ts',
+    target: 'docs/invoice.md',
+    sourceOwner: 0,
+  },
+  {
+    message:
+      'Lam mot luot nhe: Bep se bo sung index vao db/products.sql, con May sua truy van trong src/products.ts sau khi nhan schema moi cua Bep.',
+    source: 'db/products.sql',
+    target: 'src/products.ts',
+    sourceOwner: 0,
+  },
+];
 
 const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { replay: { type: 'string' }, 'handoff-holdout': { type: 'boolean' } },
+  options: {
+    replay: { type: 'string' },
+    'handoff-holdout': { type: 'boolean' },
+    'handoff-varied': { type: 'boolean' },
+  },
 });
+assert.ok(!(values['handoff-holdout'] && values['handoff-varied']), 'Choose one handoff suite');
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
 assert.notEqual(output, source, 'Choose a separate output file for replay');
@@ -219,7 +269,12 @@ function scopedWriter(jobs: SharedSadeJob[], file: string) {
   return matches[0];
 }
 
-function assess(scenario: Case, plan: ReturnType<typeof parseTeamPlan>, run: SharedSadeRun) {
+function assess(
+  scenario: Case,
+  plan: ReturnType<typeof parseTeamPlan>,
+  run: SharedSadeRun,
+  handoff = defaultHandoff,
+) {
   if (scenario === 'missing-mac') {
     assert.equal(run.state, 'blocked', 'missing Mac must stop assignment');
     assert.ok(
@@ -243,15 +298,11 @@ function assess(scenario: Case, plan: ReturnType<typeof parseTeamPlan>, run: Sha
   const jobs = run.jobs.filter((job) => job.phase === 'task');
   if (scenario === 'handoff') {
     assert.equal(jobs.length, 2, 'two tasks are sufficient');
-    const contract = scopedWriter(jobs, 'docs/contract.md');
-    const frontend = scopedWriter(jobs, 'src/signup.ts');
-    assert.equal(contract.grantId, grants[0], 'preserve the named contract owner');
-    assert.equal(frontend.grantId, grants[1], 'preserve the named frontend owner');
-    assert.deepEqual(
-      frontend.task?.dependsOn,
-      [contract.task?.key],
-      'handoff must precede frontend',
-    );
+    const source = scopedWriter(jobs, handoff.source);
+    const target = scopedWriter(jobs, handoff.target);
+    assert.equal(source.grantId, grants[handoff.sourceOwner], 'preserve the named producer');
+    assert.equal(target.grantId, grants[1 - handoff.sourceOwner], 'preserve the named recipient');
+    assert.deepEqual(target.task?.dependsOn, [source.task?.key], 'schedule the producer first');
   } else if (scenario === 'duplicate') {
     scopedWriter(jobs, 'src/menu.ts');
     assert.equal(
@@ -308,24 +359,36 @@ const selected =
     (entry: { name: string }) => entry.name === model,
   );
 assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
-const cases = values['handoff-holdout']
-  ? handoffHoldout.map((message, index) => ({
-      scenario: 'handoff' as const,
-      id: `handoff/holdout-${index + 1}`,
+const cases: {
+  scenario: Case;
+  id: string;
+  message: string;
+  handoff?: typeof defaultHandoff;
+}[] = values['handoff-varied']
+  ? variedHandoffs.map(({ message, ...handoff }, index) => ({
+      scenario: 'handoff',
+      id: `handoff/varied-${index + 1}`,
       message,
+      handoff,
     }))
-  : Object.entries(messages).flatMap(([scenario, inputs]) =>
-      inputs.map((message, index) => ({
-        scenario: scenario as Case,
-        id: `${scenario}/${index + 1}`,
+  : values['handoff-holdout']
+    ? handoffHoldout.map((message, index) => ({
+        scenario: 'handoff' as const,
+        id: `handoff/holdout-${index + 1}`,
         message,
-      })),
-    );
+      }))
+    : Object.entries(messages).flatMap(([scenario, inputs]) =>
+        inputs.map((message, index) => ({
+          scenario: scenario as Case,
+          id: `${scenario}/${index + 1}`,
+          message,
+        })),
+      );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved) assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
 await mkdir(path.dirname(output), { recursive: true });
-for (const { scenario, id, message } of cases) {
+for (const { scenario, id, message, handoff } of cases) {
   const row = await withGroup(scenario, message, async (group) => {
     const prompt = sharedGroupPlanningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
@@ -370,7 +433,7 @@ for (const { scenario, id, message } of cases) {
       parsed = true;
       group.finish(plan);
       run = group.jobs();
-      const writer = assess(scenario, plan, run);
+      const writer = assess(scenario, plan, run, handoff);
       if (writer) group.verifyReview(writer);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);

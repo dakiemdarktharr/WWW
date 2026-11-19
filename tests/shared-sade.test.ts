@@ -217,12 +217,19 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
           );
         const summary = 'Controlled structured fixture authored independently of the allocator.';
         const roster = plan.team.map((member) => member.id);
+        const actions = {
+          code: 'edit-files',
+          design: 'edit-design',
+          research: 'research-read-only',
+          review: 'review-read-only',
+        };
         const proposed = {
           summary,
           tasks: tasks.map((task) => {
             const index = roster.indexOf(task.preferredMemberId || '');
             return {
               ...task,
+              kind: actions[task.kind],
               preferredMemberId:
                 index >= 0 ? sharedPlanMemberRef(index) : task.preferredMemberId || 'auto',
               requiredPlatform: task.requiredPlatform || 'any',
@@ -634,29 +641,32 @@ test(
     const validPlan = {
       summary: 'Build architecture then inspect the result in another harness.',
       tasks: [
-        work('architecture', {
-          kind: 'code',
-          scope: ['architecture.txt'],
-          preferredMemberId: 'member-1',
-        }),
-        work('frontend', {
-          kind: 'code',
-          scope: ['frontend.txt'],
-          preferredMemberId: 'member-2',
-          dependsOn: ['review-contract'],
-          acceptance: 'The form preserves the agreed registration field names.',
-        }),
-        work('review-contract', {
-          kind: 'review',
-          scope: ['architecture.txt'],
-          preferredMemberId: 'member-2',
-          dependsOn: ['architecture'],
-          acceptance: 'Verify the registration field names match the agreed contract.',
-        }),
-        work('verify-ui', {
-          preferredMemberId: 'member-1',
-          dependsOn: ['frontend'],
-        }),
+        {
+          ...work('architecture', { scope: ['architecture.txt'], preferredMemberId: 'member-1' }),
+          kind: 'edit-files',
+        },
+        {
+          ...work('frontend', {
+            scope: ['frontend.txt'],
+            preferredMemberId: 'member-2',
+            dependsOn: ['review-contract'],
+            acceptance: 'The form preserves the agreed registration field names.',
+          }),
+          kind: 'edit-design',
+        },
+        {
+          ...work('review-contract', {
+            scope: ['architecture.txt'],
+            preferredMemberId: 'member-2',
+            dependsOn: ['architecture'],
+            acceptance: 'Verify the registration field names match the agreed contract.',
+          }),
+          kind: 'review-read-only',
+        },
+        {
+          ...work('verify-ui', { preferredMemberId: 'member-1', dependsOn: ['frontend'] }),
+          kind: 'research-read-only',
+        },
       ].map((task) => ({ ...task, requiredPlatform: task.requiredPlatform || 'any' })),
     };
     const invalid = await callTool(0, planner.session, planner.peer, 'relay_submit_plan', {
@@ -679,6 +689,7 @@ test(
     assert.ok(plannedReviewId);
     assert.equal(await pump(1), undefined, 'Review waits for the author’s actual patch');
     assert.equal(writer.task?.key, 'architecture');
+    assert.equal(writer.task?.kind, 'code');
     const author = await sessionFor(0, writer);
     const sendUpdate = (jobId: string, text: string) => ({
       action: 'sade-update-task',
@@ -764,6 +775,7 @@ test(
     );
     const frontend = (await pump(1))!;
     assert.equal(frontend.task?.key, 'frontend');
+    assert.equal(frontend.task?.kind, 'design');
     assert.ok(frontend.prerequisites[0]?.patch);
     const reader = await sessionFor(1, frontend);
     assert.match(
@@ -862,6 +874,7 @@ test(
     await pump(1);
     const verification = (await pump(0))!;
     assert.equal(verification.task?.key, 'verify-ui');
+    assert.equal(verification.task?.kind, 'research');
     assert.deepEqual(
       verification.prerequisites.flatMap((entry) =>
         entry.patch ? [entry.patch.change.files] : [],

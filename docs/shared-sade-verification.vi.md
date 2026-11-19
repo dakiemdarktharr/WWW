@@ -6,6 +6,8 @@ Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế h
 
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
 
+Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
+
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
 
 Shared Groups nhận một workflow đang hoạt động cho mỗi nhóm hoặc project. Bài hồi quy dùng hai người gửi và xác nhận tin yêu cầu thứ hai bị từ chối khi tác vụ ghi đang chạy. Sau khi tác vụ kết thúc, cùng ID tin nhắn có thể được gửi lại để mở workflow mới.
@@ -122,6 +124,24 @@ Bài hồi quy desktop dùng phiên Gemini mô phỏng để nộp kế hoạch 
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-final.json
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-handoff-holdout.json --handoff-holdout
+```
+
+### Lập kế hoạch theo hành động
+
+Biểu mẫu mới yêu cầu lập riêng việc tạo đầu ra và việc dùng đầu ra đó. Planner ghi rõ ai làm mỗi việc, file nào được sửa và task nào phải hoàn tất trước. Với yêu cầu tránh hai người sửa cùng một file, prompt yêu cầu một người kiểm tra commit cũ rồi chỉ sửa phần còn thiếu. Với tin chỉ báo tình hình, planner kết thúc mà không cấp lượt thực thi.
+
+| Tập tin nhắn                            | Prompt trước | Prompt và biểu mẫu theo hành động |
+| --------------------------------------- | ------------ | --------------------------------- |
+| 18 tin tình huống A–D và chat           | 15/18        | 16/18                             |
+| 3 câu bàn giao viết riêng               | 0/3          | 2/3                               |
+| 6 câu bàn giao có file và assignee khác | 2/6          | 2/6                               |
+
+Qwen đạt B và C 3/3 mỗi tình huống, D 6/6 và chat 3/3. Điểm A trong tập chính vẫn là 1/3. Một câu tạo tác vụ sửa tài liệu ở phạm vi cả project, một câu giao bước frontend như review chỉ đọc. Trong tập sáu câu, còn có kế hoạch thiếu người tạo đầu ra, đảo dependency hoặc gộp hai file vào cùng một việc. Các biến thể ẩn vai trò hoặc nhận tên trực tiếp có ba điểm đúng ở tập sáu câu, đồng thời giảm kết quả ở B và D. Sade giữ mã teammate và chính sách cấp quyền hiện tại. Qwen vẫn dùng offline.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-action-main.json
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-action-handoff.json --handoff-holdout
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-action-varied.json --handoff-varied
 ```
 
 ### Qwen review bản vá chức năng
