@@ -1,6 +1,6 @@
 # Thiết kế thanh toán Kivuno Plus/Max trên Avalanche
 
-**Trạng thái:** contract, compiler script, verifier/API, giao diện và quota profile/group đã được triển khai trong source. Kiểm thử local, typecheck, compile contract và build hiện đã qua; chưa deploy hay thử thanh toán end-to-end trên Fuji.
+**Trạng thái:** contract, compiler script, verifier/API, giao diện và quota profile/group đã được triển khai, kiểm tra local và push trực tiếp lên GitHub `main`. Ví deployer hiện có 20 Fuji test USDC nhưng chưa có test AVAX; contract chưa deploy và chưa chạy payment end-to-end.
 **Ngày kiểm tra nguồn:** 19/11/2026.
 **Phạm vi hiện tại:** Fuji C-Chain, USDC testnet, demo cuộc thi. Mainnet và nhận tiền thật chưa được chốt hoặc cho phép.
 
@@ -192,7 +192,7 @@ Nghiên cứu nên làm sau demo: phỏng vấn 5–8 người dùng hiện hữ
 | 8. Handoff              | Setup, architecture, limitations, video script, rubric evidence                                      | Reproducible setup; label inherited vs new work; do not submit externally        |
 | 9. Release              | Local typecheck, build and focused tests pass; Git identity verified; source pushed to `main`        | Cloud deploy and on-chain Fuji demo remain separate gates                        |
 
-Chưa deploy contract hoặc app. Vercel CLI chưa được cài; nên cài `npm i -g vercel` để mở các thao tác `vercel env pull`, deploy và logs khi cấu hình cloud billing. Không deploy mainnet hoặc dùng tài sản có giá trị thật trong phạm vi này.
+Contract và app chưa deploy. Người dùng chốt giai đoạn hiện tại chỉ push GitHub, chưa deploy app. Để tiếp tục demo on-chain cần có test AVAX tại đúng ví deployer; sau đó người dùng phải xem và ký giao dịch deploy bằng Core. Vercel CLI không cần cho phạm vi GitHub-only hiện tại. Không dùng tài sản mainnet hoặc giá trị thật để lấy test token.
 
 ## Kịch bản demo 2–3 phút (sau khi hệ thống thật chạy)
 
@@ -246,7 +246,8 @@ Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; khô
 - Stripe repo và docs đã được nghiên cứu để học idempotency, event verification và entitlement; không chép mã Stripe.
 - Fuji USDC/chain ID đã xác định; live RPC trả `USD Coin`, version `2`, decimals `6`. Contract Fuji-only, compiler, backend payment API, UI Plus/Max và quota profile/group đã có trong source.
 - Kiểm tra local ngày 19/11/2026: typecheck, Prettier trên file hỗ trợ, build Vite/cloud, compile Solidity Cancun/Shanghai và 10 kiểm thử billing/contract/collaboration đều qua. Toàn bộ suite trước đó có 328 pass, 1 skip; sau thay đổi UI gần nhất đã chạy lại các nhóm liên quan.
-- Ví deployer/treasury do người dùng cung cấp là `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`. RPC Fuji cho thấy ví này có 0 AVAX và 0 USDC tại lần kiểm tra cuối.
-- Builder Hub báo nhận 0.5 AVAX, nhưng lần claim đó dùng Console Wallet nội bộ (đuôi địa chỉ hiển thị `073F`), không phải ví deployer. Không dùng số dư này để deploy. Người dùng đã kết nối Core Extension sau đó; địa chỉ được cấp quyền cần đối chiếu trong UI trước giao dịch. RPC Fuji vẫn trả 0 AVAX và 0 USDC cho ví deployer; Builder Hub hiện báo cooldown faucet.
-- Source đã được push trực tiếp lên GitHub `main` trong commit `3b57594` dưới tài khoản `Tienkhoaa2908`. Còn lại: nhận Fuji AVAX và Fuji test USDC vào đúng ví; deploy contract bằng giao dịch Core do người dùng ký; cấu hình env/deploy cloud; chạy payment end-to-end, kiểm tra receipt và entitlement.
-- Vercel CLI chưa cài; cần `npm i -g vercel` nếu dùng CLI để kéo env, deploy và đọc logs. Chưa có triển khai mainnet, thu tiền thật, submission cuộc thi hay audit độc lập.
+- Ví deployer/treasury công khai do người dùng cung cấp là `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`; Core Extension đã kết nối và UI hiển thị đúng địa chỉ này. Không có private key/seed trong repo hay chat.
+- Circle faucet đã gửi 20 test USDC đến ví trên; receipt Fuji thành công ở tx `0x70ecab7c60105a54f6a17c8803c411a77505b5cab5cb1be85cc915dcdbed7139`. Số dư AVAX test vẫn bằng 0 tại lần kiểm tra đã ghi nhận.
+- Builder Hub từng báo nhận 0.5 AVAX nhưng vào Console Wallet nội bộ (đuôi `073F`), không phải ví deployer; không dùng số dư đó. Builder Hub báo cooldown. QuickNode Fuji faucet hiện không cho tiếp tục vì ví không đạt yêu cầu số dư AVAX mainnet nhỏ; trang FAQ nói faucet không cần tài khoản QuickNode nhưng có điều kiện số dư mainnet. Không nạp tài sản mainnet chỉ để vượt điều kiện này.
+- Source đã được push trực tiếp lên GitHub `main`: `3b57594` (implementation) và `3161ac6` (status docs), dưới tài khoản `Tienkhoaa2908`. Người dùng chốt chưa deploy app Vercel. Còn lại cho demo on-chain: nhận test AVAX tại đúng ví, người dùng xem/ký giao dịch deploy bằng Core, kiểm tra độc lập cấu hình contract, rồi chạy luồng payment/receipt/entitlement đầu-cuối.
+- Chưa có contract/app deployment, payment đầu-cuối, audit độc lập, mainnet transaction, thu tiền thật hoặc contest submission. Vercel CLI không cần cho yêu cầu GitHub-only hiện tại.
