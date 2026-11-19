@@ -35,7 +35,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `bb19a07`. `npm run check` đạt 297 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng bản runtime, Windows đạt 302 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Các biến thể review chỉ định sẵn trong bộ 1.000 tin được chạy lại trên Windows ở commit sau. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44451753544)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `ba82f2c`. `npm run check` đạt 297 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng bản runtime, Windows đạt 302 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Các biến thể đi qua bộ phân giải mã teammate trong bộ 1.000 tin được chạy lại trên Windows ở commit sau. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44453737336)
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
@@ -67,6 +67,8 @@ gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/shared-groups-sade
 `npm run test:shared-sade` chạy 20 tình huống × 10 cặp provider/gói × 5 cách diễn đạt. Có tiếng Việt có dấu, không dấu, người mới, kỹ thuật và chuyên gia song ngữ. Bài test đi qua Shared Groups, database, grant và bộ điều phối thật. Kế hoạch do fixture cung cấp để kiểm tra điều kiện giao việc, review, budget và phục hồi cả khi đầu ra model bị sai. Gói dịch vụ trong bộ test là nhãn mô phỏng.
 
 Trong 200 tin về review, 80 ca có reviewer được chỉ định trong kế hoạch, còn 120 ca dùng reviewer do Sade chọn. Mỗi ca xác nhận có đúng một lượt review cho diff, chủ thay đổi không gửi được verdict thay reviewer và không có lượt review phát sinh sau khi tích hợp.
+
+850 kế hoạch hợp lệ về cấu trúc đi qua bộ phân giải mã teammate trước khi đến bộ điều phối. Thêm 50 ca chỉ định teammate chưa cấp quyền, xác nhận cả bước phân giải ở desktop và bước kiểm quyền ở bộ điều phối đều từ chối. Các ca chat thường và mất lease giữ cách kiểm thử riêng.
 
 | Phép đo                                              | Kết quả                                                            |
 | ---------------------------------------------------- | ------------------------------------------------------------------ |
@@ -113,7 +115,7 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner
 
 ### Tên teammate và sửa lỗi dependency trong lượt lập kế hoạch
 
-Qwen nhận mã teammate ngắn và tên không dấu, sau đó chạy lại đủ 18 ca. Kết quả là 15/18, gồm A 1/3, B 3/3, C 3/3, D 6/6 và tin chỉ báo tình hình 2/3. Ca A có dependency thiếu vẫn lỗi sau khi gửi lại phản hồi công cụ. Ba câu bàn giao giữ riêng đạt 0/3, với hai kế hoạch chọn phạm vi quá rộng và một kế hoạch giao sai người. Một biến thể prompt thử đánh số task và nhấn mạnh đường dẫn đạt cả ba ca A của bộ chính, đồng thời chỉ đạt 12/18 do điểm B, C và D giảm. Qwen tiếp tục dùng để đánh giá offline.
+Qwen nhận mã teammate ngắn và tên không dấu, sau đó chạy lại đủ 18 ca. Kết quả là 15/18, gồm A 1/3, B 3/3, C 3/3, D 6/6 và tin chỉ báo tình hình 2/3. Ca A có dependency thiếu vẫn lỗi sau khi gửi lại phản hồi công cụ. Ba câu bàn giao giữ riêng đạt 0/3, với hai kế hoạch xếp việc sửa tài liệu vào loại chỉ đọc và một kế hoạch giao sai người. Một biến thể prompt thử đánh số task và nhấn mạnh đường dẫn đạt cả ba ca A của bộ chính, đồng thời chỉ đạt 12/18 do điểm B, C và D giảm. Qwen tiếp tục dùng để đánh giá offline.
 
 Bài hồi quy desktop dùng phiên Gemini mô phỏng để nộp kế hoạch thiếu dependency, nhận lỗi có khóa hợp lệ, rồi nộp lại trong cùng lượt. Chỉ có một lần `turn/start`. Người được giao vẫn phải có quyền trong roster. Phép đo Ollama gửi thông báo lỗi qua `role: tool` trong cùng hội thoại và thử nhiều nhất một lần nếu nhận được lời gọi kế hoạch sai schema hoặc dependency. [Gọi công cụ trên Ollama](https://docs.ollama.com/capabilities/tool-calling)
 

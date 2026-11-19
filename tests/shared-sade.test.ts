@@ -6,6 +6,7 @@ import type { SharedSadeRun } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
 import {
   parseSharedGroupPlan,
+  sharedPlanMemberRef,
   sharedSadeUpdates,
   type SharedDelivery,
   type SharedFinish,
@@ -214,12 +215,28 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
               dependsOn: ['implementation'],
             }),
           );
+        const summary = 'Controlled structured fixture authored independently of the allocator.';
+        const roster = plan.team.map((member) => member.id);
+        const proposed = {
+          summary,
+          tasks: tasks.map((task) => {
+            const index = roster.indexOf(task.preferredMemberId || '');
+            return {
+              ...task,
+              preferredMemberId:
+                index >= 0 ? sharedPlanMemberRef(index) : task.preferredMemberId || 'auto',
+              requiredPlatform: task.requiredPlatform || 'any',
+            };
+          }),
+        };
+        if (item.scenario === 'no-access')
+          assert.throws(() => parseSharedGroupPlan(proposed, roster), /teammate reference/);
         f.finish(0, plan.id, {
           kind: 'plan',
-          plan: {
-            summary: 'Controlled structured fixture authored independently of the allocator.',
-            tasks,
-          },
+          plan:
+            item.scenario === 'no-access'
+              ? { summary, tasks }
+              : parseSharedGroupPlan(proposed, roster),
         });
         if (['no-platform', 'no-access', 'budget'].includes(item.scenario)) {
           assert.equal(f.view().sadeRuns[0].state, 'blocked');
