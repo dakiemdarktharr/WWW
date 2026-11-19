@@ -199,12 +199,15 @@ Chế độ `sade-eval` của **Verify RELAY** chạy khi được yêu cầu tr
 $ref = 'codex/sade-shared-groups-verification'
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=pilot
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=corpus
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=corpus -f sade_intent_prompt=ordered
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=contrast
 ```
 
 Khi lượt chạy kết thúc, tải bằng `gh run download <run-id> --repo dakiemdarktharr/WWW --dir .local/sade-ci-results`. Pilot lưu JSON của các kế hoạch và JSONL phân loại mẫu. Corpus lưu năm file JSONL. Mỗi dòng JSONL có ID, digest model, hash prompt, thời gian, đáp án và dự đoán hoặc lỗi. Dùng một thư mục riêng cho từng run để đối chiếu. Artifact CI giữ trong bảy ngày.
 
 Pilot đầu trên CPU ở commit `0e3c3fa` ghi đủ 23 dòng lập kế hoạch. Sáu ca trả kết quả và đều đạt tiêu chí chấm, gồm một ca giữ người đã chỉ định, một ca chống sửa trùng và bốn ca xác minh hoặc báo thiếu Mac. Mười bốn ca hết thời gian chờ 60 giây. Ba ca chat gặp lỗi kết nối khi runner bị dừng ở phút 20. Lượt này chưa chạy tới mẫu 40 tin. Cấu hình sau chạy năm ca quota, ba phần A–D và mẫu phân loại ở các job riêng, với 120 giây cho mỗi yêu cầu lập kế hoạch. [Pilot đầu và dữ liệu kết quả](https://github.com/dakiemdarktharr/WWW/actions/runs/44539788906)
+
+Trên 15 cặp viết riêng, cùng Qwen 4B chấm đúng 19/30 với prompt ban đầu và 24/30 với prompt có thứ tự ưu tiên. Hai prompt nhận đúng cả hai tin trong lần lượt 4 và 9 cặp. Số tin chỉ cập nhật nhận đúng tăng từ 5/15 lên 12/15. Số yêu cầu làm việc nhận đúng giảm từ 14/15 xuống 12/15. Prompt có thứ tự nhầm hai yêu cầu chung thành chat và một yêu cầu chung thành tránh sửa trùng. Đây là phép đo offline. [Lượt so sánh prompt](https://github.com/dakiemdarktharr/WWW/actions/runs/44543948618)
 
 ### Qwen lập kế hoạch A–D qua công cụ thật
 

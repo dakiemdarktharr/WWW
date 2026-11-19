@@ -14,6 +14,11 @@ on:
         type: choice
         default: pilot
         options: [pilot, corpus, contrast]
+      sade_intent_prompt:
+        description: Intent prompt for the full Sade corpus
+        type: choice
+        default: baseline
+        options: [baseline, ordered]
       paired_origin:
         description: Temporary cross-host test origin for paired-macos
         type: string
@@ -84,7 +89,6 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
         shard: ${{ fromJSON(inputs.sade_suite == 'contrast' && '[0,1]' || '[0,1,2,3,4]') }}
     env:
@@ -114,6 +118,7 @@ jobs:
         env:
           SADE_SUITE: ${{ inputs.sade_suite }}
           SADE_SHARD: ${{ matrix.shard }}
+          SADE_INTENT_PROMPT: ${{ inputs.sade_intent_prompt }}
         run: |
           set -euo pipefail
           export OLLAMA_MODELS="$RUNNER_TEMP/sade-models"
@@ -144,7 +149,8 @@ jobs:
           mkdir -p "$results"
           if [[ "$SADE_SUITE" == corpus ]]; then
             node --import tsx scripts/eval-shared-sade-local.ts --categories --model "$SADE_MODEL" \
-              --shard "$SADE_SHARD/5" --output "$results/corpus-$SADE_SHARD.jsonl"
+              --intent-prompt "$SADE_INTENT_PROMPT" --shard "$SADE_SHARD/5" \
+              --output "$results/corpus-$SADE_SHARD.jsonl"
           elif [[ "$SADE_SUITE" == contrast ]]; then
             prompts=(baseline ordered)
             node --import tsx scripts/eval-shared-sade-local.ts --categories --contrast --model "$SADE_MODEL" \
