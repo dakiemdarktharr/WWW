@@ -1003,10 +1003,9 @@ export class SharedSadeWorker {
             : { kind: 'blocked', summary: 'The harness returned no completion evidence.' },
         );
     }
+    const grantExpirations = new Map(this.grants().map(({ id, expiresAt }) => [id, expiresAt]));
     return {
-      grants: this.grants()
-        .slice(0, 32)
-        .map((grant) => grant.id),
+      grants: [...grantExpirations.keys()].slice(0, 32),
       active: [...this.leases.keys()].slice(0, 4),
       ...(this.waitingForRevisions.size
         ? { waitingForRevisions: [...this.waitingForRevisions.keys()].slice(0, 4) }
@@ -1017,13 +1016,14 @@ export class SharedSadeWorker {
       }),
       results: this.host.store
         .all<Receipt>('sharedSadeLocalReceipt')
-        .filter((item) => item.result && !item.reported)
+        .filter((item) => item.result && !item.reported && grantExpirations.has(item.grantId))
         .slice(0, 8)
         .map((item) => ({
           jobId: item.id,
           result: item.result,
           version: item.version || 1,
           updatesRead: item.updatesRead,
+          grantExpiresAt: grantExpirations.get(item.grantId)!,
         })),
     };
   }
