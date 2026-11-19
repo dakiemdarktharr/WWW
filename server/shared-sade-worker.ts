@@ -115,6 +115,8 @@ type Receipt = {
   reported?: boolean;
   reviewedDigest?: string;
   revision?: string;
+  revisionHandoff?: true;
+  checkoutRevision?: string;
   clarified?: boolean;
   question?: string;
   providerTurnConsumed?: boolean;
@@ -183,6 +185,7 @@ export const sharedWorkerCommand = z.discriminatedUnion('action', [
       action: z.literal('exchange'),
       active: z.array(id).max(4),
       delivery: deliveryInput.optional(),
+      revisionHandoff: z.literal(true).optional(),
       acknowledged: z
         .array(z.object({ jobId: id, version: z.number().int().positive() }).strict())
         .max(8),
@@ -224,6 +227,8 @@ export function canonicalSharedRepository(remote: string, branch: string) {
 export class SharedSadeWorker {
   private leases = new Map<string, number>();
   private stopping = new Set<string>();
+  private starting = new Set<string>();
+  private waitingForRevisions = new Map<string, SharedDelivery>();
   private readingChanges = new Set<string>();
   private notifiedUpdates = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
@@ -433,10 +438,20 @@ export class SharedSadeWorker {
   inheritedFiles(jobId: string) {
     return this.receipt(jobId).inheritedFiles || [];
   }
-  private async importPrerequisites(delivery: SharedDelivery, project: Project, taskId: string) {
+  private async importPrerequisites(
+    delivery: SharedDelivery,
+    project: Project,
+    taskId: string,
+    checkoutRevision?: string,
+  ) {
     const patches = delivery.prerequisites.filter((entry) => entry.patch);
-    if (!patches.length) return;
-    const worktree = await createWorktree(project.path, this.host.dataDir, taskId);
+    if (!patches.length && !checkoutRevision) return;
+    const worktree = await createWorktree(
+      project.path,
+      this.host.dataDir,
+      taskId,
+      checkoutRevision,
+    );
     this.host.store.updateTask(taskId, worktree);
     const inherited = new Set<string>();
     let baseCommit = worktree.baseCommit;
@@ -542,6 +557,7 @@ export class SharedSadeWorker {
     this.host.store.put('sharedSadeLocalReceipt', {
       ...this.receipt(delivery.id),
       inheritedFiles: [...inherited],
+      checkoutRevision: worktree.baseCommit,
     });
   }
   async shareRevision(taskId: string) {
@@ -665,6 +681,8 @@ export class SharedSadeWorker {
         })
         .catch(() => {});
     }
+    for (const [jobId, delivery] of this.waitingForRevisions)
+      if (command.active.includes(jobId) && this.leases.has(jobId)) this.startDelivery(delivery);
     if (command.delivery) {
       const delivery: SharedDelivery = {
         ...command.delivery,
@@ -682,16 +700,12 @@ export class SharedSadeWorker {
           planMembers:
             delivery.phase === 'plan' ? delivery.team.map((member) => member.id) : undefined,
           clarified: Boolean(delivery.clarification),
+          revisionHandoff: command.revisionHandoff,
           acceptsUpdates: delivery.acceptsUpdates,
           updates: delivery.updates,
         } satisfies Receipt);
         this.leases.set(delivery.id, Date.now() + 15_000);
-        void this.run(delivery).catch((error) =>
-          this.result(delivery.id, {
-            kind: 'blocked',
-            summary: redact(error) || 'Could not start the harness.',
-          }),
-        );
+        this.startDelivery(delivery);
       }
     }
     return { ok: true };
@@ -718,7 +732,20 @@ export class SharedSadeWorker {
         updates: undefined,
       });
     if (result.kind !== 'change') this.leases.delete(jobId);
+    this.waitingForRevisions.delete(jobId);
     this.notifiedUpdates.delete(jobId);
+  }
+  private startDelivery(delivery: SharedDelivery) {
+    if (this.starting.has(delivery.id)) return;
+    this.starting.add(delivery.id);
+    void this.run(delivery)
+      .catch((error) =>
+        this.result(delivery.id, {
+          kind: 'blocked',
+          summary: redact(error) || 'Could not start the harness.',
+        }),
+      )
+      .finally(() => this.starting.delete(delivery.id));
   }
   private async run(delivery: SharedDelivery) {
     this.assertCurrent(delivery.id);
@@ -749,16 +776,33 @@ export class SharedSadeWorker {
       );
     if (delivery.portableReview && !grant.patchHandoff)
       throw new DomainError('This workspace has not granted reviewed patch handoff.');
-    for (const dependency of delivery.prerequisites)
-      if (dependency.revision && !dependency.patch)
-        await git(project.path, ['merge-base', '--is-ancestor', dependency.revision, 'HEAD']).catch(
-          () => {
-            throw new DomainError(
-              'Sync the reviewed prerequisite commit into the linked local project before retrying.',
-            );
-          },
+    const revisions = delivery.prerequisites.flatMap((entry) =>
+      entry.revision && !entry.patch ? [entry.revision] : [],
+    );
+    const checkoutRevision = revisions.length
+      ? await git(project.path, ['rev-parse', 'HEAD'])
+      : undefined;
+    for (const revision of new Set(revisions)) {
+      const present = await git(project.path, [
+        'merge-base',
+        '--is-ancestor',
+        revision,
+        checkoutRevision!,
+      ]).then(
+        () => true,
+        () => false,
+      );
+      if (present) continue;
+      this.assertCurrent(delivery.id);
+      if (!this.receipt(delivery.id).revisionHandoff)
+        throw new DomainError(
+          'Sync the prerequisite Git revision into the linked project before retrying.',
         );
+      this.waitingForRevisions.set(delivery.id, delivery);
+      return;
+    }
     this.assertCurrent(delivery.id);
+    this.waitingForRevisions.delete(delivery.id);
     const session = await this.host.sessions.create({
       memberId: member.id,
       projectId: project.id,
@@ -780,7 +824,7 @@ export class SharedSadeWorker {
       machine,
       portableReview: delivery.portableReview,
     });
-    await this.importPrerequisites(delivery, project, session.taskId);
+    await this.importPrerequisites(delivery, project, session.taskId, checkoutRevision);
     this.assertCurrent(delivery.id);
     const instructions =
       'Execute only the assigned task with the current scope and permission. Read predecessor evidence. Give a concise result suitable for sharing with this group. Do not include secrets, credentials or private paths. Stop at the local review step. Do not push, deploy, or use someone else’s account.';
@@ -802,6 +846,7 @@ export class SharedSadeWorker {
     if (this.stopping.has(jobId)) return;
     this.stopping.add(jobId);
     this.leases.delete(jobId);
+    this.waitingForRevisions.delete(jobId);
     try {
       const { sessionId } = this.receipt(jobId);
       if (sessionId)
@@ -846,6 +891,9 @@ export class SharedSadeWorker {
                 throw new DomainError(
                   'The harness asked a question after editing. The change stays in its local worktree.',
                 );
+              const revision = receipt.checkoutRevision || task.baseCommit;
+              if (!receipt.question && receipt.revisionHandoff && !revision)
+                throw new DomainError('Cannot verify the Git revision of the unchanged worktree.');
               const lease = this.host.store.lease(task.id);
               if (lease) this.host.store.release(task.id, lease.token);
               this.host.store.updateTask(task.id, { status: 'done' });
@@ -859,6 +907,7 @@ export class SharedSadeWorker {
                         0,
                         4000,
                       ),
+                      ...(receipt.revisionHandoff && revision ? { revision } : {}),
                     },
               );
               return;
@@ -935,6 +984,9 @@ export class SharedSadeWorker {
         .slice(0, 32)
         .map((grant) => grant.id),
       active: [...this.leases.keys()].slice(0, 4),
+      ...(this.waitingForRevisions.size
+        ? { waitingForRevisions: [...this.waitingForRevisions.keys()].slice(0, 4) }
+        : {}),
       readUpdates: [...this.leases.keys()].slice(0, 4).flatMap((jobId) => {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];
@@ -954,6 +1006,7 @@ export class SharedSadeWorker {
   close() {
     clearInterval(this.timer);
     this.leases.clear();
+    this.waitingForRevisions.clear();
     this.notifiedUpdates.clear();
   }
 }

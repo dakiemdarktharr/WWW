@@ -236,12 +236,17 @@ function isPrivateInitialPath(file: string) {
     /\.(?:pem|p12|pfx|key)$/i.test(basename)
   );
 }
-export async function createWorktree(repo: string, storage: string, taskId: string) {
+export async function createWorktree(
+  repo: string,
+  storage: string,
+  taskId: string,
+  revision?: string,
+) {
   const target = path.resolve(storage, 'worktrees', taskId);
   if (!inside(storage, target)) throw new Error('Invalid worktree target.');
   await mkdir(path.dirname(target), { recursive: true });
   const branch = `relay/${taskId.slice(0, 8)}`;
-  const baseCommit = await git(repo, ['rev-parse', 'HEAD']);
+  const baseCommit = revision ?? (await git(repo, ['rev-parse', 'HEAD']));
   await git(repo, ['worktree', 'add', '-b', branch, '--', target, baseCommit]);
   return { branch, worktree: target, baseCommit };
 }

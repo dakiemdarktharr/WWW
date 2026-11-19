@@ -650,6 +650,7 @@ async function sharedSadeLoop(generation, owner) {
           patchHandoff: true,
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
+          waitingForRevisions: snapshot.waitingForRevisions,
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -663,6 +664,7 @@ async function sharedSadeLoop(generation, owner) {
           delivery: body.delivery,
           reviews: body.reviews,
           updates: body.updates,
+          revisionHandoff: body.revisionHandoff,
           acknowledged,
         });
       else delay = 5000;

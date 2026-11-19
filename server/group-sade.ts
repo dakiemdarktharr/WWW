@@ -64,22 +64,27 @@ export const sharedSadeUpdate = z
   .strict();
 export const sharedSadeUpdates = z.array(sharedSadeUpdate).max(maxTaskUpdates);
 export const taskUpdateAck = z.object({ jobId: id, through: taskUpdateSequence }).strict();
+const syncPrerequisiteSummary =
+  'Sync the prerequisite Git revision into this desktop’s linked project. Sade will continue after the revision is available.';
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
   z
     .object({
       kind: z.literal('done'),
       summary: z.string().trim().min(1).max(4000),
-      revision: z
-        .string()
-        .regex(/^[a-f0-9]{40,64}$/)
-        .optional(),
+      revision: revisionInput.optional(),
       published: z.literal(true).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('blocked'), summary: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ kind: z.literal('question'), summary: z.string().trim().min(1).max(500) }).strict(),
-  z.object({ kind: z.literal('unchanged'), summary: z.string().trim().min(1).max(4000) }).strict(),
+  z
+    .object({
+      kind: z.literal('unchanged'),
+      summary: z.string().trim().min(1).max(4000),
+      revision: revisionInput.optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('change'),
@@ -127,6 +132,7 @@ export const groupSadeCommands = [
       patchHandoff: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
+      waitingForRevisions: z.array(id).max(4).optional(),
     })
     .strict(),
   z
@@ -672,6 +678,7 @@ export class GroupSade {
       .map((row) => JSON.parse(String(row.data)) as Run);
     const supplied = new Set(command.grants);
     const held = new Set(command.active);
+    const waiting = new Set(command.waitingForRevisions);
     for (const run of runs) {
       const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
       const grants = new Map(this.grants(group).map((grant) => [grant.id, grant]));
@@ -730,6 +737,15 @@ export class GroupSade {
           if (held.has(job.id)) {
             job.deadline = this.now() + leaseMs;
             active.push(job.id);
+            if (
+              job.state === 'running' &&
+              waiting.has(job.id) &&
+              prerequisitesOf(run, job).some(
+                (prior) => prior.revision && (!prior.portable || prior.published),
+              )
+            )
+              job.summary = syncPrerequisiteSummary;
+            else if (job.summary === syncPrerequisiteSummary) job.summary = undefined;
             if (job.reviewedDigest) reviews.push({ jobId: job.id, digest: job.reviewedDigest });
             if (job.acceptsUpdates && command.taskUpdates && job.state === 'running') {
               const read =
@@ -866,7 +882,13 @@ export class GroupSade {
       }
       if (touched) this.store.put('sharedSadeRun', run);
     }
-    return { active, delivery, reviews, ...(command.taskUpdates ? { updates } : {}) };
+    return {
+      active,
+      delivery,
+      reviews,
+      revisionHandoff: true as const,
+      ...(command.taskUpdates ? { updates } : {}),
+    };
   }
   finish(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-finish' }>) {
     const run = this.store
@@ -1097,9 +1119,19 @@ export class GroupSade {
     } else if (result.kind === 'unchanged') {
       if (job.phase !== 'task' || !writes(job.task) || job.state !== 'running')
         throw new DomainError('Only a running writing task can report an unchanged worktree.', 409);
+      const hasNextTask = run.jobs.some((other) => other.task?.dependsOn.includes(job.task!.key));
+      if (hasNextTask && !result.revision) {
+        this.block(
+          run,
+          job,
+          'Update the author’s Kivuno desktop to share the Git revision with dependent tasks.',
+        );
+        return { accepted: true };
+      }
       for (const review of plannedReviews(run, job)) review.phase = 'task';
       job.state = 'done';
       job.summary = redact(result.summary);
+      if (hasNextTask) job.revision = result.revision;
       if (run.jobs.every((item) => item.state === 'done')) {
         run.state = 'done';
         for (const item of run.jobs) item.change = undefined;

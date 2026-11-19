@@ -97,6 +97,7 @@ function fixture(
     grantIds = [grants[index]],
     deviceId = devices[index],
     readUpdates: { jobId: string; through: number }[] = [],
+    waitingForRevisions?: string[],
   ) =>
     call(
       index,
@@ -106,11 +107,13 @@ function fixture(
         active,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.taskUpdates ? { taskUpdates: true, readUpdates } : {}),
+        waitingForRevisions,
       },
       deviceId,
     ) as {
       delivery?: SharedDelivery;
       active: string[];
+      revisionHandoff?: true;
       reviews: { jobId: string; digest: string }[];
       updates?: { jobId: string; notes: { sequence: number; text: string }[] }[];
     };
@@ -540,6 +543,7 @@ test(
         hello.grants,
         cloud.devices[index],
         hello.readUpdates,
+        hello.waitingForRevisions,
       );
       assert.doesNotMatch(
         JSON.stringify(packet),
@@ -1178,6 +1182,112 @@ test(
       closed?.jobs.map((job) => job.phase),
       ['plan'],
     );
+
+    const nextAuthorGrant = {
+      id: randomUUID(),
+      groupId: cloud.groupId,
+      projectId,
+      teammateId: memberId,
+      turns: 2,
+      allowWrites: true,
+    };
+    const {
+      teammateName: _name,
+      pairedMachine: _machine,
+      ...newGrant
+    } = (await workspace.sharedSade.execute({
+      action: 'grant',
+      ...nextAuthorGrant,
+    })) as any;
+    cloud.call(0, { action: 'sade-grant', ...newGrant });
+    cloud.grants[0] = newGrant.id;
+
+    const sharedFile = 'existing-only.txt';
+    await writeFile(path.join(architectureRepo, sharedFile), 'Already committed contract\n');
+    await git(architectureRepo, ['add', sharedFile]);
+    await git(architectureRepo, [...fixtureIdentity, 'commit', '-m', 'Existing contract update']);
+    const required = await git(architectureRepo, ['rev-parse', 'HEAD']);
+    const receiverHead = await git(frontendRepo, ['rev-parse', 'HEAD']);
+    const request = {
+      ...chat,
+      id: randomUUID(),
+      content: 'Nếu phần đã commit rồi thì giữ nguyên, nhờ Mây kiểm tài liệu đó giúp.',
+    };
+    cloud.call(0, request);
+    const checkPlan = await sessionFor(0, (await pump(0))!);
+    await submit(0, checkPlan.session, checkPlan.peer, 'relay_submit_plan', {
+      summary: 'Verify an existing contract on both owners’ desktops.',
+      tasks: [
+        work('check-existing', {
+          kind: 'code',
+          scope: [sharedFile],
+          preferredMemberId: newGrant.id,
+        }),
+        work('review-existing', {
+          kind: 'review',
+          scope: [sharedFile],
+          preferredMemberId: cloud.grants[1],
+          dependsOn: ['check-existing'],
+        }),
+      ].map((task) => ({ ...task, requiredPlatform: 'any' })),
+    });
+    await complete(0, checkPlan.session, checkPlan.peer, 'Existing contract check planned.');
+    const unchanged = await sessionFor(0, (await pump(0))!);
+    assert.match(
+      await readFile(path.join(unchanged.task.worktree!, sharedFile), 'utf8'),
+      /Already committed contract/,
+    );
+    await complete(0, unchanged.session, unchanged.peer, 'Existing contract needs no edits.');
+
+    const recipientTurns = () =>
+      cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[1]).used;
+    const reservedBefore = recipientTurns();
+    let checkDelivery: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !checkDelivery; attempt++) {
+      await pump(0);
+      checkDelivery = await pump(1);
+      if (!checkDelivery) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(checkDelivery);
+    assert.equal(checkDelivery.phase, 'task');
+    assert.equal(checkDelivery.prerequisites[0]?.revision, required);
+    assert.equal(checkDelivery.prerequisites[0]?.patch, undefined);
+    assert.equal(recipientTurns(), reservedBefore + 1);
+    assert.doesNotMatch(JSON.stringify(cloud.view()), new RegExp(required));
+    const peersBeforeSync = setups[1].peers.size;
+    const waitingTask = () =>
+      cloud
+        .view()
+        .sadeRuns.at(-1)
+        ?.jobs.find((job) => job.id === checkDelivery.id);
+    for (let attempt = 0; attempt < 100 && !waitingTask()?.summary; attempt++) {
+      await pump(1);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.match(waitingTask()?.summary || '', /Sync the prerequisite Git revision/);
+    assert.equal(setups[1].peers.size, peersBeforeSync);
+    assert.equal(await git(frontendRepo, ['rev-parse', 'HEAD']), receiverHead);
+
+    await git(frontendRepo, ['fetch', '--no-tags', architectureRepo, 'main']);
+    await pump(1);
+    assert.match(waitingTask()?.summary || '', /Sync the prerequisite Git revision/);
+    assert.equal(setups[1].peers.size, peersBeforeSync, 'Fetching does not update the checkout');
+    await git(frontendRepo, [...fixtureIdentity, 'merge', '--no-edit', 'FETCH_HEAD']);
+    const syncedHead = await git(frontendRepo, ['rev-parse', 'HEAD']);
+    await pump(1);
+    const syncedReview = await sessionFor(1, checkDelivery);
+    assert.equal(syncedReview.task.baseCommit, syncedHead);
+    assert.match(
+      await readFile(path.join(syncedReview.task.worktree!, sharedFile), 'utf8'),
+      /Already committed contract/,
+    );
+    assert.equal(setups[1].peers.size, peersBeforeSync + 1);
+    assert.equal(recipientTurns(), reservedBefore + 1);
+    assert.equal(syncedReview.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
+    await complete(1, syncedReview.session, syncedReview.peer, 'Verified the synced contract.');
+    await pump(1);
+    assert.equal(cloud.view().sadeRuns.at(-1)?.state, 'done');
+    assert.equal(await remoteHead(), startingRevision);
   },
 );
 
@@ -1466,13 +1576,52 @@ test('a planned review checks existing files when the author has no diff', () =>
       },
     });
     const writer = f.poll(0).delivery!;
-    f.finish(0, writer.id, { kind: 'unchanged', summary: 'The fix is already present.' });
+    f.finish(0, writer.id, {
+      kind: 'unchanged',
+      summary: 'The fix is already present.',
+      revision: sha,
+    });
     const check = f.poll(1).delivery!;
     assert.equal(check.phase, 'task');
     assert.equal(check.task?.kind, 'review');
     assert.equal(check.review, undefined);
+    assert.equal(check.prerequisites[0]?.revision, sha);
     f.finish(1, check.id, { kind: 'done', summary: 'Verified the existing file.' });
     assert.equal(f.view().sadeRuns[0].state, 'done');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('an unchanged result without a Git revision cannot release dependent work', () => {
+  const f = fixture();
+  try {
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Use the existing implementation for the follow-up if present.',
+      sade: { projectKey: key },
+    });
+    const plan = f.poll(0).delivery!;
+    f.finish(0, plan.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Use the author’s existing work before the dependent check.',
+        tasks: [
+          work('write', { kind: 'code', preferredMemberId: f.grants[0] }),
+          work('check', { preferredMemberId: f.grants[1], dependsOn: ['write'] }),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, {
+      kind: 'unchanged',
+      summary: 'The existing implementation is enough.',
+    });
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    assert.match(f.view().sadeRuns[0].error || '', /share the Git revision with dependent tasks/);
   } finally {
     f.store.close();
   }
