@@ -38,6 +38,11 @@ const gitUrl = `https://github.com/desktop/dugite-native/releases/download/v${gi
 const gitSha256 = 'a882ec6882416b57d212a22bac845ae27944f96cf73453a864f6a12c17863a79';
 const gitRoot = path.join(runtime, 'git');
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+const stable = JSON.parse(
+  await readFile(path.join(root, 'release-artifacts/macos-stable.json'), 'utf8'),
+);
+const version = process.env.KIVUNO_MACOS_VERSION || stable.version;
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid macOS release version.');
 const npmCli = process.env.npm_execpath;
 
 if (!npmCli || !existsSync(npmCli)) throw new Error('Run macos:installer through npm.');
@@ -205,6 +210,13 @@ await execute('/usr/bin/tar', [
   runtime,
   '--strip-components=2',
   `${nodeDirectory}/bin/node`,
+]);
+await execute('/usr/bin/tar', [
+  '-xzf',
+  archivePath,
+  '-C',
+  runtime,
+  '--strip-components=1',
   `${nodeDirectory}/LICENSE`,
 ]);
 const node = path.join(runtime, 'node');
@@ -266,8 +278,8 @@ if (gitProbe !== `git version ${gitVersion}`)
 console.log('Verified the bundled macOS Node, Git and Codex CLI binaries.');
 
 const icon = await replaceIcon();
-const artifactName = `Kivuno-${packageJson.version}-macOS-arm64.dmg`;
-const updateArtifactName = `Kivuno-${packageJson.version}-macOS-arm64.zip`;
+const artifactName = `Kivuno-${version}-macOS-arm64.dmg`;
+const updateArtifactName = `Kivuno-${version}-macOS-arm64.zip`;
 await build({
   projectDir: path.join(root, 'desktop'),
   targets: Platform.MAC.createTarget(['dmg', 'zip'], Arch.arm64),
@@ -277,7 +289,7 @@ await build({
     productName: 'Kivuno',
     electronVersion: packageJson.devDependencies.electron,
     directories: { output },
-    extraMetadata: { version: packageJson.version },
+    extraMetadata: { version: version },
     files: [
       'main.cjs',
       'preload.cjs',
@@ -302,7 +314,7 @@ await build({
     ],
     mac: {
       target: ['dmg', 'zip'],
-      artifactName: `Kivuno-${packageJson.version}-macOS-arm64.\${ext}`,
+      artifactName: `Kivuno-${version}-macOS-arm64.\${ext}`,
       category: 'public.app-category.developer-tools',
       icon,
       minimumSystemVersion: '13.5.0',
@@ -316,7 +328,7 @@ await build({
       notarize: false,
     },
     dmg: {
-      title: `Kivuno ${packageJson.version}`,
+      title: `Kivuno ${version}`,
       window: { width: 540, height: 380 },
       contents: [
         { x: 130, y: 220, type: 'file' },
@@ -376,7 +388,7 @@ await writeFile(
   path.join(output, 'macos-arm64.json'),
   JSON.stringify(
     {
-      version: packageJson.version,
+      version,
       filename: artifactName,
       sha256,
       bytes: info.size,
@@ -384,7 +396,7 @@ await writeFile(
       signed: false,
       notarized: false,
       autoUpdate: {
-        version: packageJson.version,
+        version,
         filename: updateArtifactName,
         sha256: updateSha256,
         size: updateInfo.size,

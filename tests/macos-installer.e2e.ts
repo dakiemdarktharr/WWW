@@ -27,7 +27,10 @@ const runtime = path.join(resources, 'runtime');
 const modules = path.join(resources, 'workspace', 'node_modules');
 const gitRoot = path.join(runtime, 'git');
 const gitBin = path.join(gitRoot, 'bin');
-const env = { ...process.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } as Record<string, string>;
+const env = { ...process.env, HOME: profile, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } as Record<
+  string,
+  string
+>;
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.RELAY_NODE_BINARY;
 delete env.RELAY_DESKTOP_TESTING;
@@ -73,31 +76,56 @@ try {
 
   const project = path.join(temp, 'Git project');
   await mkdir(project);
-  const git = (...args: string[]) =>
-    exec(path.join(gitBin, 'git'), args, {
-      cwd: project,
+  await writeFile(path.join(project, 'probe.txt'), 'Kivuno installer smoke test\n');
+  // Exercise the shipped coordinator's project and worktree code with only bundled executables
+  // on PATH. A direct invocation of git would miss how Kivuno initializes a new project.
+  const projectProbe = await exec(
+    node,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `
+      import assert from 'node:assert/strict';
+      import path from 'node:path';
+      import { realpathSync, readFileSync } from 'node:fs';
+      import { Workspace } from './server/service.ts';
+      import { Store } from './server/store.ts';
+      import { createWorktree, git } from './server/git.ts';
+      const [source, storage] = process.argv.slice(1);
+      const store = new Store(path.join(storage, 'fixture.db'));
+      try {
+        const workspace = new Workspace(store, storage, process.cwd());
+        const project = await workspace.addProject({
+          name: 'Installer QA', goal: 'Verify the bundled runtime', path: source, initializeGit: true
+        });
+        const checkout = await createWorktree(project.path, storage, 'installer-qa');
+        assert.equal(store.projects()[0].path, realpathSync(source));
+        assert.equal(await git(checkout.worktree, ['rev-parse', 'HEAD']), checkout.baseCommit);
+        assert.equal(readFileSync(path.join(checkout.worktree, 'probe.txt'), 'utf8'), readFileSync(path.join(source, 'probe.txt'), 'utf8'));
+        console.log(await git(source, ['--version']));
+      } finally {
+        store.close();
+      }
+    `,
+      project,
+      profile,
+    ],
+    {
+      cwd: path.join(resources, 'workspace'),
       env: {
         ...env,
+        PATH: [runtime, gitBin].join(path.delimiter),
         GIT_EXEC_PATH: path.join(gitRoot, 'libexec', 'git-core'),
         GIT_TEMPLATE_DIR: path.join(gitRoot, 'share', 'git-core', 'templates'),
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_CONFIG_GLOBAL: '/dev/null',
       },
-    });
-  assert.equal((await git('--version')).stdout.trim(), 'git version 2.56.1');
-  await git('init');
-  await writeFile(path.join(project, 'probe.txt'), 'Kivuno installer smoke test\n');
-  await git('add', 'probe.txt');
-  await git(
-    '-c',
-    'user.name=Kivuno QA',
-    '-c',
-    'user.email=qa@example.invalid',
-    'commit',
-    '-m',
-    'Smoke test',
+      timeout: 30000,
+    },
   );
-  await git('worktree', 'add', '--detach', path.join(temp, 'Git worktree'), 'HEAD');
+  assert.equal(projectProbe.stdout.trim(), 'git version 2.56.1');
 
   const desktop = await electron.launch({
     executablePath: path.join(app, 'Contents', 'MacOS', 'Kivuno'),
@@ -109,8 +137,9 @@ try {
     const metadata = await desktop.evaluate(({ app }) => ({
       version: app.getVersion(),
       packaged: app.isPackaged,
+      profile: app.getPath('userData'),
     }));
-    assert.deepEqual(metadata, { version: release.version, packaged: true });
+    assert.deepEqual(metadata, { version: release.version, packaged: true, profile });
     const page = await desktop.firstWindow();
     await page.waitForURL((url) => url.protocol === 'http:' && url.hostname === '127.0.0.1', {
       timeout: 30000,
