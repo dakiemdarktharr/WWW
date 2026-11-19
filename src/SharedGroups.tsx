@@ -734,6 +734,7 @@ export default function SharedGroups({
                   await request({ action: 'message', ...next });
                   messageDraft.current = null;
                   setContent('');
+                  setProjectKey('');
                 });
               }}
             >

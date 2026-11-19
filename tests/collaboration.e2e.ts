@@ -244,6 +244,11 @@ try {
   await a.page.getByLabel('Ask Sade in this group').selectOption(projectKey);
   await a.page.getByLabel('Message group', { exact: true }).fill('Check the current plan.');
   await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+  await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue('');
+  await a.page.getByLabel('Message group', { exact: true }).fill('Cảm ơn, nghe rõ rồi.');
+  await a.page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(b.page.getByRole('log')).toContainText('Cảm ơn, nghe rõ rồi.');
+  assert.equal(cloud.all('sharedSadeRun').length, 1);
   const poll = (active: string[] = [], readUpdates?: { jobId: string; through: number }[]) =>
     dispatch({ action: 'sade-poll', grants: [grantId], active, taskUpdates: true, readUpdates });
   const plan = (poll() as { delivery: SharedDelivery }).delivery;

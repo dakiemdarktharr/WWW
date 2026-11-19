@@ -1066,6 +1066,38 @@ test('matching owner on a different device cannot receive a granted job; another
   }
 });
 
+test('an opted-in status update can close planning without assigning any work', () => {
+  const f = fixture();
+  try {
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Mình báo để nhóm biết thôi, chưa chạy việc gì nhé.',
+      sade: { projectKey: key },
+    };
+    f.call(0, request);
+    const plan = f.poll(0).delivery!;
+    assert.equal(plan.phase, 'plan');
+    f.finish(0, plan.id, {
+      kind: 'plan',
+      plan: { summary: 'The message shares progress with the group.', tasks: [] },
+    });
+    f.call(0, request);
+    assert.equal(f.poll(0).delivery, undefined);
+    assert.equal(f.poll(1).delivery, undefined);
+    const [run] = f.view().sadeRuns;
+    assert.equal(run.state, 'done');
+    assert.deepEqual(
+      run.jobs.map(({ phase, state }) => [phase, state]),
+      [['plan', 'done']],
+    );
+    assert.equal(run.jobs[0].summary, 'The message shares progress with the group.');
+  } finally {
+    f.store.close();
+  }
+});
+
 test('a revoked assignment blocks pending deliveries and a clean writing result does not reserve a reviewer', () => {
   const f = fixture();
   try {

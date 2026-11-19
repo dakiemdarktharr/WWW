@@ -224,12 +224,15 @@ const grantMs = 60 * 60_000;
 
 export const groupPlanTool = {
   ...planTool,
+  description:
+    'Submit a scoped Shared Groups plan. For a status update or conversation with no request for work, submit an empty task list and a short explanation. Use the question tool when the requested outcome is unclear.',
   inputSchema: {
     ...planTool.inputSchema,
     properties: {
       ...planTool.inputSchema.properties,
       tasks: {
         ...planTool.inputSchema.properties.tasks,
+        minItems: 0,
         items: {
           ...planTool.inputSchema.properties.tasks.items,
           properties: {
@@ -815,7 +818,14 @@ export class GroupSade {
     } else if (result.kind === 'plan') {
       if (job.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
       try {
-        const plan = parseTeamPlan(result.plan);
+        const plan = parseTeamPlan(result.plan, { allowEmpty: true });
+        if (plan.tasks.length === 0) {
+          job.state = 'done';
+          job.summary = redact(plan.summary);
+          run.state = 'done';
+          this.store.put('sharedSadeRun', run);
+          return { accepted: true };
+        }
         const eligible = grants.filter(
           (entry) => run.roster.includes(entry.id) && this.usable(entry, group),
         );

@@ -31,7 +31,9 @@ const planTaskSchema = suggestion
     requiredPlatform: z.enum(['win32', 'darwin', 'linux']).optional(),
   })
   .strict();
-const planSchema = z.object({ summary, tasks: z.array(planTaskSchema).min(1).max(32) }).strict();
+const planTasks = z.array(planTaskSchema).max(32);
+const optionalPlanSchema = z.object({ summary, tasks: planTasks }).strict();
+const planSchema = optionalPlanSchema.extend({ tasks: planTasks.min(1) });
 export const parsePlanTask = (value: unknown) => {
   const task = planTaskSchema.parse(value);
   return { ...task, scope: normalizePlanScopes(task.scope) };
@@ -70,8 +72,8 @@ export function parseProposal(input: unknown): Proposal {
 }
 
 /** Validate the entire DAG before the coordinator persists any execution tasks. */
-export function parseTeamPlan(input: unknown): TeamPlan {
-  const parsed = planSchema.parse(input);
+export function parseTeamPlan(input: unknown, options: { allowEmpty?: boolean } = {}): TeamPlan {
+  const parsed = (options.allowEmpty ? optionalPlanSchema : planSchema).parse(input);
   const tasks = parsed.tasks.map((task) => ({ ...task, scope: normalizePlanScopes(task.scope) }));
   const byKey = new Map<string, PlanTask>();
   const titles = new Set<string>();
