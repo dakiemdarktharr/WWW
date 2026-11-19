@@ -3,8 +3,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DynamicTool } from './codex.ts';
 import type { Workspace } from './service.ts';
 import type { CodexSession, Task } from '../shared/types.ts';
-import { beginMachineCheck, machineCommand, receiveMachineResult } from './machine-checks.ts';
-import { redact } from './security.ts';
+import {
+  beginMachineCheck,
+  evidenceHash,
+  failMachineCheck,
+  machineCommand,
+  receiveMachineResult,
+  type MachineCheck,
+} from './machine-checks.ts';
+import { checkRecoveryProtocol } from './machine-check-outbox.ts';
+import { MachineDeliveryInterrupted } from './runners.ts';
 import { DomainError } from './store.ts';
 import {
   exportRunnerFiles,
@@ -13,7 +21,6 @@ import {
   machineSnapshotLimits,
   machineChunkBytes,
   machinePacketBytes,
-  machineSnapshotProtocol,
   snapshotDigest,
   type RunnerFile,
 } from './runner-files.ts';
@@ -120,6 +127,7 @@ export async function machineTool(
   input: unknown,
   guard: () => void,
   humanReview = false,
+  reviewAttempt?: MachineCheck,
 ) {
   const current = () => {
     guard();
@@ -144,6 +152,7 @@ export async function machineTool(
         arch: node.execution!.arch,
         fullAccess: node.execution!.fullAccess,
         expiresAt: node.execution!.expiresAt,
+        recoverableChecks: node.execution!.fullAccess && node.capabilities.recoverableChecks,
       }));
   }
   if (name !== 'machine_use') throw new DomainError('Unknown machine tool.');
@@ -173,10 +182,7 @@ export async function machineTool(
   let watchdog: NodeJS.Timeout | undefined;
   let cancelling = false;
   try {
-    const prior = host.store
-      .all<Snapshot>('machineSnapshot')
-      .find((entry) => entry.id === key && entry.grantId === grant.id);
-    const chunked = node.version?.split(/\s+/).includes(machineSnapshotProtocol) ?? false;
+    const chunked = node.capabilities.chunkedSnapshots;
     const limits = chunked ? machineSnapshotLimits : undefined;
     let local: RunnerFile[] | undefined;
     if (values.operation === 'sync') {
@@ -190,24 +196,27 @@ export async function machineTool(
         current();
       } catch {
         cancelling = true;
-        void host.runners
-          .call(
-            { id: session.id, memberId: session.memberId, nodeId: node.id, uncertain: () => {} },
-            {
-              action: 'execute',
-              params: {
-                grantId: grant.id,
-                projectId: session.projectId,
-                taskId: task.id,
-                operation: 'cancel',
-                args: {},
+        void Promise.resolve()
+          .then(() =>
+            host.runners.call(
+              { id: session.id, memberId: session.memberId, nodeId: node.id, uncertain: () => {} },
+              {
+                action: 'execute',
+                params: {
+                  grantId: grant.id,
+                  projectId: session.projectId,
+                  taskId: task.id,
+                  operation: 'cancel',
+                  args: {},
+                },
               },
-            },
+            ),
           )
           .catch(() => {});
       }
     }, 250);
     watchdog.unref();
+    const recoverable = node.capabilities.recoverableChecks;
     const call = async (operation: string, args: Record<string, unknown>, checkId?: string) => {
       current();
       const result = await host.runners.call(
@@ -215,12 +224,14 @@ export async function machineTool(
           id: session.id,
           memberId: session.memberId,
           nodeId: node.id,
+          current,
           uncertain: (message: string) => {
             host.log(message, task.id, session.memberId, 'machine', session.projectId);
           },
         },
         {
           action: 'execute',
+          ...(checkId && recoverable ? { method: checkRecoveryProtocol } : {}),
           params: {
             grantId: grant.id,
             projectId: session.projectId,
@@ -240,6 +251,8 @@ export async function machineTool(
       return result;
     };
     if (values.operation === 'sync' || values.operation === 'pull') {
+      const snapshot = host.store.lookup<Snapshot>('machineSnapshot', key);
+      const prior = snapshot?.grantId === grant.id ? snapshot : undefined;
       let files: RunnerFile[];
       if (values.operation === 'sync') {
         if (chunked) {
@@ -280,13 +293,30 @@ export async function machineTool(
     if (values.operation === 'run') {
       host.assertMachineCheckAllowed(task.projectId);
       const recipe = machineCommand.parse(values.args);
-      const check = beginMachineCheck(host.store, task, node, grant, recipe);
+      if (reviewAttempt && !!reviewAttempt.delivery !== recoverable)
+        throw new DomainError('The runner changed its recovery capability during synchronization.');
+      const check = reviewAttempt
+        ? host.store.put('machineCheck:' + task.id, { ...reviewAttempt, preparingEpoch: undefined })
+        : beginMachineCheck(
+            host.store,
+            task,
+            node,
+            grant,
+            recipe,
+            recoverable ? { clientId: session.id, expiresAt: grant.expiresAt } : undefined,
+          );
       const kind = 'machineCheck:' + task.id;
       try {
         const result = await call('run', recipe, check.id);
         if (!result?.evidence || !result.proof)
           throw new DomainError('Update the paired runner to record a verified check.');
-        receiveMachineResult(host.store, task, check, recipe, result);
+        const recorded = host.store.get<MachineCheck>(kind, check.id);
+        if (recoverable && !recorded.evidence)
+          throw new DomainError(
+            recorded.error || 'The paired runner did not deliver its signed receipt.',
+          );
+        if (!recoverable)
+          receiveMachineResult(host.store, task, check, evidenceHash(recipe), result);
         return {
           ...result,
           code: result.evidence.code,
@@ -296,11 +326,8 @@ export async function machineTool(
           outputTruncated: result.evidence.outputTruncated,
         };
       } catch (error) {
-        host.store.put(kind, {
-          ...check,
-          finished: new Date().toISOString(),
-          error: redact((error as Error).message).slice(0, 1000),
-        });
+        if (!(recoverable && error instanceof MachineDeliveryInterrupted))
+          failMachineCheck(host.store, task.id, check.id, error);
         throw error;
       }
     }

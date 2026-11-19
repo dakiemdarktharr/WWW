@@ -9,6 +9,7 @@ export type Machine = {
   ready: boolean;
   busy: boolean;
   slots: number;
+  capabilities?: { recoverableChecks: boolean };
   executionProjectId?: string;
   execution?: { platform: string; fullAccess: boolean; expiresAt: string };
 };
@@ -92,6 +93,12 @@ export default function Machines({
             Date.parse(machine.execution.expiresAt) > Date.now()
               ? `${machine.execution.platform} · ${machine.execution.fullAccess ? 'Full access' : 'Read access'} · until ${new Date(machine.execution.expiresAt).toLocaleTimeString()}`
               : 'Waiting for machine owner'}
+            {machine.online &&
+              machine.execution?.fullAccess &&
+              Date.parse(machine.execution.expiresAt) > Date.now() &&
+              (machine.capabilities?.recoverableChecks
+                ? ' · check results recover on reconnect'
+                : ' · update runner for check recovery')}
           </span>
         ))}
       <button className="button compact" onClick={() => setExpanded(!expanded)}>

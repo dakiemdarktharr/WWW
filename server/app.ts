@@ -1094,8 +1094,11 @@ export async function buildApp(
       .send(workspace.machineCheckManifest(id, checkId));
   });
   app.post('/api/tasks/:id/machine-check', async (request) => {
-    const { checkId } = z.object({ checkId: z.string().uuid() }).strict().parse(request.body);
-    return workspace.repeatMachineCheck(params(request), checkId);
+    const { checkId, clientRequestId } = z
+      .object({ checkId: id, clientRequestId: id.optional() })
+      .strict()
+      .parse(request.body);
+    return workspace.repeatMachineCheck(params(request), checkId, clientRequestId);
   });
   app.get('/api/tasks/:id/diff', async (request) => workspace.reviewDiff(params(request)));
   app.post('/api/tasks/:id/accept', async (request) => workspace.accept(params(request)));

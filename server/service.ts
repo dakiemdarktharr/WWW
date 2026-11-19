@@ -40,13 +40,19 @@ import { Mesh } from './mesh.ts';
 import { Handoffs } from './handoffs.ts';
 import { InboxDispatcher } from './inbox.ts';
 import { Autonomy } from './autonomy.ts';
-import { Runners } from './runners.ts';
+import { MachineDeliveryInterrupted, Runners } from './runners.ts';
 import { Aegis } from './aegis.ts';
 import { assertGroupMember, groupMembers, humanPresence, memberPresence } from './groups.ts';
 import { BrowserBridge } from './browser.ts';
 import { nativeProviderClient } from './providers.ts';
 import { providerFileTool } from './provider-files.ts';
-import { inspectMachineChecks, assertMachineChecks, type MachineCheck } from './machine-checks.ts';
+import {
+  beginMachineCheck,
+  failMachineCheck,
+  inspectMachineChecks,
+  assertMachineChecks,
+  type MachineCheck,
+} from './machine-checks.ts';
 import { safeRunnerFile } from './runner-files.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
@@ -1413,7 +1419,12 @@ export class Workspace {
     const task = this.store.get<Task>('task', taskId);
     const [diff, machineChecks] = await Promise.all([
       this.diff(taskId),
-      inspectMachineChecks(this.store, task, this.sharedSade.requiresMachine(task.sharedSadeJobId)),
+      inspectMachineChecks(
+        this.store,
+        task,
+        this.sharedSade.requiresMachine(task.sharedSadeJobId),
+        this.runners.epoch,
+      ),
     ]);
     return { ...diff, machineChecks };
   }
@@ -1430,19 +1441,17 @@ export class Workspace {
     };
   }
   private checkingTasks = new Set<string>();
-  async repeatMachineCheck(taskId: string, checkId: string) {
-    if (this.checkingTasks.has(taskId)) throw new DomainError('A paired check is already running.');
+  async repeatMachineCheck(taskId: string, checkId: string, requestId?: string) {
     const task = this.store.get<Task>('task', taskId);
     const row = this.store.get<MachineCheck>('machineCheck:' + taskId, checkId);
     const lease = this.store.lease(taskId);
-    if (!row.repeat || !task.assignedTo || !lease || lease.orphaned)
-      throw new DomainError('Resume the owner and run the check on a current task lease.');
     const guard = () => {
       this.assertMachineCheckAllowed(task.projectId);
       const current = this.store.get<Task>('task', task.id);
       const held = this.store.lease(task.id);
       if (
         current.status !== 'review' ||
+        !lease ||
         !held ||
         held.orphaned ||
         held.token !== lease.token ||
@@ -1451,17 +1460,54 @@ export class Workspace {
         throw new DomainError('This task is no longer under review by the same owner.');
       if (task.sharedSadeJobId)
         this.sharedSade.assertCheckMachine(task.sharedSadeJobId, row.runnerId, row.grantId);
-      if (this.runners.assertReady(row.runnerId).execution?.id !== row.grantId)
+      const runner = this.runners.assertReady(row.runnerId);
+      if (runner.execution?.id !== row.grantId)
         throw new DomainError('The original paired machine grant is no longer active.');
+      return runner;
     };
-    guard();
     const session = {
       id: task.sessionId || task.id,
       taskId,
       projectId: task.projectId,
-      memberId: task.assignedTo,
+      memberId: task.assignedTo!,
       readOnly: false,
     };
+    const requests = 'machineReviewRequest:' + taskId;
+    // A replay reads the original attempt even after the owner or grant goes offline.
+    const reservation = this.store.transaction(() => {
+      const prior =
+        requestId && this.store.lookup<{ source: string; attemptId: string }>(requests, requestId);
+      if (prior) {
+        if (prior.source !== checkId)
+          throw new DomainError('This request ID already refers to a different check.', 409);
+        return { replay: prior.attemptId };
+      }
+      if (this.checkingTasks.has(taskId))
+        throw new DomainError('A paired check is already running.');
+      if (!row.repeat || !task.assignedTo || !lease || lease.orphaned)
+        throw new DomainError('Resume the owner and run the check on a current task lease.');
+      const runner = guard();
+      const grant = runner.execution!;
+      if (!grant.fullAccess || Date.parse(grant.expiresAt) <= Date.now())
+        throw new DomainError('The original full-access grant is no longer active.');
+      const attempt = beginMachineCheck(
+        this.store,
+        task,
+        runner,
+        grant,
+        row.repeat,
+        runner.capabilities.recoverableChecks
+          ? { clientId: session.id, expiresAt: grant.expiresAt }
+          : undefined,
+        this.runners.epoch,
+      );
+      if (requestId)
+        this.store.put(requests, { id: requestId, source: checkId, attemptId: attempt.id });
+      return { attempt };
+    });
+    if (reservation.replay)
+      return { ...(await this.reviewDiff(taskId)), attemptId: reservation.replay };
+    const attempt = reservation.attempt!;
     this.checkingTasks.add(taskId);
     try {
       for (const operation of ['sync', 'run'])
@@ -1476,8 +1522,13 @@ export class Workspace {
           },
           guard,
           true,
+          operation === 'run' ? attempt : undefined,
         );
-      return await this.reviewDiff(taskId);
+      return { ...(await this.reviewDiff(taskId)), attemptId: attempt.id };
+    } catch (error) {
+      if (!(error instanceof MachineDeliveryInterrupted))
+        failMachineCheck(this.store, taskId, attempt.id, error);
+      throw error;
     } finally {
       this.checkingTasks.delete(taskId);
     }

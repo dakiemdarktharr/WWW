@@ -6,11 +6,26 @@ import type { Workspace } from './service.ts';
 import {
   applyRunnerFiles,
   exportRunnerFiles,
+  machineSnapshotProtocol,
   validateRunnerFiles,
   type RunnerFile,
 } from './runner-files.ts';
 import { redact, safeEqual } from './security.ts';
 import type { ExecutionGrant } from './machine-execution.ts';
+import { checkRecoveryProtocol } from './machine-check-outbox.ts';
+import { receiveMachineResult, type MachineCheck } from './machine-checks.ts';
+
+export class MachineDeliveryInterrupted extends Error {}
+const isRecoverableCheck = (command: Pick<RunnerCommand, 'action' | 'method'>) =>
+  command.action === 'execute' && command.method === checkRecoveryProtocol;
+
+function runnerCapabilities(version = '') {
+  const advertised = version.split(/\s+/);
+  return {
+    recoverableChecks: advertised.includes(checkRecoveryProtocol),
+    chunkedSnapshots: advertised.includes(machineSnapshotProtocol),
+  };
+}
 
 export interface RunnerNode {
   id: string;
@@ -52,6 +67,7 @@ type Waiting = {
   command: RunnerCommand;
   nodeId: string;
   delivered: boolean;
+  current?: () => void;
   resolve: (value: any) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -84,6 +100,7 @@ export class Runners {
   list() {
     return this.host.store.all<RunnerNode>('runner').map(({ tokenHash, ...node }) => ({
       ...node,
+      capabilities: runnerCapabilities(node.version),
       online:
         !!node.lastSeen &&
         Date.now() - Date.parse(node.lastSeen) < 30_000 &&
@@ -137,25 +154,39 @@ export class Runners {
     return peer;
   }
   call(
-    peer: { id: string; nodeId: string; memberId: string; uncertain: (message: string) => void },
+    peer: {
+      id: string;
+      nodeId: string;
+      memberId: string;
+      uncertain: (message: string) => void;
+      current?: () => void;
+    },
     input: Omit<RunnerCommand, 'id' | 'clientId' | 'memberId'>,
   ) {
     this.assertReady(peer.nodeId);
     if (this.pending.size >= 128) throw new DomainError('Machine command queue is full.');
-    const command = { ...input, id: randomUUID(), clientId: peer.id, memberId: peer.memberId };
+    const recoverable = isRecoverableCheck(input);
+    const command = {
+      ...input,
+      id: recoverable ? input.params.checkId : randomUUID(),
+      clientId: peer.id,
+      memberId: peer.memberId,
+    };
     return new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(command.id);
-        const message =
-          'Machine did not acknowledge the command. It will not be replayed; recover explicitly.';
+        const message = recoverable
+          ? 'Waiting for the paired machine to reconnect and deliver its check result in Reviews.'
+          : 'Machine did not acknowledge the command. It will not be replayed; recover explicitly.';
         peer.uncertain(message);
-        reject(new Error(message));
+        reject(recoverable ? new MachineDeliveryInterrupted(message) : new Error(message));
       }, 90_000);
       timer.unref();
       this.pending.set(command.id, {
         command,
         nodeId: peer.nodeId,
         delivered: false,
+        current: peer.current,
         resolve,
         reject,
         timer,
@@ -188,7 +219,7 @@ export class Runners {
               'Machine restarted or lost its coordinator. Inspect retained output and recover explicitly.',
             );
         for (const [id, pending] of this.pending)
-          if (pending.nodeId === nodeId) {
+          if (pending.nodeId === nodeId && !isRecoverableCheck(pending.command)) {
             clearTimeout(pending.timer);
             this.pending.delete(id);
             pending.reject(new Error('Machine reset; command will not be replayed.'));
@@ -218,6 +249,13 @@ export class Runners {
           continue;
         }
         const command = event.commandId ? this.pending.get(event.commandId) : undefined;
+        if (event.type === 'result' && event.method === checkRecoveryProtocol) {
+          // Persist before acknowledging, even if the original RPC timed out or its coordinator restarted.
+          if (!this.recordMachineReceipt(node, body.execution, event)) {
+            ack.push(event.id);
+            continue;
+          }
+        }
         if (
           command?.command.action === 'execute' &&
           command.nodeId === nodeId &&
@@ -244,10 +282,32 @@ export class Runners {
         ack.push(event.id);
         if (this.seen.size > 10000) this.seen.delete(this.seen.values().next().value!);
       }
-      const next = [...this.pending.values()].find(
-        (item) => item.nodeId === nodeId && !item.delivered,
-      );
-      if (next) next.delivered = true; // Lost response is uncertain, never redeliver a mutation.
+      const queue = [...this.pending.values()].filter((item) => item.nodeId === nodeId);
+      let next =
+        queue.find((item) => !item.delivered) ??
+        queue.find((item) => isRecoverableCheck(item.command));
+      if (next && isRecoverableCheck(next.command)) {
+        try {
+          next.current?.();
+          const grant = body.execution;
+          if (
+            !body.ready ||
+            !grant?.fullAccess ||
+            grant.id !== next.command.params.grantId ||
+            Date.parse(grant.expiresAt) <= Date.now() ||
+            !runnerCapabilities(body.version).recoverableChecks
+          )
+            throw new DomainError(
+              'The original paired machine grant or recovery protocol is unavailable.',
+            );
+        } catch (error) {
+          clearTimeout(next.timer);
+          this.pending.delete(next.command.id);
+          next.reject(error as Error);
+          next = undefined;
+        }
+      }
+      if (next) next.delivered = true;
       return {
         epoch: this.epoch,
         reset: false,
@@ -258,6 +318,44 @@ export class Runners {
     } finally {
       this.polling.delete(nodeId);
     }
+  }
+  private recordMachineReceipt(
+    node: RunnerNode,
+    grant: RunnerNode['execution'],
+    event: RunnerEvent,
+  ) {
+    if (event.id !== event.commandId || typeof event.params?.taskId !== 'string') return false;
+    const store = this.host.store;
+    const kind = 'machineCheck:' + event.params.taskId;
+    const check = store.lookup<MachineCheck>(kind, event.id);
+    const task = store.lookup<Task>('task', event.params.taskId);
+    if (
+      !check?.delivery ||
+      check.preparingEpoch ||
+      !task ||
+      check.runnerId !== node.id ||
+      check.delivery.clientId !== event.clientId ||
+      task.projectId !== node.executionProjectId
+    )
+      return false;
+    if (check.finished) return true;
+    try {
+      if (event.error) throw new DomainError(redact(event.error));
+      this.pending.get(event.id)?.current?.();
+      if (
+        grant?.id !== check.grantId ||
+        !grant.fullAccess ||
+        Date.parse(grant.expiresAt) <= Date.now() ||
+        Date.parse(check.delivery.expiresAt) <= Date.now()
+      )
+        throw new DomainError('The original machine grant is no longer active.');
+      receiveMachineResult(store, task, check, check.delivery.recipe, event.result);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code?.startsWith('ERR_SQLITE')) throw error;
+      event.error = redact(error).slice(0, 1000);
+      store.put(kind, { ...check, finished: new Date().toISOString(), error: event.error });
+    }
+    return true;
   }
   result(peer: RemoteCodexClient, event: RunnerEvent) {
     const item = event.commandId ? this.pending.get(event.commandId) : undefined;
@@ -277,7 +375,13 @@ export class Runners {
     if (this.timer) clearInterval(this.timer);
     for (const item of this.pending.values()) {
       clearTimeout(item.timer);
-      item.reject(new Error('Coordinator closed.'));
+      item.reject(
+        isRecoverableCheck(item.command)
+          ? new MachineDeliveryInterrupted(
+              'Coordinator closed while waiting for the check receipt.',
+            )
+          : new Error('Coordinator closed.'),
+      );
     }
     this.pending.clear();
   }

@@ -8,8 +8,12 @@ import { MachineExecutor, type ExecutionGrant } from '../server/machine-executio
 import { MachineAgent, runMachine } from '../server/runner-agent.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
+import { buildApp } from '../server/app.ts';
 import { verifyMachineSignature } from '../server/machine-signature.ts';
 import { machineTool } from '../server/machine-tools.ts';
+import { checkRecoveryProtocol, MachineCheckOutbox } from '../server/machine-check-outbox.ts';
+import { beginMachineCheck } from '../server/machine-checks.ts';
+import type { RunnerEvent } from '../server/runners.ts';
 import { createWorktree, git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
 import {
@@ -373,6 +377,7 @@ test(
       machineTool(host, session, 'machine_use', { runnerId: node.id, operation, args }, guard);
     const machines: any = await machineTool(host, session, 'machine_list', {}, guard);
     assert.equal(machines[0].platform, process.platform);
+    assert.equal(machines[0].recoverableChecks, false);
     await use('sync');
     const target = path.join(f.root, 'target', 'remote-workspaces', task.id);
     assert.ok((await readFile(path.join(target, 'project-asset.png'))).equals(asset));
@@ -417,64 +422,329 @@ test(
   },
 );
 
+async function reviewFixture(t: TestContext) {
+  const f = await fixture(t);
+  const store = new Store(path.join(f.root, 'check.db'));
+  const host = new Workspace(store, f.root, f.root);
+  f.cleanups.push(async () => {
+    await host.close();
+    store.close();
+  });
+  const repo = path.join(f.root, 'repo');
+  await mkdir(repo);
+  await git(repo, ['init', '-b', 'main']);
+  await git(repo, ['config', 'core.autocrlf', 'false']);
+  await writeFile(path.join(repo, 'value.txt'), 'base');
+  await git(repo, ['add', '.']);
+  await git(repo, [
+    '-c',
+    'user.name=Test',
+    '-c',
+    'user.email=t@example.org',
+    'commit',
+    '-m',
+    'base',
+  ]);
+  const permission = f.executor.grant!;
+  const project = store.put('project', {
+    id: permission.projectId,
+    name: 'Check fixture',
+    path: repo,
+    goal: '',
+    createdAt: new Date().toISOString(),
+  } satisfies Project);
+  const owner = host.autonomy.addAccount();
+  store.updateMember(owner.id, { status: 'ready', account: { type: 'chatgpt' } });
+  const task = store.addTask({
+    projectId: project.id,
+    title: 'Checked change',
+    kind: 'code',
+    scope: ['value.txt'],
+    description: '',
+    priority: 'medium',
+    dependsOn: [],
+    acceptance: '',
+    status: 'ready',
+  });
+  store.claim(task.id, owner.id);
+  const checkout = await createWorktree(repo, f.root, task.id);
+  store.updateTask(task.id, { ...checkout, status: 'review' });
+  const session = {
+    id: randomUUID(),
+    projectId: project.id,
+    taskId: task.id,
+    memberId: owner.id,
+    readOnly: false,
+  };
+  const node = host.runners.add('Fixture machine', 'computer', project.id);
+  return { f, store, host, repo, project, owner, task, checkout, session, node };
+}
+
+test(
+  'lost command delivery, both endpoints restarting and a lost receipt ACK run the check once and recover it in Reviews',
+  { timeout: 30000 },
+  async (t) => {
+    const { f, host, repo, project, task, checkout, session, node } = await reviewFixture(t);
+    const config = {
+      origin: 'https://example.test',
+      token: node.token,
+      id: node.id,
+      dataDir: path.join(f.root, 'peer'),
+      slots: 1,
+      maxLoad: 1000,
+      minFreeMB: 0,
+      executionGrant: f.executor.grant,
+    };
+    let agent = new MachineAgent(config);
+    let coordinator = host;
+    f.cleanups.push(async () => {
+      await agent.reset('');
+      await agent.executor.stop();
+    });
+    const exchange = (
+      events: RunnerEvent[] = [],
+      nodeId = node.id,
+      epoch: string = coordinator.runners.epoch,
+    ) =>
+      coordinator.runners.exchange(nodeId, {
+        epoch,
+        ready: true,
+        busy: false,
+        version: checkRecoveryProtocol,
+        events,
+        execution: agent.executor.metadata(),
+      });
+    await exchange();
+    const target = path.join(checkout.worktree, 'value.txt');
+    await writeFile(target, 'tested');
+    const listed = await machineTool(host, session, 'machine_list', {}, () => {}, true);
+    assert.equal(listed[0].recoverableChecks, true);
+    await host.runners.exchange(node.id, {
+      epoch: host.runners.epoch,
+      ready: true,
+      busy: false,
+      version: checkRecoveryProtocol,
+      events: [],
+      execution: { ...agent.executor.metadata()!, fullAccess: false },
+    });
+    const readOnly = await machineTool(host, session, 'machine_list', {}, () => {}, true);
+    assert.equal(readOnly[0].recoverableChecks, false);
+    await exchange();
+    async function deliverOne() {
+      let delivered = await exchange();
+      const deadline = Date.now() + 5000;
+      while (!delivered.commands.length && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        delivered = await exchange();
+      }
+      assert.equal(delivered.commands.length, 1);
+      await agent.execute(delivered.commands[0]);
+      const accepted = await exchange(agent.batch());
+      await agent.acknowledge(accepted.ack);
+    }
+    const syncing = machineTool(
+      host,
+      session,
+      'machine_use',
+      { runnerId: node.id, operation: 'sync' },
+      () => {},
+      true,
+    );
+    await deliverOne();
+    await syncing;
+    const checking = machineTool(
+      host,
+      session,
+      'machine_use',
+      {
+        runnerId: node.id,
+        operation: 'run',
+        args: {
+          command: 'node',
+          args: [
+            '-e',
+            "require('fs').appendFileSync(require('path').join(process.env.HOME,'count'),'1');console.log('test output')",
+          ],
+        },
+      },
+      () => {},
+      true,
+    );
+    const interrupted = assert.rejects(checking, /Coordinator closed/);
+    const [lost] = (await exchange()).commands;
+    const [retry] = (await exchange()).commands;
+    assert.ok(lost);
+    assert.deepEqual(retry, lost);
+    await Promise.all([agent.execute(retry), agent.execute(lost)]);
+    assert.equal(agent.batch()[0].result.stdout.trim(), 'test output');
+    const count = path.join(config.dataDir, 'execution-home', 'count');
+    assert.equal(await readFile(count, 'utf8'), '1');
+    const differentId = randomUUID();
+    await agent.execute({ ...lost, id: differentId });
+    const malformed = agent.batch().find((event) => event.commandId === differentId)!;
+    assert.match(malformed.error!, /check identity/);
+    await agent.acknowledge([malformed.id]);
+    await host.close();
+    await interrupted;
+    await agent.reset('');
+    await agent.executor.stop();
+    agent = new MachineAgent(config);
+    const reopened = new Store(path.join(f.root, 'check.db'));
+    coordinator = new Workspace(reopened, f.root, f.root);
+    f.cleanups.push(async () => {
+      await coordinator.close();
+      reopened.close();
+    });
+    assert.equal(
+      (await coordinator.reviewDiff(task.id)).machineChecks?.attempts[0].status,
+      'awaiting result',
+    );
+    const reset = await exchange(agent.batch(), node.id, '');
+    assert.ok(reset.reset);
+    await agent.reset(reset.epoch);
+    await agent.execute(lost);
+    const [receipt] = agent.batch();
+    assert.equal(receipt.result.stdout, undefined);
+    assert.equal(receipt.result.evidence.runId, lost.id);
+    const stranger = coordinator.runners.add('Different runner', 'computer', project.id);
+    await exchange([receipt], stranger.id);
+    assert.equal((await coordinator.reviewDiff(task.id)).machineChecks?.passed, false);
+    const first = await exchange([receipt]);
+    assert.deepEqual(first.ack, [lost.id]);
+    assert.equal((await coordinator.reviewDiff(task.id)).machineChecks?.passed, true);
+    await writeFile(target, 'changed after the run');
+    const replay = await exchange(agent.batch());
+    await agent.acknowledge(replay.ack);
+    assert.deepEqual(agent.batch(), []);
+    const checks = (await coordinator.reviewDiff(task.id)).machineChecks!;
+    assert.equal(checks.attempts.length, 1);
+    assert.equal(checks.attempts[0].status, 'stale');
+    await assert.rejects(coordinator.accept(task.id), /passing paired-machine/);
+    assert.equal(await git(repo, ['rev-parse', 'HEAD']), checkout.baseCommit);
+    assert.equal(await readFile(count, 'utf8'), '1');
+    const requestId = randomUUID();
+    const rerunning = coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    const concurrent = await coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    assert.equal(concurrent.machineChecks?.attempts.at(-1)?.status, 'preparing');
+    assert.equal(concurrent.machineChecks?.attempts.length, 2);
+    // Deliver the explicit new sync and check through the ordinary exchange path.
+    await deliverOne();
+    await deliverOne();
+    const completed = await rerunning;
+    assert.equal(completed.attemptId, concurrent.attemptId);
+    assert.ok(completed.machineChecks?.passed);
+    const repeatedRequest = await coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    assert.equal(repeatedRequest.attemptId, completed.attemptId);
+    assert.equal(repeatedRequest.machineChecks?.attempts.length, 2);
+    await assert.rejects(
+      coordinator.repeatMachineCheck(task.id, completed.attemptId, requestId),
+      /different check/,
+    );
+    assert.deepEqual((await exchange()).commands, []);
+    await writeFile(target, 'changed again');
+    // An HTTP retry after a restart can inspect the original attempt with the runner offline.
+    const offlineStore = new Store(path.join(f.root, 'check.db'));
+    const offline = new Workspace(offlineStore, f.root, f.root);
+    const app = await buildApp(offline, { port: 4317 });
+    try {
+      const host = '127.0.0.1:4317';
+      const bootstrap = await app.inject({ url: '/api/session', headers: { host } });
+      const headers = {
+        host,
+        cookie: String(bootstrap.headers['set-cookie']).split(';')[0],
+        'x-relay-token': bootstrap.json().token,
+      };
+      const submit = (checkId: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/tasks/' + task.id + '/machine-check',
+          headers,
+          payload: { checkId, clientRequestId: requestId },
+        });
+      const afterEdit = await submit(lost.id);
+      assert.equal(afterEdit.statusCode, 200);
+      assert.equal(afterEdit.json().attemptId, completed.attemptId);
+      assert.equal(afterEdit.json().machineChecks.attempts.at(-1).status, 'stale');
+      assert.equal((await submit(completed.attemptId)).statusCode, 409);
+    } finally {
+      await app.close();
+      await offline.close();
+      offlineStore.close();
+    }
+    await assert.rejects(coordinator.accept(task.id), /passing paired-machine/);
+    await writeFile(target, 'changed after the run');
+    assert.equal((await coordinator.accept(task.id)).status, 'done');
+    assert.equal(await readFile(count, 'utf8'), '11');
+  },
+);
+
+test('a runner crash before a signed outcome leaves an unconfirmed receipt and prevents replay', async (t) => {
+  const f = await fixture(t);
+  const runner = randomUUID();
+  const id = randomUUID();
+  const event: RunnerEvent = {
+    id,
+    clientId: randomUUID(),
+    type: 'result',
+    commandId: id,
+    method: checkRecoveryProtocol,
+    params: { taskId: f.taskId },
+  };
+  const original = new MachineCheckOutbox(f.root, runner);
+  assert.ok(original.claim(event));
+  assert.deepEqual(original.batch(), []);
+  original.close();
+  const next = new MachineCheckOutbox(f.root, runner);
+  try {
+    assert.equal(next.claim(event), false);
+    assert.match(next.batch()[0].error!, /before saving a signed result/);
+    next.acknowledge([id]);
+    assert.equal(next.claim(event), false);
+    assert.deepEqual(next.batch(), []);
+  } finally {
+    next.close();
+  }
+});
+
+test('a repeated Review request after failed synchronization reports the same error without dispatching a command', async (t) => {
+  const { f, store, host, node, task } = await reviewFixture(t);
+  const grant = f.executor.metadata()!;
+  await host.runners.exchange(node.id, {
+    epoch: host.runners.epoch,
+    ready: true,
+    busy: false,
+    version: checkRecoveryProtocol,
+    events: [],
+    execution: grant,
+  });
+  const original = beginMachineCheck(store, task, { id: node.id, name: 'Fixture machine' }, grant, {
+    command: 'node',
+    args: ['--version'],
+    timeoutMs: 1000,
+  });
+  const calls = t.mock.method(
+    host.runners,
+    'call',
+    async (_peer: unknown, command: { params: { operation: string } }) => {
+      assert.equal(command.params.operation, 'sync');
+      throw new Error('Remote files changed.');
+    },
+  );
+  const key = randomUUID();
+  await assert.rejects(host.repeatMachineCheck(task.id, original.id, key), /Remote files changed/);
+  const replay = await host.repeatMachineCheck(task.id, original.id, key);
+  const attempt = replay.machineChecks!.attempts.at(-1)!;
+  assert.equal(attempt.id, replay.attemptId);
+  assert.equal(attempt.status, 'unconfirmed');
+  assert.match(attempt.error!, /Remote files changed/);
+  assert.equal(calls.mock.callCount(), 1);
+});
+
 test(
   'Reviews binds a real paired check to the exact patch, preserves failed attempts and requires a fresh pass to integrate',
   { timeout: 45000 },
   async (t) => {
-    const f = await fixture(t);
-    const store = new Store(path.join(f.root, 'check.db'));
-    const host = new Workspace(store, f.root, f.root);
-    f.cleanups.push(async () => {
-      await host.close();
-      store.close();
-    });
-    const repo = path.join(f.root, 'repo');
-    await mkdir(repo);
-    await git(repo, ['init', '-b', 'main']);
-    await git(repo, ['config', 'core.autocrlf', 'false']);
-    await writeFile(path.join(repo, 'value.txt'), 'base');
-    await git(repo, ['add', '.']);
-    await git(repo, [
-      '-c',
-      'user.name=Test',
-      '-c',
-      'user.email=t@example.org',
-      'commit',
-      '-m',
-      'base',
-    ]);
-    const permission = f.executor.grant!;
-    const project = store.put('project', {
-      id: permission.projectId,
-      name: 'Check fixture',
-      path: repo,
-      goal: '',
-      createdAt: new Date().toISOString(),
-    } satisfies Project);
-    const owner = host.autonomy.addAccount();
-    store.updateMember(owner.id, { status: 'ready', account: { type: 'chatgpt' } });
-    const task = store.addTask({
-      projectId: project.id,
-      title: 'Checked change',
-      kind: 'code',
-      scope: ['value.txt'],
-      description: '',
-      priority: 'medium',
-      dependsOn: [],
-      acceptance: '',
-      status: 'ready',
-    });
-    store.claim(task.id, owner.id);
-    const checkout = await createWorktree(repo, f.root, task.id);
-    store.updateTask(task.id, { ...checkout, status: 'review' });
-    const session = {
-      id: randomUUID(),
-      projectId: project.id,
-      taskId: task.id,
-      memberId: owner.id,
-      readOnly: false,
-    };
-    const node = host.runners.add('Fixture machine', 'computer', project.id);
+    const { f, store, host, repo, task, checkout, session, node } = await reviewFixture(t);
     await host.runners.exchange(node.id, {
       epoch: host.runners.epoch,
       ready: true,
