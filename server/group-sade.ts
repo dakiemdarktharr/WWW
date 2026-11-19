@@ -268,7 +268,7 @@ export const groupPlanTool = {
               ...planTool.inputSchema.properties.tasks.items.properties.kind,
               enum: Object.keys(sharedPlanKinds),
               description:
-                'Choose by action and permissions: edit-files creates or updates files such as docs, code or config, or uses paired OS tools. edit-design edits visual assets. research-read-only investigates without editing. review-read-only inspects existing work without editing.',
+                'Choose by action and permissions: edit-files creates or updates files such as docs, code or config, or uses paired OS tools. edit-design edits visual assets. research-read-only gathers information. review-read-only checks a diff, implementation or test result against requirements, including defensive checks. Review excludes the authors of scoped files.',
             },
             preferredMemberId: {
               type: 'string',

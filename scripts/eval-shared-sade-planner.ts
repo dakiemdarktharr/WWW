@@ -119,6 +119,9 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     replay: { type: 'string' },
+    case: { type: 'string' },
+    'export-prompt': { type: 'boolean' },
+    'external-plan': { type: 'string' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
@@ -131,7 +134,18 @@ assert.ok(
 );
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
+const externalPath = values['external-plan'] && path.resolve(values['external-plan']);
+const exportPrompt = values['export-prompt'];
+assert.ok(
+  [source, externalPath, exportPrompt].filter(Boolean).length <= 1,
+  'Choose replay, prompt export or an external plan.',
+);
+if (externalPath || exportPrompt) assert.ok(values.case, 'Select one planning case with --case.');
 assert.notEqual(output, source, 'Choose a separate output file for replay');
+assert.notEqual(output, externalPath, 'Choose a separate output file for external plan scoring.');
+const externalPlan: unknown = externalPath
+  ? JSON.parse(await readFile(externalPath, 'utf8'))
+  : undefined;
 type SavedRun = {
   model: string;
   digest: string;
@@ -329,10 +343,18 @@ function assess(
     const backend = scopedWriter(jobs, workshop.backend);
     const tests = scopedWriter(jobs, workshop.tests);
     const review = jobs.find((job) => job.task?.kind === 'review');
-    assert.ok(review, 'the defensive review is read-only');
+    assert.ok(review, 'use review-read-only for the coordinator to exclude patch authors');
     assert.equal(architecture.grantId, grants[0], 'architecture stays with Gemini');
     assert.equal(frontend.grantId, grants[1], 'frontend stays with Astra');
     assert.deepEqual(frontend.task?.dependsOn, [architecture.task?.key]);
+    const designInstructions = `${frontend.task?.description} ${frontend.task?.acceptance}`;
+    assert.match(designInstructions, /style|aesthetic|phong cách|phong cach/i);
+    assert.match(designInstructions, /ask|hỏi|hoi/i, 'ask the requester about the style');
+    assert.match(
+      designInstructions,
+      /tự (chọn|quyết)|tu (chon|quyet)|choose|decide/i,
+      'offer to let Astra choose the style',
+    );
     assert.deepEqual(backend.task?.dependsOn, [architecture.task?.key]);
     assert.deepEqual(tests.task?.dependsOn, [backend.task?.key]);
     assert.deepEqual(new Set(review.task?.scope), new Set([workshop.frontend, workshop.backend]));
@@ -403,11 +425,14 @@ if (saved) {
   assert.equal(saved.toolsSha256, toolsSha256);
 }
 const selected =
-  saved ||
-  (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json()).models.find(
-    (entry: { name: string }) => entry.name === model,
-  );
-assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
+  !externalPath && !exportPrompt
+    ? saved ||
+      (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json()).models.find(
+        (entry: { name: string }) => entry.name === model,
+      )
+    : undefined;
+if (!externalPath && !exportPrompt)
+  assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
 const cases: {
   scenario: Case;
   id: string;
@@ -441,9 +466,31 @@ const cases: {
         );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
-if (saved) assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
+if (saved && !values.case)
+  assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
+const selectedCases = values.case ? cases.filter(({ id }) => id === values.case) : cases;
+assert.ok(selectedCases.length, `Unknown case: ${values.case}`);
 await mkdir(path.dirname(output), { recursive: true });
-for (const { scenario, id, message, handoff } of cases) {
+if (exportPrompt) {
+  const { scenario, id, message } = selectedCases[0];
+  assert.notEqual(scenario, 'chat', 'Choose a case that requests a plan.');
+  await withGroup(scenario, message, async ({ delivery }) => {
+    const prompt = sharedGroupPlanningPrompt(delivery);
+    await writeFile(
+      output,
+      JSON.stringify(
+        { id, prompt, promptSha256: sha256(prompt), tool: groupPlanTool, toolsSha256 },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  });
+  console.log(JSON.stringify({ exported: id }));
+  process.exit(0);
+}
+
+for (const { scenario, id, message, handoff } of selectedCases) {
   const row = await withGroup(scenario, message, async (group) => {
     const prompt = sharedGroupPlanningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
@@ -463,6 +510,10 @@ for (const { scenario, id, message, handoff } of cases) {
         if (!prior.plan) throw new Error(prior.error || 'Model returned no plan.');
         toolName = prior.toolName;
         plan = parseTeamPlan(prior.plan, { allowEmpty: true });
+      } else if (externalPath) {
+        toolName = groupPlanTool.name;
+        const roster = group.delivery.team.map((member) => member.id);
+        plan = parseSharedGroupPlan(externalPlan, roster);
       } else {
         const messages: unknown[] = [{ role: 'user', content: prompt }];
         const roster = group.delivery.team.map((member) => member.id);
@@ -533,8 +584,7 @@ for (const { scenario, id, message, handoff } of cases) {
     output,
     JSON.stringify(
       {
-        model,
-        digest: selected.digest,
+        ...(externalPath ? { source: 'external-plan' } : { model, digest: selected.digest }),
         toolsSha256,
         ...(source ? { replayedFrom: path.basename(source) } : {}),
         rows,
@@ -552,3 +602,4 @@ console.log(
     passed: rows.filter((row) => row.pass).length,
   }),
 );
+if (externalPath && rows.some((row) => !row.pass)) process.exitCode = 1;

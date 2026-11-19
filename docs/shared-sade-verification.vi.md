@@ -170,6 +170,25 @@ Sau khi sửa phân công để giữ lượt Windows và reviewer độc lập,
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-full-handoff.json --full-handoff
 ```
 
+### Kiểm tra một kế hoạch bằng Codex đăng nhập
+
+Chạy hai lượt Codex CLI trên Windows bằng phiên ChatGPT có sẵn và cùng tin nhắn tổng hợp `full-handoff/1`. Cả hai lượt xuất kế hoạch JSON trong thư mục chỉ đọc. Lượt đầu có đủ năm tác vụ nhưng gắn kiểm tra dữ liệu lỗi là nghiên cứu. Vì vậy nó không qua điều kiện review độc lập. Sau khi prompt và schema mô tả rõ mục đích của từng loại việc, lượt thứ hai đạt 1/1. Kế hoạch giữ Gemini làm hợp đồng, Astra hỏi phong cách hoặc đề nghị tự chọn, Sade tự giao backend và test theo dependency, rồi chọn Antigravity mô phỏng cho review độc lập trên hai file nguồn.
+
+Codex nhận prompt và schema hiện hành qua CLI. Kivuno chấm kết quả bằng parser, Shared Groups và grant mô phỏng. Hai lượt chỉ lập kế hoạch và không chạy hành động nhóm. Phần chạy nhiều provider trên tài khoản thật vẫn cần được kiểm chứng.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-prompt.json --full-handoff --case full-handoff/1 --export-prompt
+$bundle = Get-Content .local/codex-plan-prompt.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$schema = Join-Path (Get-Location).Path '.local/codex-plan-schema.json'
+$answer = Join-Path (Get-Location).Path '.local/codex-plan-answer.json'
+[IO.File]::WriteAllText($schema, ($bundle.tool.inputSchema | ConvertTo-Json -Depth 35))
+$sandbox = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$instruction = 'This is a synthetic, read-only benchmark. Do not execute work, run commands, use tools, or read files. Return the argument object for relay_submit_plan as the final structured response.'
+($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
+node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-score.json --full-handoff --case full-handoff/1 --external-plan $answer
+```
+
 ### Qwen review bản vá chức năng
 
 Phép đo dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ, temperature 0 và seed 7013. Sáu cặp chính và ba cặp bổ sung đều có một bản đúng và một bản lỗi. Script chạy input mẫu trên các hàm có sẵn để xác nhận đáp án, rồi gửi diff qua prompt và schema review của Sade. Model đọc diff. Shared Groups ghi verdict bằng hai chủ quyền mô phỏng và kiểm tra trạng thái tích hợp trong SQLite. Luồng Git thật được kiểm tra riêng trong các bài workspace.
