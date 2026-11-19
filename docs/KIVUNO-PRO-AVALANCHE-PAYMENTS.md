@@ -1,6 +1,6 @@
 # Thiết kế thanh toán Kivuno Plus/Max trên Avalanche
 
-**Trạng thái:** contract, compiler script, verifier/API, giao diện và quota profile/group đã được triển khai, kiểm tra local và push trực tiếp lên GitHub `main`. Ví deployer hiện có 20 Fuji test USDC nhưng chưa có test AVAX; contract chưa deploy và chưa chạy payment end-to-end.
+**Trạng thái:** contract Fuji-only, compiler, verifier/API, giao diện Plus/Max và quota profile/group đã được triển khai, kiểm tra local và push trực tiếp lên GitHub `main`. Contract và ứng dụng chưa deploy; chưa có thanh toán đầu-cuối trên Fuji.
 **Ngày kiểm tra nguồn:** 19/11/2026.
 **Phạm vi hiện tại:** Fuji C-Chain, USDC testnet, demo cuộc thi. Mainnet và nhận tiền thật chưa được chốt hoặc cho phép.
 
@@ -240,14 +240,10 @@ Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; khô
 - [Mentor repo](https://github.com/tuantqse90/team1vn-socialonchain) — dùng để học thiết kế contract/indexer; hạn chế và trạng thái test/deploy được ghi riêng trong nghiên cứu ban đầu; không sao chép ví nhúng/localStorage.
 - [Circle stablecoin-evm license/source](https://github.com/circlefin/stablecoin-evm) — xem ABI/implementation đúng token trước khi chọn EIP-3009 path.
 
-## Trạng thái bàn giao hiện tại
+## Triển khai Fuji và xác minh
 
-- Repo làm việc là `D:\ChatGPT\Kivuno-research`, branch `main`, đã fast-forward từ origin/main; `D:\ChatGPT\Kivuno` là clone khác và đang cũ hơn.
-- Stripe repo và docs đã được nghiên cứu để học idempotency, event verification và entitlement; không chép mã Stripe.
-- Fuji USDC/chain ID đã xác định; live RPC trả `USD Coin`, version `2`, decimals `6`. Contract Fuji-only, compiler, backend payment API, UI Plus/Max và quota profile/group đã có trong source.
-- Kiểm tra local ngày 19/11/2026: typecheck, Prettier trên file hỗ trợ, build Vite/cloud, compile Solidity Cancun/Shanghai và 10 kiểm thử billing/contract/collaboration đều qua. Toàn bộ suite trước đó có 328 pass, 1 skip; sau thay đổi UI gần nhất đã chạy lại các nhóm liên quan.
-- Ví deployer/treasury công khai do người dùng cung cấp là `0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`; Core Extension đã kết nối và UI hiển thị đúng địa chỉ này. Không có private key/seed trong repo hay chat.
-- Circle faucet đã gửi 20 test USDC đến ví trên; receipt Fuji thành công ở tx `0x70ecab7c60105a54f6a17c8803c411a77505b5cab5cb1be85cc915dcdbed7139`. Số dư AVAX test vẫn bằng 0 tại lần kiểm tra đã ghi nhận.
-- Builder Hub từng báo nhận 0.5 AVAX nhưng vào Console Wallet nội bộ (đuôi `073F`), không phải ví deployer; không dùng số dư đó. Builder Hub báo cooldown. QuickNode Fuji faucet hiện không cho tiếp tục vì ví không đạt yêu cầu số dư AVAX mainnet nhỏ; trang FAQ nói faucet không cần tài khoản QuickNode nhưng có điều kiện số dư mainnet. Không nạp tài sản mainnet chỉ để vượt điều kiện này.
-- Source đã được push trực tiếp lên GitHub `main`: `3b57594` (implementation) và `3161ac6` (status docs), dưới tài khoản `Tienkhoaa2908`. Người dùng chốt chưa deploy app Vercel. Còn lại cho demo on-chain: nhận test AVAX tại đúng ví, người dùng xem/ký giao dịch deploy bằng Core, kiểm tra độc lập cấu hình contract, rồi chạy luồng payment/receipt/entitlement đầu-cuối.
-- Chưa có contract/app deployment, payment đầu-cuối, audit độc lập, mainnet transaction, thu tiền thật hoặc contest submission. Vercel CLI không cần cho yêu cầu GitHub-only hiện tại.
+Trang `tools/kivuno-fuji-deploy.html` là công cụ cục bộ để triển khai `KivunoPlans` bằng ví Core. Công cụ chỉ cho phép Fuji C-Chain (43113), kiểm tra địa chỉ deployer, bytecode biên dịch, USDC contract và số dư/gas; constructor cố định USDC Fuji và treasury đã cấu hình. Không có private key/seed, không gửi token allowance và không có đường deploy mainnet. Xem [hướng dẫn deploy Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
+
+Sau khi contract được triển khai, backend phải cấu hình đúng `KIVUNO_FUJI_PAYMENT_CONTRACT`, token USDC và treasury. Bộ kiểm tra cấu hình chỉ bật thanh toán khi chain, bytecode và các giá trị immutable khớp. Giao dịch payment vẫn cần người mua xem và ký trong Core; entitlement chỉ được cập nhật sau khi verifier xác nhận receipt/event. Chưa tuyên bố demo đầu-cuối cho đến khi payment thật trên Fuji và quota được xác minh.
+
+Ứng dụng Vercel chưa deploy theo phạm vi người dùng đã chọn. Không lưu private key/seed phrase; không dùng tiền thật hoặc tài sản mainnet trong demo.

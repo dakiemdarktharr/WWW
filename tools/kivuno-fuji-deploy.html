@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <link rel="icon" href="data:," />
+    <title>Kivuno · Fuji contract deploy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f1f4f6;
+        --white: #fff;
+        --ink: #1b2733;
+        --muted: #536473;
+        --line: #d6dee5;
+        --red: #e84142;
+        --red-dark: #c52e34;
+        --green: #176547;
+        --amber: #8e5d12;
+        --blue: #275e83;
+        --mono: Consolas, 'Courier New', monospace;
+        font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 320px;
+        min-height: 100vh;
+        margin: 0;
+        background: var(--paper);
+      }
+
+      button,
+      a {
+        font: inherit;
+      }
+
+      .masthead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 18px max(24px, calc((100vw - 1120px) / 2));
+        border-bottom: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        color: var(--ink);
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-mark {
+        width: 10px;
+        height: 25px;
+        background: var(--red);
+      }
+
+      .network-tag {
+        color: var(--blue);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 48px));
+        margin: 52px auto 80px;
+      }
+
+      .intro {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 28px;
+        align-items: end;
+        margin-bottom: 28px;
+      }
+
+      .kicker {
+        margin: 0 0 12px;
+        color: var(--red-dark);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      h1 {
+        max-width: 700px;
+        margin: 0;
+        font-size: clamp(31px, 5vw, 48px);
+        font-weight: 620;
+        letter-spacing: -0.055em;
+        line-height: 1.06;
+      }
+
+      .intro-copy {
+        max-width: 660px;
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      .chain-stamp {
+        width: 116px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.7;
+        text-align: right;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        border: 1px solid var(--line);
+        background: var(--white);
+      }
+
+      .review {
+        padding: 28px 32px 32px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 630;
+        letter-spacing: -0.025em;
+      }
+
+      .review-lede {
+        max-width: 580px;
+        margin: 9px 0 25px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+
+      .values {
+        margin: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .value-row {
+        display: grid;
+        grid-template-columns: 145px minmax(0, 1fr);
+        gap: 16px;
+        padding: 15px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      dt {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      dd {
+        min-width: 0;
+        margin: 0;
+        color: var(--ink);
+        font-size: 14px;
+        font-weight: 560;
+        overflow-wrap: anywhere;
+      }
+
+      .address {
+        font-family: var(--mono);
+        font-size: 12px;
+        font-weight: 450;
+        line-height: 1.65;
+      }
+
+      .plans {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 24px;
+      }
+
+      .plans span {
+        white-space: nowrap;
+      }
+
+      .side-panel {
+        display: flex;
+        flex-direction: column;
+        padding: 27px 25px;
+        border-left: 1px solid var(--line);
+        background: #f8fafb;
+      }
+
+      .side-panel p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .checks {
+        display: grid;
+        gap: 12px;
+        margin: 22px 0 20px;
+        padding: 0;
+        list-style: none;
+      }
+
+      .checks li {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 9px;
+        align-items: start;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .check-mark {
+        width: 15px;
+        height: 15px;
+        margin-top: 1px;
+        border: 1px solid #aab6c0;
+        border-radius: 50%;
+      }
+
+      .check-mark.ready {
+        border-color: var(--green);
+        background: var(--green);
+        box-shadow: inset 0 0 0 4px #f8fafb;
+      }
+
+      .estimate {
+        display: grid;
+        gap: 5px;
+        margin: 0 0 18px;
+        padding: 13px 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .estimate-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .estimate-value {
+        min-height: 24px;
+        font-family: var(--mono);
+        font-size: 14px;
+      }
+
+      .attempt-lock {
+        display: grid;
+        gap: 8px;
+        margin: 0 0 18px;
+        padding: 13px;
+        border: 1px solid #d9b568;
+        background: #fff8e9;
+        color: #694b16;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .attempt-lock[hidden],
+      .attempt-hash-wrap[hidden],
+      .resolve-attempt-button[hidden] {
+        display: none;
+      }
+
+      .attempt-lock p {
+        margin: 0;
+        color: inherit;
+        font-size: inherit;
+      }
+
+      .attempt-lock a {
+        color: #275e83;
+        overflow-wrap: anywhere;
+      }
+
+      .attempt-hash-wrap code {
+        overflow-wrap: anywhere;
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+
+      .resolve-attempt-button {
+        min-height: 38px;
+        padding: 7px 9px;
+        border: 1px solid #c7a55d;
+        background: #fffdf8;
+        color: #694b16;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.4;
+        text-align: left;
+      }
+
+      .resolve-attempt-button:hover {
+        background: #fff1cf;
+      }
+
+      .resolve-attempt-button:focus-visible {
+        outline: 3px solid #397fad;
+        outline-offset: 3px;
+      }
+
+      .wallet-button,
+      .deploy-button {
+        width: 100%;
+        min-height: 46px;
+        border: 0;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 620;
+        transition: background-color 120ms ease;
+      }
+
+      .wallet-button {
+        border: 1px solid var(--line);
+        background: var(--white);
+        color: var(--ink);
+      }
+
+      .wallet-button:hover:not(:disabled) {
+        background: #edf2f5;
+      }
+
+      .deploy-button {
+        margin-top: 9px;
+        background: var(--red);
+        color: var(--white);
+      }
+
+      .deploy-button:hover:not(:disabled) {
+        background: var(--red-dark);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.46;
+      }
+
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #397fad;
+        outline-offset: 3px;
+      }
+
+      .status {
+        min-height: 44px;
+        margin: 14px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+
+      .status[data-tone='error'] {
+        color: #a52b31;
+      }
+
+      .status[data-tone='success'] {
+        color: var(--green);
+      }
+
+      .transaction-link {
+        display: none;
+        margin-top: 7px;
+        color: var(--blue);
+        font-size: 13px;
+        overflow-wrap: anywhere;
+      }
+
+      .footnote {
+        max-width: 780px;
+        margin: 19px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100% - 28px, 560px);
+          margin-top: 34px;
+        }
+
+        .masthead {
+          padding: 15px 18px;
+        }
+
+        .network-tag {
+          font-size: 11px;
+          text-align: right;
+        }
+
+        .intro {
+          grid-template-columns: 1fr;
+          gap: 16px;
+        }
+
+        .chain-stamp {
+          width: auto;
+          justify-self: start;
+          text-align: left;
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .review {
+          padding: 24px 20px;
+        }
+
+        .side-panel {
+          border-top: 1px solid var(--line);
+          border-left: 0;
+          padding: 23px 20px;
+        }
+
+        .value-row {
+          grid-template-columns: 112px minmax(0, 1fr);
+          gap: 10px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Kivuno payments</div>
+      <div class="network-tag">Avalanche Fuji · C-Chain · 43113</div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="kicker">Local deployment tool</p>
+          <h1 id="page-title">Deploy the Kivuno Plans contract</h1>
+          <p class="intro-copy">
+            This sends one contract-creation transaction to Fuji. Review the fixed token and
+            treasury addresses below; Core will show the transaction before it is sent.
+          </p>
+        </div>
+        <div class="chain-stamp">NETWORK<br />FUJI TESTNET<br />CHAIN 43113</div>
+      </section>
+
+      <section class="workspace" aria-label="Contract deployment review">
+        <div class="review">
+          <h2>Transaction values</h2>
+          <p class="review-lede">
+            The page checks the wallet, Fuji network, USDC contract, compiled artifact, balance, and
+            estimated gas before enabling deployment.
+          </p>
+          <dl class="values">
+            <div class="value-row">
+              <dt>Contract</dt>
+              <dd>KivunoPlans · manual Plus/Max subscriptions</dd>
+            </div>
+            <div class="value-row">
+              <dt>Deployer</dt>
+              <dd class="address">0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805</dd>
+            </div>
+            <div class="value-row">
+              <dt>USDC token</dt>
+              <dd class="address">0x5425890298aed601595a70AB815c96711a31Bc65</dd>
+            </div>
+            <div class="value-row">
+              <dt>Treasury</dt>
+              <dd class="address">0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805</dd>
+            </div>
+            <div class="value-row">
+              <dt>Monthly price</dt>
+              <dd class="plans"><span>Plus · 2 test USDC</span><span>Max · 6 test USDC</span></dd>
+            </div>
+            <div class="value-row">
+              <dt>Payment behavior</dt>
+              <dd>Manual, one month at a time; buyer pays Fuji gas</dd>
+            </div>
+          </dl>
+        </div>
+
+        <aside class="side-panel" aria-labelledby="preflight-title">
+          <h2 id="preflight-title">Before Core opens</h2>
+          <p>Connect the Core account above, then inspect this preflight summary.</p>
+          <ul class="checks" aria-label="Preflight checks">
+            <li>
+              <span class="check-mark" id="check-wallet" aria-hidden="true"></span
+              ><span id="check-wallet-label">Core wallet connected</span>
+            </li>
+            <li>
+              <span class="check-mark" id="check-chain" aria-hidden="true"></span
+              ><span id="check-chain-label">Fuji C-Chain selected</span>
+            </li>
+            <li>
+              <span class="check-mark" id="check-token" aria-hidden="true"></span
+              ><span id="check-token-label">Fuji USDC contract found</span>
+            </li>
+            <li>
+              <span class="check-mark" id="check-gas" aria-hidden="true"></span
+              ><span id="check-gas-label">Gas estimate and balance checked</span>
+            </li>
+          </ul>
+          <div class="estimate">
+            <span class="estimate-label">Estimated maximum gas cost</span>
+            <strong class="estimate-value" id="gas-estimate">Not checked</strong>
+            <span class="estimate-label" id="balance-summary"
+              >The app does not request token approval.</span
+            >
+          </div>
+          <section class="attempt-lock" id="attempt-lock" aria-live="polite" hidden>
+            <strong>Earlier deployment attempt needs review</strong>
+            <p id="attempt-summary"></p>
+            <p class="attempt-hash-wrap" id="attempt-hash-wrap" hidden>
+              Recorded transaction or contract: <code id="attempt-hash"></code>
+            </p>
+            <a
+              id="attempt-explorer"
+              href="https://build.avax.network/explorer/fuji/c-chain"
+              target="_blank"
+              rel="noreferrer"
+              >Open Fuji C-Chain Explorer</a
+            >
+            <button class="resolve-attempt-button" id="resolve-attempt-button" type="button" hidden>
+              I checked Core and Fuji: no successful or pending deployment exists. Allow retry.
+            </button>
+          </section>
+          <button class="wallet-button" id="connect-button" type="button">
+            Connect Core wallet
+          </button>
+          <button class="deploy-button" id="deploy-button" type="button" disabled>
+            Review deployment in Core
+          </button>
+          <p class="status" id="status" role="status" aria-live="polite" data-tone="neutral">
+            No transaction has been sent.
+          </p>
+          <a class="transaction-link" id="transaction-link" target="_blank" rel="noreferrer"></a>
+        </aside>
+      </section>
+
+      <p class="footnote">
+        This page runs only from the local Vite development server. It does not ask for or store a
+        recovery phrase or private key, and it cannot deploy to Avalanche Mainnet. It stores only a
+        public deployment-attempt marker in this browser to prevent accidental retries. Check Core's
+        network, account, and fee before signing.
+      </p>
+    </main>
+
+    <script type="module" src="/src/kivuno-fuji-deploy.ts"></script>
+  </body>
+</html>
