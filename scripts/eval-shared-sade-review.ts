@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { runInNewContext } from 'node:vm';
@@ -123,17 +123,71 @@ const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { holdout: { type: 'boolean' } },
+  options: {
+    holdout: { type: 'boolean' },
+    case: { type: 'string' },
+    variant: { type: 'string' },
+    'export-prompt': { type: 'boolean' },
+    'external-verdict': { type: 'string' },
+  },
 });
 const output = path.resolve(positionals[0] || '.local/shared-sade-review.json');
+const exportPrompt = values['export-prompt'];
+const externalPath = values['external-verdict'] && path.resolve(values['external-verdict']);
+assert.ok(!exportPrompt || !externalPath, 'Choose prompt export or external verdict scoring.');
+assert.notEqual(output, externalPath, 'Choose a separate output file for the score.');
+assert.ok(
+  !values.variant || ['clean', 'defect'].includes(values.variant),
+  'Choose --variant clean or --variant defect.',
+);
+const cases = (values.holdout ? holdout : examples).filter(
+  ({ id }) => !values.case || id === values.case,
+);
+assert.ok(cases.length, `Unknown review case: ${values.case}`);
+const variants = (['clean', 'defect'] as const).filter(
+  (variant) => !values.variant || variant === values.variant,
+);
+if (exportPrompt || externalPath)
+  assert.ok(cases.length === 1 && variants.length === 1, 'Choose one case and one variant.');
+const externalVerdict: unknown = externalPath
+  ? JSON.parse(await readFile(externalPath, 'utf8'))
+  : undefined;
 const { type, name, description, inputSchema } = groupReviewTool;
 const tools = [{ type, function: { name, description, parameters: inputSchema } }];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+const toolsSha256 = hash(JSON.stringify(tools));
 const local = (route: string, options: RequestInit = {}) => fetch(`${endpoint}${route}`, options);
-const installed = (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json())
-  .models;
-const selected = installed.find((entry: { name: string }) => entry.name === model);
-assert.ok(selected, 'Install Qwen in the local Ollama directory.');
+const selected =
+  exportPrompt || externalPath
+    ? undefined
+    : (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json()).models.find(
+        (entry: { name: string }) => entry.name === model,
+      );
+if (!exportPrompt && !externalPath)
+  assert.ok(selected, 'Install Qwen in the local Ollama directory.');
+
+async function requestVerdict(prompt: string): Promise<unknown> {
+  const response = await local('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      tools,
+      stream: false,
+      think: false,
+      keep_alive: '45s',
+      messages: [{ role: 'user', content: prompt }],
+      options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 520 },
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
+  const { message } = await response.json();
+  assert.equal(message.tool_calls?.length, 1, 'expected one review tool call');
+  const tool = message.tool_calls[0].function;
+  assert.equal(tool.name, groupReviewTool.name);
+  return tool.arguments;
+}
 
 async function evaluate(
   example: (typeof examples)[number] | (typeof holdout)[number],
@@ -256,32 +310,41 @@ async function evaluate(
     assert.deepEqual(review.review, diff);
     const prompt = sharedGroupReviewPrompt(review);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
+    const promptSha256 = hash(prompt);
+    const diffDigest = reviewDigest(diff);
+    if (exportPrompt) {
+      await writeFile(
+        output,
+        JSON.stringify(
+          {
+            id: example.id,
+            version,
+            prompt,
+            promptSha256,
+            diffDigest,
+            tool: groupReviewTool,
+            toolsSha256,
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+      console.log(JSON.stringify({ exported: example.id, version }));
+      return;
+    }
     const started = performance.now();
     let verdict: string | undefined;
     let summary: string | undefined;
     let error: string | undefined;
     let gate = false;
     try {
-      const response = await local('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          tools,
-          stream: false,
-          think: false,
-          keep_alive: '45s',
-          messages: [{ role: 'user', content: prompt }],
-          options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 520 },
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
-      const { message } = await response.json();
-      assert.equal(message.tool_calls?.length, 1, 'expected one review tool call');
-      const tool = message.tool_calls[0].function;
-      assert.equal(tool.name, groupReviewTool.name);
-      const result = sharedFinish.parse({ ...tool.arguments, kind: 'review' });
+      const reply = externalPath ? externalVerdict : await requestVerdict(prompt);
+      assert.ok(
+        reply && typeof reply === 'object' && !Array.isArray(reply),
+        'Expected a review object',
+      );
+      const result = sharedFinish.parse({ ...reply, kind: 'review' });
       assert.ok(result.kind === 'review');
       verdict = result.verdict;
       summary = result.summary;
@@ -312,8 +375,8 @@ async function evaluate(
       correct: verdict === (version === 'clean' ? 'approved' : 'changes'),
       grounded:
         version === 'defect' && verdict === 'changes' && example.evidence.test(summary || ''),
-      promptSha256: hash(prompt),
-      diffDigest: reviewDigest(diff),
+      promptSha256,
+      diffDigest,
       milliseconds: Math.round(performance.now() - started),
     };
   } finally {
@@ -323,9 +386,10 @@ async function evaluate(
 
 await mkdir(path.dirname(output), { recursive: true });
 const rows = [];
-for (const example of values.holdout ? holdout : examples) {
-  for (const version of ['clean', 'defect'] as const) {
+for (const example of cases) {
+  for (const version of variants) {
     const row = await evaluate(example, version);
+    if (!row) continue;
     rows.push(row);
     console.log(
       JSON.stringify({
@@ -339,14 +403,24 @@ for (const example of values.holdout ? holdout : examples) {
     );
   }
 }
+if (exportPrompt) process.exit(0);
 await writeFile(
   output,
   JSON.stringify(
-    { model, digest: selected.digest, toolsSha256: hash(JSON.stringify(tools)), rows },
+    {
+      ...(externalPath ? { source: 'external-verdict' } : { model, digest: selected.digest }),
+      toolsSha256,
+      rows,
+    },
     null,
     2,
   ),
 );
+if (
+  externalPath &&
+  rows.some((row) => !row.correct || !row.gate || (row.version === 'defect' && !row.grounded))
+)
+  process.exitCode = 1;
 console.log(
   JSON.stringify({
     total: rows.length,
