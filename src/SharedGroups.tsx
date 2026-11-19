@@ -9,6 +9,8 @@ import type {
   SharedSadeRun,
 } from '../shared/collaboration';
 import './SharedGroups.css';
+import { api } from './api';
+import type { Machine } from './Machines';
 
 const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(input);
 export default function SharedGroups({
@@ -39,6 +41,8 @@ export default function SharedGroups({
   const [grantProject, setGrantProject] = useState('');
   const [grantTurns, setGrantTurns] = useState(3);
   const [allowWrites, setAllowWrites] = useState(false);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [machineId, setMachineId] = useState('');
   const [projectKey, setProjectKey] = useState('');
   const [answer, setAnswer] = useState('');
   const selectedRef = useRef(initialGroupId);
@@ -98,6 +102,7 @@ export default function SharedGroups({
     setGrantMember('');
     setGrantProject('');
     setAllowWrites(false);
+    setMachineId('');
     setProjectKey('');
     setAnswer('');
     messageDraft.current = null;
@@ -165,6 +170,36 @@ export default function SharedGroups({
     selectedRef.current = id;
     setSelected(id);
   };
+  useEffect(() => {
+    if (!editing || !grantProject || !allowWrites) return;
+    let active = true;
+    const refresh = () => {
+      void api<Machine[]>('/runners').then(
+        (next) => {
+          if (active) setMachines(next);
+        },
+        () => {
+          if (active) setMachines([]);
+        },
+      );
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [editing, grantProject, allowWrites]);
+  const paired = allowWrites
+    ? machines.filter(
+        (machine) =>
+          machine.online &&
+          machine.ready &&
+          machine.executionProjectId === grantProject &&
+          machine.execution?.fullAccess &&
+          Date.parse(machine.execution.expiresAt) > Date.now(),
+      )
+    : [];
   const ownerId = listing?.owner.id;
   const isOwner = room?.ownerId === ownerId;
   const localGrants = grants.filter((grant) => grant.ownerId === ownerId);
@@ -398,6 +433,7 @@ export default function SharedGroups({
                         projectId: grantProject,
                         teammateId: grantMember,
                         allowWrites,
+                        machineId: machineId || undefined,
                         turns: grantTurns,
                       });
                     });
@@ -425,7 +461,10 @@ export default function SharedGroups({
                   <select
                     aria-label="Sade local project"
                     value={grantProject}
-                    onChange={(event) => setGrantProject(event.target.value)}
+                    onChange={(event) => {
+                      setGrantProject(event.target.value);
+                      setMachineId('');
+                    }}
                     required
                   >
                     <option value="">Link a local Git project</option>
@@ -450,10 +489,29 @@ export default function SharedGroups({
                     <input
                       type="checkbox"
                       checked={allowWrites}
-                      onChange={(event) => setAllowWrites(event.target.checked)}
+                      onChange={(event) => {
+                        setAllowWrites(event.target.checked);
+                        setMachineId('');
+                      }}
                     />{' '}
                     Allow local file changes
                   </label>
+                  {paired.length > 0 && (
+                    <label>
+                      Paired machine
+                      <select
+                        value={machineId}
+                        onChange={(event) => setMachineId(event.target.value)}
+                      >
+                        <option value="">This computer only</option>
+                        {paired.map((machine) => (
+                          <option key={machine.id} value={machine.id}>
+                            {machine.name} · {machine.execution?.platform}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <button className="button" disabled={busy || !grantMember || !grantProject}>
                     Review one-hour access
                   </button>

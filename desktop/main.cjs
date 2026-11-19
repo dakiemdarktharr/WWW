@@ -892,6 +892,7 @@ function registerIpc() {
         projectId: input.projectId,
         teammateId: input.teammateId,
         allowWrites: input.allowWrites,
+        machineId: input.machineId,
         turns: input.turns,
       };
       const preview = await localSharedSade({ action: 'preview', ...grant });
@@ -906,14 +907,22 @@ function registerIpc() {
         type: 'question',
         title: 'Allow Sade to use your teammate?',
         message: `${preview.teammateName} · ${preview.projectName}`,
-        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes and sharing the proposed diff with an independent reviewer in your group. You control integration and publication.' : 'The teammate can read the linked project and share a short result.'} Your provider sign-in stays on this computer.`,
+        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes and sharing the proposed diff with an independent reviewer in your group. You control integration and publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching OS request while that owner’s permission is active.` : ''} Your provider sign-in stays on this computer.`,
         buttons: ['Cancel', 'Allow'],
         defaultId: 0,
         cancelId: 0,
       });
       if (consent.response !== 1 || !current()) return null;
-      const { teammateName, ...approved } = await localSharedSade({ action: 'grant', ...grant });
-      if (approved.projectKey !== preview.projectKey || !current()) {
+      const { teammateName, pairedMachine, ...approved } = await localSharedSade({
+        action: 'grant',
+        ...grant,
+      });
+      if (
+        approved.projectKey !== preview.projectKey ||
+        pairedMachine?.grantId !== preview.pairedMachine?.grantId ||
+        pairedMachine?.platform !== preview.pairedMachine?.platform ||
+        !current()
+      ) {
         if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id });
         throw new Error('The workspace changed during approval. Review the grant again.');
       }

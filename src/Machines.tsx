@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import type { JoinedMachine } from './desktop';
 import type { Project } from '../shared/types';
-type Machine = {
+export type Machine = {
   id: string;
   name: string;
   online: boolean;

@@ -43,6 +43,7 @@ export interface SharedHarnessGrant {
   projectName: string;
   role: Role;
   platform: SharedPlatform;
+  pairedPlatform?: SharedPlatform;
   allowWrites: boolean;
   expiresAt: number;
   turns: number;
@@ -94,6 +95,7 @@ export type GroupCommand =
       projectId: string;
       teammateId: string;
       allowWrites: boolean;
+      machineId?: string;
       turns: number;
     }
   | { action: 'sade-revoke'; groupId: string; grantId: string }

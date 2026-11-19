@@ -27,6 +27,7 @@ export const groupSadeGrant = z
     projectName: short,
     role: z.enum(['engineer', 'designer', 'researcher', 'reviewer']),
     platform,
+    pairedPlatform: platform.optional(),
     allowWrites: z.boolean(),
     turns: z.number().int().min(1).max(10),
   })
@@ -123,6 +124,7 @@ export type SharedDelivery = {
     provider: string;
     role: string;
     platform: string;
+    pairedPlatform?: string;
     allowWrites: boolean;
     owner: string;
     ownedByRequester: boolean;
@@ -323,6 +325,7 @@ export class GroupSade {
           existing.projectName !== command.projectName ||
           existing.role !== command.role ||
           existing.platform !== command.platform ||
+          existing.pairedPlatform !== command.pairedPlatform ||
           existing.allowWrites !== command.allowWrites ||
           existing.turns !== command.turns
         )
@@ -504,6 +507,7 @@ export class GroupSade {
                   provider: teammate.provider,
                   role: entry.role,
                   platform: entry.platform,
+                  pairedPlatform: entry.pairedPlatform,
                   allowWrites: entry.allowWrites,
                   owner: group.people.find((person) => person.id === entry.ownerId)!.name,
                   ownedByRequester: entry.ownerId === run.authorId,
@@ -589,7 +593,9 @@ export class GroupSade {
                 (entry) =>
                   entry.id === grantId &&
                   (!writes(task) || entry.allowWrites) &&
-                  (!task.requiredPlatform || entry.platform === task.requiredPlatform),
+                  (!task.requiredPlatform ||
+                    entry.platform === task.requiredPlatform ||
+                    (writes(task) && entry.pairedPlatform === task.requiredPlatform)),
               ),
           },
         );

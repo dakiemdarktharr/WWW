@@ -1003,6 +1003,18 @@ export class SessionManager {
           result = this.host.sharedSade.submitReview(sharedJob, args);
         } else if (sharedJob && params.tool === 'relay_ask_shared_requester') {
           result = this.host.sharedSade.ask(sharedJob, args);
+        } else if (sharedJob && params.tool?.startsWith('machine_')) {
+          result = await this.host.sharedSade.usePairedMachine(
+            sharedJob,
+            session,
+            params.tool,
+            args,
+            () => {
+              this.assertLease(this.get(id), active.token);
+              if (active.finished || active.stopping || this.host.closing)
+                throw new DomainError('Session stopped.');
+            },
+          );
         } else if (sharedJob && !params.tool?.startsWith('workspace_')) {
           throw new DomainError('This tool is unavailable to shared jobs.');
         } else if (params.tool?.startsWith('machine_')) {

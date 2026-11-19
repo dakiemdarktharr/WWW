@@ -15,6 +15,7 @@ import { CodexClient } from '../server/codex.ts';
 import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
+import { MachineExecutor } from '../server/machine-execution.ts';
 
 const key = 'a'.repeat(64);
 const sha = 'b'.repeat(40);
@@ -622,6 +623,134 @@ test(
     await pump(1);
     assert.equal(cloud.view().sadeRuns[0].state, 'done');
     assert.equal(setups[0].store.get<Task>('task', author.task.id).status, 'done');
+
+    const { workspace, projectId, memberId } = setups[0];
+    const pairedPlatform = process.platform === 'darwin' ? 'win32' : 'darwin';
+    const node = workspace.runners.add('Paired verification fixture', 'computer', projectId);
+    const permission = {
+      id: randomUUID(),
+      projectId,
+      fullAccess: true,
+      expiresAt: new Date(Date.now() + 120_000).toISOString(),
+    };
+    const remoteWorker = new MachineExecutor(path.join(root, 'paired-machine'), permission);
+    t.after(() => remoteWorker.stop());
+    const advertise = async (access = permission) =>
+      workspace.runners.exchange(node.id, {
+        epoch: workspace.runners.epoch,
+        version: 'controlled',
+        ready: true,
+        busy: false,
+        events: [],
+        execution: { ...access, platform: pairedPlatform, arch: process.arch },
+      });
+    await advertise();
+    let simulateRequestedOS = false;
+    const machineCall = t.mock.method(
+      workspace.runners,
+      'call',
+      async (...[peer, command]: Parameters<typeof workspace.runners.call>) => {
+        assert.equal(peer.nodeId, node.id);
+        assert.doesNotMatch(
+          JSON.stringify(command),
+          /provider-private|accessToken|tokenHash|\.env\.local/,
+        );
+        const result = await remoteWorker.perform(randomUUID(), command.params);
+        return simulateRequestedOS && 'platform' in result
+          ? { ...result, platform: pairedPlatform }
+          : result;
+      },
+    );
+    const nextGrant = {
+      id: randomUUID(),
+      groupId: cloud.groupId,
+      projectId,
+      teammateId: memberId,
+      turns: 4,
+      allowWrites: true,
+      machineId: node.id,
+    };
+    await assert.rejects(
+      workspace.sharedSade.execute({ action: 'preview', ...nextGrant, allowWrites: false }),
+      /worktree/,
+    );
+    const { teammateName, pairedMachine, ...publicGrant } = (await workspace.sharedSade.execute({
+      action: 'grant',
+      ...nextGrant,
+    })) as any;
+    assert.equal(pairedMachine.grantId, permission.id);
+    assert.equal(publicGrant.pairedPlatform, pairedPlatform);
+    cloud.call(0, { action: 'sade-grant', ...publicGrant });
+    cloud.grants[0] = nextGrant.id;
+    const debug = {
+      ...chat,
+      id: randomUUID(),
+      content: `Dùng AI của mình để kiểm thử project trên máy ghép cặp ${pairedPlatform} của bạn.`,
+    };
+    cloud.call(0, debug);
+    const debugPlan = (await pump(0))!;
+    assert.match(JSON.stringify(debugPlan.team), /pairedPlatform/);
+    assert.doesNotMatch(JSON.stringify(debugPlan), new RegExp(node.id + '|' + permission.id));
+    const debugPlanner = await sessionFor(0, debugPlan);
+    await submit(0, debugPlanner.session, debugPlanner.peer, 'relay_submit_plan', {
+      summary: 'Verify the app with the requester’s harness and the paired machine.',
+      tasks: [
+        work('platform-smoke', {
+          kind: 'code',
+          preferredMemberId: nextGrant.id,
+          requiredPlatform: pairedPlatform,
+        }),
+      ],
+    });
+    await complete(0, debugPlanner.session, debugPlanner.peer, 'Paired check planned.');
+    const debugJob = (await pump(0))!;
+    assert.equal(debugJob.task?.requiredPlatform, pairedPlatform);
+    const debuggerSession = await sessionFor(0, debugJob);
+    const use = (operation: string, args = {}, runnerId = node.id) =>
+      workspace.sharedSade.usePairedMachine(
+        debugJob.id,
+        debuggerSession.session,
+        'machine_use',
+        { runnerId, operation, args },
+        () => {},
+      );
+    await assert.rejects(use('sync'), /Verify/);
+    await assert.rejects(use('info', {}, randomUUID()), /Only the approved/);
+    assert.equal(machineCall.mock.callCount(), 0);
+    await assert.rejects(use('info'), /requested operating system/);
+    simulateRequestedOS = true;
+    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
+      runnerId: node.id,
+      operation: 'info',
+    });
+    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
+      runnerId: node.id,
+      operation: 'sync',
+    });
+    await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
+      runnerId: node.id,
+      operation: 'run',
+      args: { command: 'node', args: ['--version'] },
+    });
+    await advertise({ ...permission, id: randomUUID() });
+    await assert.rejects(use('info'), /authorization changed/);
+    await complete(
+      0,
+      debuggerSession.session,
+      debuggerSession.peer,
+      'Controlled paired OS fixture finished the smoke check.',
+    );
+    const deadline = Date.now() + 7000;
+    while (cloud.view().sadeRuns.at(-1)?.state !== 'done' && Date.now() < deadline) {
+      await pump(0);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    const final = cloud.view().sadeRuns.at(-1);
+    assert.equal(final?.state, 'done');
+    assert.match(
+      final?.jobs[1].summary ?? '',
+      new RegExp(`Paired ${pairedPlatform} command exit status 0`),
+    );
   },
 );
 
