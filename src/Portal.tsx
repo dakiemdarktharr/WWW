@@ -975,7 +975,7 @@ function PortalContent() {
                   <p>
                     {t(
                       download('macos')?.available
-                        ? 'macOS Apple Silicon · Chưa ký, chưa notarize'
+                        ? 'macOS Apple Silicon · Chưa có chứng chỉ Developer ID hoặc notarization'
                         : 'macOS Apple Silicon · Chưa có bản tải',
                     )}
                   </p>
