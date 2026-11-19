@@ -464,20 +464,28 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     const task = state?.tasks.find((t) => t.id === modal.taskId);
     if (!task?.worktree) return;
     let closed = false;
+    let awaiting = false;
+    let timer: ReturnType<typeof setTimeout>;
 
     const load = async () => {
       try {
         const next = await api<TaskDiff>(`/tasks/${task.id}/diff`);
         if (closed) return;
+        awaiting = !!next.machineChecks?.attempts.some(
+          (check) => check.current && check.status === 'awaiting result',
+        );
         setDiff(next);
         setDiffError('');
       } catch (err) {
         if (!closed) setDiffError((err as Error).message);
+      } finally {
+        if (!closed && awaiting) timer = setTimeout(load, 2000);
       }
     };
     void load();
     return () => {
       closed = true;
+      clearTimeout(timer);
     };
   }, [modal?.type === 'detail' ? modal.taskId : null, reviewRefresh]);
 

@@ -3,7 +3,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DynamicTool } from './codex.ts';
 import type { Workspace } from './service.ts';
 import type { CodexSession, Task } from '../shared/types.ts';
-import { beginMachineCheck, machineCommand, receiveMachineResult } from './machine-checks.ts';
+import {
+  beginMachineCheck,
+  evidenceHash,
+  machineCommand,
+  receiveMachineResult,
+  type MachineCheck,
+} from './machine-checks.ts';
+import { checkRecoveryProtocol } from './machine-check-outbox.ts';
+import { MachineDeliveryInterrupted } from './runners.ts';
 import { redact } from './security.ts';
 import { DomainError } from './store.ts';
 import {
@@ -190,24 +198,27 @@ export async function machineTool(
         current();
       } catch {
         cancelling = true;
-        void host.runners
-          .call(
-            { id: session.id, memberId: session.memberId, nodeId: node.id, uncertain: () => {} },
-            {
-              action: 'execute',
-              params: {
-                grantId: grant.id,
-                projectId: session.projectId,
-                taskId: task.id,
-                operation: 'cancel',
-                args: {},
+        void Promise.resolve()
+          .then(() =>
+            host.runners.call(
+              { id: session.id, memberId: session.memberId, nodeId: node.id, uncertain: () => {} },
+              {
+                action: 'execute',
+                params: {
+                  grantId: grant.id,
+                  projectId: session.projectId,
+                  taskId: task.id,
+                  operation: 'cancel',
+                  args: {},
+                },
               },
-            },
+            ),
           )
           .catch(() => {});
       }
     }, 250);
     watchdog.unref();
+    const recoverable = node.version?.split(/\s+/).includes(checkRecoveryProtocol);
     const call = async (operation: string, args: Record<string, unknown>, checkId?: string) => {
       current();
       const result = await host.runners.call(
@@ -215,12 +226,14 @@ export async function machineTool(
           id: session.id,
           memberId: session.memberId,
           nodeId: node.id,
+          current,
           uncertain: (message: string) => {
             host.log(message, task.id, session.memberId, 'machine', session.projectId);
           },
         },
         {
           action: 'execute',
+          ...(checkId && recoverable ? { method: checkRecoveryProtocol } : {}),
           params: {
             grantId: grant.id,
             projectId: session.projectId,
@@ -280,13 +293,26 @@ export async function machineTool(
     if (values.operation === 'run') {
       host.assertMachineCheckAllowed(task.projectId);
       const recipe = machineCommand.parse(values.args);
-      const check = beginMachineCheck(host.store, task, node, grant, recipe);
+      const check = beginMachineCheck(
+        host.store,
+        task,
+        node,
+        grant,
+        recipe,
+        recoverable ? { clientId: session.id, expiresAt: grant.expiresAt } : undefined,
+      );
       const kind = 'machineCheck:' + task.id;
       try {
         const result = await call('run', recipe, check.id);
         if (!result?.evidence || !result.proof)
           throw new DomainError('Update the paired runner to record a verified check.');
-        receiveMachineResult(host.store, task, check, recipe, result);
+        const recorded = host.store.get<MachineCheck>(kind, check.id);
+        if (recoverable && !recorded.evidence)
+          throw new DomainError(
+            recorded.error || 'The paired runner did not deliver its signed receipt.',
+          );
+        if (!recoverable)
+          receiveMachineResult(host.store, task, check, evidenceHash(recipe), result);
         return {
           ...result,
           code: result.evidence.code,
@@ -296,11 +322,13 @@ export async function machineTool(
           outputTruncated: result.evidence.outputTruncated,
         };
       } catch (error) {
-        host.store.put(kind, {
-          ...check,
-          finished: new Date().toISOString(),
-          error: redact((error as Error).message).slice(0, 1000),
-        });
+        const recorded = host.store.get<MachineCheck>(kind, check.id);
+        if (!recorded.finished && !(recoverable && error instanceof MachineDeliveryInterrupted))
+          host.store.put(kind, {
+            ...check,
+            finished: new Date().toISOString(),
+            error: redact((error as Error).message).slice(0, 1000),
+          });
         throw error;
       }
     }

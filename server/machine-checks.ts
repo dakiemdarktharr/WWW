@@ -64,6 +64,7 @@ export interface MachineCheck {
   finished?: string;
   command: string;
   repeat?: MachineCommand;
+  delivery?: { clientId: string; recipe: string; expiresAt: string };
   evidence?: Evidence;
   proof?: { publicKey: string; signature: string };
   code?: number | null;
@@ -80,6 +81,7 @@ export function beginMachineCheck(
   },
   grant: { id: string; platform: string; arch: string },
   recipe: MachineCommand,
+  delivery?: { clientId: string; expiresAt: string },
 ) {
   const parts = [recipe.command, ...recipe.args];
   const safe = parts.every(
@@ -101,6 +103,7 @@ export function beginMachineCheck(
       ? parts.map((s) => JSON.stringify(s)).join(' ')
       : redact(recipe.command) + ' [private arguments omitted]',
     ...(safe ? { repeat: recipe } : {}),
+    ...(delivery ? { delivery: { ...delivery, recipe: evidenceHash(recipe) } } : {}),
   };
   return store.put('machineCheck:' + task.id, check);
 }
@@ -108,7 +111,7 @@ export function receiveMachineResult(
   store: Store,
   task: Task,
   check: MachineCheck,
-  recipe: MachineCommand,
+  recipeDigest: string,
   raw: unknown,
 ) {
   const { evidence, proof } = z
@@ -125,7 +128,8 @@ export function receiveMachineResult(
     evidence.grantId !== check.grantId ||
     evidence.platform !== check.platform ||
     evidence.arch !== check.arch ||
-    evidence.recipe !== evidenceHash(recipe)
+    evidence.recipe !== recipeDigest ||
+    (check.delivery && evidence.runId !== check.id)
   )
     throw new DomainError('The paired runner did not confirm this request, machine and command.');
   const pin = store.db
@@ -136,6 +140,7 @@ export function receiveMachineResult(
   if (!pin) store.put('machineCheckSigner', { id: check.runnerId, fingerprint });
   store.put('machineCheck:' + task.id, {
     ...check,
+    error: undefined,
     evidence,
     proof,
     code: evidence.code,
@@ -148,17 +153,22 @@ export async function inspectMachineChecks(store: Store, task: Task, required: b
   const records = store.all<MachineCheck>('machineCheck:' + task.id);
   if (!records.length && !required) return undefined;
   const latest = new Map(records.map((row) => [row.key, row.id]));
-  const input = records.length && task.worktree ? await machineInput(task.worktree) : undefined;
+  const input =
+    task.worktree && records.some((row) => row.evidence)
+      ? await machineInput(task.worktree)
+      : undefined;
   const attempts: MachineCheckView[] = records.map((row) => {
     const ev = row.evidence;
     const status =
-      !row.finished || row.error || !ev
-        ? 'unconfirmed'
-        : row.code !== 0 || row.timedOut || row.truncated
-          ? 'failed'
-          : ev.input !== ev.after || ev.input !== input || task.baseCommit !== row.base
-            ? 'stale'
-            : 'passed';
+      row.delivery && !row.finished && Date.parse(row.delivery.expiresAt) > Date.now()
+        ? 'awaiting result'
+        : !row.finished || row.error || !ev
+          ? 'unconfirmed'
+          : row.code !== 0 || row.timedOut || row.truncated
+            ? 'failed'
+            : ev.input !== ev.after || ev.input !== input || task.baseCommit !== row.base
+              ? 'stale'
+              : 'passed';
     return {
       id: row.id,
       current: latest.get(row.key) === row.id,

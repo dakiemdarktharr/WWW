@@ -17,6 +17,7 @@ import type { RunnerCommand, RunnerEvent } from './runners.ts';
 import { exportSkills, installSkills } from './skill-sharing.ts';
 import { MachineExecutor, type ExecutionGrant } from './machine-execution.ts';
 import { setTimeout as wait } from 'node:timers/promises';
+import { checkRecoveryProtocol, MachineCheckOutbox } from './machine-check-outbox.ts';
 
 export interface RunnerConfig {
   origin: string;
@@ -47,6 +48,10 @@ export class MachineAgent {
   private peers = new Map<string, Peer>();
   private commands = new Set<string>();
   private operations = new Set<Promise<void>>();
+  private outbox?: MachineCheckOutbox;
+  private checkOutbox() {
+    return (this.outbox ??= new MachineCheckOutbox(this.config.dataDir, this.config.id));
+  }
   private snapshots = new Map<string, { marker: string; files: RunnerFile[] }>();
   epoch = '';
   constructor(
@@ -76,7 +81,18 @@ export class MachineAgent {
   batch() {
     const result: RunnerEvent[] = [];
     let bytes = 0;
-    for (const event of this.events) {
+    const receipts = this.config.executionGrant ? this.checkOutbox().batch() : [];
+    let events = this.events;
+    if (receipts.length) {
+      const queued = new Map(this.events.map((event) => [event.id, event]));
+      const saved = receipts.map((receipt) => {
+        const event = queued.get(receipt.id) ?? receipt;
+        queued.delete(receipt.id);
+        return event;
+      });
+      events = [...saved, ...queued.values()];
+    }
+    for (const event of events) {
       const size = Buffer.byteLength(JSON.stringify(event));
       if (result.length && bytes + size > 3_500_000) break;
       result.push(event);
@@ -86,6 +102,7 @@ export class MachineAgent {
     return result;
   }
   async acknowledge(ids: string[], applied: string[] = []) {
+    if (ids.length) this.outbox?.acknowledge(ids);
     const accepted = new Set(applied);
     for (const id of ids) {
       const snapshot = this.snapshots.get(id);
@@ -116,6 +133,31 @@ export class MachineAgent {
     if (!uuid.test(command.clientId) || !uuid.test(command.memberId) || !uuid.test(command.id))
       throw new Error('Invalid machine command identity.');
     if (command.action === 'execute') {
+      if (
+        command.method === checkRecoveryProtocol &&
+        command.params?.operation === 'run' &&
+        this.config.executionGrant &&
+        command.params.checkId === command.id
+      ) {
+        const event: RunnerEvent = {
+          id: command.id,
+          commandId: command.id,
+          type: 'result',
+          clientId: command.clientId,
+          method: checkRecoveryProtocol,
+          params: { taskId: command.params.taskId },
+        };
+        const outbox = this.checkOutbox();
+        if (!outbox.claim(event)) return;
+        try {
+          event.result = await this.executor.perform(command.id, command.params);
+        } catch (error) {
+          event.error = redact(error).slice(0, 1000);
+        }
+        outbox.finish(event);
+        this.events.push(event);
+        return;
+      }
       const result = await this.executor.perform(command.id, command.params);
       this.push(command.clientId, { type: 'result', commandId: command.id, result });
       return;
@@ -285,6 +327,8 @@ export class MachineAgent {
     this.peers.clear();
     this.commands.clear();
     this.events.length = 0;
+    this.outbox?.close();
+    this.outbox = undefined;
     this.epoch = epoch;
     this.executor = new MachineExecutor(this.config.dataDir, this.config.executionGrant);
   }
@@ -377,7 +421,9 @@ export async function runMachine(config: RunnerConfig) {
             epoch: agent.epoch,
             ready: true,
             busy: agent.busy,
-            version: [machineSnapshotProtocol, probe.version].filter(Boolean).join(' '),
+            version: [machineSnapshotProtocol, checkRecoveryProtocol, probe.version]
+              .filter(Boolean)
+              .join(' '),
             execution: agent.executor.metadata(),
             events: agent.batch(),
           }),

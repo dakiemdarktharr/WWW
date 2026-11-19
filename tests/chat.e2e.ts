@@ -272,7 +272,7 @@ try {
     acceptance: '',
   });
   store.updateTask(reviewed.id, { worktree: root, status: 'review' });
-  let status = 'stale';
+  let status = 'awaiting result';
   const checkId = randomUUID();
   await page.route('**/api/tasks/' + reviewed.id + '/diff', (route) =>
     route.fulfill({
@@ -314,6 +314,8 @@ try {
     .getByRole('button')
     .click();
   const checks = page.getByRole('region', { name: 'Paired-machine checks' });
+  await expect(checks).toContainText('darwin/arm64 · awaiting result');
+  status = 'stale';
   await expect(checks).toContainText('darwin/arm64 · stale');
   const accept = page.getByRole('button', { name: 'Accept & integrate' });
   await expect(accept).toBeDisabled();
