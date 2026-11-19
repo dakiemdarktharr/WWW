@@ -86,7 +86,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        shard: ${{ fromJSON(inputs.sade_suite == 'corpus' && '[0,1,2,3,4]' || inputs.sade_suite == 'contrast' && '[0,1]' || '[0]') }}
+        shard: ${{ fromJSON(inputs.sade_suite == 'contrast' && '[0,1]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -149,11 +149,15 @@ jobs:
             prompts=(baseline ordered)
             node --import tsx scripts/eval-shared-sade-local.ts --categories --contrast --model "$SADE_MODEL" \
               --intent-prompt "${prompts[$SADE_SHARD]}" --output "$results/contrast-$SADE_SHARD.jsonl"
-          else
-            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota.json" --quota-fallback
-            node --import tsx scripts/eval-shared-sade-planner.ts "$results/planner.json"
+          elif [[ "$SADE_SHARD" == 0 ]]; then
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota.json" \
+              --quota-fallback --timeout-ms 120000
+          elif [[ "$SADE_SHARD" == 4 ]]; then
             node --import tsx scripts/eval-shared-sade-local.ts --categories --model "$SADE_MODEL" \
               --sample --limit 40 --output "$results/pilot.jsonl"
+          else
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/planner-$SADE_SHARD.json" \
+              --shard "$((SADE_SHARD - 1))/3" --timeout-ms 120000
           fi
       - uses: actions/upload-artifact@v7
         if: always()

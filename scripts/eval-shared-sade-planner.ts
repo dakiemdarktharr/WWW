@@ -236,6 +236,8 @@ const { values, positionals } = parseArgs({
     replay: { type: 'string' },
     model: { type: 'string', default: 'qwen3:4b-instruct-2507-q4_K_M' },
     case: { type: 'string' },
+    shard: { type: 'string', default: '0/1' },
+    'timeout-ms': { type: 'string', default: '60000' },
     'export-prompt': { type: 'boolean' },
     'external-plan': { type: 'string' },
     'external-decision': { type: 'string' },
@@ -248,6 +250,16 @@ const { values, positionals } = parseArgs({
   },
 });
 const model = values.model;
+const timeoutMs = Number(values['timeout-ms']);
+const [shard, shardCount] = values.shard.split('/').map(Number);
+assert.ok(
+  Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 300_000,
+  'Choose a model request timeout between 1 and 300000 ms.',
+);
+assert.ok(
+  /^\d+\/[1-9]\d*$/.test(values.shard) && shard < shardCount,
+  'Use a zero-based shard such as 0/3.',
+);
 assert.ok(
   [
     values['handoff-holdout'],
@@ -602,7 +614,7 @@ async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
       tools,
       messages,
     }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
   return (await response.json()) as {
@@ -665,10 +677,15 @@ const cases: {
               );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
+const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
+assert.ok(selection.length, `Unknown case: ${values.case}`);
+assert.ok(shardCount <= selection.length, 'The selected suite has fewer cases than shards.');
+const selectedCases = selection.slice(
+  Math.floor((selection.length * shard) / shardCount),
+  Math.floor((selection.length * (shard + 1)) / shardCount),
+);
 if (saved && !values.case)
-  assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
-const selectedCases = values.case ? cases.filter(({ id }) => id === values.case) : cases;
-assert.ok(selectedCases.length, `Unknown case: ${values.case}`);
+  assert.equal(savedRows.size, selectedCases.length, 'Replay requires the same cases');
 await mkdir(path.dirname(output), { recursive: true });
 const externalDecision = z.object({
   decision: z.object({ name: z.string(), arguments: z.unknown() }).strict(),

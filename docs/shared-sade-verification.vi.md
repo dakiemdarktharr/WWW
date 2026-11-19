@@ -204,6 +204,8 @@ gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-ev
 
 Khi lượt chạy kết thúc, tải bằng `gh run download <run-id> --repo dakiemdarktharr/WWW --dir .local/sade-ci-results`. Pilot lưu JSON của các kế hoạch và JSONL phân loại mẫu. Corpus lưu năm file JSONL. Mỗi dòng JSONL có ID, digest model, hash prompt, thời gian, đáp án và dự đoán hoặc lỗi. Dùng một thư mục riêng cho từng run để đối chiếu. Artifact CI giữ trong bảy ngày.
 
+Pilot đầu trên CPU ở commit `0e3c3fa` ghi đủ 23 dòng lập kế hoạch. Sáu ca trả kết quả và đều đạt tiêu chí chấm, gồm một ca giữ người đã chỉ định, một ca chống sửa trùng và bốn ca xác minh hoặc báo thiếu Mac. Mười bốn ca hết thời gian chờ 60 giây. Ba ca chat gặp lỗi kết nối khi runner bị dừng ở phút 20. Lượt này chưa chạy tới mẫu 40 tin. Cấu hình sau chạy năm ca quota, ba phần A–D và mẫu phân loại ở các job riêng, với 120 giây cho mỗi yêu cầu lập kế hoạch. [Pilot đầu và dữ liệu kết quả](https://github.com/dakiemdarktharr/WWW/actions/runs/44539788906)
+
 ### Qwen lập kế hoạch A–D qua công cụ thật
 
 Dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ và 18 tin tổng hợp. Mỗi tình huống có ba cách nhắn thường, không dấu và kỹ thuật song ngữ. Model nhận prompt và schema của planner. Kế hoạch đi qua bộ kiểm tra của Shared Groups với grant thử nghiệm. Bài chấm đo đúng người, phạm vi file, dependency, số việc review và yêu cầu macOS. Phần thực thi provider, sửa code và quyền trên máy của người dùng được kiểm tra riêng.
