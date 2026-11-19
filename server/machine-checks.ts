@@ -65,6 +65,7 @@ export interface MachineCheck {
   command: string;
   repeat?: MachineCommand;
   delivery?: { clientId: string; recipe: string; expiresAt: string };
+  preparingEpoch?: string;
   evidence?: Evidence;
   proof?: { publicKey: string; signature: string };
   code?: number | null;
@@ -82,6 +83,7 @@ export function beginMachineCheck(
   grant: { id: string; platform: string; arch: string },
   recipe: MachineCommand,
   delivery?: { clientId: string; expiresAt: string },
+  preparingEpoch?: string,
 ) {
   const parts = [recipe.command, ...recipe.args];
   const safe = parts.every(
@@ -104,6 +106,7 @@ export function beginMachineCheck(
       : redact(recipe.command) + ' [private arguments omitted]',
     ...(safe ? { repeat: recipe } : {}),
     ...(delivery ? { delivery: { ...delivery, recipe: evidenceHash(recipe) } } : {}),
+    ...(preparingEpoch ? { preparingEpoch } : {}),
   };
   return store.put('machineCheck:' + task.id, check);
 }
@@ -132,10 +135,8 @@ export function receiveMachineResult(
     (check.delivery && evidence.runId !== check.id)
   )
     throw new DomainError('The paired runner did not confirm this request, machine and command.');
-  const pin = store.db
-    .prepare("SELECT data FROM records WHERE kind='machineCheckSigner' AND id=?")
-    .get(check.runnerId) as { data: string } | undefined;
-  const fingerprint = pin ? JSON.parse(pin.data).fingerprint : signerFingerprint(proof.publicKey);
+  const pin = store.lookup<{ fingerprint: string }>('machineCheckSigner', check.runnerId);
+  const fingerprint = pin ? pin.fingerprint : signerFingerprint(proof.publicKey);
   verifyMachineSignature(evidence, proof, fingerprint);
   if (!pin) store.put('machineCheckSigner', { id: check.runnerId, fingerprint });
   store.put('machineCheck:' + task.id, {
@@ -149,7 +150,22 @@ export function receiveMachineResult(
     finished: evidence.completedAt,
   });
 }
-export async function inspectMachineChecks(store: Store, task: Task, required: boolean) {
+export function failMachineCheck(store: Store, taskId: string, checkId: string, error: unknown) {
+  const kind = 'machineCheck:' + taskId;
+  const row = store.get<MachineCheck>(kind, checkId);
+  if (!row.finished)
+    store.put(kind, {
+      ...row,
+      finished: new Date().toISOString(),
+      error: redact(error instanceof Error ? error.message : error).slice(0, 1000),
+    });
+}
+export async function inspectMachineChecks(
+  store: Store,
+  task: Task,
+  required: boolean,
+  epoch?: string,
+) {
   const records = store.all<MachineCheck>('machineCheck:' + task.id);
   if (!records.length && !required) return undefined;
   const latest = new Map(records.map((row) => [row.key, row.id]));
@@ -159,16 +175,22 @@ export async function inspectMachineChecks(store: Store, task: Task, required: b
       : undefined;
   const attempts: MachineCheckView[] = records.map((row) => {
     const ev = row.evidence;
-    const status =
-      row.delivery && !row.finished && Date.parse(row.delivery.expiresAt) > Date.now()
-        ? 'awaiting result'
-        : !row.finished || row.error || !ev
-          ? 'unconfirmed'
-          : row.code !== 0 || row.timedOut || row.truncated
-            ? 'failed'
-            : ev.input !== ev.after || ev.input !== input || task.baseCommit !== row.base
-              ? 'stale'
-              : 'passed';
+    let status: MachineCheckView['status'] = 'unconfirmed';
+    let error = row.error;
+    if (!row.finished) {
+      if (row.preparingEpoch) {
+        if (row.preparingEpoch === epoch) status = 'preparing';
+        else error = 'The coordinator restarted before dispatch. Rerun this check.';
+      } else if (row.delivery && Date.parse(row.delivery.expiresAt) > Date.now())
+        status = 'awaiting result';
+    } else if (!error && ev) {
+      if (row.code !== 0 || row.timedOut || row.truncated) status = 'failed';
+      else if (ev.input !== ev.after || ev.input !== input || task.baseCommit !== row.base)
+        status = 'stale';
+      else status = 'passed';
+      if (row.truncated) error = 'The command exceeded the runner output limit.';
+      else if (ev.input !== ev.after) error = 'The command modified the tested source files.';
+    }
     return {
       id: row.id,
       current: latest.get(row.key) === row.id,
@@ -189,13 +211,7 @@ export async function inspectMachineChecks(store: Store, task: Task, required: b
       runtime: ev?.runtime,
       code: row.code,
       timedOut: row.timedOut,
-      error:
-        row.error ||
-        (row.truncated
-          ? 'The command exceeded the runner output limit.'
-          : ev && ev.input !== ev.after
-            ? 'The command modified the tested source files.'
-            : undefined),
+      error,
       repeatable: !!row.repeat,
     };
   });

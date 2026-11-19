@@ -133,12 +133,13 @@ export class MachineAgent {
     if (!uuid.test(command.clientId) || !uuid.test(command.memberId) || !uuid.test(command.id))
       throw new Error('Invalid machine command identity.');
     if (command.action === 'execute') {
-      if (
-        command.method === checkRecoveryProtocol &&
-        command.params?.operation === 'run' &&
-        this.config.executionGrant &&
-        command.params.checkId === command.id
-      ) {
+      if (command.method === checkRecoveryProtocol) {
+        if (
+          command.params?.operation !== 'run' ||
+          !this.config.executionGrant ||
+          command.params.checkId !== command.id
+        )
+          throw new Error('Invalid recoverable machine check identity or grant.');
         const event: RunnerEvent = {
           id: command.id,
           commandId: command.id,

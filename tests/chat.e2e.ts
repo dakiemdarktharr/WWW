@@ -303,7 +303,7 @@ try {
     }),
   );
   await page.route('**/api/tasks/' + reviewed.id + '/machine-check', (route) => {
-    assert.deepEqual(route.request().postDataJSON(), { checkId });
+    assert.deepEqual(route.request().postDataJSON(), { checkId, clientRequestId: checkId });
     status = 'passed';
     return route.fulfill({ json: { ok: true } });
   });

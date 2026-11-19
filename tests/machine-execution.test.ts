@@ -8,9 +8,11 @@ import { MachineExecutor, type ExecutionGrant } from '../server/machine-executio
 import { MachineAgent, runMachine } from '../server/runner-agent.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
+import { buildApp } from '../server/app.ts';
 import { verifyMachineSignature } from '../server/machine-signature.ts';
 import { machineTool } from '../server/machine-tools.ts';
 import { checkRecoveryProtocol, MachineCheckOutbox } from '../server/machine-check-outbox.ts';
+import { beginMachineCheck } from '../server/machine-checks.ts';
 import type { RunnerEvent } from '../server/runners.ts';
 import { createWorktree, git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
@@ -375,6 +377,7 @@ test(
       machineTool(host, session, 'machine_use', { runnerId: node.id, operation, args }, guard);
     const machines: any = await machineTool(host, session, 'machine_list', {}, guard);
     assert.equal(machines[0].platform, process.platform);
+    assert.equal(machines[0].recoverableChecks, false);
     await use('sync');
     const target = path.join(f.root, 'target', 'remote-workspaces', task.id);
     assert.ok((await readFile(path.join(target, 'project-asset.png'))).equals(asset));
@@ -514,6 +517,19 @@ test(
     await exchange();
     const target = path.join(checkout.worktree, 'value.txt');
     await writeFile(target, 'tested');
+    const listed = await machineTool(host, session, 'machine_list', {}, () => {}, true);
+    assert.equal(listed[0].recoverableChecks, true);
+    await host.runners.exchange(node.id, {
+      epoch: host.runners.epoch,
+      ready: true,
+      busy: false,
+      version: checkRecoveryProtocol,
+      events: [],
+      execution: { ...agent.executor.metadata()!, fullAccess: false },
+    });
+    const readOnly = await machineTool(host, session, 'machine_list', {}, () => {}, true);
+    assert.equal(readOnly[0].recoverableChecks, false);
+    await exchange();
     async function deliverOne() {
       let delivered = await exchange();
       const deadline = Date.now() + 5000;
@@ -563,6 +579,11 @@ test(
     assert.equal(agent.batch()[0].result.stdout.trim(), 'test output');
     const count = path.join(config.dataDir, 'execution-home', 'count');
     assert.equal(await readFile(count, 'utf8'), '1');
+    const differentId = randomUUID();
+    await agent.execute({ ...lost, id: differentId });
+    const malformed = agent.batch().find((event) => event.commandId === differentId)!;
+    assert.match(malformed.error!, /check identity/);
+    await agent.acknowledge([malformed.id]);
     await host.close();
     await interrupted;
     await agent.reset('');
@@ -601,11 +622,57 @@ test(
     await assert.rejects(coordinator.accept(task.id), /passing paired-machine/);
     assert.equal(await git(repo, ['rev-parse', 'HEAD']), checkout.baseCommit);
     assert.equal(await readFile(count, 'utf8'), '1');
-    const rerunning = coordinator.repeatMachineCheck(task.id, lost.id);
+    const requestId = randomUUID();
+    const rerunning = coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    const concurrent = await coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    assert.equal(concurrent.machineChecks?.attempts.at(-1)?.status, 'preparing');
+    assert.equal(concurrent.machineChecks?.attempts.length, 2);
     // Deliver the explicit new sync and check through the ordinary exchange path.
     await deliverOne();
     await deliverOne();
-    assert.ok((await rerunning).machineChecks?.passed);
+    const completed = await rerunning;
+    assert.equal(completed.attemptId, concurrent.attemptId);
+    assert.ok(completed.machineChecks?.passed);
+    const repeatedRequest = await coordinator.repeatMachineCheck(task.id, lost.id, requestId);
+    assert.equal(repeatedRequest.attemptId, completed.attemptId);
+    assert.equal(repeatedRequest.machineChecks?.attempts.length, 2);
+    await assert.rejects(
+      coordinator.repeatMachineCheck(task.id, completed.attemptId, requestId),
+      /different check/,
+    );
+    assert.deepEqual((await exchange()).commands, []);
+    await writeFile(target, 'changed again');
+    // An HTTP retry after a restart can inspect the original attempt with the runner offline.
+    const offlineStore = new Store(path.join(f.root, 'check.db'));
+    const offline = new Workspace(offlineStore, f.root, f.root);
+    const app = await buildApp(offline, { port: 4317 });
+    try {
+      const host = '127.0.0.1:4317';
+      const bootstrap = await app.inject({ url: '/api/session', headers: { host } });
+      const headers = {
+        host,
+        cookie: String(bootstrap.headers['set-cookie']).split(';')[0],
+        'x-relay-token': bootstrap.json().token,
+      };
+      const submit = (checkId: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/api/tasks/' + task.id + '/machine-check',
+          headers,
+          payload: { checkId, clientRequestId: requestId },
+        });
+      const afterEdit = await submit(lost.id);
+      assert.equal(afterEdit.statusCode, 200);
+      assert.equal(afterEdit.json().attemptId, completed.attemptId);
+      assert.equal(afterEdit.json().machineChecks.attempts.at(-1).status, 'stale');
+      assert.equal((await submit(completed.attemptId)).statusCode, 409);
+    } finally {
+      await app.close();
+      await offline.close();
+      offlineStore.close();
+    }
+    await assert.rejects(coordinator.accept(task.id), /passing paired-machine/);
+    await writeFile(target, 'changed after the run');
     assert.equal((await coordinator.accept(task.id)).status, 'done');
     assert.equal(await readFile(count, 'utf8'), '11');
   },
@@ -637,6 +704,40 @@ test('a runner crash before a signed outcome leaves an unconfirmed receipt and p
   } finally {
     next.close();
   }
+});
+
+test('a repeated Review request after failed synchronization reports the same error without dispatching a command', async (t) => {
+  const { f, store, host, node, task } = await reviewFixture(t);
+  const grant = f.executor.metadata()!;
+  await host.runners.exchange(node.id, {
+    epoch: host.runners.epoch,
+    ready: true,
+    busy: false,
+    version: checkRecoveryProtocol,
+    events: [],
+    execution: grant,
+  });
+  const original = beginMachineCheck(store, task, { id: node.id, name: 'Fixture machine' }, grant, {
+    command: 'node',
+    args: ['--version'],
+    timeoutMs: 1000,
+  });
+  const calls = t.mock.method(
+    host.runners,
+    'call',
+    async (_peer: unknown, command: { params: { operation: string } }) => {
+      assert.equal(command.params.operation, 'sync');
+      throw new Error('Remote files changed.');
+    },
+  );
+  const key = randomUUID();
+  await assert.rejects(host.repeatMachineCheck(task.id, original.id, key), /Remote files changed/);
+  const replay = await host.repeatMachineCheck(task.id, original.id, key);
+  const attempt = replay.machineChecks!.attempts.at(-1)!;
+  assert.equal(attempt.id, replay.attemptId);
+  assert.equal(attempt.status, 'unconfirmed');
+  assert.match(attempt.error!, /Remote files changed/);
+  assert.equal(calls.mock.callCount(), 1);
 });
 
 test(

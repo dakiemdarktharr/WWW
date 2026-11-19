@@ -387,7 +387,7 @@ export interface LoginResult {
 export interface MachineCheckView {
   id: string;
   current: boolean;
-  status: 'passed' | 'stale' | 'failed' | 'unconfirmed' | 'awaiting result';
+  status: 'passed' | 'stale' | 'failed' | 'unconfirmed' | 'awaiting result' | 'preparing';
   runner: string;
   platform: string;
   arch: string;

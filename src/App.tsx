@@ -472,7 +472,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         const next = await api<TaskDiff>(`/tasks/${task.id}/diff`);
         if (closed) return;
         awaiting = !!next.machineChecks?.attempts.some(
-          (check) => check.current && check.status === 'awaiting result',
+          (check) =>
+            check.current && (check.status === 'awaiting result' || check.status === 'preparing'),
         );
         setDiff(next);
         setDiffError('');
@@ -2064,26 +2065,32 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                               {check.error && <p className="error-text">{check.error}</p>}
                               {check.current &&
                                 check.repeatable &&
+                                check.status !== 'preparing' &&
                                 selectedTask.status === 'review' && (
                                   <Button
                                     disabled={pending}
                                     onClick={async () => {
                                       if (
                                         !window.confirm(
-                                          `Sync this worktree to ${check.runner} and run ${check.command} again?`,
+                                          check.status === 'awaiting result'
+                                            ? `A result is still pending. Start a separate run of ${check.command} on ${check.runner}?`
+                                            : `Sync this worktree to ${check.runner} and run ${check.command} again?`,
                                         )
                                       )
                                         return;
                                       await perform(
                                         'machine-check',
                                         `/tasks/${selectedTask.id}/machine-check`,
-                                        { checkId: check.id },
-                                        'Paired-machine check finished.',
+                                        { checkId: check.id, clientRequestId: check.id },
+                                        'Paired-machine review updated.',
                                       );
                                       setReviewRefresh((n) => n + 1);
                                     }}
                                   >
-                                    Rerun on {check.runner}
+                                    {check.status === 'awaiting result'
+                                      ? 'Start a separate check on'
+                                      : 'Rerun on'}{' '}
+                                    {check.runner}
                                   </Button>
                                 )}
                             </details>

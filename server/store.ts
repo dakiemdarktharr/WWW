@@ -78,11 +78,15 @@ export class Store extends EventEmitter {
       .reverse()
       .map((row) => JSON.parse(row.data));
   }
-  get<T>(kind: string, id: string): T {
+  lookup<T>(kind: string, id: string): T | undefined {
     const row = this.db.prepare('SELECT data FROM records WHERE kind=? AND id=?').get(kind, id) as
       { data: string } | undefined;
-    if (!row) throw new DomainError(`${kind} not found.`, 404);
-    return JSON.parse(row.data);
+    return row ? JSON.parse(row.data) : undefined;
+  }
+  get<T>(kind: string, id: string): T {
+    const value = this.lookup<T>(kind, id);
+    if (value === undefined) throw new DomainError(`${kind} not found.`, 404);
+    return value;
   }
   put<T extends { id: string }>(kind: string, data: T): T {
     this.db

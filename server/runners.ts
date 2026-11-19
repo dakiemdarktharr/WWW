@@ -6,6 +6,7 @@ import type { Workspace } from './service.ts';
 import {
   applyRunnerFiles,
   exportRunnerFiles,
+  machineSnapshotProtocol,
   validateRunnerFiles,
   type RunnerFile,
 } from './runner-files.ts';
@@ -17,6 +18,14 @@ import { receiveMachineResult, type MachineCheck } from './machine-checks.ts';
 export class MachineDeliveryInterrupted extends Error {}
 const isRecoverableCheck = (command: Pick<RunnerCommand, 'action' | 'method'>) =>
   command.action === 'execute' && command.method === checkRecoveryProtocol;
+
+function runnerCapabilities(version = '') {
+  const advertised = version.split(/\s+/);
+  return {
+    recoverableChecks: advertised.includes(checkRecoveryProtocol),
+    chunkedSnapshots: advertised.includes(machineSnapshotProtocol),
+  };
+}
 
 export interface RunnerNode {
   id: string;
@@ -91,6 +100,7 @@ export class Runners {
   list() {
     return this.host.store.all<RunnerNode>('runner').map(({ tokenHash, ...node }) => ({
       ...node,
+      capabilities: runnerCapabilities(node.version),
       online:
         !!node.lastSeen &&
         Date.now() - Date.parse(node.lastSeen) < 30_000 &&
@@ -285,7 +295,7 @@ export class Runners {
             !grant?.fullAccess ||
             grant.id !== next.command.params.grantId ||
             Date.parse(grant.expiresAt) <= Date.now() ||
-            !body.version.split(/\s+/).includes(checkRecoveryProtocol)
+            !runnerCapabilities(body.version).recoverableChecks
           )
             throw new DomainError(
               'The original paired machine grant or recovery protocol is unavailable.',
@@ -317,17 +327,12 @@ export class Runners {
     if (event.id !== event.commandId || typeof event.params?.taskId !== 'string') return false;
     const store = this.host.store;
     const kind = 'machineCheck:' + event.params.taskId;
-    let check: MachineCheck;
-    let task: Task;
-    try {
-      check = store.get<MachineCheck>(kind, event.id);
-      task = store.get<Task>('task', event.params.taskId);
-    } catch (error) {
-      if (error instanceof DomainError && error.status === 404) return false;
-      throw error;
-    }
+    const check = store.lookup<MachineCheck>(kind, event.id);
+    const task = store.lookup<Task>('task', event.params.taskId);
     if (
-      !check.delivery ||
+      !check?.delivery ||
+      check.preparingEpoch ||
+      !task ||
       check.runnerId !== node.id ||
       check.delivery.clientId !== event.clientId ||
       task.projectId !== node.executionProjectId
