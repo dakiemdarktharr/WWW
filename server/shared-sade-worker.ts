@@ -156,6 +156,8 @@ type LocalGrant = GrantInput & {
   machine?: PairedMachine;
   patchHandoff?: true;
 };
+type LocalRevocation = { id: string; groupId: string; expiresAt: number };
+const revocationBatchSize = 4;
 type Receipt = {
   id: string;
   grantId: string;
@@ -231,7 +233,10 @@ const deliveryInput = z
 export const sharedWorkerCommand = z.discriminatedUnion('action', [
   grantInput.extend({ action: z.literal('preview') }),
   grantInput.extend({ action: z.literal('grant') }),
-  z.object({ action: z.literal('revoke'), grantId: id }).strict(),
+  z.object({ action: z.literal('revoke'), grantId: id, groupId: id.optional() }).strict(),
+  z
+    .object({ action: z.literal('ack-revocations'), ids: z.array(id).max(revocationBatchSize) })
+    .strict(),
   z.object({ action: z.literal('snapshot'), grantCursor: id.optional() }).strict(),
   z
     .object({
@@ -732,10 +737,28 @@ export class SharedSadeWorker {
       };
     }
     if (command.action === 'revoke') {
-      this.host.store.remove('sharedSadeLocalGrant', command.grantId);
+      const { store } = this.host;
+      const grant = store.lookup<LocalGrant>('sharedSadeLocalGrant', command.grantId);
+      if (command.groupId && grant?.groupId && grant.groupId !== command.groupId)
+        throw new DomainError('This grant belongs to another group.');
+      store.transaction(() => {
+        store.remove('sharedSadeLocalGrant', command.grantId);
+        if (command.groupId)
+          store.put('sharedSadeLocalRevocation', {
+            id: command.grantId,
+            groupId: command.groupId,
+            expiresAt: Date.now() + 3600_000,
+          } satisfies LocalRevocation);
+      });
       for (const key of this.leases.keys())
         if (this.receipt(key).grantId === command.grantId) void this.stop(key);
       return { revoked: true };
+    }
+    if (command.action === 'ack-revocations') {
+      this.host.store.transaction(() => {
+        for (const id of command.ids) this.host.store.remove('sharedSadeLocalRevocation', id);
+      });
+      return { ok: true };
     }
     if (command.action === 'snapshot') return this.snapshot(command.grantCursor);
     if (command.action !== 'exchange')
@@ -1065,6 +1088,18 @@ export class SharedSadeWorker {
       this.stopping.delete(jobId);
     }
   }
+  private pendingRevocations() {
+    const { store } = this.host;
+    const pending: { grantId: string; groupId: string }[] = [];
+    const now = Date.now();
+    for (const { id, groupId, expiresAt } of store.all<LocalRevocation>(
+      'sharedSadeLocalRevocation',
+    )) {
+      if (expiresAt <= now) store.remove('sharedSadeLocalRevocation', id);
+      else if (pending.length < revocationBatchSize) pending.push({ grantId: id, groupId });
+    }
+    return pending;
+  }
   private snapshot(grantCursor?: string) {
     for (const [jobId] of this.leases) {
       const receipt = this.receipt(jobId);
@@ -1221,6 +1256,7 @@ export class SharedSadeWorker {
     }
     return {
       grants: [...activeGrants, ...page],
+      revocations: this.pendingRevocations(),
       ...(nextGrantCursor ? { nextGrantCursor } : {}),
       active,
       ...(this.waitingForRevisions.size

@@ -634,30 +634,56 @@ async function bridgeLoop() {
   }
 }
 
-async function localSharedSade(payload) {
+async function localSharedSade(payload, context) {
   const revoking = payload.action === 'revoke';
   if (revoking) {
     ++sharedSadeConsentVersion;
     ++pendingSharedSadeRevocations;
   }
   try {
-    const result = await fetch(backendOrigin + '/api/desktop/shared-sade', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: backendOrigin,
-        'X-Relay-Desktop': desktopSecret,
-        'X-Relay-Control': desktopSecret,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const body = await result.json();
-    if (!result.ok) throw new Error(body.error || 'Shared Sade is not available on this desktop.');
-    return body;
+    return await localControlRequest('/api/desktop/shared-sade', payload, context);
   } finally {
     if (revoking) --pendingSharedSadeRevocations;
   }
+}
+
+async function publishSharedSadeGrant(input, owner, current, context) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!current()) throw new Error('Account changed. Open your current workspace.');
+    const reply = await cloudRequest('/api/desktop/groups', input, owner.accessToken).catch(
+      () => null,
+    );
+    if (!reply || reply.response.status === 408 || reply.response.status >= 500) continue;
+    if (!reply.response.ok && attempt === 0 && current())
+      await localSharedSade({ action: 'revoke', grantId: input.id }, context);
+    return reply;
+  }
+  throw new Error('This desktop recorded your approval. Check the group before granting again.');
+}
+
+async function syncSharedSadeRevocations(revocations, owner, current, context) {
+  const confirmed = await Promise.all(
+    revocations.map(async ({ grantId, groupId }) => {
+      if (!current()) return;
+      try {
+        const { response, body } = await cloudRequest(
+          '/api/desktop/groups',
+          { action: 'sade-revoke', grantId, groupId },
+          owner.accessToken,
+        );
+        if (
+          response.ok ||
+          (response.status === 403 &&
+            body?.error === 'Only this harness owner can revoke its grant.')
+        )
+          return grantId;
+      } catch {
+        // The local record remains queued for the next connection.
+      }
+    }),
+  );
+  const ids = confirmed.filter(Boolean);
+  if (ids.length && current()) await localSharedSade({ action: 'ack-revocations', ids }, context);
 }
 
 async function sharedSadeLoop(generation, owner) {
@@ -666,6 +692,9 @@ async function sharedSadeLoop(generation, owner) {
   let supportsReviewRevision = false;
   let supportsRosterLookup = false;
   let grantCursor;
+  let revocationSync;
+  let nextRevocationSync = 0;
+  const localContext = { origin: backendOrigin, secret: desktopSecret };
   while (current()) {
     if (pendingSharedSadeRevocations) {
       await pause(250);
@@ -681,6 +710,18 @@ async function sharedSadeLoop(generation, owner) {
         ...(grantCursor ? { grantCursor } : {}),
       });
       if (!snapshotCurrent()) continue;
+      if (snapshot.revocations?.length && !revocationSync && Date.now() >= nextRevocationSync)
+        revocationSync = syncSharedSadeRevocations(
+          snapshot.revocations,
+          owner,
+          current,
+          localContext,
+        )
+          .catch(() => {})
+          .finally(() => {
+            revocationSync = undefined;
+            nextRevocationSync = Date.now() + 5000;
+          });
       if (!snapshot.grants?.length && !snapshot.active?.length && !snapshot.results?.length) {
         await pause(4000);
         continue;
@@ -967,7 +1008,7 @@ function registerIpc() {
         machineId: input.machineId,
         turns: input.turns,
       };
-      const preview = await localSharedSade({ action: 'preview', ...grant });
+      const preview = await localSharedSade({ action: 'preview', ...grant }, localContext);
       const room = await cloudRequest(
         '/api/desktop/groups',
         { action: 'read', groupId: grant.groupId, after: 10000 },
@@ -985,33 +1026,38 @@ function registerIpc() {
         cancelId: 0,
       });
       if (consent.response !== 1 || !current()) return null;
-      const { teammateName, pairedMachine, ...approved } = await localSharedSade({
-        action: 'grant',
-        ...grant,
-      });
+      const { teammateName, pairedMachine, ...approved } = await localSharedSade(
+        { action: 'grant', ...grant },
+        localContext,
+      );
       if (
         approved.projectKey !== preview.projectKey ||
         pairedMachine?.grantId !== preview.pairedMachine?.grantId ||
         pairedMachine?.platform !== preview.pairedMachine?.platform ||
         !current()
       ) {
-        if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id });
+        if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id }, localContext);
         throw new Error('The workspace changed during approval. Review the grant again.');
       }
       cloudInput = { action: 'sade-grant', ...approved };
     } else if (input.action === 'sade-revoke') {
-      await localSharedSade({ action: 'revoke', grantId: input.grantId });
+      await localSharedSade(
+        { action: 'revoke', grantId: input.grantId, groupId: input.groupId },
+        localContext,
+      );
     }
     if (!current()) throw new Error('Account changed. Open your current workspace.');
-    const { response, body } = await cloudRequest(
-      '/api/desktop/groups',
-      cloudInput,
-      owner.accessToken,
-    );
-    if (!response.ok && input.action === 'sade-connect' && current())
-      await localSharedSade({ action: 'revoke', grantId: cloudInput.id });
+    const { response, body } =
+      input.action === 'sade-connect'
+        ? await publishSharedSadeGrant(cloudInput, owner, current, localContext)
+        : await cloudRequest('/api/desktop/groups', cloudInput, owner.accessToken);
     if (identity !== owner || generation !== signInGeneration)
       throw new Error('Account changed. Open your current workspace.');
+    if (response.ok && input.action === 'sade-revoke' && current())
+      await localSharedSade(
+        { action: 'ack-revocations', ids: [input.grantId] },
+        localContext,
+      ).catch(() => {});
     if (response.status === 401) {
       void signOutWorkspace();
       throw new Error('Your Kivuno session expired. Sign in again.');

@@ -8,6 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
+import { git } from '../server/git.ts';
+import type { Member } from '../shared/types.ts';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
 const accessToken = 'desktop-test-session-' + '0'.repeat(64);
@@ -24,6 +26,10 @@ const sharedGrantPages: string[][] = [];
 let sharedGrantCursorSentToCloud = false;
 const reservedProfiles = new Map<string, Set<string>>();
 const reportedSharedJobs: string[] = [];
+const reportedRevocations: { grantId: string; groupId: string }[] = [];
+let allowSharedRevocations = false;
+const grantResponses: number[] = [];
+const reportedGrants: { id: string }[] = [];
 let releaseFirstSharedFinish!: () => void;
 const firstSharedFinish = new Promise<void>((resolve) => {
   releaseFirstSharedFinish = resolve;
@@ -115,8 +121,27 @@ const fixture = createServer(async (request, response) => {
       JSON.stringify({ active: [], reviews: [], updates: [], supportsRosterLookup: true }),
     );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
-    response.statusCode = 503;
-    response.end(JSON.stringify({ error: 'Shared Groups service is reconnecting.' }));
+    reportedRevocations.push({ grantId: payload.grantId, groupId: payload.groupId });
+    response.statusCode = allowSharedRevocations ? 200 : 503;
+    response.end(
+      JSON.stringify(
+        allowSharedRevocations
+          ? { revoked: true }
+          : { error: 'Shared Groups service is reconnecting.' },
+      ),
+    );
+  } else if (request.url === '/api/desktop/groups' && payload.action === 'read') {
+    response.end(JSON.stringify({ group: { id: payload.groupId, name: 'Consent fixture' } }));
+  } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-grant') {
+    assert.doesNotMatch(JSON.stringify(payload), /tokenHash|private-profile|accessToken|projectId/);
+    reportedGrants.push(payload);
+    const status = grantResponses.shift() ?? 200;
+    if (!status) {
+      response.destroy();
+      return;
+    }
+    response.statusCode = status;
+    response.end(JSON.stringify({ error: 'Grant request declined in the fixture.' }));
   } else if (request.url === '/api/desktop/revoke') {
     revoked = true;
     response.end('{}');
@@ -188,6 +213,7 @@ try {
 
   const unrelated = { id: randomUUID(), grantId: randomUUID() };
   const withdrawn = { id: randomUUID(), grantId: randomUUID() };
+  const withdrawalGroup = randomUUID();
   const store = new Store(path.join(state.runtime.dataDir, 'workspace.db'));
   try {
     const lastGrant = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
@@ -215,10 +241,11 @@ try {
       page.evaluate((input) => (window as any).relayDesktop.groups(input), {
         action: 'sade-revoke',
         grantId: withdrawn.grantId,
-        groupId: randomUUID(),
+        groupId: withdrawalGroup,
       }),
       /Shared Groups service is reconnecting/,
     );
+    assert.ok(store.get('sharedSadeLocalRevocation', withdrawn.grantId));
     const pollsBeforeRevoke = sharedPolls;
     releaseFirstSharedFinish();
     await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
@@ -232,6 +259,20 @@ try {
     assert.equal(sharedGrantCursorSentToCloud, false);
     assert.ok(!reportedSharedJobs.includes(withdrawn.id));
     assert.ok(store.get('sharedSadeLocalReceipt', withdrawn.id));
+    store.transaction(() => {
+      for (const { id } of store.all<{ id: string }>('sharedSadeLocalGrant'))
+        store.remove('sharedSadeLocalGrant', id);
+    });
+    allowSharedRevocations = true;
+    await expect
+      .poll(() => store.lookup('sharedSadeLocalRevocation', withdrawn.grantId), { timeout: 15000 })
+      .toBeUndefined();
+    assert.ok(reportedRevocations.length >= 2);
+    assert.ok(
+      reportedRevocations.every(
+        ({ grantId, groupId }) => grantId === withdrawn.grantId && groupId === withdrawalGroup,
+      ),
+    );
   } finally {
     releaseFirstSharedFinish();
     store.close();
@@ -403,6 +444,61 @@ try {
     competitionUrl: 'https://example.org/challenge',
     goal: 'Verify desktop browser controls without starting a model.',
   });
+  await git(project.path, [
+    'config',
+    'remote.origin.url',
+    'https://example.test/kivuno/consent-fixture',
+  ]);
+  const grantStore = new Store(path.join(state.runtime.dataDir, 'workspace.db'));
+  try {
+    const beforeGrant = grantStore.get<Member>('member', member.id);
+    grantStore.updateMember(member.id, {
+      status: 'ready',
+      account: { type: 'chatgpt', email: 'private-profile@example.test' },
+    });
+    const share = async () => {
+      await desktop!.evaluate(({ dialog }) => {
+        const original = dialog.showMessageBox;
+        (dialog as any).showMessageBox = (...args: any[]) => {
+          if (args.at(-1)?.title === 'Allow Sade to use your teammate?') {
+            dialog.showMessageBox = original;
+            return Promise.resolve({ response: 1, checkboxChecked: false });
+          }
+          return (original as any).apply(dialog, args);
+        };
+      });
+      return page.evaluate(
+        (input) => (window as any).relayDesktop.groups({ action: 'sade-connect', ...input }),
+        {
+          groupId: randomUUID(),
+          projectId: project.id,
+          teammateId: member.id,
+          allowWrites: false,
+          turns: 1,
+        },
+      );
+    };
+    grantResponses.push(0, 200);
+    await share();
+    assert.equal(reportedGrants.length, 2);
+    assert.deepEqual(reportedGrants[0], reportedGrants[1]);
+    assert.ok(grantStore.lookup('sharedSadeLocalGrant', reportedGrants[0].id));
+    grantResponses.push(503, 503);
+    await assert.rejects(share(), /desktop recorded your approval/);
+    assert.equal(reportedGrants.length, 4);
+    assert.deepEqual(reportedGrants[2], reportedGrants[3]);
+    assert.ok(grantStore.lookup('sharedSadeLocalGrant', reportedGrants[2].id));
+    grantResponses.push(403);
+    await assert.rejects(share(), /Grant request declined/);
+    assert.equal(reportedGrants.length, 5);
+    assert.equal(grantStore.lookup('sharedSadeLocalGrant', reportedGrants[4].id), undefined);
+    grantStore.updateMember(member.id, {
+      status: beforeGrant.status,
+      account: beforeGrant.account,
+    });
+  } finally {
+    grantStore.close();
+  }
   const session = await post('/sessions', {
     memberId: member.id,
     projectId: project.id,
@@ -599,7 +695,7 @@ try {
   ).toBeVisible();
 
   console.log(
-    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, local Shared Sade revocation, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
+    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, Shared Sade consent retry and revocation sync, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
   );
 } finally {
   if (desktop) await desktop.close();

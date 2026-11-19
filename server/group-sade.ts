@@ -611,10 +611,7 @@ export class GroupSade {
       return this.view(group, actor.ownerId);
     }
     if (command.action === 'sade-revoke') {
-      const grant = this.grants(group).find((item) => item.id === command.grantId);
-      if (!grant || grant.ownerId !== actor.ownerId)
-        throw new DomainError('Only this harness owner can revoke its grant.', 403);
-      this.store.put('sharedSadeGrant', { ...grant, revoked: true });
+      this.revokeGrant(group.id, command.grantId, actor);
     } else {
       const run = this.store.get<Run>('sharedSadeRun', command.runId);
       if (run.groupId !== group.id)
@@ -707,6 +704,12 @@ export class GroupSade {
   }
   private actorGrant(grant: Grant, actor: SharedPrincipal) {
     return grant.ownerId === actor.ownerId && grant.deviceId === actor.deviceId;
+  }
+  revokeGrant(groupId: string, grantId: string, actor: SharedPrincipal) {
+    const grant = this.store.lookup<Grant>('sharedSadeGrant', grantId);
+    if (!grant || grant.groupId !== groupId || grant.ownerId !== actor.ownerId)
+      throw new DomainError('Only this harness owner can revoke its grant.', 403);
+    if (!grant.revoked) this.store.put('sharedSadeGrant', { ...grant, revoked: true });
   }
   private reviewGrants(run: Run, writer: Grant, grants: Iterable<Grant>) {
     return [...grants].filter(

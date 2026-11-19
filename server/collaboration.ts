@@ -157,6 +157,11 @@ export class SharedGroups {
       }
       const group = all.find((group) => group.id === input.groupId);
       const person = group?.people.find((person) => person.id === owner.id);
+      if (input.action === 'sade-revoke' && (!group || person?.state !== 'active')) {
+        if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
+        this.sade.revokeGrant(input.groupId, input.grantId, actor);
+        return { revoked: true };
+      }
       if (!group || !person) throw new DomainError('Group unavailable.', 403);
       const isOwner = group.ownerId === owner.id;
       if (this.reconcileSeats(group))

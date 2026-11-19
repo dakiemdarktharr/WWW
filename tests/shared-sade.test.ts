@@ -2089,6 +2089,48 @@ test('the desktop polls all valid grants across project pages', async (t) => {
   assert.deepEqual(new Set([...first.grants, ...next.grants]), new Set(grants));
 });
 
+test('an owner can finish syncing a revocation after leaving and being invited back', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const revoke = { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[1] };
+  f.call(1, { action: 'leave', groupId: f.groupId });
+  f.call(0, { action: 'invite', groupId: f.groupId, account: 'owner-B' });
+  assert.throws(() => f.call(0, revoke), /Only this harness owner/);
+  assert.deepEqual(f.call(1, revoke), { revoked: true });
+  assert.deepEqual(f.call(1, revoke), { revoked: true });
+  f.call(1, { action: 'accept', groupId: f.groupId });
+  f.call(1, {
+    action: 'teammates',
+    groupId: f.groupId,
+    teammates: [{ localId: f.members[1], name: 'Mây', provider: 'codex' }],
+  });
+  assert.equal(f.store.get<{ revoked: boolean }>('sharedSadeGrant', f.grants[1]).revoked, true);
+});
+
+test('a grant registration retry preserves its deadline and never reactivates a revoked grant', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const payload = {
+    action: 'sade-grant',
+    groupId: f.groupId,
+    id: f.grants[1],
+    teammateId: f.members[1],
+    projectKey: key,
+    projectName: 'Fixture project',
+    role: 'reviewer',
+    platform: 'win32',
+    allowWrites: true,
+    turns: 8,
+  };
+  const readGrant = () => f.store.get('sharedSadeGrant', payload.id);
+  const before = readGrant();
+  f.call(1, payload);
+  assert.deepEqual(readGrant(), before);
+  f.call(1, { action: 'sade-revoke', groupId: payload.groupId, grantId: payload.id });
+  f.call(1, payload);
+  assert.deepEqual(readGrant(), { ...(before as object), revoked: true });
+});
+
 test('the desktop keeps staged patches local after a grant is revoked or expires', async (t) => {
   const store = new Store(':memory:');
   const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());
@@ -2098,7 +2140,10 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   });
   const worker = workspace.sharedSade;
   const snapshot = async () =>
-    (await worker.execute({ action: 'snapshot' })) as { results: { jobId: string }[] };
+    (await worker.execute({ action: 'snapshot' })) as {
+      results: { jobId: string }[];
+      revocations: { groupId: string; grantId: string }[];
+    };
   const queued = Array.from({ length: 3 }, () => ({
     id: randomUUID(),
     grantId: randomUUID(),
@@ -2114,7 +2159,8 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   );
 
   const [revoked, expired, stillGranted] = queued;
-  await worker.execute({ action: 'revoke', grantId: revoked.grantId });
+  const groupId = randomUUID();
+  await worker.execute({ action: 'revoke', grantId: revoked.grantId, groupId });
   store.put('sharedSadeLocalGrant', { id: expired.grantId, expiresAt: Date.now() - 1 });
   assert.deepEqual(
     (await snapshot()).results.map((entry) => entry.jobId),
@@ -2122,6 +2168,9 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   );
   assert.deepEqual(store.get('sharedSadeLocalReceipt', revoked.id), revoked);
   assert.deepEqual(store.get('sharedSadeLocalReceipt', expired.id), expired);
+  assert.deepEqual((await snapshot()).revocations, [{ groupId, grantId: revoked.grantId }]);
+  await worker.execute({ action: 'ack-revocations', ids: [revoked.grantId] });
+  assert.deepEqual((await snapshot()).revocations, []);
 });
 
 test(
