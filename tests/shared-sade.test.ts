@@ -611,33 +611,48 @@ test(
     await assert.rejects(readFile(path.join(planner.task.worktree!, '.env.local')), {
       code: 'ENOENT',
     });
-    await submit(0, planner.session, planner.peer, 'relay_submit_plan', {
+    const plannerCalls = JSON.stringify(planner.peer.calls);
+    assert.match(plannerCalls, /unaccentedName.*Bep/);
+    assert.doesNotMatch(plannerCalls, new RegExp(cloud.grants.join('|')));
+    const validPlan = {
       summary: 'Build architecture then inspect the result in another harness.',
       tasks: [
         work('architecture', {
           kind: 'code',
           scope: ['architecture.txt'],
-          preferredMemberId: cloud.grants[0],
+          preferredMemberId: 'member-1',
         }),
         work('frontend', {
           kind: 'code',
           scope: ['frontend.txt'],
-          preferredMemberId: cloud.grants[1],
+          preferredMemberId: 'member-2',
           dependsOn: ['review-contract'],
         }),
         work('review-contract', {
           kind: 'review',
           scope: ['architecture.txt'],
-          preferredMemberId: cloud.grants[1],
+          preferredMemberId: 'member-2',
           dependsOn: ['architecture'],
           acceptance: 'Verify the registration field names match the agreed contract.',
         }),
         work('verify-ui', {
-          preferredMemberId: cloud.grants[0],
+          preferredMemberId: 'member-1',
           dependsOn: ['frontend'],
         }),
       ].map((task) => ({ ...task, requiredPlatform: task.requiredPlatform || 'any' })),
+    };
+    const invalid = await callTool(0, planner.session, planner.peer, 'relay_submit_plan', {
+      ...validPlan,
+      tasks: validPlan.tasks.map((task) =>
+        task.key === 'frontend' ? { ...task, dependsOn: ['member-1'] } : task,
+      ),
     });
+    assert.equal(invalid?.success, false);
+    assert.match(invalid?.contentItems?.[0]?.text || '', /Unknown dependency/);
+    assert.match(invalid?.contentItems?.[0]?.text || '', /Declared task keys: architecture/);
+    assert.equal(cloud.view().sadeRuns[0].jobs.length, 1);
+    await submit(0, planner.session, planner.peer, 'relay_submit_plan', validPlan);
+    assert.equal(planner.peer.calls.filter((call) => call.method === 'turn/start').length, 1);
     await complete(0, planner.session, planner.peer, 'Plan submitted.');
     const writer = (await pump(0))!;
     const plannedReviewId = cloud
@@ -1161,22 +1176,35 @@ test('an opted-in status update can close planning without assigning any work', 
   }
 });
 
-test('planner routing defaults do not become a grant or platform requirement', () => {
+test('planner references resolve only to the supplied roster and preserve explicit platforms', () => {
   const reviewer = randomUUID();
-  const plan = parseSharedGroupPlan({
+  const draft = {
     summary: 'Review a general request and an explicitly assigned Mac check.',
     tasks: [
       { ...work('general'), preferredMemberId: 'auto', requiredPlatform: 'any' },
-      work('named', { preferredMemberId: reviewer, requiredPlatform: 'darwin' }),
+      work('named', { preferredMemberId: 'member-1', requiredPlatform: 'darwin' }),
     ],
-  });
+  };
+  const plan = parseSharedGroupPlan(draft, [reviewer]);
   assert.equal(plan.tasks[0].preferredMemberId, undefined);
   assert.equal(plan.tasks[0].requiredPlatform, undefined);
   assert.equal(plan.tasks[1].preferredMemberId, reviewer);
   assert.equal(plan.tasks[1].requiredPlatform, 'darwin');
   assert.throws(
-    () => parseSharedGroupPlan({ summary: plan.summary, tasks: [work('missing')] }),
+    () => parseSharedGroupPlan({ summary: plan.summary, tasks: [work('missing')] }, [reviewer]),
     /requiredPlatform/,
+  );
+  assert.throws(() => parseSharedGroupPlan(draft, []), /teammate reference/);
+  assert.throws(
+    () =>
+      parseSharedGroupPlan(
+        {
+          ...draft,
+          tasks: [work('outside', { preferredMemberId: randomUUID(), requiredPlatform: 'darwin' })],
+        },
+        [reviewer],
+      ),
+    /teammate reference/,
   );
 });
 

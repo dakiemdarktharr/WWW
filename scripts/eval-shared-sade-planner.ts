@@ -50,12 +50,17 @@ const messages = {
   ],
 };
 type Case = keyof typeof messages;
+const handoffHoldout = [
+  'Mây làm src/signup.ts sau khi nhận docs/contract.md, cái file tài liệu em nhờ Bếp cập nhật trước nghen.',
+  'Cho Bep dien quy uoc vao docs/contract.md. Khi nao nhan dung file thi May moi sua src/signup.ts nha.',
+  'Have Mây implement src/signup.ts only once Bếp has written the required signup rules to docs/contract.md.',
+];
 
 const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { replay: { type: 'string' } },
+  options: { replay: { type: 'string' }, 'handoff-holdout': { type: 'boolean' } },
 });
 const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
 const source = values.replay && path.resolve(values.replay);
@@ -268,6 +273,29 @@ function assess(scenario: Case, plan: ReturnType<typeof parseTeamPlan>, run: Sha
 }
 
 const local = (route: string, options?: RequestInit) => fetch(`${endpoint}${route}`, options);
+type PlannerReply = {
+  role: 'assistant';
+  content: string;
+  tool_calls?: { function: { name: string; arguments: unknown } }[];
+};
+async function getPlannerReply(messages: unknown[]): Promise<PlannerReply> {
+  const response = await local('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      stream: false,
+      think: false,
+      keep_alive: '45s',
+      options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
+      tools,
+      messages,
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
+  return (await response.json()).message;
+}
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const toolsSha256 = sha256(JSON.stringify(tools));
 if (saved) {
@@ -280,13 +308,19 @@ const selected =
     (entry: { name: string }) => entry.name === model,
   );
 assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
-const cases = Object.entries(messages).flatMap(([scenario, inputs]) =>
-  inputs.map((message, index) => ({
-    scenario: scenario as Case,
-    id: `${scenario}/${index + 1}`,
-    message,
-  })),
-);
+const cases = values['handoff-holdout']
+  ? handoffHoldout.map((message, index) => ({
+      scenario: 'handoff' as const,
+      id: `handoff/holdout-${index + 1}`,
+      message,
+    }))
+  : Object.entries(messages).flatMap(([scenario, inputs]) =>
+      inputs.map((message, index) => ({
+        scenario: scenario as Case,
+        id: `${scenario}/${index + 1}`,
+        message,
+      })),
+    );
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 if (saved) assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
@@ -304,36 +338,34 @@ for (const { scenario, id, message } of cases) {
     let run;
     let error;
     let toolName;
+    let correction;
     try {
       if (prior) {
         if (!prior.plan) throw new Error(prior.error || 'Model returned no plan.');
         toolName = prior.toolName;
         plan = parseTeamPlan(prior.plan, { allowEmpty: true });
       } else {
-        const response = await local('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            stream: false,
-            think: false,
-            keep_alive: '45s',
-            options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
-            tools,
-            messages: [{ role: 'user', content: prompt }],
-          }),
-          signal: AbortSignal.timeout(60_000),
-        });
-        if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
-        const { message: reply } = await response.json();
-        assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
-        const tool = reply.tool_calls[0].function;
-        toolName = tool.name;
-        if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
-        else {
-          assert.equal(toolName, groupPlanTool.name);
-          plan = parseSharedGroupPlan(tool.arguments);
+        const messages: unknown[] = [{ role: 'user', content: prompt }];
+        const roster = group.delivery.team.map((member) => member.id);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const reply = await getPlannerReply(messages);
+          assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
+          const tool = reply.tool_calls![0].function;
+          toolName = tool.name;
+          try {
+            if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
+            else {
+              assert.equal(toolName, groupPlanTool.name);
+              plan = parseSharedGroupPlan(tool.arguments, roster);
+            }
+            break;
+          } catch (cause) {
+            if (attempt !== 0 || toolName !== groupPlanTool.name) throw cause;
+            correction = cause instanceof Error ? cause.message : String(cause);
+            messages.push(reply, { role: 'tool', tool_name: toolName, content: correction });
+          }
         }
+        assert.ok(plan, 'expected a validated plan');
       }
       parsed = true;
       group.finish(plan);
@@ -352,6 +384,7 @@ for (const { scenario, id, message } of cases) {
       milliseconds: Math.round(performance.now() - started),
       plan,
       toolName,
+      correction,
       state: run?.state,
       error,
     };
@@ -364,6 +397,7 @@ for (const { scenario, id, message } of cases) {
       parsed: row.parsed,
       milliseconds: row.milliseconds,
       error: row.error,
+      correction: row.correction,
     }),
   );
   await writeFile(

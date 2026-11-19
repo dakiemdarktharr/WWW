@@ -90,7 +90,10 @@ export function parseTeamPlan(input: unknown, options: { allowEmpty?: boolean } 
       throw new DomainError(`Duplicate dependency in task: ${task.key}`, 400);
     for (const dependency of task.dependsOn) {
       if (!byKey.has(dependency))
-        throw new DomainError(`Unknown dependency “${dependency}” in task “${task.key}”.`, 400);
+        throw new DomainError(
+          `Unknown dependency “${dependency}” in task “${task.key}”. Declared task keys: ${[...byKey.keys()].join(', ')}.`,
+          400,
+        );
       if (dependency === task.key)
         throw new DomainError(`Task “${task.key}” cannot depend on itself.`, 400);
     }

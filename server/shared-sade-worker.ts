@@ -17,6 +17,7 @@ import {
   parseSharedGroupPlan,
   projectKey,
   sharedFinish,
+  sharedPlanMemberRef,
   sharedPrerequisite,
   sharedSadeUpdates,
   type SharedDelivery,
@@ -38,11 +39,21 @@ function sharedGroupContext(delivery: SharedDelivery) {
     request: delivery.task ? undefined : delivery.request,
     team: delivery.task
       ? undefined
-      : delivery.team.map((member) => ({
-          ...member,
-          owner: member.owner.slice(0, 60),
-          name: member.name.slice(0, 60),
-        })),
+      : delivery.team.map(({ id: _id, name: label, owner, ...member }, index) => {
+          const name = label.slice(0, 60);
+          const unaccentedName = name
+            .normalize('NFD')
+            .replace(/\p{Diacritic}/gu, '')
+            .replaceAll('đ', 'd')
+            .replaceAll('Đ', 'D');
+          return {
+            ...member,
+            ref: sharedPlanMemberRef(index),
+            name,
+            owner: owner.slice(0, 60),
+            ...(unaccentedName !== name ? { unaccentedName } : {}),
+          };
+        }),
     task: delivery.task,
     clarification: delivery.clarification,
     prerequisites: delivery.prerequisites.map(({ patch, ...item }) => ({
@@ -53,8 +64,8 @@ function sharedGroupContext(delivery: SharedDelivery) {
 }
 
 export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
-  const instructions = `Check whether the sender requests action in this message. Treat quoted requests as context. Call relay_finish_shared_without_work for an update with no action requested. For actual work, call relay_submit_plan once with one task per requested deliverable. Ask if an unclear outcome prevents planning.
-For each task set preferredMemberId to the exact team id of the person named for it, or auto when nobody is named. Roles are strengths and allowWrites controls permission. Kind code can edit files including documentation. Kind design edits visual work. Research and review are read-only. Keep named file scopes narrow. Each dependency must be the key of a task you also submit. For duplicate edits, plan one writer and include checking existing commits in its acceptance criteria.
+  const instructions = `Check whether the sender requests action in this message. Treat quoted requests as context. Call relay_finish_shared_without_work for an update with no action requested. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
+For each task set preferredMemberId to team.ref for the teammate named for that task. Match the requested teammate by name or unaccentedName, and use auto only when nobody is named for the task. Roles are strengths and allowWrites controls permission. Kind code can edit files including documentation. Kind design edits visual work. Research and review are read-only. Keep named file scopes narrow. Copy dependency keys from the other tasks in your submitted plan, never from teammate names or refs. For duplicate edits, plan one writer and include checking existing commits in its acceptance criteria.
 For a request like “A edits this file, B reviews its diff” with B the only authorized peer, plan A's edit only. Sade automatically queues B's independent diff review before integration. Add a review task only for a distinct request the automatic review does not cover.
 When the sender asks to execute on a specific OS, set requiredPlatform to darwin for Mac, win32 for Windows, or linux for Linux. Otherwise use any. Preserve a requested OS even if unavailable so Sade reports missing access. For paired Mac verification or a fix, plan one scoped code task on the grant with pairedPlatform darwin. The paired Mac is tools-only and needs no model sign-in.`;
   return `${instructions}${delivery.clarification ? '' : sharedQuestionHint}${sharedGroupContext(delivery)}`;
@@ -89,6 +100,7 @@ type Receipt = {
   id: string;
   grantId: string;
   phase: SharedDelivery['phase'];
+  planMembers?: string[];
   sessionId?: string;
   result?: SharedFinish;
   version?: number;
@@ -358,9 +370,11 @@ export class SharedSadeWorker {
   }
   submit(jobId: string, input: unknown, noWork = false) {
     this.assertCurrent(jobId);
-    if (this.receipt(jobId).phase !== 'plan')
-      throw new DomainError('Only the planner can submit a plan.');
-    const plan = noWork ? parseGroupNoWork(input) : parseSharedGroupPlan(input);
+    const receipt = this.receipt(jobId);
+    if (receipt.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
+    const plan = noWork
+      ? parseGroupNoWork(input)
+      : parseSharedGroupPlan(input, receipt.planMembers || []);
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
       throw new DomainError('The plan is too large.');
     this.host.store.put('sharedSadeLocalPlan', { id: jobId, plan });
@@ -657,6 +671,8 @@ export class SharedSadeWorker {
           id: delivery.id,
           grantId: delivery.grantId,
           phase: delivery.phase,
+          planMembers:
+            delivery.phase === 'plan' ? delivery.team.map((member) => member.id) : undefined,
           clarified: Boolean(delivery.clarification),
           acceptsUpdates: delivery.acceptsUpdates,
           updates: delivery.updates,
@@ -690,6 +706,7 @@ export class SharedSadeWorker {
         result,
         version: (previous.result ? previous.version || 1 : 0) + 1,
         reported: false,
+        planMembers: undefined,
         updates: undefined,
       });
     if (result.kind !== 'change') this.leases.delete(jobId);

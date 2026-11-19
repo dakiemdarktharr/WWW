@@ -258,7 +258,7 @@ export const groupPlanTool = {
               minLength: 4,
               maxLength: 36,
               description:
-                'Copy the exact id of the named teammate from team. Use auto only if the requester did not name a teammate.',
+                'Copy the exact ref of the named teammate from team. Use auto only if the requester did not name a teammate.',
             },
             requiredPlatform: {
               type: 'string',
@@ -280,9 +280,7 @@ export const groupPlanTool = {
 
 const sharedPlanRouting = z
   .object({
-    preferredMemberId: z
-      .union([z.literal('auto'), id])
-      .transform((value) => (value === 'auto' ? undefined : value)),
+    preferredMemberId: z.string().min(4).max(36),
     requiredPlatform: z
       .enum(['any', 'win32', 'darwin', 'linux'])
       .transform((value) => (value === 'any' ? undefined : value)),
@@ -291,8 +289,20 @@ const sharedPlanRouting = z
 const sharedPlanInput = z
   .object({ tasks: z.array(sharedPlanRouting).min(1).max(32) })
   .passthrough();
-export function parseSharedGroupPlan(input: unknown) {
-  return parseTeamPlan(sharedPlanInput.parse(input));
+export const sharedPlanMemberRef = (index: number) => `member-${index + 1}`;
+
+export function parseSharedGroupPlan(input: unknown, roster: readonly string[]) {
+  const plan = sharedPlanInput.parse(input);
+  const tasks = plan.tasks.map((task) => {
+    const choice = task.preferredMemberId;
+    const member = roster.find(
+      (id, index) => choice === id || choice === sharedPlanMemberRef(index),
+    );
+    if (choice !== 'auto' && !member)
+      throw new DomainError('Use a teammate reference from the supplied team or auto.');
+    return { ...task, preferredMemberId: member };
+  });
+  return parseTeamPlan({ ...plan, tasks });
 }
 
 export const groupNoWorkTool = {

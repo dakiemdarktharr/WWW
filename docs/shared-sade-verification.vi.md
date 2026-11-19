@@ -4,6 +4,8 @@ Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let
 
 Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi chỉ báo tình hình qua **Ask Sade**, planner có thể kết thúc bằng một thao tác riêng, kèm lời giải thích. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
+Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
+
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
 
 Shared Groups nhận một workflow đang hoạt động cho mỗi nhóm hoặc project. Bài hồi quy dùng hai người gửi và xác nhận tin yêu cầu thứ hai bị từ chối khi tác vụ ghi đang chạy. Sau khi tác vụ kết thúc, cùng ID tin nhắn có thể được gửi lại để mở workflow mới.
@@ -102,11 +104,22 @@ Chạy Ollama trên `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-native.json
 ```
 
-Khi chấm lại cùng 18 đầu ra đã lưu, với cùng digest model, hash prompt và hash bộ công cụ, bộ điều phối mới đạt 14/18. Hai kế hoạch C có review khớp phạm vi đều chạy đúng một lượt review rồi hoàn tất. Ca C gặp HTTP 500 vẫn giữ kết quả lỗi. Bước chấm lại dùng diff tổng hợp và verdict thử nghiệm. Kết quả đo việc dùng lại tác vụ review ở bộ điều phối. Chất lượng tìm lỗi bằng model đăng nhập thật vẫn cần đo riêng.
+Ở commit `b91a40b`, khi chấm lại cùng 18 đầu ra đã lưu, với cùng digest model, hash prompt và hash bộ công cụ, bộ điều phối mới đạt 14/18. Hai kế hoạch C có review khớp phạm vi đều chạy đúng một lượt review rồi hoàn tất. Ca C gặp HTTP 500 vẫn giữ kết quả lỗi. Bước chấm lại dùng diff tổng hợp và verdict thử nghiệm. Kết quả đo việc dùng lại tác vụ review ở bộ điều phối. Chất lượng tìm lỗi bằng model đăng nhập thật vẫn cần đo riêng. Với bản hiện tại, tạo lại tệp đầu ra khi prompt hoặc schema đã đổi.
 
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-review-replay.json `
   --replay .local/shared-sade-planner-native.json
+```
+
+### Tên teammate và sửa lỗi dependency trong lượt lập kế hoạch
+
+Qwen nhận mã teammate ngắn và tên không dấu, sau đó chạy lại đủ 18 ca. Kết quả là 15/18, gồm A 1/3, B 3/3, C 3/3, D 6/6 và tin chỉ báo tình hình 2/3. Ca A có dependency thiếu vẫn lỗi sau khi gửi lại phản hồi công cụ. Ba câu bàn giao giữ riêng đạt 0/3, với hai kế hoạch chọn phạm vi quá rộng và một kế hoạch giao sai người. Một biến thể prompt thử đánh số task và nhấn mạnh đường dẫn đạt cả ba ca A của bộ chính, đồng thời chỉ đạt 12/18 do điểm B, C và D giảm. Qwen tiếp tục dùng để đánh giá offline.
+
+Bài hồi quy desktop dùng phiên Gemini mô phỏng để nộp kế hoạch thiếu dependency, nhận lỗi có khóa hợp lệ, rồi nộp lại trong cùng lượt. Chỉ có một lần `turn/start`. Người được giao vẫn phải có quyền trong roster. Phép đo Ollama gửi thông báo lỗi qua `role: tool` trong cùng hội thoại và thử nhiều nhất một lần nếu nhận được lời gọi kế hoạch sai schema hoặc dependency. [Gọi công cụ trên Ollama](https://docs.ollama.com/capabilities/tool-calling)
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-final.json
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-handoff-holdout.json --handoff-holdout
 ```
 
 ## Cấu hình dùng trong Shared Groups
