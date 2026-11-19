@@ -77,6 +77,15 @@ async function regularParents(root: string, name: string) {
     current = path.dirname(current);
   }
 }
+async function indexedExecutables(root: string) {
+  const index = process.platform === 'win32' ? await git(root, ['ls-files', '--stage', '-z']) : '';
+  return new Set(
+    index
+      .split('\0')
+      .filter((line) => line.startsWith('100755 '))
+      .map((line) => line.slice(line.indexOf('\t') + 1)),
+  );
+}
 async function readRunnerFiles(
   root: string,
   limits: SnapshotLimits,
@@ -86,13 +95,7 @@ async function readRunnerFiles(
     .split('\0')
     .filter(Boolean);
   // Windows exposes executable Git modes through the index, not the filesystem.
-  const index = process.platform === 'win32' ? await git(root, ['ls-files', '--stage', '-z']) : '';
-  const executables = new Set(
-    index
-      .split('\0')
-      .filter((line) => line.startsWith('100755 '))
-      .map((line) => line.slice(line.indexOf('\t') + 1)),
-  );
+  const executables = await indexedExecutables(root);
   let bytes = 0;
   const output: RunnerFile[] = [];
   for (const name of [...new Set(names)].sort()) {
@@ -190,6 +193,10 @@ export async function applyRunnerFiles(
       initial.get(name)?.hash !== final.get(name)?.hash ||
       initial.get(name)?.executable !== final.get(name)?.executable,
   );
+  const executables =
+    process.platform === 'win32' && changes.length
+      ? await indexedExecutables(root)
+      : new Set<string>();
   for (const name of changes) {
     safeRunnerFile(name);
     if (!scopesOverlap([name], scopes))
@@ -199,7 +206,15 @@ export async function applyRunnerFiles(
       if (error.code === 'ENOENT') return null;
       throw error;
     });
-    if ((actual ? digest(actual) : undefined) !== initial.get(name)?.hash)
+    const executable =
+      actual &&
+      (process.platform === 'win32'
+        ? executables.has(name)
+        : !!((await lstat(path.join(root, name))).mode & 0o100));
+    if (
+      (actual ? digest(actual) : undefined) !== initial.get(name)?.hash ||
+      !!executable !== !!initial.get(name)?.executable
+    )
       throw new DomainError(
         'Repository changed while the remote turn ran. Inspect before recovery.',
       );

@@ -170,6 +170,8 @@ export async function inspectMachineChecks(store: Store, task: Task, required: b
       started: row.started,
       finished: row.finished,
       input: ev?.input,
+      base: ev?.baseCommit,
+      signer: row.proof && signerFingerprint(row.proof.publicKey),
       output: ev?.output,
       runId: ev?.runId,
       recipe: ev?.recipe,
@@ -177,7 +179,13 @@ export async function inspectMachineChecks(store: Store, task: Task, required: b
       runtime: ev?.runtime,
       code: row.code,
       timedOut: row.timedOut,
-      error: row.error,
+      error:
+        row.error ||
+        (row.truncated
+          ? 'The command exceeded the runner output limit.'
+          : ev && ev.input !== ev.after
+            ? 'The command modified the tested source files.'
+            : undefined),
       repeatable: !!row.repeat,
     };
   });

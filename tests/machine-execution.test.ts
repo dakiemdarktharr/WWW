@@ -1,6 +1,6 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID, createHash } from 'node:crypto';
@@ -523,6 +523,14 @@ test(
     const check = (await host.reviewDiff(task.id)).machineChecks!;
     assert.equal(check.passed, true);
     const original = check.attempts.at(-1)!;
+    if (process.platform === 'win32')
+      await git(checkout.worktree, ['update-index', '--chmod=+x', 'value.txt']);
+    else await chmod(target, 0o755);
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.passed, false);
+    if (process.platform === 'win32')
+      await git(checkout.worktree, ['update-index', '--chmod=-x', 'value.txt']);
+    else await chmod(target, 0o644);
+    assert.equal((await host.reviewDiff(task.id)).machineChecks!.passed, true);
     const manifest = host.machineCheckManifest(task.id, original.id);
     verifyMachineSignature(manifest.evidence, manifest.proof, manifest.fingerprint);
     assert.throws(

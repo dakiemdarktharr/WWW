@@ -220,8 +220,8 @@ export class MachineAgent {
               const current = await exportRunnerFiles(root);
               if (JSON.stringify(current) === JSON.stringify(files)) before = current;
             }
-            await applyRunnerFiles(root, before, files, ['.'], () => {});
             await git(root, ['init']);
+            await applyRunnerFiles(root, before, files, ['.'], () => {});
             await git(root, ['add', '--all']);
             await git(root, [
               '-c',

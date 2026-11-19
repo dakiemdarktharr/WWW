@@ -2008,6 +2008,16 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                                   Tested input <code>{check.input}</code>
                                 </p>
                               )}
+                              {check.base && (
+                                <p>
+                                  Git base <code>{check.base}</code>
+                                </p>
+                              )}
+                              {check.signer && (
+                                <p>
+                                  Runner key fingerprint <code>{check.signer}</code>
+                                </p>
+                              )}
                               {check.output && (
                                 <p>
                                   Output digest <code>{check.output}</code>

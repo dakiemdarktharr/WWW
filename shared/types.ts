@@ -395,6 +395,8 @@ export interface MachineCheckView {
   started: string;
   finished?: string;
   input?: string;
+  base?: string | null;
+  signer?: string;
   output?: string;
   runId?: string;
   recipe?: string;
