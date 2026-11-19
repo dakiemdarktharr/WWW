@@ -105,7 +105,11 @@ async function routePortal(context: BrowserContext, available = false) {
               available,
               ...(available ? { url: '/downloads/Kivuno.AppImage', sha256: 'b'.repeat(64) } : {}),
             },
-            macos: { available: false },
+            macos: {
+              available,
+              notarized: false,
+              ...(available ? { url: '/downloads/Kivuno-macOS-arm64.dmg' } : {}),
+            },
           },
         },
       });
@@ -700,9 +704,17 @@ try {
     'href',
     '/downloads/Kivuno.AppImage',
   );
-  await expect(
-    accountPage.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
-  ).toBeDisabled();
+  await expect(accountPage.getByRole('link', { name: 'Tải Kivuno cho macOS' })).toHaveAttribute(
+    'href',
+    '/downloads/Kivuno-macOS-arm64.dmg',
+  );
+  await accountPage.getByRole('button', { name: 'Bản cài & checksum', exact: true }).click();
+  const macDownloads = accountPage.getByRole('dialog', { name: 'Tải Kivuno' });
+  await expect(macDownloads.getByRole('link', { name: 'Tải Kivuno cho macOS' })).toContainText(
+    'macOS Apple Silicon',
+  );
+  await expect(macDownloads.getByText(/Privacy & Security → Open Anyway/)).toBeVisible();
+  await accountPage.keyboard.press('Escape');
   await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
   const reducedDemo = accountPage.locator('#workflow');
   await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(8);

@@ -36,6 +36,7 @@
     "verify:download": "node scripts/verify-download.mjs",
     "test:claude-native": "tsx tests/claude-native.e2e.ts",
     "test:desktop-package": "tsx tests/desktop-package.e2e.ts",
+    "test:macos-installer": "tsx tests/macos-installer.e2e.ts",
     "test:sade": "tsx --test --test-concurrency=2 tests/sade.test.ts tests/workflow-plan.test.ts tests/workflows.test.ts tests/store.test.ts tests/handoffs.test.ts tests/runners.test.ts tests/managed-providers.test.ts tests/machine-execution.test.ts tests/shared-sade.test.ts",
     "test:shared-sade": "tsx --test tests/shared-sade.test.ts",
     "payment:compile": "node scripts/kivuno-payment-compile.mjs",

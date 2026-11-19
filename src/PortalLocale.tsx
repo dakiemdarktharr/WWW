@@ -133,6 +133,11 @@ const english: Record<string, string> = {
   'macOS Apple Silicon · Chưa ký, chưa notarize':
     'macOS Apple Silicon · Unsigned and not notarized',
   'macOS Apple Silicon · Chưa có bản tải': 'macOS Apple Silicon · Download not available yet',
+  'macOS Apple Silicon': 'macOS Apple Silicon',
+  'Mở DMG, kéo Kivuno vào Applications rồi mở app.':
+    'Open the DMG, drag Kivuno to Applications, then open the app.',
+  'Nếu macOS báo chưa xác minh nhà phát triển, mở System Settings → Privacy & Security → Open Anyway.':
+    'If macOS says it cannot verify the developer, go to System Settings → Privacy & Security → Open Anyway.',
   'Dịch vụ đăng nhập chưa sẵn sàng. Hãy thử lại.': 'Sign-in is unavailable. Please try again.',
   'Bạn đã thử nhiều lần. Vui lòng đợi một phút.': 'Too many attempts. Please wait a minute.',
   'Email hoặc mật khẩu không đúng.': 'The email or password is incorrect.',
