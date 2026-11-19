@@ -599,10 +599,11 @@ if (process.env.KIVUNO_PAIRED_RECOVERY === '1')
       const api = `http://127.0.0.1:${uiPort}/api`;
       const { token } = await (await page.request.get(api + '/session')).json();
       const response = await page.request.post(`${api}/tasks/${task.id}/accept`, {
-        headers: { 'x-relay-token': token },
+        headers: { 'x-relay-token': token, 'content-type': 'application/json' },
+        data: {},
       });
-      assert.equal(response.status(), 409);
       const rejection = (await response.json()).error;
+      assert.equal(response.status(), 409, rejection);
       assert.match(rejection, /passing paired-machine check/);
       assert.equal(await git(repo, ['rev-parse', 'HEAD']), checkout.baseCommit);
       assert.equal(await readFile(path.join(repo, 'value.txt'), 'utf8'), 'base');
