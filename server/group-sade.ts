@@ -196,8 +196,20 @@ export const groupReadUpdatesTool = {
 } as const;
 export const needsGroupWrite = writesTask;
 const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
+function plannedReviews(run: Run, writer: Job) {
+  const key = writer.task?.key;
+  return key
+    ? run.jobs.filter((job) => job.phase === 'review' && job.task?.dependsOn[0] === key)
+    : [];
+}
 function hasDependents(run: Run, job: Job) {
-  return !!job.task && run.jobs.some((other) => other.task?.dependsOn.includes(job.task!.key));
+  if (!job.task) return false;
+  // Patch reviews can run before integration, but tasks waiting on them still need the integrated change.
+  const reviews = plannedReviews(run, job);
+  const keys = new Set([job.task.key, ...reviews.map((review) => review.task!.key)]);
+  return run.jobs.some(
+    (other) => !reviews.includes(other) && other.task?.dependsOn.some((key) => keys.has(key)),
+  );
 }
 function prerequisitesOf(run: Run, target: Job) {
   const source = target.reviewOf ? run.jobs.find((job) => job.id === target.reviewOf) : target;
@@ -723,6 +735,7 @@ export class GroupSade {
           )
         )
           continue;
+        if (job.phase === 'review' && !job.reviewOf) continue;
         const predecessors = dependencies.get(job) || [];
         if (predecessors.some((other) => other.state !== 'done')) continue;
         if (job.updateCount && !command.taskUpdates) {
@@ -900,20 +913,34 @@ export class GroupSade {
         );
         job.state = 'done';
         job.summary = redact(plan.summary);
-        run.jobs.push(
-          ...plan.tasks.map((task, index): Job => ({
-            id: randomUUID(),
-            runId: run.id,
-            grantId: allocations[index].memberId,
-            phase: 'task',
-            task: {
-              ...task,
-              description: redact(task.description),
-              acceptance: redact(task.acceptance),
-            },
-            state: 'queued',
-          })),
-        );
+        const planned = plan.tasks.map((task, index): Job => ({
+          id: randomUUID(),
+          runId: run.id,
+          grantId: allocations[index].memberId,
+          phase: 'task',
+          task: {
+            ...task,
+            description: redact(task.description),
+            acceptance: redact(task.acceptance),
+          },
+          state: 'queued',
+        }));
+        const byKey = new Map(planned.map((item) => [item.task!.key, item]));
+        const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
+        for (const item of planned) {
+          const task = item.task!;
+          if (task.kind !== 'review' || task.dependsOn.length !== 1) continue;
+          const source = byKey.get(task.dependsOn[0]);
+          if (
+            source?.task &&
+            writes(source.task) &&
+            ownerByGrant.get(source.grantId) !== ownerByGrant.get(item.grantId) &&
+            task.scope.length === source.task.scope.length &&
+            task.scope.every((scope) => source.task!.scope.includes(scope))
+          )
+            item.phase = 'review';
+        }
+        run.jobs.push(...planned);
         run.state = 'running';
         this.store.put('sharedSadeRun', run);
       } catch (error) {
@@ -953,24 +980,40 @@ export class GroupSade {
         this.block(run, job, 'A changed file falls outside the task scope.');
         return { accepted: true };
       }
-      const reviewer = grants
-        .filter(
-          (entry) =>
-            run.roster.includes(entry.id) &&
-            entry.ownerId !== grant.ownerId &&
-            this.usable(entry, group),
-        )
-        .sort(
-          (a, b) =>
-            Number(b.role === 'reviewer') - Number(a.role === 'reviewer') || a.used - b.used,
-        )
-        .find(
-          (entry) =>
-            run.jobs.filter((other) => other.state === 'queued' && other.grantId === entry.id)
-              .length <
-            entry.turns - entry.used,
+      const scheduled = plannedReviews(run, job);
+      if (
+        scheduled.some((review) => {
+          const entry = grants.find((item) => item.id === review.grantId);
+          return !entry || entry.ownerId === grant.ownerId || !this.usable(entry, group);
+        })
+      ) {
+        this.block(
+          run,
+          job,
+          'A planned reviewer lost access or ran out of turns. The change stays local.',
         );
-      if (!reviewer) {
+        return { accepted: true };
+      }
+      const reviewer = scheduled.length
+        ? undefined
+        : grants
+            .filter(
+              (entry) =>
+                run.roster.includes(entry.id) &&
+                entry.ownerId !== grant.ownerId &&
+                this.usable(entry, group),
+            )
+            .sort(
+              (a, b) =>
+                Number(b.role === 'reviewer') - Number(a.role === 'reviewer') || a.used - b.used,
+            )
+            .find(
+              (entry) =>
+                run.jobs.filter((other) => other.state === 'queued' && other.grantId === entry.id)
+                  .length <
+                entry.turns - entry.used,
+            );
+      if (!scheduled.length && !reviewer) {
         this.block(
           run,
           job,
@@ -982,14 +1025,16 @@ export class GroupSade {
       job.change = result.diff;
       job.portable = result.portable;
       job.summary = 'Waiting for independent review.';
-      run.jobs.push({
-        id: randomUUID(),
-        runId: run.id,
-        grantId: reviewer.id,
-        phase: 'review',
-        reviewOf: job.id,
-        state: 'queued',
-      });
+      for (const review of scheduled) review.reviewOf = job.id;
+      if (reviewer)
+        run.jobs.push({
+          id: randomUUID(),
+          runId: run.id,
+          grantId: reviewer.id,
+          phase: 'review',
+          reviewOf: job.id,
+          state: 'queued',
+        });
       this.store.put('sharedSadeRun', run);
     } else if (result.kind === 'review') {
       const source = run.jobs.find((item) => item.id === job.reviewOf);
@@ -1004,16 +1049,19 @@ export class GroupSade {
           'Independent reviewer requested changes. Read the review before continuing.',
         );
       else {
-        source.reviewedDigest = reviewDigest(source.change);
-        source.summary =
-          hasDependents(run, source) && !source.portable
-            ? 'Reviewed. Integrate and share the Git revision from the author’s workspace.'
-            : 'Reviewed. The author can integrate the changes locally.';
+        if (run.jobs.every((other) => other.reviewOf !== source.id || other.state === 'done')) {
+          source.reviewedDigest = reviewDigest(source.change);
+          source.summary =
+            hasDependents(run, source) && !source.portable
+              ? 'Reviewed. Integrate and share the Git revision from the author’s workspace.'
+              : 'Reviewed. The author can integrate the changes locally.';
+        }
         this.store.put('sharedSadeRun', run);
       }
     } else if (result.kind === 'unchanged') {
       if (job.phase !== 'task' || !writes(job.task) || job.state !== 'running')
         throw new DomainError('Only a running writing task can report an unchanged worktree.', 409);
+      for (const review of plannedReviews(run, job)) review.phase = 'task';
       job.state = 'done';
       job.summary = redact(result.summary);
       if (run.jobs.every((item) => item.state === 'done')) {

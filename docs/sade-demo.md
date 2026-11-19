@@ -39,6 +39,8 @@ Khi gửi lại cùng yêu cầu, nhóm chỉ thấy một workflow. Các nhiệ
 
 Giao viết hàm tính chỗ còn lại của workshop, cài lỗi lệch một đơn vị trong fixture. Khi task kết thúc, không gửi thêm lệnh “hãy review”.
 
+Chạy lại với một yêu cầu chỉ định Mây review đúng file Bếp sửa. Trong Shared Groups, tác vụ đã giao cho Mây nhận diff và tiêu chí review. Sau khi Mây chấp thuận, nhóm thấy có đúng một lượt review cho diff đó. Bếp vẫn xác nhận tích hợp trên desktop của mình.
+
 Kỳ vọng: Sade tạo đúng một phiên chỉ đọc cho teammate khác tác giả; việc đơn giản dùng model tiết kiệm có high reasoning nếu catalog cho phép. Security/architecture dùng lựa chọn mạnh hơn. Người review ghi bằng chứng và đề xuất sửa. Người dùng đọc kết quả rồi quyết định tích hợp. Nếu sửa source sau review, kết quả cũ không đủ để tích hợp.
 
 Test xác định hiện kiểm tra khác tác giả, chống dispatch trùng, ràng buộc digest và không chạy thêm sau pause. Demo model thật đo tỷ lệ tìm lỗi cài sẵn, false positives, thời gian và usage. Diff quá 12.000 ký tự, bị cắt, binary hoặc chứa đường dẫn credential không được tự xác nhận đã review đầy đủ; cần chia task nhỏ hơn. Chức năng GitHub push vẫn cần quyền riêng; Sade không tự push.

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 import { SharedGroups } from '../server/collaboration.ts';
 import {
   groupNoWorkTool,
@@ -52,7 +53,20 @@ type Case = keyof typeof messages;
 
 const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
-const output = path.resolve(process.argv[2] || '.local/shared-sade-planner.json');
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: { replay: { type: 'string' } },
+});
+const output = path.resolve(positionals[0] || '.local/shared-sade-planner.json');
+const source = values.replay && path.resolve(values.replay);
+assert.notEqual(output, source, 'Choose a separate output file for replay');
+type SavedRun = {
+  model: string;
+  digest: string;
+  toolsSha256: string;
+  rows: { id: string; promptSha256: string; plan?: unknown; error?: string; toolName?: string }[];
+};
+const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
 const tools = [groupPlanTool, groupNoWorkTool].map(({ type, name, description, inputSchema }) => ({
   type,
   function: { name, description, parameters: inputSchema },
@@ -159,11 +173,33 @@ async function withGroup<T>(
             },
           },
         });
+        const review = poll(1);
         assert.equal(
-          poll(1)?.phase,
+          review?.phase,
           'review',
           'the coordinator must dispatch the independent review',
         );
+        assert.equal(jobs().jobs.filter((item) => item.phase === 'review').length, 1);
+        call(1, {
+          action: 'sade-finish',
+          jobId: review!.id,
+          result: {
+            kind: 'review',
+            verdict: 'approved',
+            summary: 'Verified rounding in the supplied diff.',
+          },
+        });
+        call(0, {
+          action: 'sade-finish',
+          jobId: job.id,
+          result: {
+            kind: 'done',
+            revision: 'b'.repeat(40),
+            summary: 'The reviewed change was integrated locally.',
+          },
+        });
+        assert.equal(poll(1), undefined, 'no duplicate review should be dispatched');
+        assert.equal(jobs().state, 'done');
       },
     });
   } finally {
@@ -232,11 +268,18 @@ function assess(scenario: Case, plan: ReturnType<typeof parseTeamPlan>, run: Sha
 }
 
 const local = (route: string, options?: RequestInit) => fetch(`${endpoint}${route}`, options);
-const installed = (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json())
-  .models;
-const selected = installed.find((entry: { name: string }) => entry.name === model);
-assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+const toolsSha256 = sha256(JSON.stringify(tools));
+if (saved) {
+  assert.equal(saved.model, model);
+  assert.equal(saved.toolsSha256, toolsSha256);
+}
+const selected =
+  saved ||
+  (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json()).models.find(
+    (entry: { name: string }) => entry.name === model,
+  );
+assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
 const cases = Object.entries(messages).flatMap(([scenario, inputs]) =>
   inputs.map((message, index) => ({
     scenario: scenario as Case,
@@ -245,11 +288,16 @@ const cases = Object.entries(messages).flatMap(([scenario, inputs]) =>
   })),
 );
 const rows = [];
+const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
+if (saved) assert.equal(savedRows.size, cases.length, 'Replay requires the same cases');
 await mkdir(path.dirname(output), { recursive: true });
 for (const { scenario, id, message } of cases) {
   const row = await withGroup(scenario, message, async (group) => {
     const prompt = sharedGroupPlanningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
+    const promptSha256 = sha256(prompt);
+    const prior = savedRows.get(id);
+    if (saved) assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
     const started = performance.now();
     let parsed = false;
     let plan;
@@ -257,29 +305,35 @@ for (const { scenario, id, message } of cases) {
     let error;
     let toolName;
     try {
-      const response = await local('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          stream: false,
-          think: false,
-          keep_alive: '45s',
-          options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
-          tools,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
-      const { message: reply } = await response.json();
-      assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
-      const tool = reply.tool_calls[0].function;
-      toolName = tool.name;
-      if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
-      else {
-        assert.equal(toolName, groupPlanTool.name);
-        plan = parseSharedGroupPlan(tool.arguments);
+      if (prior) {
+        if (!prior.plan) throw new Error(prior.error || 'Model returned no plan.');
+        toolName = prior.toolName;
+        plan = parseTeamPlan(prior.plan, { allowEmpty: true });
+      } else {
+        const response = await local('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            think: false,
+            keep_alive: '45s',
+            options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
+            tools,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
+        const { message: reply } = await response.json();
+        assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
+        const tool = reply.tool_calls[0].function;
+        toolName = tool.name;
+        if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
+        else {
+          assert.equal(toolName, groupPlanTool.name);
+          plan = parseSharedGroupPlan(tool.arguments);
+        }
       }
       parsed = true;
       group.finish(plan);
@@ -292,7 +346,7 @@ for (const { scenario, id, message } of cases) {
     return {
       id,
       scenario,
-      promptSha256: sha256(prompt),
+      promptSha256,
       parsed,
       pass: !error,
       milliseconds: Math.round(performance.now() - started),
@@ -318,7 +372,8 @@ for (const { scenario, id, message } of cases) {
       {
         model,
         digest: selected.digest,
-        toolsSha256: sha256(JSON.stringify(tools)),
+        toolsSha256,
+        ...(source ? { replayedFrom: path.basename(source) } : {}),
         rows,
       },
       null,

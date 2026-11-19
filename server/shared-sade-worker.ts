@@ -769,7 +769,7 @@ export class SharedSadeWorker {
       delivery.phase === 'plan'
         ? sharedGroupPlanningPrompt(delivery)
         : delivery.review
-          ? `${instructions}\n\nDIFF:\n${delivery.review.diff}`
+          ? `${instructions}${delivery.task ? sharedGroupContext(delivery) : ''}\n\nDIFF:\n${delivery.review.diff}`
           : `${instructions}${delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS. Sync the owned worktree, run the project check on that machine, and pull only scoped changes for review. Report the actual outcome.' : ''}${sharedGroupContext(delivery)}`;
     await this.host.sessions.send(
       session.id,

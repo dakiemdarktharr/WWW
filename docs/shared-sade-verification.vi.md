@@ -12,6 +12,8 @@ Kivuno dùng tài khoản provider đã đăng nhập trên desktop của từng
 
 Sau review độc lập, chủ máy kiểm tra và tích hợp thay đổi cục bộ. Sade bàn giao patch đã duyệt cho nhiệm vụ phụ thuộc qua Shared Groups. Desktop nhận kiểm tra digest và danh sách file, rồi áp dụng patch trong worktree riêng trước khi mở harness. Nhánh Git của người nhận chỉ nhận thay đổi khi chủ máy chọn tích hợp. Quyền cũ vẫn sử dụng **Share published revision**. Cấp lại quyền trên desktop mới để cho phép bàn giao patch.
 
+Nếu kế hoạch đã giao review cho một chủ tài khoản khác, với đúng phạm vi và chỉ phụ thuộc vào một tác vụ sửa, chính tác vụ review đó nhận diff khi bản sửa sẵn sàng. Sade giữ người được giao và tiêu chí review. Nếu cùng một diff có nhiều lượt review, mỗi lượt phải chấp thuận trước khi tích hợp. Nhiệm vụ phụ thuộc vẫn chờ kết quả tích hợp. Nếu tác vụ sửa kết thúc với worktree nguyên trạng, phần review đã yêu cầu tiếp tục dưới dạng kiểm tra chỉ đọc trên file hiện có.
+
 Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác tập file và byte trên nhánh đích. AEGIS có thể chặn tích hợp nhiệm vụ phụ thuộc nếu nhánh đích còn thiếu patch đầu vào.
 
 ## Kết quả A–D
@@ -96,6 +98,13 @@ Chạy Ollama trên `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M
 
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-native.json
+```
+
+Khi chấm lại cùng 18 đầu ra đã lưu, với cùng digest model, hash prompt và hash bộ công cụ, bộ điều phối mới đạt 14/18. Hai kế hoạch C có review khớp phạm vi đều chạy đúng một lượt review rồi hoàn tất. Ca C gặp HTTP 500 vẫn giữ kết quả lỗi. Bước chấm lại dùng diff tổng hợp và verdict thử nghiệm. Kết quả đo việc dùng lại tác vụ review ở bộ điều phối. Chất lượng tìm lỗi bằng model đăng nhập thật vẫn cần đo riêng.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-review-replay.json `
+  --replay .local/shared-sade-planner-native.json
 ```
 
 ## Cấu hình dùng trong Shared Groups

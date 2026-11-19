@@ -606,7 +606,14 @@ test(
           kind: 'code',
           scope: ['frontend.txt'],
           preferredMemberId: cloud.grants[1],
+          dependsOn: ['review-contract'],
+        }),
+        work('review-contract', {
+          kind: 'review',
+          scope: ['architecture.txt'],
+          preferredMemberId: cloud.grants[1],
           dependsOn: ['architecture'],
+          acceptance: 'Verify the registration field names match the agreed contract.',
         }),
         work('verify-ui', {
           preferredMemberId: cloud.grants[0],
@@ -616,6 +623,11 @@ test(
     });
     await complete(0, planner.session, planner.peer, 'Plan submitted.');
     const writer = (await pump(0))!;
+    const plannedReviewId = cloud
+      .view()
+      .sadeRuns[0].jobs.find((job) => job.task?.key === 'review-contract')?.id;
+    assert.ok(plannedReviewId);
+    assert.equal(await pump(1), undefined, 'Review waits for the author’s actual patch');
     assert.equal(writer.task?.key, 'architecture');
     const author = await sessionFor(0, writer);
     const sendUpdate = (jobId: string, text: string) => ({
@@ -672,8 +684,10 @@ test(
       if (!reviewer) await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.ok(reviewer && reviewer.phase === 'review');
+    assert.equal(reviewer.id, plannedReviewId);
     const check = await sessionFor(1, reviewer);
     assert.match(JSON.stringify(check.peer.calls), /Shared verified contract/);
+    assert.match(JSON.stringify(check.peer.calls), /Verify the registration field names/);
     await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
       verdict: 'approved',
       summary: 'Contract is present and scoped.',
@@ -794,7 +808,9 @@ test(
     const verification = (await pump(0))!;
     assert.equal(verification.task?.key, 'verify-ui');
     assert.deepEqual(
-      verification.prerequisites.map((entry) => entry.patch?.change.files),
+      verification.prerequisites.flatMap((entry) =>
+        entry.patch ? [entry.patch.change.files] : [],
+      ),
       [['architecture.txt'], ['frontend.txt']],
     );
     const verifier = await sessionFor(0, verification);
@@ -1243,6 +1259,116 @@ test('a revoked assignment blocks pending deliveries and a clean writing result 
       'Check all queued permissions before dispatching the first task',
     );
     assert.equal(f.view().sadeRuns.at(-1)?.state, 'blocked');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('planned patch reviews use their allocated turns and all verdicts are required', () => {
+  const f = fixture(['gemini', 'codex'], { turnsB: 2 });
+  try {
+    const scope = ['src/example.ts'];
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Sửa phép tính rồi nhờ Mây kiểm cả giá trị biên và logic tính.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Check logic and boundary cases in the exact change.',
+        tasks: [
+          work('write', { kind: 'code', scope, preferredMemberId: f.grants[0] }),
+          work('logic', {
+            kind: 'review',
+            scope,
+            preferredMemberId: f.grants[1],
+            dependsOn: ['write'],
+          }),
+          work('limits', {
+            kind: 'review',
+            scope,
+            preferredMemberId: f.grants[1],
+            dependsOn: ['write'],
+          }),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    assert.equal(writer.requiresPublication, false);
+    assert.equal(f.poll(1).delivery, undefined);
+    const change = { kind: 'change', diff: patch, summary: 'Ready for both checks.' } as const;
+    f.finish(0, writer.id, change);
+    f.finish(0, writer.id, change);
+    const approvals = {
+      kind: 'review',
+      verdict: 'approved',
+      summary: 'Verified the assigned check.',
+    } as const;
+    const first = f.poll(1).delivery!;
+    assert.equal(first.phase, 'review');
+    assert.deepEqual(first.review, patch);
+    f.finish(1, first.id, approvals);
+    assert.deepEqual(f.poll(0, [writer.id]).reviews, []);
+    assert.throws(
+      () => f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' }),
+      /independent review/,
+    );
+    const second = f.poll(1).delivery!;
+    assert.equal(second.phase, 'review');
+    assert.deepEqual(second.review, patch);
+    assert.notEqual(second.id, first.id);
+    f.finish(1, second.id, approvals);
+    assert.deepEqual(f.poll(0, [writer.id]).reviews, [
+      { jobId: writer.id, digest: reviewDigest(patch) },
+    ]);
+    f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+    assert.equal(f.view().sadeRuns[0].jobs.filter((job) => job.phase === 'review').length, 2);
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a planned review checks existing files when the author has no diff', () => {
+  const f = fixture(['gemini', 'codex'], { turnsB: 1 });
+  try {
+    const scope = ['src/example.ts'];
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Nếu đã có bản sửa thì nhờ Mây đọc lại file hiện có.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Keep the requested read-only check even if the worktree is unchanged.',
+        tasks: [
+          work('write', { kind: 'code', scope, preferredMemberId: f.grants[0] }),
+          work('check', {
+            kind: 'review',
+            scope,
+            preferredMemberId: f.grants[1],
+            dependsOn: ['write'],
+          }),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, { kind: 'unchanged', summary: 'The fix is already present.' });
+    const check = f.poll(1).delivery!;
+    assert.equal(check.phase, 'task');
+    assert.equal(check.task?.kind, 'review');
+    assert.equal(check.review, undefined);
+    f.finish(1, check.id, { kind: 'done', summary: 'Verified the existing file.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
   } finally {
     f.store.close();
   }
