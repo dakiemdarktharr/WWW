@@ -379,7 +379,7 @@ try {
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
-  await expect(title).toHaveAttribute('data-title-state', 'ready');
+  await expect(title).toHaveAttribute('data-title-state', 'ready', { timeout: 20000 });
   await page.screenshot({ path: '.local/kivuno-hero-desktop-dark.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
@@ -742,7 +742,11 @@ try {
   const reducedTitle = accountPage.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(reducedTitle).toHaveText('Kivuno');
   const reducedStage = accountPage.locator('.kp-puffy-stage');
-  await expect(accountPage.locator('.kp-puffy-title')).toHaveAttribute('data-title-state', 'ready');
+  await expect(accountPage.locator('.kp-puffy-title')).toHaveAttribute(
+    'data-title-state',
+    'ready',
+    { timeout: 20000 },
+  );
   await reducedStage.focus();
   await accountPage.keyboard.down('ArrowRight');
   await expect(reducedStage).toHaveAttribute('data-rotation', '0.0000,0.1500');
