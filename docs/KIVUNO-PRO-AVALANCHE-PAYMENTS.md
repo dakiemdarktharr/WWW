@@ -183,16 +183,16 @@ Nghiên cứu nên làm sau demo: phỏng vấn 5–8 người dùng hiện hữ
 | ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | 0. Yêu cầu sản phẩm     | Đã chốt Plus/Max, giá, USDC, gas, gia hạn, đổi ví, offline, group owner, downgrade                   | Không cần hỏi lại các lựa chọn đã xác nhận                                       |
 | 1. Wallet identity      | Implemented: one-time nonce, unique binding, wallet change requires two signatures                   | Browser connection and signed wallet bind still need Fuji verification           |
-| 2. Fuji contract        | Implemented and compiled Fuji-only; local EVM tests pass                                             | Independent review and deployment remain                                         |
+| 2. Fuji contract        | Implemented, locally tested, and deployed on Fuji; transaction is Explorer-final                     | Independent security review remains                                               |
 | 3. Billing verifier     | Implemented PaymentIntent, receipt/event verifier and idempotent ledger                              | Fuji pending/revert/wrong-chain, RPC outage and live intent reconciliation       |
 | 4. Entitlement + quotas | Implemented account entitlement, group owner quotas, desktop profile reservations and lock selection | Fuji end-to-end and manual downgrade/device-sync checks                          |
 | 5. UI/wallet flow       | Implemented Plus/Max selection, wallet binding, exact amount/recipient and payment confirmation      | Manual responsive, keyboard and screen-reader review                             |
 | 6. Security review      | Solidity, authorization, key storage, API, event processing, UX                                      | Independent reviewer; address all findings and record remaining risk             |
-| 7. Fuji demo            | Deploy/test only after values and wallet configured; no real funds                                   | Verify published address/receipt/event; test complete purchase→entitlement→quota |
+| 7. Fuji demo            | Contract deployment verified on Fuji; no USDC payment has been made                                  | Verify full purchase→receipt/event→entitlement→quota flow                         |
 | 8. Handoff              | Setup, architecture, limitations, video script, rubric evidence                                      | Reproducible setup; label inherited vs new work; do not submit externally        |
 | 9. Release              | Local typecheck, build and focused tests pass; Git identity verified; source pushed to `main`        | Cloud deploy and on-chain Fuji demo remain separate gates                        |
 
-Contract và app chưa deploy. Người dùng chốt giai đoạn hiện tại chỉ push GitHub, chưa deploy app. Để tiếp tục demo on-chain cần có test AVAX tại đúng ví deployer; sau đó người dùng phải xem và ký giao dịch deploy bằng Core. Vercel CLI không cần cho phạm vi GitHub-only hiện tại. Không dùng tài sản mainnet hoặc giá trị thật để lấy test token.
+Contract KivunoPlans đã được người dùng ký và triển khai lên Fuji ngày 19/11/2026; địa chỉ là `0xBA7321C1F3107b95Acec6C3490e3130aFaE7a220`, giao dịch là `0x87d0e5b524d729fbe8e8bc67c57201d1729105e41a7cf0a02bb66400cb80bf1f` và Explorer báo SUCCESS/Final. Giao dịch tạo contract, không thanh toán USDC. Ứng dụng chưa được deploy lên Vercel theo lựa chọn người dùng. Cấu hình public contract address trong backend local, rồi kiểm chứng một lần mua test USDC end-to-end; chưa tuyên bố demo thanh toán hoàn chỉnh cho tới khi entitlement và quota được xác minh. Vercel CLI không cần cho phạm vi GitHub-only hiện tại. Không dùng tài sản mainnet hoặc giá trị thật để lấy test token.
 
 ## Kịch bản demo 2–3 phút (sau khi hệ thống thật chạy)
 
@@ -242,8 +242,8 @@ Vercel Sandbox/SQLite hiện có thể ngủ hoặc phụ thuộc snapshot; khô
 
 ## Triển khai Fuji và xác minh
 
-Trang `tools/kivuno-fuji-deploy.html` là công cụ cục bộ để triển khai `KivunoPlans` bằng ví Core. Công cụ chỉ cho phép Fuji C-Chain (43113), kiểm tra địa chỉ deployer, bytecode biên dịch, USDC contract và số dư/gas; constructor cố định USDC Fuji và treasury đã cấu hình. Không có private key/seed, không gửi token allowance và không có đường deploy mainnet. Xem [hướng dẫn deploy Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
+Trang `tools/kivuno-fuji-deploy.html` là công cụ cục bộ đã dùng để triển khai `KivunoPlans` bằng ví Core. Explorer xác nhận giao dịch thành công ở Fuji C-Chain (43113), và trang đã kiểm tra bytecode cùng giá trị USDC/treasury sau deploy. Công cụ chỉ cho phép Fuji, không có private key/seed, không gửi token allowance và không có đường deploy mainnet. Địa chỉ contract và transaction hash đã lưu trong [hướng dẫn deploy Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 
-Sau khi contract được triển khai, backend phải cấu hình đúng `KIVUNO_FUJI_PAYMENT_CONTRACT`, token USDC và treasury. Bộ kiểm tra cấu hình chỉ bật thanh toán khi chain, bytecode và các giá trị immutable khớp. Giao dịch payment vẫn cần người mua xem và ký trong Core; entitlement chỉ được cập nhật sau khi verifier xác nhận receipt/event. Chưa tuyên bố demo đầu-cuối cho đến khi payment thật trên Fuji và quota được xác minh.
+Backend chưa chạy ở cloud mode với `KIVUNO_FUJI_PAYMENT_CONTRACT` đã deploy. Billing routes chỉ được đăng ký khi `RELAY_DEPLOYMENT=cloud`; `npm run dev:server` mặc định không bật chúng. Một demo đầu-cuối cần môi trường HTTPS cloud-mode được cấu hình hoặc một local HTTPS harness riêng; Vercel vẫn chưa deploy theo lựa chọn người dùng. Bộ kiểm tra cấu hình chỉ bật thanh toán khi chain, bytecode và các giá trị immutable khớp. Giao dịch mua gói vẫn cần người mua xem và ký trong Core; entitlement chỉ được cập nhật sau khi verifier xác nhận receipt/event. Chưa tuyên bố demo đầu-cuối cho đến khi một lần thanh toán test USDC trên Fuji và quota được xác minh.
 
 Ứng dụng Vercel chưa deploy theo phạm vi người dùng đã chọn. Không lưu private key/seed phrase; không dùng tiền thật hoặc tài sản mainnet trong demo.
