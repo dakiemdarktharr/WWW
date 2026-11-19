@@ -14,7 +14,7 @@ Kivuno dùng tài khoản provider đã đăng nhập trên desktop của từng
 
 Sau review độc lập, chủ máy kiểm tra và tích hợp thay đổi cục bộ. Sade bàn giao patch đã duyệt cho nhiệm vụ phụ thuộc qua Shared Groups. Desktop nhận kiểm tra digest và danh sách file, rồi áp dụng patch trong worktree riêng trước khi mở harness. Nhánh Git của người nhận chỉ nhận thay đổi khi chủ máy chọn tích hợp. Quyền cũ vẫn sử dụng **Share published revision**. Cấp lại quyền trên desktop mới để cho phép bàn giao patch.
 
-Nếu kế hoạch đã giao review cho một chủ tài khoản khác, với đúng phạm vi và chỉ phụ thuộc vào một tác vụ sửa, chính tác vụ review đó nhận diff khi bản sửa sẵn sàng. Sade giữ người được giao và tiêu chí review. Nếu cùng một diff có nhiều lượt review, mỗi lượt phải chấp thuận trước khi tích hợp. Nhiệm vụ phụ thuộc vẫn chờ kết quả tích hợp. Nếu tác vụ sửa kết thúc với worktree nguyên trạng, phần review đã yêu cầu tiếp tục dưới dạng kiểm tra chỉ đọc trên file hiện có.
+Nếu kế hoạch đã giao review cho một chủ tài khoản khác, với đúng phạm vi và chỉ phụ thuộc vào một tác vụ sửa, chính tác vụ review đó nhận diff khi bản sửa sẵn sàng. Sade giữ người được giao và tiêu chí review. Reviewer nhận tên, mô tả, tiêu chí nghiệm thu của tác vụ sửa và câu trả lời gần nhất của người gửi nếu có. Nếu cùng một diff có nhiều lượt review, mỗi lượt phải chấp thuận trước khi tích hợp. Nhiệm vụ phụ thuộc vẫn chờ kết quả tích hợp. Nếu tác vụ sửa kết thúc với worktree nguyên trạng, phần review đã yêu cầu tiếp tục dưới dạng kiểm tra chỉ đọc trên file hiện có.
 
 Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác tập file và byte trên nhánh đích. AEGIS có thể chặn tích hợp nhiệm vụ phụ thuộc nếu nhánh đích còn thiếu patch đầu vào.
 
@@ -24,7 +24,7 @@ Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác t�
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | A. Một tin nhắn giao việc cho hai harness | Hai workspace độc lập dùng Gemini và Codex protocol fixture, với Git thật. Kiến trúc được review và tích hợp cục bộ rồi được chuyển sang worktree frontend. Frontend hỏi về phong cách, tiếp tục sau câu trả lời và được review riêng. SHA của nhánh từ xa giữ nguyên trong suốt lần chạy. |
 | B. Công việc hoặc commit trùng            | Phạm vi ghi chồng nhau được xếp hàng. Tin nhắn lặp chỉ tạo một workflow. Fixture kiểm tra chỉ đạo giữa lượt cho bốn adapter và chặn kết quả chưa đọc chỉ đạo. Worktree không thay đổi không mở thêm review. Việc hai model thật nhận ra thay đổi tương đương về ngữ nghĩa chưa được đo.    |
-| C. Review độc lập                         | Quyền của tác giả không thể gửi verdict của reviewer. Tích hợp bị chặn trước review. Digest được kiểm lại lúc tích hợp. Reviewer chạy với chính sách chọn model theo nhiệm vụ review trên desktop của mình. Kết quả phát hiện lỗi của model thật chưa được đo.                             |
+| C. Review độc lập                         | Tích hợp chờ verdict của reviewer độc lập và kiểm lại digest. Qwen cục bộ chặn đúng 8/9 bản có lỗi và duyệt đúng 6/9 bản đúng trong phép đo riêng. Chính sách desktop vẫn chọn model theo catalog của reviewer. Phiên review với tài khoản provider đã đăng nhập còn cần kiểm chứng.       |
 | D. Windows nhờ Mac kiểm tra               | Windows thật dùng cầu nối Kivuno đến runner macOS arm64 thật trong CI. Công cụ trên Mac tái hiện lỗi đường dẫn, áp dụng bản sửa theo yêu cầu fixture, chạy lại thành công và gửi một file đúng scope về Windows. Mac chạy ở chế độ chỉ dùng công cụ.                                       |
 
 Nếu máy Mac chỉ chạy công cụ, chủ máy ghép máy với project qua **Machines** và xác nhận quyền chạy lệnh. Trong nhóm, người dùng Windows chọn cùng project, bật **Allow local file changes**, chọn máy trong **Paired machine** rồi xác nhận quyền cho harness của mình. Khi **Ask Sade** nhận yêu cầu chạy trên macOS, harness dùng tài khoản trên Windows, kiểm tra hệ điều hành của máy ghép cặp trước khi chuyển worktree, chạy thao tác kiểm thử trên máy Mac và chuyển về các thay đổi trong scope để review. Kết quả nhóm ghi mã thoát hoặc timeout do máy trả về. Chủ máy Mac cần Kivuno để cấp và thu hồi quyền, còn phiên AI chạy ở máy Windows.
@@ -122,6 +122,25 @@ Bài hồi quy desktop dùng phiên Gemini mô phỏng để nộp kế hoạch 
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-final.json
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-roster-handoff-holdout.json --handoff-holdout
+```
+
+### Qwen review bản vá chức năng
+
+Phép đo dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ, temperature 0 và seed 7013. Sáu cặp chính và ba cặp bổ sung đều có một bản đúng và một bản lỗi. Script chạy input mẫu trên các hàm có sẵn để xác nhận đáp án, rồi gửi diff qua prompt và schema review của Sade. Model đọc diff. Shared Groups ghi verdict bằng hai chủ quyền mô phỏng và kiểm tra trạng thái tích hợp trong SQLite. Luồng Git thật được kiểm tra riêng trong các bài workspace.
+
+| Prompt và tập bản vá                  | Phát hiện bản lỗi | Duyệt bản đúng | Trạng thái tích hợp khớp verdict |
+| ------------------------------------- | ----------------- | -------------- | -------------------------------- |
+| Chỉ gửi diff, sáu cặp chính           | 6/6               | 1/6            | 12/12                            |
+| Có yêu cầu và tiêu chí, sáu cặp chính | 5/6               | 6/6            | 12/12                            |
+| Cùng prompt mới, ba cặp bổ sung       | 3/3               | 0/3            | 6/6                              |
+
+Qwen bỏ sót điều kiện giảm giá tại đúng ngưỡng trên tập chính. Ở ba cặp bổ sung, Qwen chặn cả ba bản đúng vì suy diễn thêm yêu cầu hoặc đọc sai tác dụng của hàm. Phép đo trạng thái xác nhận Sade thi hành quyết định model đã gửi, kể cả quyết định sai. Sade giữ chính sách chọn reviewer theo quyền và catalog, còn Qwen dùng để đo offline.
+
+Chạy từ hai commit khác nhau để so sánh prompt. Bản chỉ gửi diff nằm ở commit `28eb3e7`. Dùng `--holdout` ở bản mới để chạy ba cặp bổ sung. Cả hai dùng Ollama cục bộ tại `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M`. Báo cáo JSON lưu digest model và hash prompt của từng ca.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-main.json
+node --import tsx scripts/eval-shared-sade-review.ts .local/shared-sade-review-holdout.json --holdout
 ```
 
 ## Cấu hình dùng trong Shared Groups

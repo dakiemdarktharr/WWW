@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { parseArgs } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { SharedGroups } from '../server/collaboration.ts';
 import { groupReviewTool, sharedFinish, type SharedDelivery } from '../server/group-sade.ts';
@@ -56,7 +57,7 @@ const examples = [
     spec: 'Return a ten percent discount rate when spend meets or exceeds the minimum.',
     clean: 'spend >= minimum ? 10 : 0',
     defect: 'spend > minimum ? 10 : 0',
-    evidence: /equal|inclus|meet|>=|minimum|threshold/i,
+    evidence: /equal|inclus|exact|>=|boundary/i,
   },
   {
     id: 'rounding',
@@ -78,13 +79,53 @@ const examples = [
     spec: 'Remove whitespace at both ends while preserving interior whitespace.',
     clean: 'value.trim()',
     defect: 'value.trimStart()',
-    evidence: /end|trail|trimstart|right|both/i,
+    evidence: /\bends?\b|trailing|trimstart|right side|both sides/i,
+  },
+] as const;
+
+const holdout = [
+  {
+    id: 'access-window',
+    file: 'src/window.js',
+    params: 'minute, start, end',
+    args: [120, 100, 120],
+    expected: true,
+    spec: 'The time window contains both endpoints. At the end minute the window is still open.',
+    clean: 'minute >= start && minute <= end',
+    defect: 'minute >= start && minute < end',
+    evidence: /endpoint|equal|inclus|end minute|<=|boundary/i,
+  },
+  {
+    id: 'packing',
+    file: 'src/packing.js',
+    params: 'items, capacity',
+    args: [21, 10],
+    expected: 3,
+    spec: 'Count boxes, including one more box for a partial load. Inputs are valid and capacity is positive.',
+    clean: 'Math.ceil(items / capacity)',
+    defect: 'Math.floor(items / capacity)',
+    evidence: /partial|round.+up|ceil|remainder|floor/i,
+  },
+  {
+    id: 'title',
+    file: 'src/title.js',
+    params: 'value',
+    args: ['  A  B '],
+    expected: 'A  B',
+    spec: 'Remove outer whitespace. Keep interior spaces as well as the original letter case.',
+    clean: 'value.trim()',
+    defect: "value.trim().replace(/\\s+/g, ' ')",
+    evidence: /interior|internal|collaps|consecutive|inside/i,
   },
 ] as const;
 
 const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
-const output = path.resolve(process.argv[2] || '.local/shared-sade-review.json');
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: { holdout: { type: 'boolean' } },
+});
+const output = path.resolve(positionals[0] || '.local/shared-sade-review.json');
 const { type, name, description, inputSchema } = groupReviewTool;
 const tools = [{ type, function: { name, description, parameters: inputSchema } }];
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -94,7 +135,10 @@ const installed = (await (await local('/api/tags', { signal: AbortSignal.timeout
 const selected = installed.find((entry: { name: string }) => entry.name === model);
 assert.ok(selected, 'Install Qwen in the local Ollama directory.');
 
-async function evaluate(example: (typeof examples)[number], version: 'clean' | 'defect') {
+async function evaluate(
+  example: (typeof examples)[number] | (typeof holdout)[number],
+  version: 'clean' | 'defect',
+) {
   const oracle = runInNewContext(
     `((${example.params}) => ${example[version]})(...args)`,
     { args: example.args },
@@ -279,7 +323,7 @@ async function evaluate(example: (typeof examples)[number], version: 'clean' | '
 
 await mkdir(path.dirname(output), { recursive: true });
 const rows = [];
-for (const example of examples) {
+for (const example of values.holdout ? holdout : examples) {
   for (const version of ['clean', 'defect'] as const) {
     const row = await evaluate(example, version);
     rows.push(row);

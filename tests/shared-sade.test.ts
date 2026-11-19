@@ -644,6 +644,7 @@ test(
           scope: ['frontend.txt'],
           preferredMemberId: 'member-2',
           dependsOn: ['review-contract'],
+          acceptance: 'The form preserves the agreed registration field names.',
         }),
         work('review-contract', {
           kind: 'review',
@@ -845,6 +846,11 @@ test(
     assert.deepEqual(frontendReviewer.review?.files, ['frontend.txt']);
     assert.ok(frontendReviewer.prerequisites[0]?.patch);
     const frontendCheck = await sessionFor(0, frontendReviewer);
+    assert.match(
+      JSON.stringify(frontendCheck.peer.calls),
+      /The form preserves the agreed registration field names/,
+    );
+    assert.match(JSON.stringify(frontendCheck.peer.calls), /tự chọn phong cách nhé/);
     await submit(0, frontendCheck.session, frontendCheck.peer, 'relay_submit_shared_review', {
       verdict: 'approved',
       summary: 'Frontend changes stay within their assigned file.',

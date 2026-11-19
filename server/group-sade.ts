@@ -806,13 +806,31 @@ export class GroupSade {
               ]
             : [];
         });
+        const reviewedJob = job.reviewOf
+          ? run.jobs.find((other) => other.id === job.reviewOf)
+          : undefined;
+        const reviewedTask = reviewedJob?.task;
+        const reviewedClarification = reviewedJob?.clarification;
+        const reviewRequirements = reviewedTask
+          ? [
+              `Task: ${redact(reviewedTask.title).slice(0, 140)}`,
+              `Description: ${redact(reviewedTask.description).slice(0, 2000)}`,
+              `Acceptance: ${redact(reviewedTask.acceptance).slice(0, 3000)}`,
+              ...(reviewedClarification
+                ? [
+                    `Question: ${redact(reviewedClarification.question).slice(0, 500)}`,
+                    `Answer: ${redact(reviewedClarification.answer).slice(0, 1000)}`,
+                  ]
+                : []),
+            ].join('\n')
+          : undefined;
         delivery = {
           id: job.id,
           grantId: grant.id,
           groupId: group.id,
           projectKey: run.projectKey,
           phase: job.phase,
-          request: run.content,
+          request: reviewRequirements ?? run.content,
           team,
           task: job.task,
           prerequisites: predecessors.map((other) => ({
@@ -833,9 +851,7 @@ export class GroupSade {
             !(command.patchHandoff && grant.patchHandoff),
           portableReview:
             writes(job.task) && command.patchHandoff && grant.patchHandoff ? true : undefined,
-          ...(job.reviewOf
-            ? { review: run.jobs.find((other) => other.id === job.reviewOf)?.change }
-            : {}),
+          ...(reviewedJob ? { review: reviewedJob.change } : {}),
         };
       }
       if (touched) this.store.put('sharedSadeRun', run);
