@@ -708,7 +708,8 @@ try {
     'href',
     '/downloads/Kivuno-macOS-arm64.dmg',
   );
-  await accountPage.getByRole('button', { name: 'Bản cài & checksum', exact: true }).click();
+  await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
+  await accountPage.getByRole('button', { name: 'Tải app', exact: true }).click();
   const macDownloads = accountPage.getByRole('dialog', { name: 'Tải Kivuno' });
   await expect(macDownloads.getByRole('link', { name: 'Tải Kivuno cho macOS' })).toContainText(
     'macOS Apple Silicon',

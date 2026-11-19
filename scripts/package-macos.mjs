@@ -310,6 +310,8 @@ await build({
       // Preserve the vendors' Mach-O signatures and seal Resources with the app bundle.
       signIgnore: '/Contents/Resources/',
       hardenedRuntime: false,
+      timestamp: 'none',
+      preAutoEntitlements: false,
       gatekeeperAssess: false,
       notarize: false,
     },
