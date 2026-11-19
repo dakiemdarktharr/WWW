@@ -53,7 +53,7 @@ Chạy các ca: chưa cấp quyền; cấp quyền đúng máy/project; hết h�
 
 `machine_list` chỉ trả máy đang online có grant đúng project. `machine_use` hỗ trợ info/sync/read/write/run/pull. Lệnh tối đa 60 giây. Runner hỗ trợ chia gói nhận snapshot tối đa 8 MiB, 2.000 file và 4 MiB mỗi file. Runner đời cũ nhận tối đa 2 MiB và 512 KiB mỗi file. Credential paths bị loại và các mẫu secret phổ biến bị chặn. Full access cho phép thực thi với quyền OS của chủ máy, **cwd chỉ là thư mục làm việc**. Stop trên máy đích thu hồi quyền. Hết hạn dừng subprocess và mất liên lạc dừng sau cửa sổ giám sát. Kết quả chưa rõ không tự chạy lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
 
-`machine-execution.test.ts` chạy tiến trình Node thật trên Windows và macOS CI qua broker/MachineAgent có kiểm soát. Bài test xác minh quyền, thu hồi, hết hạn, chống replay và giới hạn pull. Buổi demo hai máy cần xác minh riêng vận chuyển qua Kivuno và phiên provider đăng nhập thật. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
+`machine-execution.test.ts` chạy tiến trình Node thật trên Windows và macOS CI, kiểm tra quyền, thu hồi, hết hạn, chống replay và giới hạn pull. Bài thử `paired-macos` kết nối Windows thật với runner macOS qua cầu nối Kivuno và đưa một bản sửa đúng scope về Windows. Harness dùng fixture. Phiên provider đăng nhập thật cần kiểm tra riêng. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
 
 ## Demo cho người không chuyên kỹ thuật
 

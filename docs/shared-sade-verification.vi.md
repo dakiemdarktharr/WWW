@@ -19,7 +19,7 @@ Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác t�
 | A. Một tin nhắn giao việc cho hai harness | Hai workspace độc lập dùng Gemini và Codex protocol fixture, với Git thật. Kiến trúc được review và tích hợp cục bộ rồi được chuyển sang worktree frontend. Frontend hỏi về phong cách, tiếp tục sau câu trả lời và được review riêng. SHA của nhánh từ xa giữ nguyên trong suốt lần chạy. |
 | B. Công việc hoặc commit trùng            | Phạm vi ghi chồng nhau được xếp hàng. Tin nhắn lặp chỉ tạo một workflow. Fixture kiểm tra chỉ đạo giữa lượt cho bốn adapter và chặn kết quả chưa đọc chỉ đạo. Worktree không thay đổi không mở thêm review. Việc hai model thật nhận ra thay đổi tương đương về ngữ nghĩa chưa được đo.    |
 | C. Review độc lập                         | Quyền của tác giả không thể gửi verdict của reviewer. Tích hợp bị chặn trước review. Digest được kiểm lại lúc tích hợp. Reviewer chạy với chính sách chọn model theo nhiệm vụ review trên desktop của mình. Kết quả phát hiện lỗi của model thật chưa được đo.                             |
-| D. Windows nhờ Mac kiểm tra               | Bộ điều phối chọn quyền phù hợp với macOS trong fixture và dừng nếu thiếu nó. Desktop kiểm tra hệ điều hành thật trước khi mở harness. Chủ máy Mac có thể dùng provider đã kết nối của họ. Phiên Windows → Mac và chế độ Mac không có provider đăng nhập vẫn cần xác minh riêng.           |
+| D. Windows nhờ Mac kiểm tra               | Windows thật dùng cầu nối Kivuno đến runner macOS arm64 thật trong CI. Công cụ trên Mac tái hiện lỗi đường dẫn, áp dụng bản sửa theo yêu cầu fixture, chạy lại thành công và gửi một file đúng scope về Windows. Mac chạy ở chế độ chỉ dùng công cụ.                                       |
 
 Nếu máy Mac chỉ chạy công cụ, chủ máy ghép máy với project qua **Machines** và xác nhận quyền chạy lệnh. Trong nhóm, người dùng Windows chọn cùng project, bật **Allow local file changes**, chọn máy trong **Paired machine** rồi xác nhận quyền cho harness của mình. Khi **Ask Sade** nhận yêu cầu chạy trên macOS, harness dùng tài khoản trên Windows, kiểm tra hệ điều hành của máy ghép cặp trước khi chuyển worktree, chạy thao tác kiểm thử trên máy Mac và chuyển về các thay đổi trong scope để review. Kết quả nhóm ghi mã thoát hoặc timeout do máy trả về. Chủ máy Mac cần Kivuno để cấp và thu hồi quyền, còn phiên AI chạy ở máy Windows.
 
@@ -31,7 +31,30 @@ Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno s
 
 CI trên macOS arm64 với Node 24.22.1 đã chạy commit `94006a6`. `npm run check` đạt 292 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt, gồm gửi chỉ đạo và hiển thị xác nhận đã đọc. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 297 bài, bỏ qua một bài theo nền tảng, và các bài Electron, Shared Groups và Cloud đều đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44444107770)
 
-CI dùng máy ảo macOS và fixture provider. Bằng chứng này xác minh chạy runner, build và UI trên Darwin. Phiên Windows → máy Mac của một chủ tài khoản khác qua Kivuno và model đăng nhập thật vẫn cần một lần thử riêng.
+CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
+
+### Chạy lại tình huống D qua mạng
+
+Chế độ tùy chọn `paired-macos` đã có trong workflow **Verify RELAY**. Phép thử dùng project Git tổng hợp trên Windows, một runner công cụ macOS arm64 và cầu nối desktop Kivuno cô lập. Cấu hình runner chỉ cấp khi danh tính GitHub Actions khớp origin, workflow và commit. Phép thử có một lỗi xử lý đường dẫn qua dấu gạch chéo, đi qua thứ tự chạy trên Windows, tái hiện lỗi trên macOS, sửa trên máy đích, kéo thay đổi trong scope về Windows, review độc lập và tích hợp cục bộ. Quick Tunnel chỉ mở trong lúc thử. [GitHub Actions OIDC](https://docs.github.com/en/actions/concepts/security/openid-connect) · [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+
+Commit `c8ce015` đã qua bài kiểm thử ở cả hai đầu. Lượt chạy đầu trên macOS trả mã thoát 1, lượt sau khi sửa trả 0. File `.env.local` trên Windows không vào snapshot. Tiến trình Node trên Mac không nhận biến môi trường provider giả của runner. Windows kéo đúng `path-label.cjs`, chạy lại thành công rồi dùng review độc lập trước khi tích hợp. SHA trên Git remote của project thử giữ nguyên. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44446192162)
+
+Mở `cloudflared tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:58173` trên Windows và lấy HTTPS origin từ đầu ra. Checkout cùng nhánh và commit sẽ chạy trên macOS, cài dependency bằng `npm ci` rồi đặt môi trường trong shell Windows.
+
+```powershell
+$env:KIVUNO_CROSS_HOST_ORIGIN = '<HTTPS origin từ cloudflared>'
+$env:KIVUNO_CROSS_HOST_PORT = '58173'
+$env:KIVUNO_CROSS_HOST_WORKFLOW = 'dakiemdarktharr/WWW/.github/workflows/ci.yml@refs/heads/codex/shared-groups-sade'
+$env:KIVUNO_CROSS_HOST_SHA = (git rev-parse HEAD).Trim()
+node --import tsx --test --test-name-pattern 'two desktop workspaces' tests/shared-sade.test.ts
+```
+
+Khi Windows báo `Cross-host fixture waiting`, chạy lệnh dưới đây trong shell dùng cùng giá trị origin. Dừng tunnel sau khi hai đầu kết thúc.
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/shared-groups-sade `
+  -f platform=paired-macos -f "paired_origin=$env:KIVUNO_CROSS_HOST_ORIGIN"
+```
 
 ## Kiểm thử 1.000 tin nhắn
 
