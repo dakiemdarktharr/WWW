@@ -5,6 +5,8 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Workspace } from '../server/service.ts';
+import { reviewDigest } from '../server/sade.ts';
+import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
 import type { Task, TaskDiff } from '../shared/types.ts';
 import {
@@ -257,6 +259,105 @@ test('accepting a reviewed change already present on the project creates no dupl
   assert.deepEqual(result, { revision: existing, alreadyPresent: true });
   assert.equal(await git(f.repo, ['status', '--porcelain']), '');
 });
+
+for (const remoteChange of ['unrelated file', 'reviewed file', 'rewritten history'] as const) {
+  test(`Shared Sade checks a published revision after a teammate pushes ${remoteChange}`, async (t) => {
+    const f = await fixture(t);
+    const remote = path.join(f.root, 'bare remote');
+    const teammate = path.join(f.root, 'teammate clone');
+    const origin = 'https://example.test/shared/published-review.git';
+    const base = await git(f.repo, ['rev-parse', 'HEAD']);
+    await writeFile(path.join(f.repo, 'shared.txt'), 'reviewed change\n');
+    const diff = await taskDiff(f.repo, base);
+    await git(f.repo, ['add', 'shared.txt']);
+    await git(f.repo, ['commit', '-m', 'Integrate the reviewed change']);
+    const revision = await git(f.repo, ['rev-parse', 'HEAD']);
+    await git(f.root, ['init', '--bare', '-b', 'main', remote]);
+    await git(f.repo, ['remote', 'add', 'origin', origin]);
+    await git(f.repo, ['config', `url.${remote}.insteadOf`, origin]);
+    await git(f.repo, ['push', '-u', 'origin', 'main']);
+    await git(f.repo, ['fetch', '--no-tags', 'origin', 'main']);
+    await git(f.root, ['clone', '--', remote, teammate]);
+    if (remoteChange === 'rewritten history')
+      await git(teammate, ['switch', '-c', 'replacement', base]);
+    const file = remoteChange === 'reviewed file' ? 'shared.txt' : 'team.txt';
+    await writeFile(path.join(teammate, file), 'unrelated teammate update\n');
+    await git(teammate, ['add', file]);
+    await git(teammate, [
+      '-c',
+      'user.name=Team fixture',
+      '-c',
+      'user.email=team@example.test',
+      'commit',
+      '-m',
+      'Teammate update',
+    ]);
+    const tip = await git(teammate, ['rev-parse', 'HEAD']);
+    await git(teammate, [
+      'push',
+      ...(remoteChange === 'rewritten history'
+        ? [`--force-with-lease=refs/heads/main:${revision}`]
+        : []),
+      'origin',
+      'HEAD:refs/heads/main',
+    ]);
+    await assert.rejects(git(f.repo, ['cat-file', '-e', `${tip}^{commit}`]));
+    const refs = await git(f.repo, ['show-ref']);
+    const fetchHead = await git(f.repo, ['rev-parse', 'FETCH_HEAD']);
+
+    const store = new Store(':memory:');
+    const workspace = new Workspace(store, f.root, f.repo);
+    t.after(async () => {
+      await workspace.close();
+      store.close();
+    });
+    const projectId = randomUUID();
+    const grantId = randomUUID();
+    const jobId = randomUUID();
+    store.put('project', { id: projectId, path: f.repo, name: 'Publication fixture' });
+    const task = store.put('task', {
+      id: randomUUID(),
+      projectId,
+      status: 'done',
+      sharedSadeJobId: jobId,
+      sharedSadeNeedsPublication: true,
+    });
+    store.put('sharedSadeLocalGrant', {
+      id: grantId,
+      projectId,
+      projectKey: canonicalSharedRepository(origin, 'main'),
+      expiresAt: Date.now() + 60_000,
+    });
+    const receipt = store.put('sharedSadeLocalReceipt', {
+      id: jobId,
+      grantId,
+      phase: 'task',
+      reviewedDigest: reviewDigest(diff),
+      revision,
+      result: { kind: 'change', diff, summary: 'Reviewed draft.' },
+    });
+    t.mock.method(workspace.sharedSade, 'assertCurrent', (id: string) => assert.equal(id, jobId));
+    if (remoteChange === 'unrelated file') {
+      assert.deepEqual(await workspace.sharedSade.shareRevision(task.id), { shared: true });
+      assert.deepEqual(store.get<typeof receipt>('sharedSadeLocalReceipt', jobId).result, {
+        kind: 'done',
+        revision,
+        published: true,
+        summary: 'Integrated reviewed changes.',
+      });
+    } else {
+      const reason =
+        remoteChange === 'reviewed file' ? /reviewed files/ : /Publish the integrated revision/;
+      await assert.rejects(workspace.sharedSade.shareRevision(task.id), reason);
+      assert.deepEqual(store.get('sharedSadeLocalReceipt', jobId), receipt);
+    }
+    assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), revision);
+    assert.equal(await git(f.repo, ['rev-parse', 'FETCH_HEAD']), fetchHead);
+    assert.equal(await git(f.repo, ['show-ref']), refs);
+    assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+    assert.equal(await git(f.root, ['--git-dir', remote, 'rev-parse', 'refs/heads/main']), tip);
+  });
+}
 
 test('a prior merge does not prove the current branch already has the full reviewed change', async (t) => {
   const f = await fixture(t);

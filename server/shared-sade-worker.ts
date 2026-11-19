@@ -318,12 +318,15 @@ export class SharedSadeWorker {
       throw new DomainError('Unsupported desktop system.');
     return { member, project };
   }
-  private async fingerprint(project: Project) {
-    const [remote, branch] = await Promise.all([
+  private async linkedRepository(project: Project) {
+    const [origin, branch] = await Promise.all([
       git(project.path, ['config', '--get', 'remote.origin.url']),
       git(project.path, ['branch', '--show-current']),
     ]);
-    return canonicalSharedRepository(remote, branch);
+    return { origin, branch, key: canonicalSharedRepository(origin, branch) };
+  }
+  private async fingerprint(project: Project) {
+    return (await this.linkedRepository(project)).key;
   }
   private pairedMachine(projectId: string, nodeId: string): PairedMachine {
     const node = this.host.runners.assertReady(nodeId);
@@ -678,25 +681,95 @@ export class SharedSadeWorker {
     const receipt = this.receipt(jobId);
     const grant = this.grants().find((item) => item.id === receipt.grantId)!;
     const project = this.host.store.get<Project>('project', grant.projectId);
-    if (
-      !receipt.reviewedDigest ||
-      !receipt.revision ||
-      (await this.fingerprint(project)) !== grant.projectKey
-    )
+    const { reviewedDigest, revision } = receipt;
+    const target = await this.linkedRepository(project);
+    if (!reviewedDigest || !revision || target.key !== grant.projectKey)
       throw new DomainError('The approved integration is unavailable for this branch.');
-    const branch = await git(project.path, ['branch', '--show-current']);
-    const remote = await git(project.path, [
-      'ls-remote',
-      '--heads',
-      'origin',
-      `refs/heads/${branch}`,
-    ]);
-    if (!remote || remote.split(/\s+/)[0] !== receipt.revision)
+
+    const assertPublicationTarget = async () => {
+      const current = await this.linkedRepository(project);
+      if (current.origin !== target.origin || current.branch !== target.branch)
+        throw new DomainError('Return to the granted Git branch before sharing.');
+      this.assertCurrent(jobId);
+    };
+    const ref = `refs/heads/${target.branch}`;
+    const publishedTip = async () => {
+      const refs = await git(project.path, ['ls-remote', '--heads', 'origin', ref]).catch(() => {
+        throw new DomainError(
+          'The linked Git branch could not be read. Check your connection and retry.',
+        );
+      });
+      return refs
+        .split(/\r?\n/)
+        .map((line) => line.split('\t'))
+        .find(([, name]) => name === ref)?.[0];
+    };
+    const tip = await publishedTip();
+    if (!tip || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tip))
       throw new DomainError('Publish the integrated revision to the linked Git branch first.');
-    this.assertCurrent(jobId);
+    if (tip !== revision) {
+      const available = await git(project.path, ['cat-file', '-e', `${tip}^{commit}`]).then(
+        () => true,
+        () => false,
+      );
+      if (!available) {
+        await assertPublicationTarget();
+        await git(project.path, [
+          'fetch',
+          '--no-tags',
+          '--no-prune',
+          '--no-write-fetch-head',
+          '--no-recurse-submodules',
+          '--no-auto-maintenance',
+          '--refmap=',
+          `--negotiation-tip=${revision}`,
+          'origin',
+          ref,
+        ]).catch(() => {
+          throw new DomainError(
+            'The linked Git branch could not be checked. Check your connection and retry.',
+          );
+        });
+        if ((await publishedTip()) !== tip)
+          throw new DomainError(
+            'The linked Git branch moved during verification. Try sharing again.',
+          );
+      }
+      const isPublished = await git(project.path, [
+        'merge-base',
+        '--is-ancestor',
+        revision,
+        tip,
+      ]).then(
+        () => true,
+        () => false,
+      );
+      if (!isPublished)
+        throw new DomainError('Publish the integrated revision to the linked Git branch first.');
+      if (receipt.result?.kind !== 'change' || reviewDigest(receipt.result.diff) !== reviewedDigest)
+        throw new DomainError('The reviewed file list is unavailable for publication.');
+      const changed = await git(project.path, [
+        '--literal-pathspecs',
+        'diff',
+        '--name-only',
+        '--no-renames',
+        '--no-ext-diff',
+        '--ignore-submodules=none',
+        '-z',
+        revision,
+        tip,
+        '--',
+        ...receipt.result.diff.files,
+      ]);
+      if (changed)
+        throw new DomainError(
+          'The published branch changed the reviewed files. Review the current files before sharing.',
+        );
+    }
+    await assertPublicationTarget();
     this.result(jobId, {
       kind: 'done',
-      revision: receipt.revision,
+      revision,
       published: true,
       summary: redact(task.summary || 'Integrated reviewed changes.').slice(0, 4000),
     });
