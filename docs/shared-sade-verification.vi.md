@@ -310,7 +310,11 @@ Chạy ca hồi quy bằng `node --import tsx --test tests/codex.test.ts tests/s
 
 Cùng App Server trên Windows, một câu tiếng Việt kiểu casual chạy phần bàn giao của ví dụ A. Shared Groups giao lượt lập kế hoạch thật cho GPT-6.2-Sol với reasoning `high`. Model gọi `relay_submit_plan` để giao `docs/contract.md` cho Gemini của An và `src/form.ts` cho Astra của Bình, kèm phụ thuộc giữa hai file và yêu cầu Astra hỏi về phong cách. Sade giao bước hợp đồng trước và giữ bước giao diện chờ. Gửi lại cùng mã tin nhắn vẫn chỉ có một tin và một workflow. Hai harness nhận việc dùng fixture. Bản ghi nằm ở `.local/sade-native-live/scoped-native-handoff.json`, với mã chạy lại trong `run-handoff.source.txt`.
 
+Ở ví dụ B, tin casual nêu mã commit thật của hợp đồng đã có và yêu cầu chỉ viết test ở `tests/form.test.ts`. GPT-6.2-Sol lập kế hoạch qua Shared Groups và mã công cụ của App Server. Bước của Gemini bên An chỉ đọc `docs/contract.md`. Bước của Astra bên Bình có đúng một file được phép ghi và chờ báo cáo của Gemini. Sade mở bước test sau khi fixture xác nhận bước đọc đã hoàn tất. Git giữ nguyên commit ban đầu. Hai harness nhận việc dùng fixture. Bản ghi và mã chạy lại nằm trong `.local/sade-native-live/scoped-native-reuse.json` và `run-reuse.source.txt`.
+
 Windows qua 107 ca liên quan và build trên mã ứng dụng của `667e316`. macOS arm64 qua 359 ca, bỏ qua sáu ca theo nền tảng, rồi qua Electron, giao diện Shared Groups và kiểm tra dependency. Bộ 1.000 tin nhắn dùng phản hồi planner mô phỏng tiếp tục đạt trên cả hai hệ điều hành. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44523780317)
+
+Ở commit `d0f6c25`, Windows qua 74 ca Git và Shared Groups cùng build. macOS arm64 qua 364 ca và kiểm thử Electron, gồm việc bàn giao commit cũ khi nhánh remote đã tiến thêm. Hai hệ điều hành tiếp tục qua bộ 1.000 tin nhắn với planner mô phỏng. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44527498309)
 
 Một bài hồi quy desktop tái hiện việc tiêu chí bảo mật của tác vụ gốc bị bỏ khỏi khâu chọn model cho review. Desktop giờ đưa yêu cầu đã gửi đến reviewer vào thông tin chọn model và đặt scope của review theo danh sách file trong diff. Review thường vẫn dùng model nhẹ có reasoning cao. Khi yêu cầu có tiêu chí bảo mật, chính sách dùng model mặc định của catalog với reasoning cao nếu hỗ trợ.
 
