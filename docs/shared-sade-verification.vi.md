@@ -16,6 +16,8 @@ Một desktop có thể cấp quyền cho nhiều project. Desktop gửi tối �
 
 Khi kết hợp với giới hạn ghế của gói Kivuno, Sade cập nhật quyền của từng nhóm trước khi giao việc. Ghế bị khóa dừng công việc gắn với quyền đó. Các project khác trên cùng desktop vẫn nhận việc và duy trì phiên. Chủ harness có thể thu hồi grant của mình khi ghế đang khóa. Phản hồi chỉ xác nhận việc thu hồi. Desktop từ chối tạo grant cho profile bị khóa bởi gói Kivuno.
 
+Trên nhánh đã ghép thay đổi về gói của `main`, Windows đạt 350 bài và bỏ qua một bài theo nền tảng ở commit `2832dbd`. macOS arm64 đạt 345 bài và bỏ qua sáu bài theo nền tảng trên cùng commit. Cả hai qua build, Electron, giao diện Shared Groups và bộ 1.000 tin mô phỏng. Bài bàn giao Windows–Mac arm64 đạt ở commit `7c8e736`, cùng mã ứng dụng với `2832dbd`. Hai commit khác nhau ở fixture giữ chỗ profile cho hai bài giao diện. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44510483025) · [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44510094728)
+
 Windows chạy 340 bài và bỏ qua một bài theo nền tảng ở commit `912401f`. Build, Electron, giao diện Shared Groups và bộ 1.000 tin đều đạt. macOS arm64 chạy 335 bài, bỏ qua sáu bài theo nền tảng và qua các bài giao diện. [Kiểm thử macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44507015451)
 
 Lượt bàn giao qua mạng chạy ở commit `17d038b`. Máy Mac arm64 ghép cặp tái hiện lỗi đường dẫn, chạy lại thành công sau khi sửa và trả đúng tệp được cấp quyền về Windows. Commit `912401f` bổ sung kiểm tra kiểu cho dữ liệu bài thử. [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44506869643)
