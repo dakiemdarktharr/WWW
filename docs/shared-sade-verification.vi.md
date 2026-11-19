@@ -35,7 +35,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `ba82f2c`. `npm run check` đạt 297 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng bản runtime, Windows đạt 302 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Các biến thể đi qua bộ phân giải mã teammate trong bộ 1.000 tin được chạy lại trên Windows ở commit sau. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44453737336)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `6534a77`. `npm run check` đạt 297 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Cùng commit, Windows đạt 302 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. Bộ 1.000 tin dùng planner mô phỏng đạt trên cả hai hệ điều hành. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44455856114)
 
 CI dùng máy ảo macOS và fixture provider. Bài kiểm thử riêng bên dưới bổ sung bằng chứng kết nối giữa hai máy qua mạng. Phiên dùng tài khoản provider đăng nhập thật và máy Mac của thành viên vẫn cần xác minh riêng.
 
@@ -134,7 +134,7 @@ Phép đo dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ, temperature
 | Có yêu cầu và tiêu chí, sáu cặp chính | 5/6               | 6/6            | 12/12                            |
 | Cùng prompt mới, ba cặp bổ sung       | 3/3               | 0/3            | 6/6                              |
 
-Qwen bỏ sót điều kiện giảm giá tại đúng ngưỡng trên tập chính. Ở ba cặp bổ sung, Qwen chặn cả ba bản đúng vì suy diễn thêm yêu cầu hoặc đọc sai tác dụng của hàm. Phép đo trạng thái xác nhận Sade thi hành quyết định model đã gửi, kể cả quyết định sai. Sade giữ chính sách chọn reviewer theo quyền và catalog, còn Qwen dùng để đo offline.
+Qwen bỏ sót điều kiện giảm giá tại đúng ngưỡng trên tập chính. Ở ba cặp bổ sung, Qwen chặn cả ba bản đúng vì suy diễn thêm yêu cầu hoặc đọc sai tác dụng của hàm. Có lượt yêu cầu sửa đúng nhưng giải thích một phần sai, như nêu kết quả làm tròn về 0 của `-1.7` là `-2`. Điểm trong bảng tính theo quyết định duyệt hoặc yêu cầu sửa. Phép đo trạng thái xác nhận Sade thi hành quyết định model đã gửi, kể cả quyết định sai. Sade giữ chính sách chọn reviewer theo quyền và catalog. Qwen dùng để đo offline.
 
 Chạy từ hai commit khác nhau để so sánh prompt. Bản chỉ gửi diff nằm ở commit `28eb3e7`. Dùng `--holdout` ở bản mới để chạy ba cặp bổ sung. Cả hai dùng Ollama cục bộ tại `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M`. Báo cáo JSON lưu digest model và hash prompt của từng ca.
 
