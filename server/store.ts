@@ -433,13 +433,30 @@ export class Store extends EventEmitter {
     }
     for (const m of this.members())
       this.updateMember(m.id, { status: 'offline', account: null, rateLimits: null });
-    for (const session of this.sessions())
+    const restartError =
+      'Coordinator restarted. Confirm the last observed session PID stopped before recovery.';
+    for (const session of this.sessions()) {
+      // A clean exit already stopped the worker of a completed read-only chat.
+      // Older coordinators marked those same chats interrupted on the next launch.
+      if (
+        session.readOnly &&
+        !session.external &&
+        session.pid == null &&
+        (session.status === 'idle' ||
+          (session.status === 'interrupted' && session.error === restartError)) &&
+        this.lookup<Task>('task', session.taskId)?.status === 'done' &&
+        !this.lease(session.taskId)
+      ) {
+        if (session.status !== 'idle')
+          this.updateSession(session.id, { status: 'idle', error: null });
+        continue;
+      }
       if (['running', 'starting', 'idle'].includes(session.status))
         this.updateSession(session.id, {
           status: 'interrupted',
-          error:
-            'Coordinator restarted. Confirm the last observed session PID stopped before recovery.',
+          error: restartError,
         });
+    }
     return leases.length;
   }
   recoverOrphans() {

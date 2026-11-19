@@ -11,7 +11,7 @@ import {
 import { z } from 'zod';
 import type { CloudUser } from './cloud-auth.ts';
 import { DomainError, type Store } from './store.ts';
-import { DesktopIdentity } from './desktop-auth.ts';
+import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { bankEntitlement } from './bank-checkout.ts';
 
 export const FUJI_CHAIN_ID = 43113;
@@ -437,18 +437,39 @@ export function registerBillingRoutes(
         )
           throw new DomainError('Duplicate provider profile IDs were supplied.', 400);
         const ids = new Set(input.profiles.map((profile) => profile.profileId));
-        for (const existing of profileRows(owner.id))
-          if (
-            existing.deviceId === deviceId &&
-            existing.state === 'active' &&
-            !ids.has(existing.profileId)
-          )
+        // Desktop consent rotates device leases. Carry over the owner's selection
+        // for the same local profile only after the former lease has retired.
+        const activeDevices = new Set(
+          store
+            .all<DesktopDevice>('desktopDevice')
+            .filter((device) => !device.revoked && Date.parse(device.expiresAt) > now)
+            .map((device) => device.id),
+        );
+        const inherited = new Map<string, BillingProfile>();
+        for (const existing of profileRows(owner.id)) {
+          if (existing.state !== 'active') continue;
+          const returning = ids.has(existing.profileId) && !activeDevices.has(existing.deviceId);
+          if (returning && (!inherited.has(existing.profileId) || existing.selected))
+            inherited.set(existing.profileId, existing);
+          if (returning || (existing.deviceId === deviceId && !ids.has(existing.profileId)))
             store.put('billingProfile', {
               ...existing,
               state: 'released',
               selected: false,
               updatedAt: new Date().toISOString(),
             });
+        }
+        for (const previous of inherited.values()) {
+          const id = reservationId(deviceId, previous.profileId);
+          const current = store.lookup<BillingProfile>('billingProfile', id);
+          store.put('billingProfile', {
+            ...previous,
+            id,
+            deviceId,
+            selected: previous.selected || (current?.state === 'active' && current.selected),
+            updatedAt: new Date().toISOString(),
+          });
+        }
         for (const supplied of input.profiles) {
           const key = reservationId(deviceId, supplied.profileId);
           const existing = store.lookup<BillingProfile>('billingProfile', key);
