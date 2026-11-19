@@ -48,6 +48,7 @@ function fixture(
     reviewRevision?: boolean;
     taskUpdates?: boolean;
     roleA?: 'researcher';
+    allowWritesB?: boolean;
     roleB?: 'reviewer' | 'researcher';
   } = {},
 ) {
@@ -99,7 +100,7 @@ function fixture(
         projectName: 'Fixture project',
         role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
         platform: index && options.mac ? 'darwin' : 'win32',
-        allowWrites: true,
+        allowWrites: !index || options.allowWritesB !== false,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         turns: (index ? options.turnsB : options.turnsA) ?? 8,
       });
@@ -1744,6 +1745,255 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   assert.deepEqual(store.get('sharedSadeLocalReceipt', expired.id), expired);
 });
 
+test(
+  'one group message hands off through the actual Claude and Antigravity adapters',
+  { timeout: 55000 },
+  async (t) => {
+    const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'sade-managed-handoff-')));
+    const desktops: {
+      workspace: Workspace;
+      store: Store;
+      memberId: string;
+      projectId: string;
+      repo: string;
+    }[] = [];
+    const command = path.resolve('tests/fixtures/managed-peer.mjs');
+    const overrides = ['RELAY_CLAUDE_COMMAND', 'RELAY_ANTIGRAVITY_COMMAND'];
+    const previous = overrides.map((name) => process.env[name]);
+    for (const name of overrides) process.env[name] = command;
+    t.after(async () => {
+      for (const { workspace, store } of desktops) {
+        await workspace.close();
+        store.close();
+      }
+      for (const [index, name] of overrides.entries()) {
+        if (previous[index] === undefined) delete process.env[name];
+        else process.env[name] = previous[index];
+      }
+      assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+      assert.ok(path.basename(root).startsWith('sade-managed-handoff-'));
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    });
+
+    const providers = ['claude', 'antigravity'] as const;
+    const origin = 'https://example.test/shared/managed-fixture.git';
+    const fingerprint = canonicalSharedRepository(origin, 'main');
+    const plan = {
+      summary: 'Hand the independently reviewed contract to Antigravity.',
+      tasks: [
+        {
+          ...work('contract', { scope: ['contract.txt'] }),
+          kind: 'edit-files',
+          preferredMemberId: 'member-1',
+          requiredPlatform: 'any',
+        },
+        {
+          ...work('check', { dependsOn: ['contract'], scope: ['contract.txt'] }),
+          kind: 'research-read-only',
+          preferredMemberId: 'member-2',
+          requiredPlatform: 'any',
+        },
+      ],
+    };
+    const originRepo = path.join(root, 'Claude project');
+    const reviewRepo = path.join(root, 'Antigravity project');
+    await mkdir(originRepo);
+    await git(originRepo, ['init', '-b', 'main']);
+    await writeFile(path.join(originRepo, '.gitattributes'), 'contract.txt text eol=lf\n');
+    await writeFile(path.join(originRepo, 'contract.txt'), 'Baseline contract\n');
+    await git(originRepo, ['add', '.gitattributes', 'contract.txt']);
+    await git(originRepo, [
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-m',
+      'Baseline',
+    ]);
+    await git(root, ['clone', '--', originRepo, reviewRepo]);
+    for (const [index, provider] of providers.entries()) {
+      const repo = index ? reviewRepo : originRepo;
+      await git(repo, ['config', 'remote.origin.url', origin]);
+      const dataDir = path.join(root, provider);
+      const store = new Store(':memory:');
+      const workspace = new Workspace(store, dataDir, repo);
+      const member = store.addMember({
+        name: provider,
+        provider,
+        role: index ? 'reviewer' : 'engineer',
+      });
+      store.updateMember(member.id, { managedRuntime: true });
+      const projectId = randomUUID();
+      store.put('project', {
+        id: projectId,
+        path: repo,
+        name: 'Fixture project',
+        goal: 'Verify a handoff',
+        memberIds: [member.id],
+        createdAt: new Date().toISOString(),
+      });
+      desktops.push({ workspace, store, memberId: member.id, projectId, repo });
+      const home = workspace.home(member.id);
+      await mkdir(home, { recursive: true });
+      await writeFile(
+        path.join(home, 'managed-fixture-account.json'),
+        JSON.stringify({ marker: `fixture-profile-marker-${provider}` }),
+      );
+      await writeFile(path.join(home, 'managed-fixture-shared-plan.json'), JSON.stringify(plan));
+      const signedIn = await workspace.refresh(member.id);
+      assert.equal(signedIn.account?.type, index ? 'antigravity-google' : 'claude-subscription');
+    }
+
+    const cloud = fixture(providers, {
+      key: fingerprint,
+      members: desktops.map(({ memberId }) => memberId),
+      patchHandoff: true,
+      allowWritesB: false,
+      turnsA: 2,
+      turnsB: 2,
+    });
+    t.after(() => cloud.store.close());
+    for (const [index, { workspace, memberId, projectId }] of desktops.entries()) {
+      await workspace.sharedSade.execute({
+        action: 'grant',
+        groupId: cloud.groupId,
+        id: cloud.grants[index],
+        projectId,
+        teammateId: memberId,
+        turns: 2,
+        allowWrites: !index,
+      });
+    }
+    const request = {
+      action: 'message',
+      groupId: cloud.groupId,
+      id: randomUUID(),
+      content:
+        'Claude viết hợp đồng trong contract.txt, rồi cho Antigravity review và dùng hợp đồng đã duyệt để kiểm tra nha.',
+      sade: { projectKey: fingerprint },
+    };
+    cloud.call(0, request);
+    const deliveries: SharedDelivery[] = [];
+    async function pump(index: number) {
+      const worker = desktops[index].workspace.sharedSade;
+      const snapshot = (await worker.execute({ action: 'snapshot' })) as {
+        grants: typeof cloud.grants;
+        active: string[];
+        results: { jobId: string; result: SharedFinish; version: number }[];
+      };
+      assert.doesNotMatch(JSON.stringify(snapshot), /fixture-profile-marker|accessToken|projectId/);
+      for (const { jobId, result } of snapshot.results) cloud.finish(index, jobId, result);
+      const packet = cloud.poll(index, snapshot.active, snapshot.grants);
+      assert.doesNotMatch(JSON.stringify(packet), /fixture-profile-marker|accessToken|projectId/);
+      if (packet.delivery) deliveries.push(packet.delivery);
+      await worker.execute({
+        action: 'exchange',
+        ...packet,
+        acknowledged: snapshot.results.map(({ jobId, version }) => ({ jobId, version })),
+      });
+    }
+    function run() {
+      return cloud.view().sadeRuns[0];
+    }
+    async function waitFor<T>(label: string, read: () => T | undefined | false) {
+      const deadline = Date.now() + 18000;
+      while (Date.now() < deadline) {
+        for (const index of [0, 1]) await pump(index);
+        const state = run();
+        assert.notEqual(state.state, 'blocked', JSON.stringify(state));
+        const value = read();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+      throw new Error(`Timed out waiting for ${label}: ${JSON.stringify(run())}`);
+    }
+
+    const [author, reader] = desktops;
+    const approval = await waitFor(
+      'scoped file approval',
+      () => author.workspace.sessions.approvals()[0],
+    );
+    const authorTask = author.store.get<Task>('task', approval.taskId);
+    assert.equal(
+      await readFile(path.join(authorTask.worktree!, 'contract.txt'), 'utf8'),
+      'Baseline contract\n',
+    );
+    assert.deepEqual(
+      deliveries.map(({ phase }) => phase),
+      ['plan', 'task'],
+    );
+    assert.equal(reader.store.sessions().length, 0);
+    await assert.rejects(author.workspace.accept(authorTask.id), /review|running/i);
+    author.workspace.sessions.decide(approval.id, 'accept');
+    await waitFor('Antigravity review', () =>
+      run().jobs.some(({ phase, state }) => phase === 'review' && state === 'done'),
+    );
+    assert.ok(!deliveries.some(({ task }) => task?.key === 'check'));
+    assert.equal(author.store.get<Task>('task', authorTask.id).status, 'review');
+    assert.equal(
+      await readFile(path.join(reader.repo, 'contract.txt'), 'utf8'),
+      'Baseline contract\n',
+    );
+    await pump(0);
+    const integrated = await author.workspace.accept(authorTask.id);
+    assert.ok(integrated);
+    await waitFor('dependent read', () => run().state === 'done');
+
+    assert.deepEqual(
+      deliveries.map(({ phase, grantId }) => [phase, grantId]),
+      [
+        ['plan', cloud.grants[0]],
+        ['task', cloud.grants[0]],
+        ['review', cloud.grants[1]],
+        ['task', cloud.grants[1]],
+      ],
+    );
+    assert.equal(
+      await readFile(path.join(author.repo, 'contract.txt'), 'utf8'),
+      'Native shared contract v1\n',
+    );
+    assert.equal(
+      await readFile(path.join(reader.repo, 'contract.txt'), 'utf8'),
+      'Baseline contract\n',
+    );
+    cloud.call(0, request);
+    assert.equal(cloud.view().sadeRuns.length, 1);
+    assert.equal(cloud.view().messages.length, 1);
+    for (const [index, { workspace, store, memberId }] of desktops.entries()) {
+      const calls = await readFile(
+        path.join(workspace.home(memberId), 'managed-peer-events.jsonl'),
+        'utf8',
+      );
+      const prompts = calls
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.equal(
+        prompts.filter(({ type, method }) => type === 'user' || method === 'session/prompt').length,
+        2,
+      );
+      assert.doesNotMatch(calls, /authenticate/);
+      assert.equal(store.all('providerTurnGrant').length, 0);
+      assert.equal(
+        cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[index]).used,
+        2,
+      );
+      assert.deepEqual(
+        store.sessions().map(({ model, reasoningEffort }) => [model, reasoningEffort]),
+        index
+          ? [
+              ['agy-flash', 'high'],
+              ['agy-controlled', 'medium'],
+            ]
+          : [
+              ['default', 'high'],
+              ['default', 'medium'],
+            ],
+      );
+    }
+  },
+);
 test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
   const f = fixture();
   try {
