@@ -41,6 +41,7 @@ const app = await buildApp(workspace, { cloud: { origin, gatewaySecret, auth } }
 const browser = await chromium.launch();
 const errors: string[] = [],
   forbidden: string[] = [];
+const profileCommands: { action: string; profileId?: string }[] = [];
 const mime: Record<string, string> = {
   '.js': 'text/javascript',
   '.css': 'text/css',
@@ -53,6 +54,16 @@ const config = JSON.parse(await readFile('vercel.json', 'utf8'));
 async function device() {
   const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
   context.setDefaultTimeout(12000);
+  // This suite exercises workspace UI with a native-capability fixture. Billing
+  // tests separately exercise the real reservation/entitlement API.
+  await context.exposeFunction(
+    'fixtureProfiles',
+    (command: { action: string; profileId?: string }) => {
+      assert.ok(['reserve', 'commit', 'release', 'sync'].includes(command.action));
+      profileCommands.push(command);
+      return { lockedIds: [] };
+    },
+  );
   await context.addInitScript(() => {
     try {
       sessionStorage.setItem('kivuno-guide-v3', 'seen');
@@ -134,6 +145,7 @@ async function login(context: BrowserContext) {
       }),
       chooseDirectory: async () => null,
       prepareProvider: async (provider) => ({ provider, available: true }),
+      profiles: (command) => window.fixtureProfiles(command),
       openExternal: async () => {},
       openPreview: async () => {},
       signOut: async () => {},
@@ -465,6 +477,17 @@ try {
     .toBe(true);
   assert.deepEqual(forbidden, []);
   assert.deepEqual(errors, []);
+  assert.ok(profileCommands.some((command) => command.action === 'sync'));
+  assert.ok(
+    profileCommands.some(
+      (command) =>
+        command.action === 'reserve' &&
+        profileCommands.some(
+          (commit) => commit.action === 'commit' && commit.profileId === command.profileId,
+        ),
+    ),
+    'Creating a profile reserves and commits the same profile ID through the desktop bridge.',
+  );
   console.log(
     JSON.stringify({
       ownerLogin: true,

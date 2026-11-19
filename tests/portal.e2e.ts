@@ -32,6 +32,7 @@ const app = await buildApp(workspace, { cloud: { origin, gatewaySecret, auth } }
 const browser = await chromium.launch();
 const errors: string[] = [];
 const workspaceCalls: string[] = [];
+const apiCalls: string[] = [];
 let signupRequests = 0;
 let approvalRequests = 0;
 const mime: Record<string, string> = {
@@ -62,6 +63,7 @@ async function routePortal(context: BrowserContext, available = false) {
   await context.route(`${origin}/**`, async (route) => {
     const request = route.request(),
       url = new URL(request.url());
+    if (url.pathname.startsWith('/api/')) apiCalls.push(url.pathname);
     if (url.pathname === '/api/state' || url.pathname === '/api/events')
       workspaceCalls.push(url.pathname);
     if (url.pathname === '/api/auth/sign-up/email') signupRequests++;
@@ -139,6 +141,17 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await routePortal(context);
   const page = await context.newPage();
+  const cspViolations: string[] = [];
+  await page.exposeFunction('recordPortalCspViolation', (directive: string) =>
+    cspViolations.push(directive),
+  );
+  await page.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      (
+        window as unknown as { recordPortalCspViolation: (value: string) => void }
+      ).recordPortalCspViolation(event.violatedDirective);
+    });
+  });
   await page.goto(origin + '/#updates');
   await expect
     .poll(() => page.locator('#updates').evaluate((section) => section.getBoundingClientRect().top))
@@ -146,6 +159,13 @@ try {
   await expect
     .poll(() => page.locator('#updates').evaluate((section) => section.getBoundingClientRect().top))
     .toBeLessThan(200);
+  const latestPatch = page.locator('#updates details').first();
+  await expect(latestPatch).toHaveAttribute('open', '');
+  await latestPatch.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(latestPatch).not.toHaveAttribute('open', '');
+  await page.keyboard.press('Space');
+  await expect(latestPatch).toHaveAttribute('open', '');
   await page.evaluate(() => scrollTo({ top: 0, behavior: 'instant' }));
   const heading = page.getByRole('heading', { name: 'Kivuno', exact: true });
   await expect(heading).toBeVisible();
@@ -186,11 +206,7 @@ try {
     await stories.evaluateAll((items) => items.map((item) => item.getAttribute('data-story'))),
     ['plan', 'handoff', 'review'],
   );
-  await expect(
-    page.locator(
-      '.kp-story-description, .kp-read-story, .kp-story-scroll, .kp-chat-bar, .kp-chat-bottom, .kp-demo-badge, .kp-feature-copy p, .kp-guide-copy p',
-    ),
-  ).toHaveCount(0);
+  await expect(page.getByRole('tablist')).toHaveCount(0);
   await expect(page.getByText('UniHack / Aurora', { exact: true })).toHaveCount(0);
   await expect(page.getByText('3 Codex online · Bạn dẫn đội', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Xem tất cả tin nhắn' })).toHaveCount(0);
@@ -293,12 +309,47 @@ try {
     page.getByRole('button', { name: 'Windows download not available', exact: true }),
   ).toBeDisabled();
   await menu.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
-  const guide = page.getByRole('tablist', { name: 'Cách dùng Kivuno' });
-  await guide.getByRole('tab', { name: '2 Tạo dự án' }).click();
-  await expect(page.getByRole('tabpanel')).toContainText('Một mục tiêu chung.');
-  await page.keyboard.press('ArrowRight');
-  await expect(guide.getByRole('tab', { name: '3 Dẫn đội' })).toBeFocused();
-  await expect(page.getByRole('tabpanel')).toContainText('Chờ bạn duyệt');
+  const guide = page.locator('#workflow');
+  await guide.scrollIntoViewIfNeeded();
+  await expect(guide.getByRole('heading', { name: 'Từ ý tưởng đến cùng làm.' })).toBeVisible();
+  await expect(guide.getByRole('tab')).toHaveCount(0);
+  const demoMessages = guide.locator('[data-demo-message]');
+  const demoReplay = guide.getByRole('button', { name: 'Phát lại mô phỏng' });
+  const demoSend = guide.getByRole('button', { name: 'Gửi tin nhắn mô phỏng' });
+  const demoInput = guide.getByRole('textbox', { name: 'Tin nhắn mô phỏng' });
+  const demoApiCalls = apiCalls.length;
+  await demoReplay.click();
+  await expect(demoMessages).toHaveCount(1);
+  await expect(demoSend).toBeDisabled();
+  await expect(demoMessages).toHaveCount(2, { timeout: 5000 });
+  await guide.getByRole('button', { name: 'Tạm dừng mô phỏng' }).click();
+  const pausedCount = await demoMessages.count();
+  await page.waitForTimeout(3300);
+  await expect(demoMessages).toHaveCount(pausedCount);
+  await demoInput.fill('   ');
+  await expect(demoSend).toBeDisabled();
+  await demoInput.fill('Kiểm tra thêm các trạng thái bàn phím nhé.');
+  await page.keyboard.press('Enter');
+  await expect(guide.locator('[data-demo-message="local-1"]')).toContainText(
+    'Kiểm tra thêm các trạng thái bàn phím nhé.',
+  );
+  await expect(guide.locator('[data-demo-message="reply-1"]')).toContainText('Sade');
+  await expect(demoInput).toHaveValue('');
+  await expect(demoInput).toBeFocused();
+  await expect(demoSend).toBeDisabled();
+  await expect(guide.getByRole('button', { name: 'Tiếp tục mô phỏng' })).toBeVisible();
+  await menu.getByRole('button', { name: 'Switch to English' }).click();
+  await expect(guide.getByRole('log', { name: 'Demo conversation' })).toBeVisible();
+  await expect(guide.locator('[data-demo-message="local-1"]')).toContainText(
+    'Kiểm tra thêm các trạng thái bàn phím nhé.',
+  );
+  await expect(guide.getByRole('button', { name: 'Resume demo' })).toBeVisible();
+  await menu.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
+  await page.screenshot({ path: '.local/kivuno-group-chat-interaction.png' });
+  await demoReplay.click();
+  await expect(demoMessages).toHaveCount(1);
+  await expect(guide.locator('[data-demo-message="local-1"]')).toHaveCount(0);
+  assert.equal(apiCalls.length, demoApiCalls, 'The scripted group chat never calls real services.');
   const downloadOpener = menu.getByRole('button', { name: 'Tải app', exact: true });
   await downloadOpener.click();
   const downloads = page.getByRole('dialog', { name: 'Tải Kivuno' });
@@ -343,19 +394,32 @@ try {
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
       .toBe(true);
   }
+  // Decorative artwork may be SVG or CSS; every actual image still needs to load.
   await expect
     .poll(() =>
       page
-        .locator('.kp-hivemind-art')
-        .evaluate(
-          (img) =>
-            (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth === 1536,
+        .locator('img')
+        .evaluateAll((images) =>
+          images.every(
+            (img) =>
+              (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0,
+          ),
         ),
     )
     .toBe(true);
   await storyProgress('handoff', 0.75);
   await page.screenshot({ path: '.local/kivuno-scroll-mobile.png' });
   await page.screenshot({ path: '.local/kivuno-portal-mobile.png', fullPage: true });
+  for (const width of [320, 768]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const selector of ['.kp-hero', '#workflow', '.kp-features', '#updates']) {
+      await page.locator(selector).scrollIntoViewIfNeeded();
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+        .toBe(true);
+    }
+    await page.screenshot({ path: `.local/kivuno-portal-${width}.png`, fullPage: true });
+  }
 
   const reduced = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -459,6 +523,25 @@ try {
     accountPage.getByRole('button', { name: /macOS.*(chưa có bản tải|download not available)/i }),
   ).toBeDisabled();
   await accountPage.locator('#workflow').scrollIntoViewIfNeeded();
+  const reducedDemo = accountPage.locator('#workflow');
+  await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(8);
+  await expect(reducedDemo.getByRole('button', { name: 'Tạm dừng mô phỏng' })).toHaveCount(0);
+  const demoApprove = reducedDemo.getByRole('button', { name: 'Duyệt bản demo', exact: true });
+  const beforeDemoApproval = apiCalls.length;
+  await demoApprove.focus();
+  await accountPage.keyboard.press('Enter');
+  await expect(reducedDemo.locator('[data-demo-message="approved"]')).toContainText(
+    'Mình đã duyệt bản thay đổi trong mô phỏng.',
+  );
+  await expect(reducedDemo.getByRole('button', { name: 'Đã duyệt bản demo' })).toBeDisabled();
+  assert.equal(apiCalls.length, beforeDemoApproval, 'Demo approval never approves real work.');
+  await accountPage.screenshot({ path: '.local/kivuno-group-chat-mobile-approved.png' });
+  await reducedDemo.getByRole('button', { name: 'Phát lại mô phỏng' }).click();
+  await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(8);
+  await expect(reducedDemo.locator('[data-demo-message="approved"]')).toHaveCount(0);
+  await expect(demoApprove).toBeEnabled();
+  for (const message of await reducedDemo.locator('[data-demo-message]').all())
+    await expect(message).toHaveCSS('opacity', '1');
   await accountPage.getByRole('button', { name: 'Kivuno — về màn hình đầu' }).click();
   await expect.poll(() => accountPage.evaluate(() => scrollY)).toBe(0);
   await expect(accountPage.locator('.kp-pixel-curtain')).toHaveCount(0);
@@ -469,6 +552,7 @@ try {
   for (const message of await accountPage.locator('[data-scroll-message]').all())
     await expect(message).toHaveCSS('opacity', '1');
   assert.deepEqual(workspaceCalls, []);
+  assert.deepEqual(cspViolations, [], 'The production CSP permits all portal resources.');
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
@@ -478,7 +562,9 @@ try {
       platformDownloads: true,
       macOSUnavailableShown: true,
       interactiveDemos: true,
-      noDecorativeSubtext: true,
+      noTabbedGuide: true,
+      timedGroupChatPauseReplay: true,
+      localDemoComposerAndApproval: true,
       separateScrollStories: true,
       reversibleScrollBubbles: true,
       persistedVietnameseEnglish: true,
@@ -497,6 +583,7 @@ try {
       oneUseExchange: true,
       noModelUsage: true,
       pageErrors: 0,
+      cspViolations: 0,
     }),
   );
 } finally {

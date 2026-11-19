@@ -51,7 +51,7 @@ function Avatar({ member, human = false }: { member?: Member; human?: boolean })
   return (
     <span
       className={`chat-avatar ${human ? 'human' : ''}`}
-      style={{ '--avatar-color': member?.color || '#8ce8cf' } as React.CSSProperties}
+      style={{ '--avatar-color': member?.color || '#d5ff5f' } as React.CSSProperties}
     >
       {human ? 'Y' : member?.name.slice(0, 1).toUpperCase() || 'K'}
     </span>

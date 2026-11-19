@@ -25,7 +25,7 @@
   backdrop-filter: blur(24px);
 }
 .usage-modal::backdrop {
-  background: #03121c99;
+  background: #17161999;
   backdrop-filter: blur(4px);
 }
 .usage-modal > header {
@@ -141,8 +141,8 @@
   align-items: center;
   padding: 10px 14px;
   border: 0;
-  background: #a2e8ce;
-  color: #163b2f;
+  background: #d5ff5f;
+  color: #222619;
   border-radius: 10px;
   font-weight: 600;
   font-size: 12px;

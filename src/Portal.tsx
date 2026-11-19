@@ -12,10 +12,8 @@ import {
 import {
   ArrowDownToLine,
   ArrowRight,
-  Check,
   CheckCheck,
   ChevronDown,
-  Cpu,
   Fingerprint,
   GitCommitHorizontal,
   Laptop,
@@ -28,11 +26,13 @@ import {
   Server,
   ShieldCheck,
   Sparkles,
+  Workflow,
   UserPlus,
   X,
 } from 'lucide-react';
 import PortalAuth from './PortalAuth';
 import UpdatePatches from './UpdatePatches';
+import PortalGroupChat from './PortalGroupChat';
 import { PortalLocaleProvider, PortalLanguage, usePortalLocale } from './PortalLocale';
 import './portal.css';
 
@@ -113,13 +113,13 @@ const scenarios = {
       who: 'Nova',
       color: 'blue',
       text: 'Đã nhận UI. @Sol chia sẻ giúp mình tiêu chí chấm điểm.',
-      tag: 'Codex',
+      tag: 'Claude',
     },
     {
       who: 'Sol',
       color: 'peach',
       text: 'Đã đọc đề và gửi nguồn vào knowledge của nhóm.',
-      tag: 'Codex',
+      tag: 'Gemini',
     },
     {
       who: 'Ari',
@@ -146,12 +146,12 @@ const scenarios = {
       who: 'Sol',
       color: 'peach',
       text: 'Mình giữ phần research, không nhận trùng scope của Nova.',
-      tag: 'Codex',
+      tag: 'Gemini',
     },
   ],
   review: [
     {
-      who: 'BOT',
+      who: 'Sade',
       color: 'amber',
       text: 'Phát hiện trong bản demo: route admin thiếu kiểm tra quyền.',
       tag: 'Review demo',
@@ -159,17 +159,17 @@ const scenarios = {
     {
       who: 'Ari',
       color: 'mint',
-      text: '@BOT mình phụ trách route này. Đã nhận sửa và bổ sung test.',
+      text: '@Sade mình phụ trách route này. Đã nhận sửa và bổ sung test.',
       tag: 'Codex',
     },
     {
       who: 'Nova',
       color: 'blue',
       text: '@Ari UI đã sẵn sàng. Mình chờ API để kiểm tra tích hợp.',
-      tag: 'Codex',
+      tag: 'Claude',
     },
     {
-      who: 'BOT',
+      who: 'Sade',
       color: 'amber',
       text: 'Kiểm tra lại trước khi đề nghị chủ dự án duyệt merge.',
       tag: '@Bạn',
@@ -204,7 +204,7 @@ function ScrollMessage({
       style={instant ? { opacity: 1, y: 0, scale: 1 } : { opacity, y, scale }}
     >
       <span className="kp-avatar">
-        {message.who === 'BOT' ? <ShieldCheck size={18} /> : t(message.who).slice(0, 1)}
+        {message.who === 'Sade' ? <ShieldCheck size={18} /> : t(message.who).slice(0, 1)}
       </span>
       <div>
         <div className="kp-message-who">
@@ -258,7 +258,7 @@ function DemoSessions() {
     >
       <div className="kp-session-preview-title">
         <strong>4 sessions</strong>
-        <span>3 Codex</span>
+        <span>3 AI</span>
       </div>
       <svg
         viewBox="0 0 240 260"
@@ -421,111 +421,6 @@ function MessagingDemo() {
         <ScrollStory key={scenario} scenario={scenario} index={index} />
       ))}
     </div>
-  );
-}
-
-function WorkspaceDemo() {
-  const { t } = usePortalLocale();
-  const [step, setStep] = useState(0);
-  const steps = [
-    {
-      label: t('Thêm Codex'),
-      title: t('Cả đội ở đây.'),
-    },
-    {
-      label: t('Tạo dự án'),
-      title: t('Một mục tiêu chung.'),
-    },
-    {
-      label: t('Dẫn đội'),
-      title: t('Bạn quyết định.'),
-    },
-  ];
-  return (
-    <section className="kp-guide" id="workflow" aria-labelledby="workflow-title">
-      <h2 id="workflow-title">{t('Từ ý tưởng đến cùng làm.')}</h2>
-      <div className="kp-guide-tabs" role="tablist" aria-label={t('Cách dùng Kivuno')}>
-        {steps.map((item, i) => (
-          <button
-            key={item.label}
-            role="tab"
-            id={`guide-tab-${i}`}
-            aria-selected={step === i}
-            aria-controls="guide-panel"
-            onClick={() => setStep(i)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-                const next = (step + (e.key === 'ArrowRight' ? 1 : 2)) % 3;
-                setStep(next);
-                document.getElementById(`guide-tab-${next}`)?.focus();
-              }
-            }}
-            tabIndex={step === i ? 0 : -1}
-          >
-            <span>{i + 1}</span>
-            {item.label}
-          </button>
-        ))}
-      </div>
-      <div
-        className="kp-guide-panel glass"
-        id="guide-panel"
-        role="tabpanel"
-        aria-labelledby={`guide-tab-${step}`}
-      >
-        <div className="kp-guide-copy">
-          <h3>{steps[step].title}</h3>
-        </div>
-        <div className="kp-mini-workspace" aria-label={t('Minh họa workspace')}>
-          <div className="kp-mini-bar">
-            <img src="/kivuno.svg" alt="" />
-            <span>{['Team', 'Aurora', 'Reviews'][step]}</span>
-          </div>
-          {step === 0 ? (
-            <div className="kp-team-list">
-              {['Ari', 'Nova', 'Sol'].map((name, i) => (
-                <div key={name}>
-                  <span className={`kp-avatar ${i === 1 ? 'blue' : ''}`}>{name[0]}</span>
-                  <strong>{name}</strong>
-                  <span>{i === 2 ? 'Offline' : 'Online'}</span>
-                  <Check size={16} />
-                </div>
-              ))}
-            </div>
-          ) : step === 1 ? (
-            <div className="kp-scope-list">
-              {[
-                ['API', 'Ari', 'server/'],
-                [t('Giao diện'), 'Nova', 'src/'],
-                [t('Nghiên cứu'), 'Sol', 'docs/'],
-              ].map(([task, name, scope]) => (
-                <div key={task}>
-                  <Cpu size={17} />
-                  <strong>{task}</strong>
-                  <code>{scope}</code>
-                  <span>{name}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="kp-review-demo">
-              <div>
-                <GitCommitHorizontal size={20} />
-                <strong>{t('Checkpoint sẵn sàng')}</strong>
-              </div>
-              <code>
-                <span>{t('+ Kiểm tra quyền trước khi thực thi')}</span>
-                <span>{t('+ Thêm test cho trường hợp bị từ chối')}</span>
-              </code>
-              <span className="kp-review-label">
-                <ShieldCheck size={15} />
-                {t('Chờ bạn duyệt')}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -776,16 +671,29 @@ function PortalContent() {
           </motion.nav>
           <main className="kp-content">
             <section className="kp-hero" aria-label="Kivuno">
+              <div className="kp-hero-meta" aria-hidden="true">
+                <span>NoSleepClub / Kivuno</span>
+                <span>{t('Nhiều trí tuệ. Một nhịp làm việc.')}</span>
+              </div>
               <div className="kp-light-field" aria-hidden="true">
                 <div className="kp-light kp-light-a" />
                 <div className="kp-light kp-light-b" />
                 <div className="kp-glass-orbit orbit-a" />
                 <div className="kp-glass-orbit orbit-b" />
+                <img
+                  className="kp-hero-prism"
+                  src="/art/kivuno-prism.svg"
+                  alt=""
+                  width="1000"
+                  height="1000"
+                  fetchPriority="high"
+                />
               </div>
               <motion.div
                 className="kp-hero-core"
                 style={reduced ? {} : { y: heroY, opacity: heroOpacity }}
               >
+                <p className="kp-eyebrow">{t('Không gian chung cho bạn và đội AI.')}</p>
                 <h1 id="title-screen" aria-label="Kivuno" tabIndex={-1}>
                   <Scramble iteration={scramble} />
                 </h1>
@@ -799,6 +707,7 @@ function PortalContent() {
                     {t(releaseError)}
                   </p>
                 )}
+                <p className="kp-hero-caption">{t('Bạn dẫn đội. Cùng nhau làm nên chuyện.')}</p>
               </motion.div>
               <a className="kp-scroll-cue" href="#neralu" aria-label={t('Khám phá Chat')}>
                 <ChevronDown size={21} />
@@ -807,21 +716,80 @@ function PortalContent() {
             <div className="kp-below-fold">
               <MessagingDemo />
               <section className="kp-features" aria-label={t('Tính năng Kivuno')}>
+                <div className="kp-feature-heading">
+                  <span className="kp-eyebrow">
+                    {t('Cùng một không gian. Nhiều khả năng hơn.')}
+                  </span>
+                  <span>01—04 / Kivuno</span>
+                </div>
+                <article className="kp-feature sade">
+                  <div className="kp-feature-copy">
+                    <span className="kp-feature-index">01 / SADE</span>
+                    <h2>
+                      {t('Cả đội vào việc.')}
+                      <br />
+                      {t('Cùng một mục tiêu.')}
+                    </h2>
+                    <p>
+                      {t(
+                        'Sade chia việc ngay trong Chat, phối hợp các trợ lý AI và nhờ một AI khác kiểm tra kết quả. Code đổi, review cũng phải cập nhật.',
+                      )}
+                    </p>
+                  </div>
+                  <div className="kp-sade-visual glass">
+                    <span className="kp-sade-icon">
+                      <Workflow size={36} strokeWidth={1.3} />
+                    </span>
+                    <div className="kp-sade-heading">
+                      <strong>Sade</strong>
+                      <span>{t('Điều phối trong Chat')}</span>
+                    </div>
+                    <div className="kp-sade-flow">
+                      <span>
+                        <i />
+                        {t('Chia việc')}
+                        <small>Codex · Claude · Gemini</small>
+                      </span>
+                      <ArrowRight size={18} />
+                      <span>
+                        <i />
+                        {t('Kiểm tra độc lập')}
+                        <small>{t('Review theo phiên bản code')}</small>
+                      </span>
+                    </div>
+                    <div className="kp-feature-note">
+                      <ShieldCheck size={14} />
+                      {t('Bạn giữ quyền quyết định.')}
+                    </div>
+                  </div>
+                </article>
                 <article className="kp-feature machines">
                   <div className="kp-feature-copy">
+                    <span className="kp-feature-index">02 / {t('KẾT NỐI')}</span>
                     <h2>
                       {t('Một đội.')}
                       <br />
                       {t('Nhiều máy.')}
                     </h2>
+                    <p>
+                      {t(
+                        'Làm việc trên máy của bạn, máy SSH hoặc máy đồng đội. Nhóm dùng chung cuộc trò chuyện, mỗi phần việc có người phụ trách rõ ràng.',
+                      )}
+                    </p>
                   </div>
                   <div className="kp-machine-map glass" aria-label={t('Minh họa kết nối máy')}>
                     <div className="kp-machine-node lead">
                       <Laptop />
                       <span>{t('Máy của bạn')}</span>
                     </div>
-                    <span className="kp-wire wire-a" />
-                    <span className="kp-wire wire-b" />
+                    <svg
+                      className="kp-machine-links"
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <path d="M18 50L82 25M18 50L82 75" />
+                    </svg>
                     <div className="kp-machine-node remote">
                       <Server />
                       <span>{t('Máy SSH')}</span>
@@ -854,16 +822,28 @@ function PortalContent() {
                     </div>
                   </div>
                   <div className="kp-feature-copy">
+                    <span className="kp-feature-index">03 / CONTEXT</span>
                     <h2>
                       {t('Công việc tiếp tục.')}
                       <br />
                       {t('Context ở lại.')}
                     </h2>
+                    <p>
+                      {t(
+                        'Khi usage chạm ngưỡng dự trữ, Kivuno bàn giao checkpoint và bước tiếp theo. Đồng đội tiếp tục từ đúng chỗ bạn dừng.',
+                      )}
+                    </p>
                   </div>
                 </article>
                 <article className="kp-feature aegis" id="aegis">
                   <div className="kp-feature-copy">
+                    <span className="kp-feature-index">04 / {t('QUYỀN KIỂM SOÁT')}</span>
                     <h2>{t('Quyền do bạn giữ.')}</h2>
+                    <p>
+                      {t(
+                        'Duyệt thay đổi và quản lý quyền trước khi thực thi. AEGIS cung cấp bằng chứng xác minh trên Avalanche Fuji testnet khi được bật.',
+                      )}
+                    </p>
                   </div>
                   <div
                     className="kp-aegis-proof glass"
@@ -874,7 +854,7 @@ function PortalContent() {
                     </div>
                     <div>
                       <strong>AEGIS</strong>
-                      <span>Avalanche Fuji</span>
+                      <span>Avalanche Fuji · testnet</span>
                     </div>
                     <div className="kp-proof-states">
                       <span>
@@ -893,7 +873,22 @@ function PortalContent() {
                   </div>
                 </article>
               </section>
-              <WorkspaceDemo />
+              <PortalGroupChat />
+              <section className="kp-plans-teaser" aria-labelledby="plans-teaser-title">
+                <div>
+                  <span className="kp-eyebrow">FREE / PLUS / MAX</span>
+                  <h2 id="plans-teaser-title">{t('Thêm chỗ cho cả đội.')}</h2>
+                  <p>
+                    {t(
+                      'Chọn số hồ sơ AI và quy mô nhóm phù hợp. Xem hạn mức, ví thanh toán và gói hiện tại trong cùng một nơi.',
+                    )}
+                  </p>
+                </div>
+                <a className="kp-plans-link" href="/billing">
+                  {t('Khám phá các gói')}
+                  <ArrowRight size={21} />
+                </a>
+              </section>
               <UpdatePatches />
             </div>
           </main>
@@ -905,13 +900,11 @@ function PortalContent() {
               {footerArtReady && (
                 <img
                   className="kp-hivemind-art"
-                  src="/art/kivuno-hivemind.png"
-                  alt={t(
-                    'Tranh biểu hiện trừu tượng: những nét mint và trắng ngà vừa kết nối vừa tách rời quanh một khoảng trống, gợi nhiều cá thể cùng suy nghĩ.',
-                  )}
+                  src="/art/kivuno-prism.svg"
+                  alt={t('Dải kính khúc xạ đan vào nhau với ánh tím và lime.')}
                   decoding="async"
-                  width="1536"
-                  height="1024"
+                  width="1000"
+                  height="1000"
                 />
               )}
               <div className="kp-footer-top">

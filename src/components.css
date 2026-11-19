@@ -55,7 +55,7 @@
   flex: 1;
   min-width: 35px;
   height: 6px;
-  accent-color: var(--mint, #8ce8cf);
+  accent-color: var(--mint, #d5ff5f);
 }
 .member-quota-window strong {
   font-size: 11px;

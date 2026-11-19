@@ -5,8 +5,8 @@
 }
 .neralu-mode button[aria-pressed='true'],
 .neralu-mode button[aria-pressed='true']:hover:not(:disabled) {
-  background: var(--lime);
-  color: #10211b;
+  background: var(--action-fill, #d5ff5f);
+  color: var(--action-ink, #222619);
 }
 .shared-groups {
   display: grid;
@@ -41,7 +41,7 @@
 }
 .shared-group-link[aria-current] {
   border-color: var(--line);
-  background: var(--surface);
+  background: var(--panel-2);
 }
 .shared-group-room {
   min-width: 0;

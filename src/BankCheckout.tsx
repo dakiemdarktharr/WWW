@@ -236,6 +236,7 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
               type="button"
               className="billing-secondary bank-plan"
               aria-label={'Chọn ' + planName(plan)}
+              aria-pressed={order?.plan === plan}
               disabled={busy}
               onClick={() => void run(() => choose(plan))}
             >
