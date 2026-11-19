@@ -3,6 +3,12 @@ on:
   # Verification runs locally for this free-only alpha. Hosted runners are
   # opt-in so a private repository cannot silently consume paid Actions minutes.
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Verification platform
+        type: choice
+        default: desktop
+        options: [desktop, macos]
 permissions:
   contents: read
 jobs:
@@ -10,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(inputs.platform == 'macos' && '["macos-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     steps:
@@ -22,6 +28,8 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
+      - if: runner.os == 'macOS'
+        run: node -p 'JSON.stringify({platform:process.platform,arch:process.arch,node:process.version})'
       - run: npm run check
       - if: runner.os == 'Linux'
         run: npx playwright install --with-deps chromium
@@ -29,4 +37,10 @@ jobs:
         run: npm run test:cloud
       - if: runner.os == 'Linux'
         run: npm run test:portal
+      - if: runner.os == 'macOS'
+        run: npx playwright install chromium
+      - if: runner.os == 'macOS'
+        run: npm run test:desktop
+      - if: runner.os == 'macOS'
+        run: npm run test:collaboration
       - run: npm audit --omit=dev --audit-level=high

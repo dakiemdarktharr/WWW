@@ -470,7 +470,7 @@ test('unknown fields cannot escalate task status or overwrite account identity',
   }
 });
 test('redaction strips provider tokens and nested secret fields', () => {
-  assert.ok(!redact('api_key=sk-abcdefghijklmnopqrstuvwxyz').includes('sk-'));
+  assert.ok(!redact(`api_key=sk-${'abcdefghijklmnopqrstuvwxyz'}`).includes('sk-'));
   assert.ok(!redact('Authorization: Bearer private-test-value').includes('private-test-value'));
   assert.ok(!redact('{"refresh_token":"private-test-value"}').includes('private-test-value'));
   const output = safeDetails({

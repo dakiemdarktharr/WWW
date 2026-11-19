@@ -11,6 +11,11 @@ import { Workspace } from '../server/service.ts';
 import { machineTool } from '../server/machine-tools.ts';
 import { git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
+import {
+  machineChunkBytes,
+  machineSnapshotProtocol,
+  snapshotDigest,
+} from '../server/runner-files.ts';
 
 const file = (name: string, value: string) => ({
   path: name,
@@ -170,6 +175,34 @@ test(
       await assert.rejects(f.run('sync', { files: [file(name, 'private')] }), /path/);
     const snapshot: any = await f.run('export');
     assert.deepEqual(snapshot.files, [file('sample.txt', 'remote edit')]);
+
+    const id = randomUUID();
+    const packet = Buffer.from(JSON.stringify([file('sample.txt', 'incomplete fixture')]));
+    await f.run('snapshot-upload', {
+      id,
+      offset: 0,
+      size: packet.length,
+      data: packet.subarray(0, 8).toString('base64'),
+    });
+    await assert.rejects(
+      f.run('snapshot-apply', {
+        id,
+        before: snapshotDigest(snapshot.files),
+        digest: createHash('sha256').update(packet).digest('hex'),
+      }),
+      /incomplete/,
+    );
+    await f.run('cancel');
+    await assert.rejects(
+      f.run('snapshot-upload', {
+        id,
+        offset: 8,
+        size: packet.length,
+        data: packet.subarray(8).toString('base64'),
+      }),
+      /unexpected chunk offset/,
+    );
+    assert.deepEqual(await f.run('export'), snapshot);
   },
 );
 
@@ -244,6 +277,8 @@ test(
     await git(repo, ['init']);
     await writeFile(path.join(repo, 'sample.txt'), 'base');
     await writeFile(path.join(repo, 'outside.txt'), 'outside');
+    const asset = Buffer.alloc(3 * 1024 * 1024, 0xa3);
+    await writeFile(path.join(repo, 'project-asset.png'), asset);
     await mkdir(path.join(repo, '.claude'));
     await writeFile(path.join(repo, '.claude', 'settings.json'), 'private');
     const project = store.put('project', {
@@ -306,6 +341,7 @@ test(
       await agent.executor.stop();
     });
     let exchanging = false;
+    const operations: string[] = [];
     async function pulse() {
       if (exchanging) return;
       exchanging = true;
@@ -314,12 +350,17 @@ test(
           epoch: agent.epoch,
           ready: true,
           busy: false,
-          version: 'tools-test',
+          version: machineSnapshotProtocol,
           events: agent.batch(),
           execution: agent.executor.metadata(),
         });
         await agent.acknowledge(result.ack, result.applied);
-        for (const command of result.commands) void agent.execute(command);
+        for (const command of result.commands) {
+          const operation = command.params?.operation;
+          if (operation) operations.push(operation);
+          assert.ok(Buffer.byteLength(JSON.stringify(command)) < 2 * machineChunkBytes);
+          void agent.execute(command);
+        }
       } finally {
         exchanging = false;
       }
@@ -333,6 +374,7 @@ test(
     assert.equal(machines[0].platform, process.platform);
     await use('sync');
     const target = path.join(f.root, 'target', 'remote-workspaces', task.id);
+    assert.ok((await readFile(path.join(target, 'project-asset.png'))).equals(asset));
     await assert.rejects(readFile(path.join(target, '.claude', 'settings.json')), {
       code: 'ENOENT',
     });
@@ -344,7 +386,14 @@ test(
       ],
     });
     assert.equal(result.stdout.trim(), process.platform);
+    await assert.rejects(use('sync'), /Remote files changed/);
+    assert.equal(
+      await readFile(path.join(target, 'sample.txt'), 'utf8'),
+      'fixed on ' + process.platform,
+    );
     await use('pull');
+    assert.ok(operations.filter((operation) => operation === 'snapshot-upload').length > 1);
+    assert.ok(operations.filter((operation) => operation === 'snapshot-read').length > 1);
     assert.equal(
       await readFile(path.join(repo, 'sample.txt'), 'utf8'),
       'fixed on ' + process.platform,

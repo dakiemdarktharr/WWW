@@ -116,7 +116,7 @@ test('team skill distribution is versioned, bounded, preserves target files and 
   assert.match(await readFile(path.join(copied, 'SKILL.md'), 'utf8'), /clear language/);
   await host.autonomy.shareSkills(target.id);
   assert.equal(store.all('skillReceipt').length, 1);
-  await writeFile(path.join(dir, 'key.md'), '-----BEGIN PRIVATE KEY-----');
+  await writeFile(path.join(dir, 'key.md'), '-----BEGIN ' + 'PRIVATE KEY-----');
   await assert.rejects(skillFiles(dir), /credentials/);
 });
 

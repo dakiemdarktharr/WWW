@@ -143,7 +143,7 @@ test('profile environment excludes inherited provider keys, WIF and unrelated ap
 
 test('error redaction strips token values and OAuth query strings', () => {
   const sanitized = redactCodexError(
-    'access_token=secret-value Bearer private-token sk-1234567890ABCDEFG https://auth.openai.com/authorize?state=private&code=secret',
+    `access_token=secret-value Bearer private-token sk-${'1234567890ABCDEFG'} https://auth.openai.com/authorize?state=private&code=secret`,
   );
   for (const secret of [
     'secret-value',

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DynamicTool } from './codex.ts';
 import type { Workspace } from './service.ts';
 import type { CodexSession, Task } from '../shared/types.ts';
@@ -7,6 +8,11 @@ import {
   exportRunnerFiles,
   validateRunnerFiles,
   applyRunnerFiles,
+  machineSnapshotLimits,
+  machineChunkBytes,
+  machinePacketBytes,
+  machineSnapshotProtocol,
+  snapshotDigest,
   type RunnerFile,
 } from './runner-files.ts';
 
@@ -54,6 +60,56 @@ const inputSchema = z
   .strict();
 type Snapshot = { id: string; local: RunnerFile[]; remote: RunnerFile[]; grantId: string };
 const inFlight = new WeakMap<Workspace, Set<string>>();
+const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+type ExecuteMachine = (operation: string, args: Record<string, unknown>) => Promise<any>;
+
+async function uploadSnapshot(call: ExecuteMachine, files: RunnerFile[], before: RunnerFile[]) {
+  const bytes = Buffer.from(JSON.stringify(files));
+  if (bytes.length > machinePacketBytes)
+    throw new DomainError('Machine snapshot exceeds its transfer limit.');
+  const id = randomUUID();
+  for (let offset = 0; offset < bytes.length; offset += machineChunkBytes) {
+    const part = bytes.subarray(offset, offset + machineChunkBytes);
+    const ack = await call('snapshot-upload', {
+      id,
+      offset,
+      size: bytes.length,
+      data: part.toString('base64'),
+    });
+    if (ack?.offset !== offset + part.length)
+      throw new DomainError('Machine acknowledged an unexpected snapshot offset.');
+  }
+  return call('snapshot-apply', { id, digest: digest(bytes), before: snapshotDigest(before) });
+}
+
+async function downloadSnapshot(call: ExecuteMachine) {
+  const id = randomUUID();
+  const { size, digest: expected } = z
+    .object({
+      size: z.number().int().min(1).max(machinePacketBytes),
+      digest: z.string().regex(/^[a-f0-9]{64}$/),
+    })
+    .strict()
+    .parse(await call('snapshot-export', { id }));
+  const bytes = Buffer.alloc(size);
+  for (let offset = 0; offset < size; offset += machineChunkBytes) {
+    const result = await call('snapshot-read', { id, offset });
+    if (
+      typeof result?.data !== 'string' ||
+      result.data.length > Math.ceil(machineChunkBytes / 3) * 4
+    )
+      throw new DomainError('Invalid machine snapshot chunk.');
+    const part = Buffer.from(result.data, 'base64');
+    if (
+      part.length !== Math.min(machineChunkBytes, size - offset) ||
+      part.toString('base64') !== result.data
+    )
+      throw new DomainError('Machine snapshot chunk has unexpected bytes.');
+    part.copy(bytes, offset);
+  }
+  if (digest(bytes) !== expected) throw new DomainError('Machine snapshot digest does not match.');
+  return validateRunnerFiles(JSON.parse(bytes.toString('utf8')), machineSnapshotLimits);
+}
 
 export async function machineTool(
   host: Workspace,
@@ -117,12 +173,12 @@ export async function machineTool(
     const prior = host.store
       .all<Snapshot>('machineSnapshot')
       .find((entry) => entry.id === key && entry.grantId === grant.id);
-    let args = values.args;
+    const chunked = node.version?.split(/\s+/).includes(machineSnapshotProtocol) ?? false;
+    const limits = chunked ? machineSnapshotLimits : undefined;
     let local: RunnerFile[] | undefined;
     if (values.operation === 'sync') {
       if (!root) throw new DomainError('Start an owned task before synchronizing to a machine.');
-      local = await exportRunnerFiles(root);
-      args = { files: local, before: prior?.remote || [] };
+      local = await exportRunnerFiles(root, limits);
     }
     current();
     watchdog = setInterval(() => {
@@ -149,44 +205,59 @@ export async function machineTool(
       }
     }, 250);
     watchdog.unref();
-    const result = await host.runners.call(
-      {
-        id: session.id,
-        memberId: session.memberId,
-        nodeId: node.id,
-        uncertain: (message: string) => {
-          host.log(message, task.id, session.memberId, 'machine', session.projectId);
+    const call: ExecuteMachine = async (operation, args) => {
+      current();
+      const result = await host.runners.call(
+        {
+          id: session.id,
+          memberId: session.memberId,
+          nodeId: node.id,
+          uncertain: (message: string) => {
+            host.log(message, task.id, session.memberId, 'machine', session.projectId);
+          },
         },
-      },
-      {
-        action: 'execute',
-        params: {
-          grantId: grant.id,
-          projectId: session.projectId,
-          taskId: task.id,
-          operation: values.operation === 'pull' ? 'export' : values.operation,
-          args,
+        {
+          action: 'execute',
+          params: {
+            grantId: grant.id,
+            projectId: session.projectId,
+            taskId: task.id,
+            operation,
+            args,
+          },
         },
-      },
-    );
-    current();
-    // Re-read the advertised grant after the response; it may have been revoked.
-    const now = host.runners.assertReady(node.id).execution;
-    if (!now || now.id !== grant.id || Date.parse(now.expiresAt) <= Date.now())
-      throw new DomainError(
-        'Machine access expired during the operation. Inspect retained output on the machine.',
       );
+      current();
+      const now = host.runners.assertReady(node.id).execution;
+      if (!now || now.id !== grant.id || Date.parse(now.expiresAt) <= Date.now())
+        throw new DomainError(
+          'Machine access expired during the operation. Inspect retained output on the machine.',
+        );
+      return result;
+    };
     if (values.operation === 'sync' || values.operation === 'pull') {
-      const files = validateRunnerFiles(result?.files);
+      let files: RunnerFile[];
       if (values.operation === 'sync') {
-        if (JSON.stringify(files) !== JSON.stringify(local))
-          throw new DomainError('Machine did not acknowledge the exact source snapshot.');
+        if (chunked) {
+          const response = await uploadSnapshot(call, local!, prior?.remote || []);
+          if (response?.digest !== snapshotDigest(local!) || response.platform !== grant.platform)
+            throw new DomainError('Machine did not acknowledge the exact source snapshot.');
+          files = local!;
+        } else {
+          const response = await call('sync', { files: local, before: prior?.remote || [] });
+          files = validateRunnerFiles(response?.files);
+          if (JSON.stringify(files) !== JSON.stringify(local))
+            throw new DomainError('Machine did not acknowledge the exact source snapshot.');
+        }
       } else {
         if (!prior || !root)
           throw new DomainError(
             'No matching source snapshot; remote output requires explicit recovery.',
           );
-        await applyRunnerFiles(root, prior.local, files, task.scope, current);
+        files = chunked
+          ? await downloadSnapshot(call)
+          : validateRunnerFiles((await call('export', values.args))?.files);
+        await applyRunnerFiles(root, prior.local, files, task.scope, current, limits);
         local = files;
       }
       host.store.put('machineSnapshot', {
@@ -202,6 +273,7 @@ export async function machineTool(
         arch: grant.arch,
       };
     }
+    const result = await call(values.operation, values.args);
     host.log(
       `Machine ${node.name}: ${values.operation} completed.`,
       task.id,

@@ -9,6 +9,7 @@ import {
   applyRunnerFiles,
   exportRunnerFiles,
   validateRunnerFiles,
+  machineSnapshotProtocol,
   type RunnerFile,
 } from './runner-files.ts';
 import { git } from './git.ts';
@@ -376,7 +377,7 @@ export async function runMachine(config: RunnerConfig) {
             epoch: agent.epoch,
             ready: true,
             busy: agent.busy,
-            version: probe.version,
+            version: [machineSnapshotProtocol, probe.version].filter(Boolean).join(' '),
             execution: agent.executor.metadata(),
             events: agent.batch(),
           }),

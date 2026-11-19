@@ -11,7 +11,30 @@ export interface RunnerFile {
   data: string;
   hash: string;
 }
+type SnapshotLimits = { file: number; total: number; scanCredentials?: boolean };
+const inlineLimits: SnapshotLimits = { file: 512 * 1024, total: 2 * 1024 * 1024 };
+export const machineSnapshotLimits: SnapshotLimits = {
+  file: 4 * 1024 * 1024,
+  total: 8 * 1024 * 1024,
+  scanCredentials: true,
+};
+export const machineChunkBytes = 768 * 1024;
+export const machinePacketBytes = 16 * 1024 * 1024;
+export const machineSnapshotProtocol = 'snapshot-chunks/1';
 const digest = (value: Buffer) => createHash('sha256').update(value).digest('hex');
+function checkCredentials(data: Buffer) {
+  if (
+    /\b(?:sk-|gh[opusr]_)[A-Za-z0-9_-]{10,}|-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/.test(
+      data.toString(),
+    )
+  )
+    throw new DomainError(
+      'Repository snapshot may contain credentials. Remove secrets before remote execution.',
+    );
+}
+export function snapshotDigest(files: RunnerFile[]) {
+  return digest(Buffer.from(JSON.stringify(files.map(({ path, hash }) => [path, hash]))));
+}
 function safeFile(name: string) {
   if (
     isPrivateCredentialPath(name) ||
@@ -47,7 +70,10 @@ async function regularParents(root: string, name: string) {
     current = path.dirname(current);
   }
 }
-export async function exportRunnerFiles(root: string): Promise<RunnerFile[]> {
+export async function exportRunnerFiles(
+  root: string,
+  limits = inlineLimits,
+): Promise<RunnerFile[]> {
   const names = (await git(root, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']))
     .split('\0')
     .filter(Boolean);
@@ -66,25 +92,22 @@ export async function exportRunnerFiles(root: string): Promise<RunnerFile[]> {
     if (!stat) continue;
     if (!stat.isFile() || stat.isSymbolicLink())
       throw new DomainError('Remote execution requires regular repository files.');
-    if (stat.size > 512 * 1024)
+    if (stat.size > limits.file)
       throw new DomainError(
-        'A runner source file exceeds 512 KB. Keep large data in its existing storage.',
+        `A runner source file exceeds ${limits.file / 1024} KiB. Keep large data in its existing storage.`,
       );
     const data = await readFile(location);
     bytes += data.length;
-    if (
-      /\b(?:sk-|gh[opusr]_)[A-Za-z0-9_-]{10,}|-----BEGIN .*PRIVATE KEY-----/.test(data.toString())
-    )
+    checkCredentials(data);
+    if (bytes > limits.total || output.length >= 2000)
       throw new DomainError(
-        'Repository snapshot may contain credentials. Remove secrets before remote execution.',
+        `Remote source snapshot exceeds ${limits.total / 1024 ** 2} MiB or 2,000 files.`,
       );
-    if (bytes > 2 * 1024 * 1024 || output.length >= 2000)
-      throw new DomainError('Remote source snapshot exceeds 2 MB or 2,000 files.');
     output.push({ path: name, data: data.toString('base64'), hash: digest(data) });
   }
   return output;
 }
-export function validateRunnerFiles(raw: unknown): RunnerFile[] {
+export function validateRunnerFiles(raw: unknown, limits = inlineLimits): RunnerFile[] {
   if (!Array.isArray(raw) || raw.length > 2000) throw new DomainError('Invalid runner snapshot.');
   let bytes = 0;
   const names = new Set<string>();
@@ -104,12 +127,13 @@ export function validateRunnerFiles(raw: unknown): RunnerFile[] {
     const data = Buffer.from(file.data, 'base64');
     bytes += data.length;
     if (
-      data.length > 512 * 1024 ||
-      bytes > 2 * 1024 * 1024 ||
+      data.length > limits.file ||
+      bytes > limits.total ||
       data.toString('base64') !== file.data ||
       digest(data) !== file.hash
     )
       throw new DomainError('Runner snapshot integrity check failed.');
+    if (limits.scanCredentials) checkCredentials(data);
     return { path: file.path, data: file.data, hash: file.hash };
   });
 }
@@ -119,8 +143,9 @@ export async function applyRunnerFiles(
   after: RunnerFile[],
   scopes: string[],
   guard: () => void,
+  limits = inlineLimits,
 ) {
-  validateRunnerFiles(after);
+  validateRunnerFiles(after, limits);
   const initial = new Map(before.map((file) => [file.path, file]));
   const final = new Map(after.map((file) => [file.path, file]));
   const changes = [...new Set([...initial.keys(), ...final.keys()])].filter(

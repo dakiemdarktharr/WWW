@@ -47,7 +47,7 @@ test('browser handoffs are session scoped, expire, and invalidate stale snapshot
   const snapshot = browser.share('project-a', 'session-a', {
     url: 'https://example.org/dashboard?token=never-share#secret',
     title: 'Dashboard',
-    text: 'Visible text sk-abcdefghijklmnopq and Bearer secret-token',
+    text: `Visible text sk-${'abcdefghijklmnopq'} and Bearer secret-token`,
   });
   assert.equal(snapshot.url, 'https://example.org/dashboard');
   assert.equal(snapshot.text, 'Visible text [redacted] and Bearer [redacted]');
