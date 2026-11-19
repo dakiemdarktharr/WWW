@@ -62,6 +62,16 @@ Lượt bổ sung dùng câu tiếng Việt không dấu gặp ngưỡng dự tr
 
 Ở commit `00ba51b`, Windows qua 80 bài Shared Groups, quota và session, cùng bước build. macOS arm64 qua 366 bài, bỏ qua sáu bài theo nền tảng, và qua build, Electron và giao diện Shared Groups. Bộ 1.000 tin với planner mô phỏng đạt trên cả hai. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44534005500)
 
+### Giới hạn chỉ đọc cho từng tin nhắn
+
+Trong Shared Groups, chọn project ở **Ask Sade** rồi chọn **Read-only request** để giới hạn cả workflow. Quyền này đi cùng mã tin nhắn và giữ qua lần gửi lại hoặc bước trả lời câu hỏi của planner. Cả planner trên desktop và máy chủ kiểm tra kế hoạch. Máy chủ chặn tác vụ ghi kể cả khi harness có quyền ghi cho project. Kế hoạch chỉ đọc vẫn giao được cho harness đã được cấp quyền của người khác.
+
+Hai đầu ra Qwen đã ghi ở ca quota không dấu và tiếng Anh kỹ thuật từng đề xuất ghi file khi yêu cầu là chỉ đọc. Khi phát lại nguyên kế hoạch đó qua Shared Groups với **Read-only request** đã chọn và cả hai grant đều có quyền ghi, backend chặn cả hai và giao 0 tác vụ. Đây là phát lại kế hoạch thật với tài khoản nhóm mô phỏng. [Dữ liệu đầu ra Qwen](https://github.com/dakiemdarktharr/WWW/actions/runs/44544213702)
+
+Planner nhận phản hồi ngay trong lượt nếu tách bước kiểm thử trên máy ghép cặp thành tác vụ phụ thuộc mà harness được chỉ định không thể chạy trên OS đó. Bài kiểm tra hai workspace dùng harness mô phỏng để gửi kế hoạch tách bước, nhận lỗi rồi nộp lại một tác vụ với đầy đủ kiểm tra trên máy ghép cặp. Sade giữ bước review tích hợp hiện có. Với hội thoại chỉ có một harness được cấp quyền, planner cũng nhận phản hồi khi kế hoạch yêu cầu review độc lập bản sửa của chính harness đó.
+
+Ở commit `afcb0a0`, Windows qua 90 bài hồi quy Shared Groups, session và bộ phân công, gồm bộ 1.000 tin với planner mô phỏng. Build và bài giao diện `test:collaboration` cũng đạt. Bài giao diện chọn **Read-only request**, xác nhận planner nhận các grant với quyền ghi bị giới hạn, trả lời câu hỏi và tiếp tục trong cùng workflow.
+
 ### Phương án dự phòng được nêu trong tin nhắn
 
 Với yêu cầu “nhờ Gemini đọc file này, hết lượt thì để Claude của Bình đọc”, Sade giữ một tác vụ với một harness chính và một harness dự phòng. Sade ưu tiên lượt còn dùng được của Gemini trước các việc người dùng để nhóm tự phân công. Nếu Gemini hết lượt được cấp hoặc bị kiểm tra quota từ chối trước khi chạy, Claude nhận cùng phạm vi và điều kiện nếu quyền của Claude còn hiệu lực. Sade chỉ tự chọn người dự phòng khi người gửi giao quyền lựa chọn đó.
