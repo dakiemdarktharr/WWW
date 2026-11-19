@@ -15,6 +15,7 @@ import { reviewDigest } from './sade.ts';
 
 const id = z.string().uuid();
 export const projectKey = z.string().regex(/^[a-f0-9]{64}$/);
+export const inlineSharedSadeTeamLimit = 32;
 const short = z.string().trim().min(1).max(100);
 const platform = z.enum(['win32', 'darwin', 'linux']);
 export const groupSadeGrant = z
@@ -135,6 +136,7 @@ export const groupSadeCommands = [
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
       reviewRevision: z.literal(true).optional(),
+      rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
@@ -1062,6 +1064,39 @@ export class GroupSade {
           }
           job.reviewGrantId = reviewer?.id;
         }
+        const team =
+          job.phase === 'plan'
+            ? run.roster.flatMap((grantId) => {
+                const entry = grants.get(grantId);
+                if (!entry || !this.usable(entry, group, false)) return [];
+                const teammate = group.teammates.find(
+                  (member) =>
+                    member.ownerId === entry.ownerId && member.localId === entry.teammateId,
+                )!;
+                return [
+                  {
+                    id: entry.id,
+                    name: entry.label,
+                    provider: teammate.provider,
+                    role: entry.role,
+                    platform: entry.platform,
+                    pairedPlatform: entry.pairedPlatform,
+                    allowWrites: entry.allowWrites,
+                    owner: group.people.find((person) => person.id === entry.ownerId)!.name,
+                    ownedByRequester: entry.ownerId === run.authorId,
+                  },
+                ];
+              })
+            : [];
+        if (team.length > inlineSharedSadeTeamLimit && !command.rosterLookup) {
+          const summary =
+            'Update this desktop to let Sade use all granted Shared Groups teammates.';
+          if (job.summary !== summary) {
+            job.summary = summary;
+            touched = true;
+          }
+          continue;
+        }
         job.state = 'running';
         job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
         job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
@@ -1069,27 +1104,6 @@ export class GroupSade {
         job.deadline = this.now() + leaseMs;
         this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
         touched = true;
-        const team = run.roster.flatMap((grantId) => {
-          const entry = grants.get(grantId);
-          const teammate = group.teammates.find(
-            (member) => member.ownerId === entry?.ownerId && member.localId === entry?.teammateId,
-          );
-          return entry && teammate && this.usable(entry, group, false)
-            ? [
-                {
-                  id: entry.id,
-                  name: entry.label,
-                  provider: teammate.provider,
-                  role: entry.role,
-                  platform: entry.platform,
-                  pairedPlatform: entry.pairedPlatform,
-                  allowWrites: entry.allowWrites,
-                  owner: group.people.find((person) => person.id === entry.ownerId)!.name,
-                  ownedByRequester: entry.ownerId === run.authorId,
-                },
-              ]
-            : [];
-        });
         const reviewedJob = job.reviewOf
           ? run.jobs.find((other) => other.id === job.reviewOf)
           : undefined;
@@ -1143,6 +1157,7 @@ export class GroupSade {
     }
     return {
       supportsReviewRevision: true as const,
+      supportsRosterLookup: true as const,
       active,
       delivery,
       reviews,

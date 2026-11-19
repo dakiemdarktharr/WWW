@@ -635,6 +635,7 @@ async function sharedSadeLoop(generation, owner) {
   const current = () =>
     !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
   let supportsReviewRevision = false;
+  let supportsRosterLookup = false;
   while (current()) {
     if (pendingSharedSadeRevocations) {
       await pause(250);
@@ -673,6 +674,7 @@ async function sharedSadeLoop(generation, owner) {
           action: 'sade-poll',
           patchHandoff: true,
           ...(supportsReviewRevision ? { reviewRevision: true } : {}),
+          ...(supportsRosterLookup ? { rosterLookup: true } : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -683,6 +685,7 @@ async function sharedSadeLoop(generation, owner) {
       );
       if (!snapshotCurrent()) continue;
       supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
+      supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
       if (response.ok)
         await localSharedSade({
           action: 'exchange',

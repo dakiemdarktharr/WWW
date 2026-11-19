@@ -10,6 +10,8 @@ Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không d
 
 Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. **Sade progress** hiển thị tên harness cùng tên chủ tài khoản. Nếu còn mơ hồ, người gửi dùng **Reply to Sade**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
 
+Khi project có hơn 32 harness đã cấp quyền, planner tra cứu theo từng trang bằng tên, chủ tài khoản, provider hoặc hệ điều hành. Kết quả dùng mã teammate của lượt lập kế hoạch và nhận được tên tiếng Việt không dấu. Nếu desktop chưa hỗ trợ tra cứu, yêu cầu chờ ở trạng thái xếp hàng và giữ nguyên số lượt. Bài kiểm thử hai workspace dùng 33 harness, gồm hai harness trùng tên của hai chủ khác nhau. Planner tìm đúng harness thứ 33 và giao việc cho desktop đã cấp quyền. Kết quả là bằng chứng giao thức với harness mô phỏng.
+
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
 Khi chia việc, Sade tính khối lượng của các tác vụ đã chỉ định trước khi chọn harness cho việc còn trống. Với tác vụ review trong kế hoạch, Sade lần theo cả các bước phụ thuộc gián tiếp và loại profile của chủ tài khoản đã nhận quyền ghi vào các file thuộc phạm vi review. Người chỉ chạy test hoặc viết file ngoài phạm vi đó vẫn đủ điều kiện. Sade kiểm tra lại trước khi giao một lượt review đã được lập từ bản cũ.

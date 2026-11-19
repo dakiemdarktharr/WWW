@@ -19,6 +19,7 @@ let revoked = false;
 let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
 let sharedPolls = 0;
+const rosterCapabilities: unknown[] = [];
 const reportedSharedJobs: string[] = [];
 let releaseFirstSharedFinish!: () => void;
 const firstSharedFinish = new Promise<void>((resolve) => {
@@ -86,7 +87,10 @@ const fixture = createServer(async (request, response) => {
     response.end('{}');
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-poll') {
     sharedPolls++;
-    response.end(JSON.stringify({ active: [], reviews: [], updates: [] }));
+    rosterCapabilities.push(payload.rosterLookup);
+    response.end(
+      JSON.stringify({ active: [], reviews: [], updates: [], supportsRosterLookup: true }),
+    );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
     response.statusCode = 503;
     response.end(JSON.stringify({ error: 'Shared Groups service is reconnecting.' }));
@@ -188,6 +192,8 @@ try {
     const pollsBeforeRevoke = sharedPolls;
     releaseFirstSharedFinish();
     await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
+    assert.equal(rosterCapabilities[0], undefined);
+    await expect.poll(() => rosterCapabilities.includes(true), { timeout: 15000 }).toBe(true);
     assert.ok(!reportedSharedJobs.includes(withdrawn.id));
     assert.ok(store.get('sharedSadeLocalReceipt', withdrawn.id));
   } finally {

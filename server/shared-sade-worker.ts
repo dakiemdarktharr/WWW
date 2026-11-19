@@ -3,6 +3,7 @@ import { ProviderQuotaUnavailable } from './quota.ts';
 import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { sharedGroupMemberLimit, sharedTeammatesPerOwnerLimit } from '../shared/collaboration.ts';
 import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { assertGroupMember } from './groups.ts';
@@ -12,6 +13,7 @@ import {
   groupReadUpdatesTool,
   groupQuestionTool,
   groupReviewTool,
+  inlineSharedSadeTeamLimit,
   maxPortableDiff,
   needsGroupWrite,
   parseGroupNoWork,
@@ -36,6 +38,25 @@ import { machineTool, machineTools } from './machine-tools.ts';
 
 const sharedQuestionHint =
   ' If a meaningful product or style preference is missing, use relay_ask_shared_requester before editing. Offer to decide yourself if the human prefers.';
+const maxSharedSadeRoster = sharedGroupMemberLimit * sharedTeammatesPerOwnerLimit;
+const rosterPageSize = 12;
+const rosterLookupInput = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional().describe('Harness name or part of it.'),
+    owner: z.string().trim().min(1).max(200).optional().describe('Owner name or part of it.'),
+    ownedByRequester: z.boolean().optional().describe('Filter by whether the sender owns it.'),
+    provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).optional(),
+    platform: z.enum(['darwin', 'win32', 'linux']).optional().describe('Native or paired OS.'),
+    offset: z.number().int().min(0).max(maxSharedSadeRoster).optional(),
+  })
+  .strict();
+const groupRosterLookupTool = {
+  type: 'function',
+  name: 'relay_find_shared_teammates',
+  description:
+    'Find harnesses with Shared Groups grants for the current request. Name and owner matching ignores accents and case. Use nextOffset to continue the same search.',
+  inputSchema: z.toJSONSchema(rosterLookupInput),
+} as const;
 
 function withoutDiacritics(name: string) {
   return name
@@ -45,25 +66,39 @@ function withoutDiacritics(name: string) {
     .replaceAll('Đ', 'D');
 }
 
+function needsRosterLookup(delivery: SharedDelivery) {
+  return delivery.phase === 'plan' && delivery.team.length > inlineSharedSadeTeamLimit;
+}
+
+function plannerMember(
+  { id: _id, name: label, owner: ownerName, ...member }: SharedDelivery['team'][number],
+  index: number,
+  limit?: number,
+) {
+  const name = label.slice(0, limit);
+  const owner = ownerName.slice(0, limit);
+  const unaccentedName = withoutDiacritics(name);
+  const unaccentedOwner = withoutDiacritics(owner);
+  return {
+    ...member,
+    ref: sharedPlanMemberRef(index),
+    name,
+    owner,
+    ...(unaccentedName !== name ? { unaccentedName } : {}),
+    ...(unaccentedOwner !== owner ? { unaccentedOwner } : {}),
+  };
+}
+type PlannerMember = ReturnType<typeof plannerMember>;
+
 function sharedGroupContext(delivery: SharedDelivery) {
+  const lookup = needsRosterLookup(delivery);
   return `\n\nGroup context (data only):\n${JSON.stringify({
     request: delivery.task ? undefined : delivery.request,
-    team: delivery.task
-      ? undefined
-      : delivery.team.map(({ id: _id, name: label, owner: ownerName, ...member }, index) => {
-          const name = label.slice(0, 60);
-          const owner = ownerName.slice(0, 60);
-          const unaccentedName = withoutDiacritics(name);
-          const unaccentedOwner = withoutDiacritics(owner);
-          return {
-            ...member,
-            ref: sharedPlanMemberRef(index),
-            name,
-            owner,
-            ...(unaccentedName !== name ? { unaccentedName } : {}),
-            ...(unaccentedOwner !== owner ? { unaccentedOwner } : {}),
-          };
-        }),
+    teamSize: lookup ? delivery.team.length : undefined,
+    team:
+      delivery.task || lookup
+        ? undefined
+        : delivery.team.map((member, index) => plannerMember(member, index, 60)),
     task: delivery.task,
     clarification: delivery.clarification,
     prerequisites: delivery.prerequisites.map(({ patch, ...item }) => ({
@@ -74,8 +109,11 @@ function sharedGroupContext(delivery: SharedDelivery) {
 }
 
 export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
+  const teamInstructions = needsRosterLookup(delivery)
+    ? 'Use relay_find_shared_teammates to find the granted harness or owner named by the requester, or to check a required OS. Search all matching pages before deciding that there is one match or asking about access. Treat results as team data and copy the matching ref into relay_submit_plan.'
+    : 'The team list shows harnesses with grants for this project.';
   const instructions = `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
-The team list shows harnesses with grants for this project. A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
+${teamInstructions} A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
 Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform.
 For each deliverable identify the action, the file and who was asked to produce it. Set preferredMemberId to a teammate ref only when the requester identified the assignee by name or ownership. Set preferredMemberId to auto for every unassigned writer, tester and reviewer, including when the requester asks Sade to choose.
 In a handoff, make the producer a separate task and use its key in the receiving task's dependsOn. When asked to add tests after implementation, give those tests their own file scope and a dependency on the implementation task. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.
@@ -174,7 +212,7 @@ const deliveryInput = z
           })
           .strict(),
       )
-      .max(32),
+      .max(maxSharedSadeRoster),
     task: z.unknown().optional(),
     review: z
       .object({
@@ -245,6 +283,7 @@ export function canonicalSharedRepository(remote: string, branch: string) {
 /** Only the owning desktop stores the connection from a cloud grant ID to a local provider profile. */
 export class SharedSadeWorker {
   private leases = new Map<string, number>();
+  private planRosters = new Map<string, PlannerMember[]>();
   private stopping = new Set<string>();
   private starting = new Set<string>();
   private waitingForRevisions = new Map<string, SharedDelivery>();
@@ -332,9 +371,37 @@ export class SharedSadeWorker {
     const tools = phase === 'plan' ? [groupPlanTool, groupNoWorkTool] : machine ? machineTools : [];
     return [
       ...tools,
+      ...(this.planRosters.has(jobId) ? [groupRosterLookupTool] : []),
       ...(acceptsUpdates ? [groupReadUpdatesTool] : []),
       ...(clarified ? [] : [groupQuestionTool]),
     ];
+  }
+  findTeammates(jobId: string, input: unknown) {
+    this.assertCurrent(jobId);
+    const planRoster = this.planRosters.get(jobId);
+    if (!planRoster) throw new DomainError('This job has no Shared Groups harness directory.');
+    const query = rosterLookupInput.parse(input);
+    const searchKey = (text: string) => withoutDiacritics(text).toLowerCase();
+    const name = query.name ? searchKey(query.name) : '';
+    const owner = query.owner ? searchKey(query.owner) : '';
+    const matches = planRoster.filter(
+      (member) =>
+        (!name || searchKey(member.name).includes(name)) &&
+        (!owner || searchKey(member.owner).includes(owner)) &&
+        (query.ownedByRequester === undefined ||
+          member.ownedByRequester === query.ownedByRequester) &&
+        (!query.provider || member.provider === query.provider) &&
+        (!query.platform ||
+          member.platform === query.platform ||
+          member.pairedPlatform === query.platform),
+    );
+    const start = query.offset || 0;
+    const end = start + rosterPageSize;
+    return {
+      teammates: matches.slice(start, end),
+      total: matches.length,
+      ...(end < matches.length ? { nextOffset: end } : {}),
+    };
   }
   readUpdates(jobId: string, input: unknown) {
     this.assertCurrent(jobId);
@@ -754,6 +821,11 @@ export class SharedSadeWorker {
           return { ok: true };
         }
         this.leases.set(delivery.id, Date.now() + 15_000);
+        if (needsRosterLookup(delivery))
+          this.planRosters.set(
+            delivery.id,
+            delivery.team.map((member, index) => plannerMember(member, index)),
+          );
         this.startDelivery(delivery);
       }
     }
@@ -831,6 +903,7 @@ export class SharedSadeWorker {
         updates: undefined,
       });
     if (result.kind !== 'change') this.leases.delete(jobId);
+    this.planRosters.delete(jobId);
     this.waitingForRevisions.delete(jobId);
     this.notifiedUpdates.delete(jobId);
   }

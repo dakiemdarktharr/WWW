@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import type { CodexSession, ProviderId, PlanTask, Task } from '../shared/types.ts';
+import type { CodexSession, Project, ProviderId, PlanTask, Task } from '../shared/types.ts';
 import type { SharedSadeRun } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
 import {
@@ -20,7 +20,10 @@ import path from 'node:path';
 import { CodexClient } from '../server/codex.ts';
 import { Workspace } from '../server/service.ts';
 import { git } from '../server/git.ts';
-import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
+import {
+  canonicalSharedRepository,
+  sharedGroupPlanningPrompt,
+} from '../server/shared-sade-worker.ts';
 import { generateKeyPairSync } from 'node:crypto';
 import { signMachineResult } from '../server/machine-signature.ts';
 import { MachineExecutor } from '../server/machine-execution.ts';
@@ -112,6 +115,7 @@ function fixture(
     deviceId = devices[index],
     readUpdates: { jobId: string; through: number }[] = [],
     waitingForRevisions?: string[],
+    rosterLookup?: true,
   ) =>
     call(
       index,
@@ -121,12 +125,14 @@ function fixture(
         active,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
+        ...(rosterLookup ? { rosterLookup } : {}),
         ...(options.taskUpdates ? { taskUpdates: true, readUpdates } : {}),
         waitingForRevisions,
       },
       deviceId,
     ) as {
       supportsReviewRevision?: true;
+      supportsRosterLookup?: true;
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
@@ -560,15 +566,17 @@ test(
       const hello = (await worker.execute({ action: 'snapshot' })) as any;
       for (const result of hello.results)
         cloud.finish(index, result.jobId, result.result, result.updatesRead);
-      const { supportsReviewRevision, ...packet } = cloud.poll(
+      const { supportsReviewRevision, supportsRosterLookup, ...packet } = cloud.poll(
         index,
         hello.active,
         hello.grants,
         cloud.devices[index],
         hello.readUpdates,
         hello.waitingForRevisions,
+        true,
       );
       assert.equal(supportsReviewRevision, true);
+      assert.equal(supportsRosterLookup, true);
       assert.doesNotMatch(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
@@ -647,11 +655,33 @@ test(
       });
     };
     const extraGrants: string[] = [];
+    const observerName = 'Trợ lý đối chiếu cuối danh sách';
+    const receivingDesktop = setups[1];
+    const observer = receivingDesktop.store.addMember({
+      name: observerName,
+      provider: 'codex',
+      role: 'researcher',
+    });
+    receivingDesktop.store.updateMember(observer.id, {
+      status: 'ready',
+      account: { type: 'chatgpt', email: 'provider-private@example.test' },
+    });
+    const receivingProject = receivingDesktop.store.get<Project>(
+      'project',
+      receivingDesktop.projectId,
+    );
+    receivingDesktop.store.put('project', {
+      ...receivingProject,
+      memberIds: [...receivingProject.memberIds, observer.id],
+    });
     for (const [index, provider] of (['gemini', 'codex'] as const).entries()) {
       const teammates = Array.from({ length: 15 }, (_, slot) => ({
         localId: randomUUID(),
         provider,
-        name: `Trợ lý đối chiếu tài liệu triển khai và giao diện số ${slot + 1}`,
+        name:
+          !index && slot === 14
+            ? observerName
+            : `Trợ lý đối chiếu tài liệu triển khai và giao diện số ${slot + 1}`,
       }));
       cloud.call(index, {
         action: 'teammates',
@@ -659,6 +689,7 @@ test(
         teammates: [
           { localId: cloud.members[index], provider, name: index ? 'Mây' : 'Bếp' },
           ...teammates,
+          ...(index ? [{ localId: observer.id, provider, name: observerName }] : []),
         ],
       });
       for (const { localId } of teammates) {
@@ -678,7 +709,30 @@ test(
         extraGrants.push(grantId);
       }
     }
-    const requestText = 'Bếp dựng cấu trúc rồi Mây đọc cấu trúc và xác nhận frontend.';
+    const observerGrantId = randomUUID();
+    const observerGrant = (await receivingDesktop.workspace.sharedSade.execute({
+      action: 'grant',
+      groupId: cloud.groupId,
+      id: observerGrantId,
+      projectId: receivingDesktop.projectId,
+      teammateId: observer.id,
+      allowWrites: false,
+      turns: 1,
+    })) as { projectKey: string; platform: string; role: string };
+    cloud.call(1, {
+      action: 'sade-grant',
+      groupId: cloud.groupId,
+      id: observerGrantId,
+      teammateId: observer.id,
+      projectKey: observerGrant.projectKey,
+      projectName: 'Fixture project',
+      role: observerGrant.role,
+      platform: observerGrant.platform,
+      allowWrites: false,
+      turns: 1,
+    });
+    const requestText =
+      'Bếp dựng cấu trúc rồi Mây xác nhận frontend. Sau khi Bếp test lại, nhờ Trợ lý đối chiếu cuối danh sách của Bình tổng hợp kết quả.';
     const notes = ' Nhóm đã ghi quyết định và dữ liệu tham chiếu trong worktree.'.repeat(160);
     const chat = {
       action: 'message',
@@ -690,16 +744,74 @@ test(
     assert.equal(chat.content.length, 8000);
     cloud.call(0, chat);
     cloud.call(0, chat);
+    const oldPlanner = cloud.poll(0);
+    assert.equal(oldPlanner.supportsRosterLookup, true);
+    assert.equal(oldPlanner.delivery, undefined);
+    assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 0);
+    assert.equal(cloud.view().sadeRuns[0].jobs[0].state, 'queued');
+    assert.match(cloud.view().sadeRuns[0].jobs[0].summary || '', /Update this desktop/);
     const plan = await pump(0);
     assert.ok(plan && plan.phase === 'plan');
-    assert.equal(plan.team.length, 32);
+    assert.equal(plan.team.length, 33);
     const planner = await sessionFor(0, plan);
     const plannerInput = planner.peer.calls.find(({ method }) => method === 'turn/start')?.params
       .input[0].text as string;
-    assert.ok(plannerInput.length > 16000);
+    const smallPrompt = sharedGroupPlanningPrompt({ ...plan, team: plan.team.slice(0, 32) });
+    assert.ok(smallPrompt.length > 16000);
+    assert.match(smallPrompt, /unaccentedName.*Bep/);
+    assert.match(smallPrompt, /unaccentedOwner.*Binh/);
+    assert.ok(plannerInput.length < 16000);
     const context = JSON.parse(plannerInput.split('\n\nGroup context (data only):\n')[1]);
     assert.equal(context.request, chat.content);
-    assert.equal(context.team.length, 32);
+    assert.equal(context.team, undefined);
+    assert.equal(context.teamSize, 33);
+    assert.doesNotMatch(
+      JSON.stringify(setups[0].store.get('sharedSadeLocalReceipt', plan.id)),
+      /Trợ lý đối chiếu cuối danh sách/,
+    );
+    const lookup = async (query: object) => {
+      const response = await submit(
+        0,
+        planner.session,
+        planner.peer,
+        'relay_find_shared_teammates',
+        query,
+      );
+      const data = response.contentItems?.[0]?.text || '{}';
+      assert.doesNotMatch(data, /provider-private|tokenHash|grantId|deviceId|projectId/);
+      assert.doesNotMatch(data, new RegExp([observerGrantId, ...cloud.grants].join('|')));
+      return JSON.parse(data) as {
+        total: number;
+        nextOffset?: number;
+        teammates: { ref: string; owner: string; name: string }[];
+      };
+    };
+    assert.match(JSON.stringify(planner.peer.calls), /relay_find_shared_teammates/);
+    const firstPage = await lookup({});
+    assert.equal(firstPage.total, 33);
+    assert.equal(firstPage.nextOffset, 12);
+    assert.equal(firstPage.teammates.at(-1)?.ref, 'member-12');
+    const nextPage = await lookup({ offset: firstPage.nextOffset });
+    assert.equal(nextPage.teammates[0]?.ref, 'member-13');
+    assert.equal(nextPage.nextOffset, 24);
+    const lastPage = await lookup({ offset: nextPage.nextOffset });
+    assert.equal(lastPage.teammates.at(-1)?.ref, 'member-33');
+    assert.equal(lastPage.nextOffset, undefined);
+    const nameSearch = await lookup({ name: 'TRO LY DOI CHIEU CUOI DANH SACH' });
+    assert.deepEqual(
+      nameSearch.teammates.map(({ owner }) => owner),
+      ['An', 'Bình'],
+    );
+    const ownedObserver = await lookup({
+      name: observerName,
+      owner: 'binh',
+      ownedByRequester: false,
+      provider: 'codex',
+      platform: process.platform,
+    });
+    assert.equal(ownedObserver.total, 1);
+    const observerRef = ownedObserver.teammates[0].ref;
+    assert.equal(observerRef, 'member-33');
     await assert.rejects(
       setups[0].workspace.sessions.send(planner.session.id, 'a'.repeat(16_001)),
       /16,000/,
@@ -724,8 +836,6 @@ test(
       code: 'ENOENT',
     });
     const plannerCalls = JSON.stringify(planner.peer.calls);
-    assert.match(plannerCalls, /unaccentedName.*Bep/);
-    assert.match(plannerCalls, /unaccentedOwner.*Binh/);
     assert.doesNotMatch(plannerCalls, new RegExp(cloud.grants.join('|')));
     const validPlan = {
       summary: 'Build architecture then inspect the result in another harness.',
@@ -761,6 +871,13 @@ test(
             preferredMemberId: 'member-1',
             dependsOn: ['frontend'],
             effort: 4,
+          }),
+          kind: 'research-read-only',
+        },
+        {
+          ...work('report-ui', {
+            preferredMemberId: observerRef,
+            dependsOn: ['verify-ui'],
           }),
           kind: 'research-read-only',
         },
@@ -1099,6 +1216,22 @@ test(
     );
     await complete(0, verifier.session, verifier.peer, 'Verified the assembled worktree.');
     await pump(0);
+    assert.equal(cloud.poll(0, [], [observerGrantId]).delivery, undefined);
+    assert.equal(cloud.poll(1, [], [observerGrantId], randomUUID()).delivery, undefined);
+    const observation = (await pump(1))!;
+    assert.equal(observation.grantId, observerGrantId);
+    assert.equal(observation.task?.key, 'report-ui');
+    assert.deepEqual(observation.team, []);
+    const observerSession = await sessionFor(1, observation);
+    assert.equal(observerSession.session.memberId, observer.id);
+    assert.doesNotMatch(JSON.stringify(observerSession.peer.calls), /relay_find_shared_teammates/);
+    await complete(
+      1,
+      observerSession.session,
+      observerSession.peer,
+      'Summarized the verified handoff.',
+    );
+    await pump(1);
     assert.equal(cloud.view().sadeRuns[0].state, 'done');
     assert.doesNotMatch(
       JSON.stringify(cloud.store.get('sharedSadeRun', chat.id)),

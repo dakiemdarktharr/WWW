@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
-import type { GroupListing, SharedGroup, SharedMessage } from '../shared/collaboration.ts';
+import {
+  sharedGroupMemberLimit,
+  sharedTeammatesPerOwnerLimit,
+  type GroupListing,
+  type SharedGroup,
+  type SharedMessage,
+} from '../shared/collaboration.ts';
 import { DomainError, type Store } from './store.ts';
 import { type DesktopOwner, DesktopIdentity } from './desktop-auth.ts';
 import { GroupSade, groupSadeCommands, projectKey } from './group-sade.ts';
@@ -33,7 +39,7 @@ const command = z.discriminatedUnion('action', [
             })
             .strict(),
         )
-        .max(32),
+        .max(sharedTeammatesPerOwnerLimit),
     })
     .strict(),
   z
@@ -164,7 +170,8 @@ export class SharedGroups {
         const target = this.findUser(input.account);
         if (!target) throw new DomainError('No Kivuno account matches that ID or email.', 404);
         if (group.people.some((person) => person.id === target.id)) return group;
-        if (group.people.length >= 32) throw new DomainError('Group member limit reached.', 429);
+        if (group.people.length >= sharedGroupMemberLimit)
+          throw new DomainError('Group member limit reached.', 429);
         group.people.push({ ...target, state: 'invited' });
       } else if (input.action === 'teammates') {
         const localIds = new Set(input.teammates.map((member) => member.localId));

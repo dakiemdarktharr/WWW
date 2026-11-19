@@ -1026,7 +1026,9 @@ export class SessionManager {
         let result: unknown;
         let readThrough: number | undefined;
         let sharedReadThrough: number | undefined;
-        if (sharedJob && params.tool === 'relay_read_shared_updates') {
+        if (sharedJob && params.tool === 'relay_find_shared_teammates') {
+          result = this.host.sharedSade.findTeammates(sharedJob, args);
+        } else if (sharedJob && params.tool === 'relay_read_shared_updates') {
           const updates = this.host.sharedSade.readUpdates(sharedJob, args);
           sharedReadThrough = updates.at(-1)?.sequence || 0;
           result = { updates, through: sharedReadThrough };

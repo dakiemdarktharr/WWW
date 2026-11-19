@@ -1,5 +1,8 @@
 import type { PlanTask, ProviderId, Role } from './types';
 
+export const sharedGroupMemberLimit = 32;
+export const sharedTeammatesPerOwnerLimit = 32;
+
 export interface GroupPerson {
   id: string;
   name: string;
