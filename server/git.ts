@@ -388,18 +388,15 @@ export async function integrate(
     // Include inherited prerequisite changes, even though the worker's review omits them.
     const mergeBase = await git(worktree, ['merge-base', workerHead, startingHead]);
     const diffNames = ['diff', '--name-only', '--no-renames', '--ignore-submodules=none', '-z'];
-    const [affected, different] = await Promise.all([
-      git(worktree, [...diffNames, mergeBase, reviewedTree]),
+    const [different, ...affected] = await Promise.all([
       git(worktree, [...diffNames, startingHead, reviewedTree]),
+      ...[...new Set([baseCommit, mergeBase])].map((base) =>
+        git(worktree, [...diffNames, base, reviewedTree]),
+      ),
     ]);
     const differentPaths = new Set(different.split('\0'));
-    if (
-      affected &&
-      affected
-        .split('\0')
-        .filter(Boolean)
-        .every((file) => !differentPaths.has(file))
-    ) {
+    const affectedPaths = affected.flatMap((files) => files.split('\0').filter(Boolean));
+    if (affectedPaths.length && affectedPaths.every((file) => !differentPaths.has(file))) {
       await options.validateDiff?.(await taskDiff(worktree, baseCommit), {
         root: worktree,
         phase: 'worker',
@@ -458,7 +455,12 @@ export async function integrate(
         phase: 'staged',
       });
     const stagedTree = reviewedTree ? await git(repo, ['write-tree']) : undefined;
-    if (await git(repo, ['diff', '--cached', '--name-only']))
+    const stagedChanges = await git(repo, ['diff', '--cached', '--name-only']);
+    if (options.skipAlreadyPresent && reviewedTree && !stagedChanges)
+      throw new DomainError(
+        'The project branch differs from the reviewed result and there is no change to integrate. Review the current branch before retrying.',
+      );
+    if (stagedChanges)
       await git(repo, [
         '-c',
         'user.name=RELAY',

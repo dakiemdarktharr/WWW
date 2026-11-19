@@ -254,6 +254,36 @@ test('accepting a reviewed change already present on the project creates no dupl
   assert.equal(await git(f.repo, ['status', '--porcelain']), '');
 });
 
+test('a prior merge does not prove the current branch already has the full reviewed change', async (t) => {
+  const f = await fixture(t);
+  const worker = await createWorktree(f.repo, f.storage, 'stale-duplicate');
+  await writeFile(path.join(worker.worktree, 'shared.txt'), 'first worker change\n');
+  await git(worker.worktree, ['add', 'shared.txt']);
+  await git(worker.worktree, ['commit', '-m', 'First worker change']);
+  await git(f.repo, ['merge', '--ff-only', worker.branch]);
+  await writeFile(path.join(f.repo, 'shared.txt'), 'replacement from another contributor\n');
+  await writeFile(path.join(f.repo, 'followup.txt'), 'same followup content\n');
+  await git(f.repo, ['add', '--all']);
+  await git(f.repo, ['commit', '-m', 'Replace first change and add followup']);
+  const projectHead = await git(f.repo, ['rev-parse', 'HEAD']);
+  await writeFile(path.join(worker.worktree, 'followup.txt'), 'same followup content\n');
+  const review = await taskDiff(worker.worktree, worker.baseCommit);
+  await assert.rejects(
+    integrate(f.repo, worker.worktree, worker.branch, 'Full reviewed change', {
+      baseCommit: worker.baseCommit,
+      skipAlreadyPresent: true,
+      verifyReview: async (current) => assert.deepEqual(current, review),
+    }),
+    /project branch differs from the reviewed result/,
+  );
+  assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), projectHead);
+  assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  assert.equal(
+    await readFile(path.join(f.repo, 'shared.txt'), 'utf8'),
+    'replacement from another contributor\n',
+  );
+});
+
 test('dirty project preflight does not stage or commit the agent worktree', async (t) => {
   const f = await fixture(t);
   const worker = await createWorktree(f.repo, f.storage, 'dirty-task-6666');
