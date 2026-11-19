@@ -79,27 +79,23 @@ export class SharedGroups {
       if (input.action === 'sade-poll' || input.action === 'sade-finish') {
         if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
         if (input.action === 'sade-poll') {
-          const supplied = new Set(input.grants);
           const groupIds = new Set<string>();
-          for (const grant of this.store.all<{
-            id: string;
-            ownerId: string;
-            deviceId: string;
-            groupId: string;
-          }>('sharedSadeGrant'))
-            if (supplied.has(grant.id) && grant.ownerId === owner.id && grant.deviceId === deviceId)
+          for (const id of new Set(input.grants)) {
+            const grant = this.store.lookup<{
+              ownerId: string;
+              deviceId: string;
+              groupId: string;
+            }>('sharedSadeGrant', id);
+            if (grant?.ownerId === owner.id && grant.deviceId === deviceId)
               groupIds.add(grant.groupId);
+          }
           // A locked seat applies to its own group, not to every grant in this desktop's poll.
           for (const groupId of groupIds) this.refreshGroupSeats(groupId);
-        } else {
-          const run = this.store
-            .all<{ groupId: string; jobs: { id: string }[] }>('sharedSadeRun')
-            .find((item) => item.jobs.some((job) => job.id === input.jobId));
-          if (run) this.assertActiveSeat(owner.id, run.groupId);
+          return this.sade.poll(actor, input, [...groupIds]);
         }
-        return input.action === 'sade-poll'
-          ? this.sade.poll(actor, input)
-          : this.sade.finish(actor, input);
+        return this.sade.finish(actor, input, (groupId) =>
+          this.assertActiveSeat(owner.id, groupId),
+        );
       }
       const all = this.store.all<SharedGroup>('sharedGroup');
       if (input.action === 'list') {
@@ -359,6 +355,7 @@ export class SharedGroups {
     if (person.quotaLocked)
       throw new DomainError('Your group seat is locked. You may leave the group.', 403);
     if (person.state !== 'active') throw new DomainError('Accept the group invitation first.', 403);
+    return group;
   }
 
   private saveGroup(group: SharedGroup): SharedGroup {

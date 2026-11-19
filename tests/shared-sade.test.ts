@@ -2373,6 +2373,68 @@ test('a locked group seat cannot stall another project on the same desktop', (t)
   assert.equal(f.store.get<{ revoked: boolean }>('sharedSadeGrant', f.grants[1]).revoked, true);
 });
 
+test('Shared Sade polls only groups from the desktop grant page', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const secondGroup = randomUUID();
+  const secondProject = 'c'.repeat(64);
+  const secondGrant = randomUUID();
+  f.call(1, { action: 'create', id: secondGroup, name: 'Unrelated project' });
+  f.call(1, {
+    action: 'teammates',
+    groupId: secondGroup,
+    teammates: [{ localId: f.members[1], name: 'Mây', provider: 'codex' }],
+  });
+  f.call(1, {
+    action: 'sade-grant',
+    groupId: secondGroup,
+    id: secondGrant,
+    teammateId: f.members[1],
+    projectKey: secondProject,
+    projectName: 'Unrelated project',
+    role: 'researcher',
+    platform: 'win32',
+    turns: 2,
+    allowWrites: false,
+  });
+  const open = (index: number, groupId: string, projectKey: string) =>
+    f.call(index, {
+      action: 'message',
+      id: randomUUID(),
+      groupId,
+      content: 'Đọc tài liệu trong project này giúp mình.',
+      sade: { projectKey },
+    });
+  open(0, f.groupId, key);
+  open(1, secondGroup, secondProject);
+
+  const reads = t.mock.method(f.store, 'get');
+  const scans = t.mock.method(f.store, 'all');
+  const first = f.poll(0, [], [f.grants[0], secondGrant]);
+  assert.equal(first.delivery?.grantId, f.grants[0]);
+  assert.deepEqual(
+    reads.mock.calls
+      .filter(({ arguments: [kind] }) => kind === 'sharedGroup')
+      .map(({ arguments: [, id] }) => id),
+    [f.groupId],
+  );
+  assert.equal(f.poll(0, [], [secondGrant]).delivery, undefined);
+  assert.deepEqual(f.poll(0, [first.delivery.id]).active, [first.delivery.id]);
+
+  const second = f.poll(1, [], [secondGrant]).delivery!;
+  assert.equal(second.grantId, secondGrant);
+  const result: SharedFinish = { kind: 'plan', plan: { summary: 'No work needed.', tasks: [] } };
+  assert.deepEqual(f.finish(0, first.delivery.id, result), { accepted: true });
+  assert.deepEqual(f.finish(0, first.delivery.id, result), { accepted: true });
+  assert.deepEqual(f.finish(1, second.id, result), { accepted: true });
+  assert.deepEqual(
+    scans.mock.calls
+      .map(({ arguments: [kind] }) => kind)
+      .filter((kind) => kind === 'sharedSadeGrant' || kind === 'sharedSadeRun'),
+    [],
+  );
+});
+
 test('the desktop polls all valid grants across project pages', async (t) => {
   const store = new Store(':memory:');
   const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());

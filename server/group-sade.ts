@@ -987,16 +987,23 @@ export class GroupSade {
     this.store.put('sharedSadeRun', run);
     return true;
   }
-  poll(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-poll' }>) {
+  poll(
+    actor: SharedPrincipal,
+    command: Extract<GroupSadeCommand, { action: 'sade-poll' }>,
+    groupIds: string[],
+  ) {
     const active: string[] = [];
     const reviews: { jobId: string; digest: string }[] = [];
     const updates: { jobId: string; notes: z.infer<typeof sharedSadeUpdates> }[] = [];
     let delivery: SharedDelivery | undefined;
     const runs = this.store.db
       .prepare(
-        "SELECT data FROM records WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running') ORDER BY rowid",
+        `SELECT data FROM records INDEXED BY shared_sade_active WHERE kind='sharedSadeRun'
+         AND json_extract(data,'$.state') IN ('planning','running')
+         AND json_extract(data,'$.groupId') IN (SELECT value FROM json_each(?))
+         ORDER BY rowid`,
       )
-      .all()
+      .all(JSON.stringify(groupIds))
       .map((row) => JSON.parse(String(row.data)) as Run);
     const supplied = new Set(command.grants);
     const held = new Set(command.active);
@@ -1306,13 +1313,25 @@ export class GroupSade {
       ...(command.taskUpdates ? { updates } : {}),
     };
   }
-  finish(actor: SharedPrincipal, command: Extract<GroupSadeCommand, { action: 'sade-finish' }>) {
-    const run = this.store
-      .all<Run>('sharedSadeRun')
-      .find((item) => item.jobs.some((job) => job.id === command.jobId));
-    if (!run) throw new DomainError('Shared job is unavailable.', 404);
+  finish(
+    actor: SharedPrincipal,
+    command: Extract<GroupSadeCommand, { action: 'sade-finish' }>,
+    activeGroup: (groupId: string) => SharedGroup,
+  ) {
+    const row = this.store.db
+      .prepare(
+        `SELECT data FROM records WHERE kind='sharedSadeRun'
+         AND EXISTS (
+           SELECT 1 FROM json_each(records.data,'$.jobs') AS job
+           WHERE json_extract(job.value,'$.id')=?
+         )
+         ORDER BY rowid LIMIT 1`,
+      )
+      .get(command.jobId);
+    if (!row) throw new DomainError('Shared job is unavailable.', 404);
+    const run = JSON.parse(String(row.data)) as Run;
+    const group = activeGroup(run.groupId);
     const job = run.jobs.find((item) => item.id === command.jobId)!;
-    const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
     const grants = this.grants(group);
     const grant = grants.find((item) => item.id === job.grantId)!;
     if (!grant || !this.actorGrant(grant, actor) || !this.usable(grant, group, false))
