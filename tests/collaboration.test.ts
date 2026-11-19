@@ -57,6 +57,10 @@ test('groups isolate accounts, require invitation acceptance and protect teammat
   assert.throws(() => call(bob, 'message', message), /already used/);
   for (let i = 0; i < 105; i++) call(bob, 'message', { id: randomUUID(), content: `Reply ${i}` });
   assert.equal(call(alice, 'read').messages.length, 100);
+  assert.equal(call(alice, 'read').hasMore, true);
+  const fullLastPage = call(alice, 'read', { after: 6 });
+  assert.equal(fullLastPage.messages.length, 100);
+  assert.equal(fullLastPage.hasMore, false);
   assert.equal(call(alice, 'read', { after: 100 }).messages.length, 6);
   assert.throws(() => call(stranger, 'read'));
   call(alice, 'remove', { userId: bob.id });

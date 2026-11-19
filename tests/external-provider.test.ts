@@ -329,6 +329,39 @@ test('external wait wakes for a new group message and returns scoped replies', a
   assert.equal(reply.replyTo, message.id);
 });
 
+test('external wait returns existing project backlog even after 1001 messages in another room', async (t) => {
+  const f = await fixture(t);
+  const { header } = f.connect();
+  const { messages } = await f.invoke(header, 'mesh_read');
+  const after = messages.at(-1)?.sequence ?? 0;
+  const message = f.store.message({
+    projectId: f.project.id,
+    taskId: null,
+    authorId: null,
+    kind: 'system',
+    content: 'Already here.',
+  });
+  f.store.transaction(() => {
+    for (let i = 0; i < 1001; i++)
+      f.store.message({
+        projectId: 'another-room',
+        taskId: null,
+        authorId: null,
+        kind: 'system',
+        content: String(i),
+      });
+  });
+  const next = await Promise.race([
+    f.invoke(header, 'mesh_wait', { after }),
+    new Promise<undefined>((resolve) => setImmediate(() => resolve(undefined))),
+  ]);
+  assert.ok(next, 'an available page must return without waiting for a notification');
+  assert.deepEqual(
+    next.messages.map((entry: { id: string }) => entry.id),
+    [message.id],
+  );
+});
+
 test('external claim preserves a worktree created while its connection is revoked', async (t) => {
   const f = await fixture(t),
     task = f.task();

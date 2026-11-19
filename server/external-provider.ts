@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { CodexSession, Member, Project, RoomMessage, Task } from '../shared/types.ts';
+import type { CodexSession, Member, Project, Task } from '../shared/types.ts';
 import type { Workspace } from './service.ts';
 import { DomainError } from './store.ts';
 import { assertGroupMember } from './groups.ts';
@@ -310,9 +310,7 @@ export class ExternalProviders {
       c.revokedAt ||
       Date.parse(c.expiresAt) <= Date.now() ||
       this.host.closing ||
-      this.host.store
-        .recent<RoomMessage>('message', 1000)
-        .some((m) => m.projectId === c.projectId && (m.sequence || 0) > after);
+      this.host.store.latestRoomSequence(c.projectId) > after;
     if (changed()) return;
     this.waiting.add(c.id);
     try {

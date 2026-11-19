@@ -146,16 +146,15 @@ export class SharedGroups {
       }
       if (input.action === 'read') {
         // Query only this group's records; never return other groups' history.
-        const messages = this.store.db
+        const rows = this.store.db
           .prepare(
-            "SELECT data FROM records WHERE kind='sharedMessage' AND json_extract(data,'$.groupId')=? AND json_extract(data,'$.sequence')>? ORDER BY json_extract(data,'$.sequence') ASC LIMIT 100",
+            "SELECT data FROM records WHERE kind='sharedMessage' AND json_extract(data,'$.groupId')=? AND json_extract(data,'$.sequence')>? ORDER BY json_extract(data,'$.sequence') ASC LIMIT 101",
           )
-          .all(group.id, input.after || 0)
-          .map((row) => JSON.parse(String(row.data)) as SharedMessage);
+          .all(group.id, input.after || 0);
         return {
           group,
-          messages,
-          hasMore: messages.length === 100,
+          messages: rows.slice(0, 100).map((row) => JSON.parse(String(row.data)) as SharedMessage),
+          hasMore: rows.length > 100,
           ...this.sade.view(group, owner.id),
         };
       }

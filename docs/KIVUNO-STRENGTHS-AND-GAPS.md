@@ -1,5 +1,7 @@
 # Where Kivuno should compete with QM
 
+The [100-repository harness comparison](HARNESS-LANDSCAPE.md) extends this review to shared rooms, remote agents and verification workflows. It includes the Kivuno inbox benchmark and the next three proposed milestones.
+
 Engineering and product review, 19 November 2026. QM was inventoried across all 3,084 tracked files at `2884788`. The closest source comparisons were the agent loop, grants, swarms, approval identities, command execution, memory disclosure, skill import and their tests. The findings below concern the code paths reviewed. [QM snapshot](https://github.com/yc-software/qm/tree/2884788ba107e1d19805cc07340cbee4ba7f4ff4) · [Original comparison and competitor research](QM-COMPARISON.md)
 
 ## Kivuno strengths worth polishing

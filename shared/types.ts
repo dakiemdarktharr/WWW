@@ -198,6 +198,7 @@ export interface Workflow {
 }
 export interface RoomMessage {
   clientRequestId?: string;
+  requestedMentions?: string[];
   reactions?: MessageReaction[];
   effectiveConfig?: ChatConfig;
   command?: string;

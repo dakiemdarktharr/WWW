@@ -1,9 +1,10 @@
 import type { Workspace } from './service.ts';
-import type { CodexModel, HumanRequest, RoomMessage, QuotaGrant } from '../shared/types.ts';
+import type { CodexModel, HumanRequest, RoomMessage } from '../shared/types.ts';
 import { groupMembers } from './groups.ts';
 import { chatRecipients, reserveIntent } from './chat-intent.ts';
 import { DomainError } from './store.ts';
 import { competitionLink } from './competition-research.ts';
+import { redact } from './security.ts';
 
 /** Only the authenticated human route calls this; agent tools never grant usage. */
 export function postHumanChat(
@@ -18,61 +19,62 @@ export function postHumanChat(
   },
   catalog: CodexModel[],
 ) {
-  const members = groupMembers(host.store, input.projectId);
-  const history = host.store
-    .all<RoomMessage>('message')
-    .filter((message) => message.projectId === input.projectId)
-    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
-  if (input.clientRequestId) {
-    const previous = history.find(
-      (message) => message.clientRequestId === input.clientRequestId && message.authorId === null,
-    );
-    if (previous) {
-      if (previous.content !== input.content.trim())
-        throw new DomainError('Message retry content changed.');
-      return previous;
-    }
-  }
-  const waiting = host.store
-    .all<HumanRequest>('humanRequest')
-    .some(
-      (item) =>
-        item.projectId === input.projectId && item.kind === 'quota' && item.status === 'open',
-    );
-  const intent = reserveIntent(input.content, waiting);
-  let targets = [
-    ...new Set([...(input.mentions || []), ...chatRecipients(input.content, members, !!intent)]),
-  ];
-  if (!targets.length && input.replyTo) {
-    const reply = history.find((entry) => entry.id === input.replyTo);
-    const target = reply?.authorId || reply?.claimedBy;
-    if (target && members.some((entry) => entry.id === target)) targets = [target];
-  }
-  if (intent && !targets.length) {
-    const reply = history.find((message) => message.id === input.replyTo);
-    const context =
-      reply ||
-      (waiting
-        ? [...history]
-            .reverse()
-            .find(
-              (message) =>
-                message.authorId === null &&
-                message.kind === 'message' &&
-                message.mentions?.length &&
-                Date.now() - Date.parse(message.createdAt) < 10 * 60000,
-            )
-        : undefined);
-    targets = context?.authorId ? [context.authorId] : context?.mentions || [];
-    if (!targets.length && members.length === 1) targets = [members[0].id];
-  }
   return host.store.transaction(() => {
+    const members = groupMembers(host.store, input.projectId);
+    const requestedMentions = [...new Set(input.mentions || [])].sort();
+    if (input.clientRequestId) {
+      const previous = host.store.humanMessageByRequest(input.projectId, input.clientRequestId);
+      if (previous) {
+        if (previous.content !== redact(input.content.trim()))
+          throw new DomainError('Message retry content changed.');
+        if (
+          (previous.replyTo ?? null) !== (input.replyTo ?? null) ||
+          (previous.taskId ?? null) !== (input.taskId ?? null) ||
+          (previous.requestedMentions &&
+            JSON.stringify(previous.requestedMentions) !== JSON.stringify(requestedMentions))
+        )
+          throw new DomainError('Message retry target changed.');
+        return previous;
+      }
+    }
+    const waiting = host.store
+      .all<HumanRequest>('humanRequest')
+      .some(
+        (item) =>
+          item.projectId === input.projectId && item.kind === 'quota' && item.status === 'open',
+      );
+    const intent = reserveIntent(input.content, waiting);
+    const reply = input.replyTo
+      ? host.store.lookup<RoomMessage>('message', input.replyTo)
+      : undefined;
+    if (reply && reply.projectId !== input.projectId)
+      throw new DomainError('Replies must stay inside their project group.');
+    let targets = [
+      ...new Set([...(input.mentions || []), ...chatRecipients(input.content, members, !!intent)]),
+    ];
+    if (!targets.length && input.replyTo) {
+      const target = reply?.authorId || reply?.claimedBy;
+      if (target && members.some((entry) => entry.id === target)) targets = [target];
+    }
+    if (intent && !targets.length) {
+      const context =
+        reply ||
+        (waiting
+          ? host.store.recentAddressedRequest(input.projectId, Date.now() - 10 * 60000)
+          : undefined);
+      targets = context?.authorId ? [context.authorId] : context?.mentions || [];
+      if (!targets.length && members.length === 1) targets = [members[0].id];
+    }
     let message = host.mesh.post(
       { ...input, mentions: targets, authorId: null, kind: 'message' },
       catalog,
     );
     if (input.clientRequestId)
-      message = host.store.put('message', { ...message, clientRequestId: input.clientRequestId });
+      message = host.store.put('message', {
+        ...message,
+        clientRequestId: input.clientRequestId,
+        requestedMentions,
+      });
     if (!intent) {
       if (!message.command) {
         const project = host.store.get<any>('project', input.projectId);
@@ -109,25 +111,12 @@ export function postHumanChat(
       });
       return message;
     }
-    for (const previous of host.store.all<QuotaGrant>('quotaGrant'))
-      if (
-        previous.memberId === member.id &&
-        previous.projectId === input.projectId &&
-        !previous.revokedAt
-      )
-        host.store.put('quotaGrant', { ...previous, revokedAt: new Date().toISOString() });
     const grant = host.quota.grant(member.id, {
       projectId: input.projectId,
       floor: intent.floor,
       expiresAt: new Date(Date.now() + intent.minutes * 60000).toISOString(),
     });
-    const pending = history.find(
-      (entry) =>
-        entry.authorId === null &&
-        entry.kind === 'message' &&
-        entry.requestStatus === 'open' &&
-        (!entry.mentions?.length || entry.mentions.includes(member.id)),
-    );
+    const pending = host.store.firstOpenRequest(input.projectId, member.id, message.sequence!);
     if (pending) host.store.put('message', { ...pending, mentions: [member.id] });
     let runnable = false;
     try {
