@@ -110,6 +110,8 @@ interface Host {
   handoffs?: { automatic(sessionId: string): Promise<unknown> };
   sharedSade?: { assertCurrent(jobId: string): void; consumeProviderTurn(jobId: string): void };
 }
+export class ProviderQuotaUnavailable extends DomainError {}
+
 export class QuotaManager {
   private refreshing = new Map<string, Promise<AccountQuota>>();
   private enforcing = false;
@@ -263,7 +265,7 @@ export class QuotaManager {
       );
     }
     if (['unknown', 'stale', 'blocked'].includes(quota.status))
-      throw new DomainError(
+      throw new ProviderQuotaUnavailable(
         quota.error || `Account usage is ${quota.status}. Refresh usage before continuing.`,
       );
     const grant = this.store
@@ -278,7 +280,7 @@ export class QuotaManager {
       .sort((a, b) => a.floor - b.floor)[0];
     const floor = grant?.floor ?? 50;
     if (quota.windows.some((window) => window.remainingPercent <= floor))
-      throw new DomainError(
+      throw new ProviderQuotaUnavailable(
         `Account reserve reached (${floor}% remaining floor). Handoff or request permission in MESH.`,
       );
     return quota;

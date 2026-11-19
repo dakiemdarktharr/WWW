@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ProviderQuotaUnavailable } from './quota.ts';
 import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -117,6 +118,7 @@ type Receipt = {
   reviewedDigest?: string;
   revision?: string;
   revisionHandoff?: true;
+  quotaFailover?: true;
   checkoutRevision?: string;
   clarified?: boolean;
   question?: string;
@@ -187,6 +189,7 @@ export const sharedWorkerCommand = z.discriminatedUnion('action', [
       active: z.array(id).max(4),
       delivery: deliveryInput.optional(),
       revisionHandoff: z.literal(true).optional(),
+      quotaFailover: z.literal(true).optional(),
       acknowledged: z
         .array(z.object({ jobId: id, version: z.number().int().positive() }).strict())
         .max(8),
@@ -711,6 +714,7 @@ export class SharedSadeWorker {
             delivery.phase === 'plan' ? delivery.team.map((member) => member.id) : undefined,
           clarified: Boolean(delivery.clarification),
           revisionHandoff: command.revisionHandoff,
+          quotaFailover: command.quotaFailover,
           acceptsUpdates: delivery.acceptsUpdates,
           updates: delivery.updates,
         } satisfies Receipt);
@@ -749,13 +753,34 @@ export class SharedSadeWorker {
     if (this.starting.has(delivery.id)) return;
     this.starting.add(delivery.id);
     void this.run(delivery)
-      .catch((error) =>
-        this.result(delivery.id, {
-          kind: 'blocked',
-          summary: redact(error) || 'Could not start the harness.',
-        }),
-      )
+      .catch((error) => this.reportStartFailure(delivery.id, error))
       .finally(() => this.starting.delete(delivery.id));
+  }
+  private reportStartFailure(jobId: string, cause: unknown) {
+    if (this.host.closing) return;
+    const receipt = this.receipt(jobId);
+    const error = redact(cause) || 'Could not start the harness.';
+    if (
+      cause instanceof ProviderQuotaUnavailable &&
+      receipt.quotaFailover &&
+      receipt.phase !== 'plan' &&
+      receipt.sessionId &&
+      !receipt.providerTurnConsumed &&
+      this.leases.has(jobId)
+    ) {
+      const session = this.host.store.get<CodexSession>('session', receipt.sessionId);
+      if (
+        session.status === 'idle' &&
+        !session.threadId &&
+        !this.host.store.lease(session.taskId)
+      ) {
+        this.host.store.updateTask(session.taskId, { status: 'blocked', error });
+        this.host.store.updateSession(session.id, { status: 'error', error });
+        this.result(jobId, { kind: 'provider-unavailable' });
+        return;
+      }
+    }
+    this.result(jobId, { kind: 'blocked', summary: error });
   }
   private async run(delivery: SharedDelivery) {
     this.assertCurrent(delivery.id);

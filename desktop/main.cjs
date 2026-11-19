@@ -665,6 +665,7 @@ async function sharedSadeLoop(generation, owner) {
           reviews: body.reviews,
           updates: body.updates,
           revisionHandoff: body.revisionHandoff,
+          quotaFailover: body.quotaFailover,
           acknowledged,
         });
       else delay = 5000;

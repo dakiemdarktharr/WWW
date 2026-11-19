@@ -77,6 +77,7 @@ export const sharedFinish = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('blocked'), summary: z.string().trim().min(1).max(4000) }).strict(),
+  z.object({ kind: z.literal('provider-unavailable') }).strict(),
   z.object({ kind: z.literal('question'), summary: z.string().trim().min(1).max(500) }).strict(),
   z
     .object({
@@ -165,6 +166,7 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
   content: string;
   roster: string[];
+  unavailableGrants?: string[];
   jobs: Job[];
 };
 export type SharedDelivery = {
@@ -240,6 +242,23 @@ function writesTask(task?: PlanTask) {
   return task?.kind === 'code' || task?.kind === 'design';
 }
 const writes = writesTask;
+function supportsTask(grant: Grant, task?: PlanTask) {
+  return (
+    (!writes(task) || grant.allowWrites) &&
+    (!task?.requiredPlatform ||
+      grant.platform === task.requiredPlatform ||
+      (writes(task) && grant.pairedPlatform === task.requiredPlatform))
+  );
+}
+
+function reviewedWriters(run: Run, job: Job) {
+  if (job.reviewOf) return run.jobs.filter((prior) => prior.id === job.reviewOf);
+  const task = job.task;
+  if (task?.kind !== 'review') return [];
+  return prerequisitesOf(run, job).filter(
+    (prior) => writes(prior.task) && scopesOverlap(prior.task!.scope, task.scope),
+  );
+}
 const leaseMs = 30_000;
 const grantMs = 60 * 60_000;
 
@@ -430,42 +449,44 @@ export class GroupSade {
       sadeGrants: grants
         .filter((grant) => this.usable(grant, group, false))
         .map(({ deviceId, revoked, ...view }) => view),
-      sadeRuns: this.runs(group).map(({ authorId, content, roster, ...run }) => ({
-        ...run,
-        canAnswer: ownerId === authorId,
-        jobs: run.jobs.map(
-          ({
-            deadline,
-            revision,
-            change,
-            reviewOf,
-            reviewGrantId,
-            reviewedDigest,
-            clarification,
-            portable,
-            published,
-            acceptsUpdates,
-            updates,
-            ...job
-          }) => ({
-            ...job,
-            canUpdate: Boolean(
-              ownerId &&
-              acceptsUpdates &&
-              job.state === 'running' &&
-              (deadline || 0) > this.now() &&
-              (job.updateCount || 0) < maxTaskUpdates &&
-              run.state === 'running' &&
-              this.canUpdate(
-                group,
-                authorId,
-                grants.find((grant) => grant.id === job.grantId),
-                ownerId,
+      sadeRuns: this.runs(group).map(
+        ({ authorId, content, roster, unavailableGrants, ...run }) => ({
+          ...run,
+          canAnswer: ownerId === authorId,
+          jobs: run.jobs.map(
+            ({
+              deadline,
+              revision,
+              change,
+              reviewOf,
+              reviewGrantId,
+              reviewedDigest,
+              clarification,
+              portable,
+              published,
+              acceptsUpdates,
+              updates,
+              ...job
+            }) => ({
+              ...job,
+              canUpdate: Boolean(
+                ownerId &&
+                acceptsUpdates &&
+                job.state === 'running' &&
+                (deadline || 0) > this.now() &&
+                (job.updateCount || 0) < maxTaskUpdates &&
+                run.state === 'running' &&
+                this.canUpdate(
+                  group,
+                  authorId,
+                  grants.find((grant) => grant.id === job.grantId),
+                  ownerId,
+                ),
               ),
-            ),
-          }),
-        ),
-      })),
+            }),
+          ),
+        }),
+      ),
     };
   }
   private canUpdate(
@@ -666,13 +687,92 @@ export class GroupSade {
   }
   private availableReviewer(run: Run, job: Job, group: SharedGroup, grants: Grant[]) {
     return grants
-      .filter((grant) => this.usable(grant, group) && unreservedTurns(run, grant, job) > 0)
+      .filter(
+        (grant) => this.usableForRun(grant, group, run) && unreservedTurns(run, grant, job) > 0,
+      )
       .sort(
         (a, b) =>
           Number(b.id === job.reviewGrantId) - Number(a.id === job.reviewGrantId) ||
           Number(b.role === 'reviewer') - Number(a.role === 'reviewer') ||
           a.used - b.used,
       )[0];
+  }
+  private usableForRun(grant: Grant, group: SharedGroup, run: Run) {
+    return !run.unavailableGrants?.includes(grant.id) && this.usable(grant, group);
+  }
+  private handleUnavailableProvider(
+    run: Run,
+    job: Job,
+    group: SharedGroup,
+    grant: Grant,
+    grants: Grant[],
+  ) {
+    if (job.phase === 'plan' || job.state !== 'running' || job.change || !grant.used)
+      throw new DomainError('Only work that did not start can be reassigned.', 409);
+
+    this.store.put('sharedSadeGrant', { ...grant, used: grant.used - 1 });
+    run.unavailableGrants = [...new Set([...(run.unavailableGrants || []), grant.id])];
+    if (job.task?.preferredMemberId) {
+      this.block(run, job, 'The requested harness did not have enough provider quota to start.');
+      return;
+    }
+
+    const byId = new Map(grants.map((entry) => [entry.id, entry]));
+    const authorOwners = new Set(
+      reviewedWriters(run, job).map((prior) => byId.get(prior.grantId)?.ownerId),
+    );
+    const writer = writes(job.task);
+    const reviewerOwners = new Set(
+      writer
+        ? run.jobs
+            .filter((other) => reviewedWriters(run, other).includes(job))
+            .map((other) => byId.get(other.grantId)?.ownerId)
+        : [],
+    );
+    const planned = writer ? plannedReviews(run, job) : [];
+    const replacement = grants
+      .filter(
+        (entry) =>
+          run.roster.includes(entry.id) &&
+          this.usableForRun(entry, group, run) &&
+          unreservedTurns(run, entry, job) > 0 &&
+          supportsTask(entry, job.task) &&
+          !authorOwners.has(entry.ownerId) &&
+          !reviewerOwners.has(entry.ownerId) &&
+          (!writer || !grant.patchHandoff || entry.patchHandoff || !hasDependents(run, job)),
+      )
+      .sort(
+        (a, b) => Number(b.role === grant.role) - Number(a.role === grant.role) || a.used - b.used,
+      )
+      .find((entry) => {
+        if (!writer) return true;
+        if (planned.length)
+          return planned.every((review) => {
+            const peer = byId.get(review.grantId);
+            return peer && this.usableForRun(peer, group, run);
+          });
+        return this.availableReviewer(run, job, group, this.reviewGrants(run, entry, grants));
+      });
+    if (!replacement) {
+      this.block(
+        run,
+        job,
+        'The harness could not start within its provider quota. No eligible granted teammate can take over this task.',
+      );
+      return;
+    }
+    run.jobs[run.jobs.indexOf(job)] = {
+      ...job,
+      id: randomUUID(),
+      grantId: replacement.id,
+      state: 'queued',
+      deadline: undefined,
+      summary: 'Waiting for another granted teammate after a provider quota check.',
+      reviewGrantId: undefined,
+      acceptsUpdates: undefined,
+      updatesRead: undefined,
+    };
+    this.store.put('sharedSadeRun', run);
   }
   private block(run: Run, job: Job, reason: string) {
     run.state = 'blocked';
@@ -798,11 +898,8 @@ export class GroupSade {
         if (
           job.phase === 'task' &&
           job.task?.kind === 'review' &&
-          predecessors.some(
-            (prior) =>
-              writes(prior.task) &&
-              scopesOverlap(prior.task!.scope, job.task!.scope) &&
-              grants.get(prior.grantId)?.ownerId === grant.ownerId,
+          reviewedWriters(run, job).some(
+            (prior) => grants.get(prior.grantId)?.ownerId === grant.ownerId,
           )
         ) {
           this.block(
@@ -951,6 +1048,7 @@ export class GroupSade {
       delivery,
       reviews,
       revisionHandoff: true as const,
+      quotaFailover: true as const,
       ...(command.taskUpdates ? { updates } : {}),
     };
   }
@@ -974,6 +1072,10 @@ export class GroupSade {
     )
       throw new DomainError('This job is no longer running. Recover locally.', 409);
     const result = command.result;
+    if (result.kind === 'provider-unavailable') {
+      this.handleUnavailableProvider(run, job, group, grant, grants);
+      return { accepted: true };
+    }
     const read = Math.max(job.updatesRead || 0, command.updatesRead || 0);
     if (read > (job.updateCount || 0))
       throw new DomainError('Task update acknowledgement is out of date.', 409);
@@ -1022,14 +1124,7 @@ export class GroupSade {
             ownerByMember: ownerByGrant,
             turns: new Map(eligible.map((entry) => [entry.id, entry.turns - entry.used])),
             supports: (grantId, task) =>
-              eligible.some(
-                (entry) =>
-                  entry.id === grantId &&
-                  (!writes(task) || entry.allowWrites) &&
-                  (!task.requiredPlatform ||
-                    entry.platform === task.requiredPlatform ||
-                    (writes(task) && entry.pairedPlatform === task.requiredPlatform)),
-              ),
+              eligible.some((entry) => entry.id === grantId && supportsTask(entry, task)),
           },
         );
         job.state = 'done';
