@@ -1394,7 +1394,7 @@ test('Shared Sade balances open implementation work without consuming the only i
         assert.equal(f.poll(1).delivery, undefined);
         continue;
       }
-      assert.equal(run.state, 'running', run.error);
+      assert.equal(run.state, 'running', run.error ?? 'The plan should be runnable.');
       assert.deepEqual(
         run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job.grantId]),
         [
@@ -1464,7 +1464,7 @@ test('Shared Sade saves the last turn on the desktop required by a later task', 
       },
     });
     const run = f.view().sadeRuns[0];
-    assert.equal(run.state, 'running', run.error);
+    assert.equal(run.state, 'running', run.error ?? 'The plan should be runnable.');
     assert.equal(f.poll(0).delivery, undefined);
     assert.equal(run.jobs.find((job) => job.task?.key === 'windows-check')?.grantId, f.grants[0]);
     const configuration = f.poll(1).delivery!;
