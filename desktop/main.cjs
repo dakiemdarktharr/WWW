@@ -636,6 +636,7 @@ async function sharedSadeLoop(generation, owner) {
     !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
   let supportsReviewRevision = false;
   let supportsRosterLookup = false;
+  let grantCursor;
   while (current()) {
     if (pendingSharedSadeRevocations) {
       await pause(250);
@@ -646,7 +647,10 @@ async function sharedSadeLoop(generation, owner) {
     const snapshotCurrent = () => current() && consentVersion === sharedSadeConsentVersion;
     let delay = 2500;
     try {
-      const snapshot = await localSharedSade({ action: 'snapshot' });
+      const snapshot = await localSharedSade({
+        action: 'snapshot',
+        ...(grantCursor ? { grantCursor } : {}),
+      });
       if (!snapshotCurrent()) continue;
       if (!snapshot.grants?.length && !snapshot.active?.length && !snapshot.results?.length) {
         await pause(4000);
@@ -686,7 +690,7 @@ async function sharedSadeLoop(generation, owner) {
       if (!snapshotCurrent()) continue;
       supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
       supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
-      if (response.ok)
+      if (response.ok) {
         await localSharedSade({
           action: 'exchange',
           active: body.active,
@@ -697,7 +701,8 @@ async function sharedSadeLoop(generation, owner) {
           quotaFailover: body.quotaFailover,
           acknowledged,
         });
-      else delay = 5000;
+        if (snapshotCurrent()) grantCursor = snapshot.nextGrantCursor;
+      } else delay = 5000;
     } catch {
       delay = 5000;
     }

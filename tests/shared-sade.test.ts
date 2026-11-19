@@ -31,6 +31,8 @@ import { startCrossHostBridge } from './fixtures/shared-sade-cross-host.ts';
 
 const key = 'a'.repeat(64);
 const sha = 'b'.repeat(40);
+const fixtureGrantId = (index: number) =>
+  `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`;
 const patch = {
   files: ['src/example.ts'],
   diff: '+export const value = 1;\n',
@@ -561,9 +563,13 @@ test(
       });
       assert.equal((grant as any).projectKey, fingerprint);
     }
+    const grantCursors: (string | undefined)[] = [];
     const pump = async (index: number) => {
       const worker = setups[index].workspace.sharedSade;
-      const hello = (await worker.execute({ action: 'snapshot' })) as any;
+      const hello = (await worker.execute({
+        action: 'snapshot',
+        grantCursor: grantCursors[index],
+      })) as any;
       for (const result of hello.results)
         cloud.finish(index, result.jobId, result.result, result.updatesRead);
       const { supportsReviewRevision, supportsRosterLookup, ...packet } = cloud.poll(
@@ -588,6 +594,7 @@ test(
           ({ jobId, version }: { jobId: string; version: number }) => ({ jobId, version }),
         ),
       });
+      grantCursors[index] = hello.nextGrantCursor;
       return packet.delivery;
     };
     async function sessionFor(index: number, job: SharedDelivery) {
@@ -710,7 +717,7 @@ test(
         extraGrants.push(grantId);
       }
     }
-    const observerGrantId = randomUUID();
+    const observerGrantId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
     const observerGrant = (await receivingDesktop.workspace.sharedSade.execute({
       action: 'grant',
       groupId: cloud.groupId,
@@ -1219,6 +1226,14 @@ test(
     await pump(0);
     assert.equal(cloud.poll(0, [], [observerGrantId]).delivery, undefined);
     assert.equal(cloud.poll(1, [], [observerGrantId], randomUUID()).delivery, undefined);
+    const otherProjectGrants = Array.from({ length: 35 }, (_, index) => fixtureGrantId(index));
+    for (const id of otherProjectGrants)
+      receivingDesktop.store.put('sharedSadeLocalGrant', {
+        id,
+        projectId: randomUUID(),
+        expiresAt: Date.now() + 60_000,
+      });
+    assert.equal(await pump(1), undefined, 'The first poll only contains earlier grant IDs');
     const observation = (await pump(1))!;
     assert.equal(observation.grantId, observerGrantId);
     assert.equal(observation.task?.key, 'report-ui');
@@ -1226,6 +1241,10 @@ test(
     const observerSession = await sessionFor(1, observation);
     assert.equal(observerSession.session.memberId, observer.id);
     assert.doesNotMatch(JSON.stringify(observerSession.peer.calls), /relay_find_shared_teammates/);
+    assert.equal(await pump(1), undefined);
+    receivingDesktop.workspace.sharedSade.assertCurrent(observation.id);
+    assert.equal(await pump(1), undefined);
+    receivingDesktop.workspace.sharedSade.assertCurrent(observation.id);
     await complete(
       1,
       observerSession.session,
@@ -1233,6 +1252,7 @@ test(
       'Summarized the verified handoff.',
     );
     await pump(1);
+    for (const id of otherProjectGrants) receivingDesktop.store.remove('sharedSadeLocalGrant', id);
     assert.equal(cloud.view().sadeRuns[0].state, 'done');
     assert.doesNotMatch(
       JSON.stringify(cloud.store.get('sharedSadeRun', chat.id)),
@@ -1901,6 +1921,37 @@ test('a quota fallback can write the same scope using another write grant and in
       f.store.close();
     }
   }
+});
+
+test('the desktop polls all valid grants across project pages', async (t) => {
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+  });
+  const worker = workspace.sharedSade;
+  const snapshot = async (grantCursor?: string) =>
+    (await worker.execute({ action: 'snapshot', ...(grantCursor ? { grantCursor } : {}) })) as {
+      grants: string[];
+      nextGrantCursor?: string;
+    };
+  const grants = Array.from({ length: 36 }, (_, index) => fixtureGrantId(index));
+  const expiresAt = Date.now() + 60_000;
+  for (const grantId of grants)
+    store.put('sharedSadeLocalGrant', { id: grantId, projectId: randomUUID(), expiresAt });
+  store.put('sharedSadeLocalGrant', { id: randomUUID(), expiresAt: Date.now() - 1 });
+
+  const first = await snapshot();
+  assert.deepEqual(first.grants, grants.slice(0, 32));
+  assert.equal(first.nextGrantCursor, grants[31]);
+  assert.deepEqual(await snapshot(), first, 'A poll retry must offer the same grant page');
+  await worker.execute({ action: 'revoke', grantId: first.nextGrantCursor });
+  const next = await snapshot(first.nextGrantCursor);
+  assert.deepEqual(next.grants.slice(0, 4), grants.slice(32));
+  assert.equal(next.grants.length, 32);
+  assert.ok(next.grants.every((grantId) => grantId !== first.nextGrantCursor));
+  assert.deepEqual(new Set([...first.grants, ...next.grants]), new Set(grants));
 });
 
 test('the desktop keeps staged patches local after a grant is revoked or expires', async (t) => {

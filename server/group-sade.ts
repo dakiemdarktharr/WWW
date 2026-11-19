@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type {
-  SharedGroup,
-  SharedHarnessGrant,
-  SharedMessage,
-  SharedSadeJob,
-  SharedSadeRun,
+import {
+  sharedSadePollGrantLimit,
+  type SharedGroup,
+  type SharedHarnessGrant,
+  type SharedMessage,
+  type SharedSadeJob,
+  type SharedSadeRun,
 } from '../shared/collaboration.ts';
 import type { PlanTask, TaskDiff } from '../shared/types.ts';
 import { allocatePlan, collectPrerequisites, parseTeamPlan, planTool } from './workflow-plan.ts';
@@ -132,7 +133,7 @@ export const groupSadeCommands = [
   z
     .object({
       action: z.literal('sade-poll'),
-      grants: z.array(id).max(32),
+      grants: z.array(id).max(sharedSadePollGrantLimit),
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
       reviewRevision: z.literal(true).optional(),

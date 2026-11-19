@@ -20,6 +20,8 @@ let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
 let sharedPolls = 0;
 const rosterCapabilities: unknown[] = [];
+const sharedGrantPages: string[][] = [];
+let sharedGrantCursorSentToCloud = false;
 const reportedSharedJobs: string[] = [];
 let releaseFirstSharedFinish!: () => void;
 const firstSharedFinish = new Promise<void>((resolve) => {
@@ -88,6 +90,9 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-poll') {
     sharedPolls++;
     rosterCapabilities.push(payload.rosterLookup);
+    sharedGrantPages.push(payload.grants);
+    sharedGrantCursorSentToCloud ||= 'grantCursor' in payload || 'nextGrantCursor' in payload;
+    if (sharedGrantPages.length === 2) response.statusCode = 503;
     response.end(
       JSON.stringify({ active: [], reviews: [], updates: [], supportsRosterLookup: true }),
     );
@@ -167,7 +172,14 @@ try {
   const withdrawn = { id: randomUUID(), grantId: randomUUID() };
   const store = new Store(path.join(state.runtime.dataDir, 'workspace.db'));
   try {
+    const lastGrant = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
     store.transaction(() => {
+      for (let index = 0; index < 35; index++)
+        store.put('sharedSadeLocalGrant', {
+          id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, '0')}`,
+          expiresAt: Date.now() + 90_000,
+        });
+      store.put('sharedSadeLocalGrant', { id: lastGrant, expiresAt: Date.now() + 90_000 });
       for (const queued of [unrelated, withdrawn]) {
         store.put('sharedSadeLocalGrant', {
           id: queued.grantId,
@@ -194,6 +206,12 @@ try {
     await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
     assert.equal(rosterCapabilities[0], undefined);
     await expect.poll(() => rosterCapabilities.includes(true), { timeout: 15000 }).toBe(true);
+    await expect.poll(() => sharedGrantPages.length, { timeout: 18000 }).toBeGreaterThanOrEqual(3);
+    assert.equal(sharedGrantPages[0].length, 32);
+    assert.ok(!sharedGrantPages[0].includes(lastGrant));
+    assert.ok(sharedGrantPages[1].includes(lastGrant));
+    assert.deepEqual(sharedGrantPages[2], sharedGrantPages[1]);
+    assert.equal(sharedGrantCursorSentToCloud, false);
     assert.ok(!reportedSharedJobs.includes(withdrawn.id));
     assert.ok(store.get('sharedSadeLocalReceipt', withdrawn.id));
   } finally {

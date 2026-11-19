@@ -3,7 +3,11 @@ import { ProviderQuotaUnavailable } from './quota.ts';
 import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import { sharedGroupMemberLimit, sharedTeammatesPerOwnerLimit } from '../shared/collaboration.ts';
+import {
+  sharedGroupMemberLimit,
+  sharedSadePollGrantLimit,
+  sharedTeammatesPerOwnerLimit,
+} from '../shared/collaboration.ts';
 import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { assertGroupMember } from './groups.ts';
@@ -235,7 +239,7 @@ export const sharedWorkerCommand = z.discriminatedUnion('action', [
   grantInput.extend({ action: z.literal('preview') }),
   grantInput.extend({ action: z.literal('grant') }),
   z.object({ action: z.literal('revoke'), grantId: id }).strict(),
-  z.object({ action: z.literal('snapshot') }).strict(),
+  z.object({ action: z.literal('snapshot'), grantCursor: id.optional() }).strict(),
   z
     .object({
       action: z.literal('exchange'),
@@ -740,7 +744,7 @@ export class SharedSadeWorker {
         if (this.receipt(key).grantId === command.grantId) void this.stop(key);
       return { revoked: true };
     }
-    if (command.action === 'snapshot') return this.snapshot();
+    if (command.action === 'snapshot') return this.snapshot(command.grantCursor);
     if (command.action !== 'exchange')
       throw new DomainError('Invalid Shared Groups worker command.');
     for (const { jobId, version } of command.acknowledged) {
@@ -1072,7 +1076,7 @@ export class SharedSadeWorker {
       this.stopping.delete(jobId);
     }
   }
-  private snapshot() {
+  private snapshot(grantCursor?: string) {
     for (const [jobId] of this.leases) {
       const receipt = this.receipt(jobId);
       if (!receipt.sessionId) continue;
@@ -1204,13 +1208,36 @@ export class SharedSadeWorker {
         );
     }
     const grantExpirations = new Map(this.grants().map(({ id, expiresAt }) => [id, expiresAt]));
+    const active = [...this.leases.keys()].slice(0, 4);
+    // The cloud renews held jobs only when their current grants are in the poll.
+    const activeGrants = new Set(
+      active.map((jobId) => this.receipt(jobId).grantId).filter((id) => grantExpirations.has(id)),
+    );
+    const available = [...grantExpirations.keys()].filter((id) => !activeGrants.has(id));
+    const remaining = sharedSadePollGrantLimit - activeGrants.size;
+    let page = available;
+    let nextGrantCursor: string | undefined;
+    if (available.length > remaining) {
+      available.sort();
+      // Using a value cursor keeps the next page stable if a grant is removed mid-cycle.
+      const start = grantCursor
+        ? Math.max(
+            0,
+            available.findIndex((id) => id > grantCursor),
+          )
+        : 0;
+      page = available.slice(start, start + remaining);
+      if (page.length < remaining) page.push(...available.slice(0, remaining - page.length));
+      nextGrantCursor = page.at(-1);
+    }
     return {
-      grants: [...grantExpirations.keys()].slice(0, 32),
-      active: [...this.leases.keys()].slice(0, 4),
+      grants: [...activeGrants, ...page],
+      ...(nextGrantCursor ? { nextGrantCursor } : {}),
+      active,
       ...(this.waitingForRevisions.size
         ? { waitingForRevisions: [...this.waitingForRevisions.keys()].slice(0, 4) }
         : {}),
-      readUpdates: [...this.leases.keys()].slice(0, 4).flatMap((jobId) => {
+      readUpdates: active.flatMap((jobId) => {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];
       }),
