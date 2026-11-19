@@ -769,6 +769,7 @@ async function sharedSadeLoop(generation, owner) {
           updates: body.updates,
           revisionHandoff: body.revisionHandoff,
           quotaFailover: body.quotaFailover,
+          planQuotaFailover: body.planQuotaFailover,
           acknowledged,
         });
         if (snapshotCurrent()) grantCursor = snapshot.nextGrantCursor;

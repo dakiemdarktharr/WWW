@@ -768,6 +768,20 @@ export class GroupSade {
   private usableForRun(grant: Grant, group: SharedGroup, run: Run) {
     return !run.unavailableGrants?.includes(grant.id) && this.usable(grant, group);
   }
+  private queueQuotaReplacement(run: Run, job: Job, grant: Grant, summary: string) {
+    run.jobs[run.jobs.indexOf(job)] = {
+      ...job,
+      id: randomUUID(),
+      grantId: grant.id,
+      state: 'queued',
+      deadline: undefined,
+      summary,
+      reviewGrantId: undefined,
+      acceptsUpdates: undefined,
+      updatesRead: undefined,
+    };
+    this.store.put('sharedSadeRun', run);
+  }
   private handleUnavailableProvider(
     run: Run,
     job: Job,
@@ -775,11 +789,34 @@ export class GroupSade {
     grant: Grant,
     grants: Grant[],
   ) {
-    if (job.phase === 'plan' || job.state !== 'running' || job.change || !grant.used)
+    if (job.state !== 'running' || job.change || !grant.used)
       throw new DomainError('Only work that did not start can be reassigned.', 409);
 
     this.store.put('sharedSadeGrant', { ...grant, used: grant.used - 1 });
     run.unavailableGrants = [...new Set([...(run.unavailableGrants || []), grant.id])];
+    if (job.phase === 'plan') {
+      const backup = grants.find(
+        (entry) =>
+          entry.ownerId === run.authorId &&
+          run.roster.includes(entry.id) &&
+          this.usableForRun(entry, group, run) &&
+          unreservedTurns(run, entry, job) > 0,
+      );
+      if (backup)
+        this.queueQuotaReplacement(
+          run,
+          job,
+          backup,
+          'Waiting for another harness granted by the requester for this project.',
+        );
+      else
+        this.block(
+          run,
+          job,
+          'The requester’s planner reached its provider quota. They can check usage or grant another of their harnesses access to this project.',
+        );
+      return;
+    }
     if (job.task?.preferredMemberId) {
       this.block(run, job, 'The requested harness did not have enough provider quota to start.');
       return;
@@ -829,18 +866,12 @@ export class GroupSade {
       );
       return;
     }
-    run.jobs[run.jobs.indexOf(job)] = {
-      ...job,
-      id: randomUUID(),
-      grantId: replacement.id,
-      state: 'queued',
-      deadline: undefined,
-      summary: 'Waiting for another granted teammate after a provider quota check.',
-      reviewGrantId: undefined,
-      acceptsUpdates: undefined,
-      updatesRead: undefined,
-    };
-    this.store.put('sharedSadeRun', run);
+    this.queueQuotaReplacement(
+      run,
+      job,
+      replacement,
+      'Waiting for another granted teammate after a provider quota check.',
+    );
   }
   private block(run: Run, job: Job, reason: string) {
     run.state = 'blocked';
@@ -1131,7 +1162,12 @@ export class GroupSade {
           job.phase === 'plan'
             ? run.roster.flatMap((grantId) => {
                 const entry = grants.get(grantId);
-                if (!entry || !this.usable(entry, group, false)) return [];
+                if (
+                  !entry ||
+                  run.unavailableGrants?.includes(entry.id) ||
+                  !this.usable(entry, group, false)
+                )
+                  return [];
                 const teammate = group.teammates.find(
                   (member) =>
                     member.ownerId === entry.ownerId && member.localId === entry.teammateId,
@@ -1229,6 +1265,7 @@ export class GroupSade {
       reviews,
       revisionHandoff: true as const,
       quotaFailover: true as const,
+      planQuotaFailover: true as const,
       ...(command.taskUpdates ? { updates } : {}),
     };
   }
@@ -1294,7 +1331,7 @@ export class GroupSade {
           return { accepted: true };
         }
         const eligible = grants.filter(
-          (entry) => run.roster.includes(entry.id) && this.usable(entry, group),
+          (entry) => run.roster.includes(entry.id) && this.usableForRun(entry, group, run),
         );
         const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         const allocations = allocatePlan(

@@ -172,6 +172,7 @@ type Receipt = {
   revision?: string;
   revisionHandoff?: true;
   quotaFailover?: true;
+  planQuotaFailover?: true;
   checkoutRevision?: string;
   clarified?: boolean;
   question?: string;
@@ -245,6 +246,7 @@ export const sharedWorkerCommand = z.discriminatedUnion('action', [
       delivery: deliveryInput.optional(),
       revisionHandoff: z.literal(true).optional(),
       quotaFailover: z.literal(true).optional(),
+      planQuotaFailover: z.literal(true).optional(),
       acknowledged: z
         .array(z.object({ jobId: id, version: z.number().int().positive() }).strict())
         .max(8),
@@ -898,6 +900,7 @@ export class SharedSadeWorker {
           clarified: Boolean(delivery.clarification),
           revisionHandoff: command.revisionHandoff,
           quotaFailover: command.quotaFailover,
+          planQuotaFailover: command.planQuotaFailover,
           acceptsUpdates: delivery.acceptsUpdates,
           updates: delivery.updates,
         };
@@ -1009,8 +1012,7 @@ export class SharedSadeWorker {
     const error = redact(cause) || 'Could not start the harness.';
     if (
       cause instanceof ProviderQuotaUnavailable &&
-      receipt.quotaFailover &&
-      receipt.phase !== 'plan' &&
+      (receipt.phase === 'plan' ? receipt.planQuotaFailover : receipt.quotaFailover) &&
       receipt.sessionId &&
       !receipt.providerTurnConsumed &&
       this.leases.has(jobId)

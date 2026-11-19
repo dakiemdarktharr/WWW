@@ -139,6 +139,7 @@ function fixture(
       active: string[];
       revisionHandoff?: true;
       quotaFailover?: true;
+      planQuotaFailover?: true;
       reviews: { jobId: string; digest: string }[];
       updates?: { jobId: string; notes: { sequence: number; text: string }[] }[];
     };
@@ -442,7 +443,7 @@ class DesktopPeer extends CodexClient {
       };
     else if (method === 'account/rateLimits/read')
       value =
-        this.provider === 'gemini'
+        this.provider === 'gemini' && this.quotaUsedPercent < 100
           ? { rateLimits: null }
           : {
               ordinaryUsageAllowed: true,
@@ -1807,8 +1808,153 @@ test(
     await pump(0);
     assert.equal(cloud.view().sadeRuns.at(-1)?.state, 'done');
     assert.equal(await remoteHead(), startingRevision);
+
+    const authorStore = setups[0].store;
+    const backup = authorStore.addMember({ name: 'Sổ tay', role: 'researcher', provider: 'codex' });
+    authorStore.updateMember(backup.id, { status: 'ready', account: { type: 'chatgpt' } });
+    const project = authorStore.get<Project>('project', setups[0].projectId);
+    authorStore.put('project', { ...project, memberIds: [...project.memberIds, backup.id] });
+    const primaryControl = (await workspace.client(setups[0].memberId)) as DesktopPeer;
+    primaryControl.quotaUsedPercent = 100;
+    const backupControl = new DesktopPeer(project.path, 'codex');
+    workspace.client = async (memberId) =>
+      memberId === backup.id ? backupControl : primaryControl;
+    workspace.refresh = async (memberId) => authorStore.get('member', memberId);
+    cloud.call(0, {
+      action: 'teammates',
+      groupId: cloud.groupId,
+      teammates: [
+        { localId: setups[0].memberId, provider: 'gemini', name: 'Bếp' },
+        { localId: backup.id, provider: 'codex', name: 'Sổ tay' },
+      ],
+    });
+    const primaryGrantId = randomUUID();
+    const backupGrantId = randomUUID();
+    for (const [id, teammateId] of [
+      [primaryGrantId, setups[0].memberId],
+      [backupGrantId, backup.id],
+    ]) {
+      const { teammateName, pairedMachine, ...grant } = (await workspace.sharedSade.execute({
+        action: 'grant',
+        groupId: cloud.groupId,
+        id,
+        projectId: project.id,
+        teammateId,
+        turns: 1,
+        allowWrites: false,
+      })) as { teammateName: string; pairedMachine?: unknown };
+      cloud.call(0, { action: 'sade-grant', ...grant });
+    }
+    const backupRequest = {
+      ...chat,
+      id: randomUUID(),
+      content: 'Team ơi, em báo đã đọc kỹ hợp đồng thôi, hôm nay chưa giao ai làm thêm nhé.',
+    };
+    cloud.call(0, backupRequest);
+    const usedBefore = authorStore.sessions().length;
+    const plannerPeersBefore = setups[0].peers.size;
+    const initialPlan = await pump(0);
+    assert.equal(initialPlan?.grantId, primaryGrantId);
+    let backupPlan: SharedDelivery | undefined;
+    for (let attempt = 0; attempt < 100 && !backupPlan; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      backupPlan = await pump(0);
+    }
+    assert.ok(backupPlan);
+    assert.equal(backupPlan.phase, 'plan');
+    assert.equal(backupPlan.grantId, backupGrantId);
+    assert.equal(backupPlan.request, backupRequest.content);
+    const backupSession = await sessionFor(0, backupPlan);
+    assert.equal(backupSession.session.memberId, backup.id);
+    assert.equal(backupSession.session.readOnly, true);
+    assert.equal(authorStore.sessions().length, usedBefore + 2);
+    assert.equal(setups[0].peers.size, plannerPeersBefore + 1);
+    await submit(0, backupSession.session, backupSession.peer, 'relay_finish_shared_without_work', {
+      summary: 'This is a status update only.',
+    });
+    await complete(0, backupSession.session, backupSession.peer, 'No work requested.');
+    await pump(0);
+    const backupRun = cloud.view().sadeRuns.at(-1);
+    assert.equal(backupRun?.id, backupRequest.id);
+    assert.equal(backupRun?.state, 'done');
+    assert.equal(backupRun?.jobs.length, 1);
+    assert.equal(await remoteHead(), startingRevision);
   },
 );
+
+for (const backupProject of [key, 'c'.repeat(64)]) {
+  const sameProject = backupProject === key;
+  test(`planning quota failover ${sameProject ? 'uses an authorized harness of the requester' : 'keeps the request on the granted project'}`, (t) => {
+    const f = fixture(['gemini', 'claude']);
+    t.after(() => f.store.close());
+    const profile = randomUUID();
+    const backup = randomUUID();
+    f.call(0, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [
+        { localId: f.members[0], provider: 'gemini', name: 'Bếp' },
+        { localId: profile, provider: 'codex', name: 'Sổ tay' },
+      ],
+    });
+    f.call(0, {
+      action: 'sade-grant',
+      id: backup,
+      groupId: f.groupId,
+      teammateId: profile,
+      projectKey: backupProject,
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    });
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Gemini bên tui gói free hay hết lượt. Nhờ Claude của Bình đọc src/check.ts giùm.',
+      sade: { projectKey: key },
+    };
+    f.call(0, request);
+    const original = f.poll(0).delivery!;
+    assert.equal(original.phase, 'plan');
+    assert.equal(original.grantId, f.grants[0]);
+    assert.throws(() => f.finish(1, original.id, { kind: 'provider-unavailable' }), /grant/);
+    f.finish(0, original.id, { kind: 'provider-unavailable' });
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
+    assert.equal(f.poll(1).delivery, undefined);
+    const replacement = f.poll(0, [], [backup]).delivery;
+    if (!sameProject) {
+      assert.equal(replacement, undefined);
+      assert.match(f.view().sadeRuns[0].error || '', /quota/);
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      return;
+    }
+    assert.ok(replacement);
+    assert.equal(replacement.grantId, backup);
+    assert.notEqual(replacement.id, original.id);
+    assert.equal(replacement.phase, 'plan');
+    assert.equal(replacement.request, request.content);
+    assert.equal(
+      replacement.team.some(({ id }) => id === original.grantId),
+      false,
+    );
+    assert.throws(() => f.finish(0, original.id, { kind: 'provider-unavailable' }), /unavailable/);
+    f.call(0, request);
+    assert.deepEqual(f.poll(0, [], [backup]).delivery, replacement);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', backup).used, 1);
+    f.finish(0, replacement.id, {
+      kind: 'plan',
+      plan: { summary: 'Inspect the assigned file once.', tasks: [work('check')] },
+    });
+    const task = f.poll(1).delivery;
+    assert.equal(task?.phase, 'task');
+    assert.equal(task.grantId, f.grants[1]);
+    assert.equal(f.view().messages.filter(({ id }) => id === request.id).length, 1);
+    assert.equal(f.view().sadeRuns.length, 1);
+  });
+}
 
 for (const pinned of ['named harness', 'required OS'] as const) {
   test(`quota failover preserves the ${pinned}`, () => {
