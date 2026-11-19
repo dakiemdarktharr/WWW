@@ -209,6 +209,8 @@ Pilot đầu trên CPU ở commit `0e3c3fa` ghi đủ 23 dòng lập kế hoạc
 
 Trên 15 cặp viết riêng, cùng Qwen 4B chấm đúng 19/30 với prompt ban đầu và 24/30 với prompt có thứ tự ưu tiên. Hai prompt nhận đúng cả hai tin trong lần lượt 4 và 9 cặp. Số tin chỉ cập nhật nhận đúng tăng từ 5/15 lên 12/15. Số yêu cầu làm việc nhận đúng giảm từ 14/15 xuống 12/15. Prompt có thứ tự nhầm hai yêu cầu chung thành chat và một yêu cầu chung thành tránh sửa trùng. Đây là phép đo offline. [Lượt so sánh prompt](https://github.com/dakiemdarktharr/WWW/actions/runs/44543948618)
 
+Chấm lại đầu ra pilot dài hơn phát hiện hai lỗi riêng. Fixture cũ không gửi heartbeat trong lúc chờ model, nên có kế hoạch hợp lệ bị báo hết hạn. Đã thêm heartbeat và kiểm tra một phản hồi mô phỏng đến sau 65 giây vẫn được chấm. Sau khi phát lại đầu ra Qwen, các lỗi model còn thấy gồm bỏ trống trường dự phòng, thấy yêu cầu chỉ đọc nhưng tạo tác vụ ghi, và tách một ca chạy trên Mac ghép cặp thành hai tác vụ. Chế độ `planner-constraints` thử prompt có thêm ba ràng buộc này trên năm ca quota và ca Mac không dấu. Đây là prompt thử nghiệm trong bộ đo.
+
 ### Qwen lập kế hoạch A–D qua công cụ thật
 
 Dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ và 18 tin tổng hợp. Mỗi tình huống có ba cách nhắn thường, không dấu và kỹ thuật song ngữ. Model nhận prompt và schema của planner. Kế hoạch đi qua bộ kiểm tra của Shared Groups với grant thử nghiệm. Bài chấm đo đúng người, phạm vi file, dependency, số việc review và yêu cầu macOS. Phần thực thi provider, sửa code và quyền trên máy của người dùng được kiểm tra riêng.

@@ -238,6 +238,7 @@ const { values, positionals } = parseArgs({
     case: { type: 'string' },
     shard: { type: 'string', default: '0/1' },
     'timeout-ms': { type: 'string', default: '60000' },
+    'planning-prompt': { type: 'string', default: 'baseline' },
     'export-prompt': { type: 'boolean' },
     'external-plan': { type: 'string' },
     'external-decision': { type: 'string' },
@@ -259,6 +260,10 @@ assert.ok(
 assert.ok(
   /^\d+\/[1-9]\d*$/.test(values.shard) && shard < shardCount,
   'Use a zero-based shard such as 0/3.',
+);
+assert.ok(
+  ['baseline', 'constraints'].includes(values['planning-prompt']),
+  'Choose baseline or constraints for the planning prompt.',
 );
 assert.ok(
   [
@@ -333,6 +338,7 @@ async function withGroup<T>(
   }) => Promise<T>,
 ) {
   const store = new Store(':memory:');
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const fullHandoff = scenario === 'full-handoff';
     const quotaFallback = scenario.startsWith('quota-');
@@ -414,6 +420,9 @@ async function withGroup<T>(
     call(0, { action: 'message', groupId, id: uuid(8), content: message, sade: { projectKey } });
     const delivery = poll(0);
     assert.ok(delivery?.phase === 'plan');
+    // Keep this fixture's delivery current while the live model is generating the plan.
+    poll(0, [delivery.id]);
+    heartbeat = setInterval(() => poll(0, [delivery.id]), 10_000);
     const jobs = () =>
       (call(0, { action: 'read', groupId }) as { sadeRuns: SharedSadeRun[] }).sadeRuns[0];
     return await run({
@@ -477,6 +486,7 @@ async function withGroup<T>(
       },
     });
   } finally {
+    clearInterval(heartbeat);
     store.close();
   }
 }
@@ -690,10 +700,21 @@ await mkdir(path.dirname(output), { recursive: true });
 const externalDecision = z.object({
   decision: z.object({ name: z.string(), arguments: z.unknown() }).strict(),
 });
+function planningPrompt(delivery: SharedDelivery) {
+  const base = sharedGroupPlanningPrompt(delivery);
+  if (values['planning-prompt'] === 'baseline') return base;
+  return `Before submitting a plan, verify these three constraints:
+For a request to read, explain or summarize an existing file, use research-read-only. “Read-only”, “chỉ đọc”, “chỉ xem” and “dung sua” rule out creating or editing files for that task. Do not invent an implementation or an independent review for a request to explain a file.
+“A does the work, B only if A has no quota” is one task. Its preferredMemberId is A’s ref and its fallbackMemberId is B’s ref. Put the backup in that field even when the summary already mentions it. Use auto in that field only if the requester delegates the backup choice. Use none when the user requires the named assignee.
+For reproducing, fixing and rerunning on one paired machine, include those three operations in one scoped edit-files task with the required OS. Do not create an extra research or review task for running the same tests on that paired machine.
+
+${base}`;
+}
+
 if (exportPrompt) {
   const { scenario, id, message } = selectedCases[0];
   await withGroup(scenario, message, async ({ delivery }) => {
-    const prompt = sharedGroupPlanningPrompt(delivery);
+    const prompt = planningPrompt(delivery);
     const decisionSchema = {
       type: 'object',
       properties: {
@@ -735,7 +756,7 @@ if (exportPrompt) {
 
 for (const { scenario, id, message, handoff } of selectedCases) {
   const row = await withGroup(scenario, message, async (group) => {
-    const prompt = sharedGroupPlanningPrompt(group.delivery);
+    const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
