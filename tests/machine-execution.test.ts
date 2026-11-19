@@ -13,7 +13,7 @@ import { verifyMachineSignature } from '../server/machine-signature.ts';
 import { machineTool } from '../server/machine-tools.ts';
 import { checkRecoveryProtocol, MachineCheckOutbox } from '../server/machine-check-outbox.ts';
 import { beginMachineCheck } from '../server/machine-checks.ts';
-import type { RunnerEvent } from '../server/runners.ts';
+import { MachineDeliveryInterrupted, type RunnerEvent } from '../server/runners.ts';
 import { createWorktree, git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
 import {
@@ -422,7 +422,7 @@ test(
   },
 );
 
-async function reviewFixture(t: TestContext) {
+async function reviewFixture(t: TestContext, ignoredCounter?: string) {
   const f = await fixture(t);
   const store = new Store(path.join(f.root, 'check.db'));
   const host = new Workspace(store, f.root, f.root);
@@ -435,6 +435,7 @@ async function reviewFixture(t: TestContext) {
   await git(repo, ['init', '-b', 'main']);
   await git(repo, ['config', 'core.autocrlf', 'false']);
   await writeFile(path.join(repo, 'value.txt'), 'base');
+  if (ignoredCounter) await writeFile(path.join(repo, '.gitignore'), ignoredCounter + '\n');
   await git(repo, ['add', '.']);
   await git(repo, [
     '-c',
@@ -479,6 +480,161 @@ async function reviewFixture(t: TestContext) {
   const node = host.runners.add('Fixture machine', 'computer', project.id);
   return { f, store, host, repo, project, owner, task, checkout, session, node };
 }
+
+if (process.env.KIVUNO_PAIRED_RECOVERY === '1')
+  test(
+    'Windows Reviews recovers a finished check from a disconnected Mac',
+    { timeout: 650_000 },
+    async (t) => {
+      assert.equal(process.platform, 'win32');
+      const { chromium, expect } = await import('@playwright/test');
+      const { startCrossHostBridge } = await import('./fixtures/shared-sade-cross-host.ts');
+      const counter = 'runner-invocations.txt';
+      const { f, host, repo, checkout, project, task, session, node } = await reviewFixture(
+        t,
+        counter,
+      );
+      const directory = process.env.KIVUNO_RECOVERY_EVIDENCE_DIR!;
+      await mkdir(directory, { recursive: true });
+      const nonce = randomUUID();
+      let first: RunnerEvent | undefined;
+      let cutAt = 0,
+        reopenedAt = 0,
+        disconnectedRequests = 0;
+      const bridge = await startCrossHostBridge(host, project.id, node, {
+        origin: process.env.KIVUNO_CROSS_HOST_ORIGIN!,
+        port: Number(process.env.KIVUNO_CROSS_HOST_PORT),
+        workflowRef: process.env.KIVUNO_MAC_WORKFLOW_REF!,
+        sha: process.env.GITHUB_SHA!,
+        runId: process.env.KIVUNO_MAC_RUN_ID!,
+        dropExchange(body) {
+          if (reopenedAt) return false;
+          const receipt = body.events.find(
+            (event) =>
+              event.method === checkRecoveryProtocol && event.result?.evidence?.taskId === task.id,
+          );
+          if (!first) {
+            if (!receipt) return false;
+            first = receipt;
+            cutAt = Date.now();
+            console.log(
+              'Dropping Mac exchange after command completion and before coordinator delivery.',
+            );
+          }
+          // A blank epoch after the cut is the runner's reconnect handshake. Its
+          // compact outbox receipt survives the loss of the in-memory output.
+          if (!body.epoch && receipt?.id === first.id && receipt.result?.stdout === undefined) {
+            reopenedAt = Date.now();
+            return false;
+          }
+          disconnectedRequests++;
+          return true;
+        },
+      });
+      f.cleanups.push(bridge.close);
+      const uiPort = 58175;
+      const ui = await buildApp(host, { port: uiPort, distDir: path.resolve('dist') });
+      f.cleanups.push(() => ui.close());
+      await ui.listen({ host: '127.0.0.1', port: uiPort });
+      const browser = await chromium.launch();
+      f.cleanups.push(() => browser.close());
+      const page = await browser.newPage();
+      await page.addInitScript(() => sessionStorage.setItem('kivuno-guide-v3', 'seen'));
+      await page.goto(`http://127.0.0.1:${uiPort}/#reviews`);
+      const card = page.locator('.review-card').filter({ hasText: task.title });
+      await expect(card).toBeVisible();
+      const grant = await bridge.ready();
+      assert.equal(grant.platform, 'darwin');
+      const target = path.join(checkout.worktree, 'value.txt');
+      await writeFile(target, 'tested');
+      const use = (operation: string, args = {}) =>
+        machineTool(
+          host,
+          session,
+          'machine_use',
+          { runnerId: node.id, operation, args },
+          () => {},
+          true,
+        );
+      await use('sync');
+      const command = [
+        "const fs = require('node:fs'), assert = require('node:assert/strict')",
+        "assert.equal(process.platform, 'darwin')",
+        `fs.appendFileSync('${counter}', process.argv[1] + '\\n')`,
+        "assert.equal(fs.readFileSync('value.txt','utf8'), 'tested')",
+        'console.log(process.argv[1])',
+      ].join(';');
+      const result = use('run', { command: 'node', args: ['-e', command, nonce] }).then(
+        () => undefined,
+        (error: Error) => error,
+      );
+      await card.getByRole('button').click();
+      const checks = page.getByRole('region', { name: 'Paired-machine checks' });
+      const integrate = page.getByRole('button', { name: 'Accept & integrate' });
+      await expect.poll(() => cutAt, { timeout: 35_000 }).toBeGreaterThan(0);
+      assert.equal(first!.result.stdout.trim(), nonce);
+      assert.equal(first!.result.evidence.code, 0);
+      await expect(checks).toContainText('awaiting result');
+      await expect(integrate).toBeDisabled();
+      assert.equal((await host.reviewDiff(task.id)).machineChecks!.attempts[0].finished, undefined);
+      await checks.screenshot({ path: path.join(directory, 'disconnected.png') });
+      await expect(checks).toContainText('· passed', { timeout: 110_000 });
+      await expect(integrate).toBeEnabled();
+      assert.ok(reopenedAt > cutAt && disconnectedRequests > 0);
+      const outcome = await result;
+      if (outcome && !(outcome instanceof MachineDeliveryInterrupted)) throw outcome;
+      const rows = (await host.reviewDiff(task.id)).machineChecks!.attempts;
+      assert.equal(rows.length, 1);
+      const manifest = host.machineCheckManifest(task.id, rows[0].id);
+      assert.deepEqual(manifest.evidence, first!.result.evidence);
+      assert.deepEqual(manifest.proof, first!.result.proof);
+      verifyMachineSignature(manifest.evidence, manifest.proof, manifest.fingerprint);
+      const readCounter = async () => (await use('read', { path: counter })).content;
+      assert.equal(await readCounter(), nonce + '\n');
+      await checks.screenshot({ path: path.join(directory, 'recovered.png') });
+      await writeFile(target, 'edited after the Mac check');
+      await checks.getByRole('button', { name: 'Refresh checks' }).click();
+      await expect(checks).toContainText('· stale');
+      await expect(integrate).toBeDisabled();
+      const api = `http://127.0.0.1:${uiPort}/api`;
+      const { token } = await (await page.request.get(api + '/session')).json();
+      const response = await page.request.post(`${api}/tasks/${task.id}/accept`, {
+        headers: { 'x-relay-token': token, 'content-type': 'application/json' },
+        data: {},
+      });
+      const rejection = (await response.json()).error;
+      assert.equal(response.status(), 409, rejection);
+      assert.match(rejection, /passing paired-machine check/);
+      assert.equal(await git(repo, ['rev-parse', 'HEAD']), checkout.baseCommit);
+      assert.equal(await readFile(path.join(repo, 'value.txt'), 'utf8'), 'base');
+      assert.equal(await readCounter(), nonce + '\n');
+      await checks.screenshot({ path: path.join(directory, 'edited.png') });
+      const summary = {
+        coordinator: process.platform,
+        coordinatorRelease: os.release(),
+        runner: grant.platform,
+        arch: grant.arch,
+        runnerRelease: manifest.evidence.release,
+        checkId: rows[0].id,
+        disconnectedRequests,
+        disconnectedMs: reopenedAt - cutAt,
+        invocations: 1,
+        reviewAttempts: rows.length,
+        reviewStates: ['awaiting result', 'passed', 'stale'],
+        integrationHttpStatus: response.status(),
+        rejection,
+        unchangedHead: checkout.baseCommit,
+        revision: process.env.GITHUB_SHA,
+      };
+      await writeFile(
+        path.join(directory, 'signed-result.json'),
+        JSON.stringify(manifest, null, 2),
+      );
+      await bridge.finish();
+      await writeFile(path.join(directory, 'verification.json'), JSON.stringify(summary, null, 2));
+      console.log(JSON.stringify(summary));
+    },
+  );
 
 test(
   'lost command delivery, both endpoints restarting and a lost receipt ACK run the check once and recover it in Reviews',

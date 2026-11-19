@@ -10,6 +10,7 @@ import { DesktopIdentity } from '../../server/desktop-auth.ts';
 import { registerDesktopRoutes } from '../../server/desktop-routes.ts';
 import { runMachine, type RunnerConfig } from '../../server/runner-agent.ts';
 import type { Workspace } from '../../server/service.ts';
+import type { RunnerEvent } from '../../server/runners.ts';
 import { safeEqual } from '../../server/security.ts';
 import { Store } from '../../server/store.ts';
 
@@ -17,6 +18,7 @@ const issuer = 'https://token.actions.githubusercontent.com';
 const bootstrapPath = '/paired-test/config';
 const statusPath = '/paired-test/status';
 const exchangePath = '/api/desktop/bridge/exchange';
+const enrollmentRequired = 'An unused, matching CI identity is required.';
 const key = () => randomBytes(32).toString('base64url');
 
 export function tunnelOrigin(input: string) {
@@ -33,7 +35,14 @@ export async function startCrossHostBridge(
   workspace: Workspace,
   projectId: string,
   node: { id: string; token: string },
-  options: { origin: string; port: number; workflowRef: string; sha: string },
+  options: {
+    origin: string;
+    port: number;
+    workflowRef: string;
+    sha: string;
+    runId?: string;
+    dropExchange?: (body: { epoch: string; events: RunnerEvent[] }) => boolean;
+  },
 ) {
   const origin = tunnelOrigin(options.origin);
   const response = await fetch(`${issuer}/.well-known/jwks`, { signal: AbortSignal.timeout(5000) });
@@ -59,6 +68,7 @@ export async function startCrossHostBridge(
         claims.exp > now &&
         claims.workflow_ref === options.workflowRef &&
         claims.sha === options.sha &&
+        (!options.runId || claims.run_id === options.runId) &&
         claims.event_name === 'workflow_dispatch' &&
         claims.runner_environment === 'github-hosted'
       );
@@ -97,9 +107,21 @@ export async function startCrossHostBridge(
     if (verified) acknowledged = true;
     return { verified };
   });
+  if (options.dropExchange) {
+    edge.addHook('preHandler', async (request, reply) => {
+      if (
+        request.url.split('?')[0] === exchangePath &&
+        options.dropExchange!(request.body as { epoch: string; events: RunnerEvent[] })
+      ) {
+        // Cut the actual origin socket before the desktop bridge forwards the receipt.
+        reply.hijack();
+        request.raw.socket.destroy();
+      }
+    });
+  }
   edge.post(bootstrapPath, { bodyLimit: 256 }, async (request, reply) => {
     if (provisioned || !trusted(request.headers.authorization))
-      return reply.code(403).send({ error: 'An unused, matching CI identity is required.' });
+      return reply.code(403).send({ error: enrollmentRequired });
     provisioned = true;
     reply.header('Cache-Control', 'no-store');
     return {
@@ -175,6 +197,27 @@ export async function startCrossHostBridge(
 export async function runCrossHostMac(url: string) {
   assert.equal(process.platform, 'darwin');
   const origin = tunnelOrigin(url);
+  const deadline = Date.now() + 90_000;
+  // Wait for the fixture's JSON response; an intermediary can also return a 403.
+  for (;;) {
+    const probe = await fetch(origin + bootstrapPath, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(5000),
+      redirect: 'error',
+    }).catch(() => undefined);
+    if (
+      probe?.status === 403 &&
+      (await probe.json().catch(() => null))?.error === enrollmentRequired
+    )
+      break;
+    if (Date.now() >= deadline)
+      throw new Error(
+        `Fixture origin did not become ready (last HTTP status ${probe?.status ?? 'unreachable'}).`,
+      );
+    await wait(1500);
+  }
   const tokenUrl = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL!);
   tokenUrl.searchParams.set('audience', origin);
   const oidc = await fetch(tokenUrl, {
