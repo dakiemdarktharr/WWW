@@ -19,6 +19,28 @@ export interface DesktopWindowState {
   maximized: boolean;
   fullscreen: boolean;
 }
+export type DesktopProfileCommand =
+  | {
+      action: 'reserve';
+      profileId: string;
+      name: string;
+      provider: import('../shared/types').ProviderId;
+    }
+  | {
+      action: 'commit';
+      profileId: string;
+      name?: string;
+      provider?: import('../shared/types').ProviderId;
+    }
+  | { action: 'release'; profileId: string }
+  | {
+      action: 'sync';
+      profiles: {
+        profileId: string;
+        name: string;
+        provider: import('../shared/types').ProviderId;
+      }[];
+    };
 export interface DesktopUpdateStatus {
   currentVersion: string;
   latestVersion: string;
@@ -67,6 +89,7 @@ declare global {
       }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
+      profiles<T>(input: DesktopProfileCommand): Promise<T>;
       signOut(): Promise<void>;
       openExternal(url: string): Promise<void>;
       openPreview(url: string): Promise<void>;

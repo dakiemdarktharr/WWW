@@ -147,7 +147,9 @@ export class Workspace {
   async restoreAccounts(runnerId?: string) {
     for (const member of this.store
       .members()
-      .filter((member) => member.connectedAt && member.runnerId === runnerId)) {
+      .filter(
+        (member) => !member.entitlementLocked && member.connectedAt && member.runnerId === runnerId,
+      )) {
       if (this.closing) return;
       try {
         const updated = await this.refresh(member.id);
@@ -157,6 +159,96 @@ export class Workspace {
           this.log(`Account restore needs attention: ${redact(error)}`, null, member.id, 'system');
       }
     }
+  }
+  async applyProfileLocks(lockedIds: string[]) {
+    const locked = new Set(lockedIds);
+    const newlyLocked: Member[] = [];
+    for (const member of this.store.members()) {
+      const next = locked.has(member.id);
+      const justLocked = next && !member.entitlementLocked;
+      if (Boolean(member.entitlementLocked) !== next || justLocked)
+        this.store.updateMember(member.id, {
+          entitlementLocked: next,
+          ...(justLocked ? { status: 'offline' as const } : {}),
+        });
+      if (justLocked) {
+        this.accountEpoch.set(member.id, (this.accountEpoch.get(member.id) || 0) + 1);
+        newlyLocked.push(member);
+      }
+    }
+    for (const member of newlyLocked) {
+      if (this.loginOwner === member.id) {
+        const loginId = this.loginId;
+        this.loginGeneration++;
+        clearTimeout(this.loginTimer);
+        this.loginOwner = null;
+        this.loginId = null;
+        if (loginId)
+          await this.clients
+            .get(member.id)
+            ?.request('account/login/cancel', { loginId })
+            .catch(() => {});
+        this.store.updateMember(member.id, {
+          status: 'offline',
+          signIn: {
+            state: 'error',
+            startedAt: member.signIn?.startedAt || new Date().toISOString(),
+            error: 'This profile is locked by the current Kivuno plan.',
+          },
+        });
+      }
+      const run = this.running.get(member.id);
+      if (run) {
+        try {
+          await this.stop(run.taskId);
+        } catch (error) {
+          this.log(
+            `Could not stop locked profile work: ${redact(error)}`,
+            run.taskId,
+            member.id,
+            'error',
+          );
+        }
+      } else {
+        for (const session of this.sessions
+          .all()
+          .filter(
+            (item) => item.memberId === member.id && ['starting', 'running'].includes(item.status),
+          ))
+          try {
+            await this.sessions.stop(session.id);
+          } catch (error) {
+            this.log(
+              `Could not stop locked profile session: ${redact(error)}`,
+              session.taskId,
+              member.id,
+              'error',
+            );
+          }
+      }
+      const client = this.clients.get(member.id);
+      if (client) {
+        try {
+          await client.stop();
+        } catch (error) {
+          this.log(
+            `Could not stop locked profile client: ${redact(error)}`,
+            null,
+            member.id,
+            'error',
+          );
+        } finally {
+          this.clients.delete(member.id);
+        }
+      }
+    }
+    return { updated: true };
+  }
+  assertProfileUnlocked(id: string): Member {
+    const member = this.store.get<Member>('member', id);
+    if (member.entitlementLocked)
+      throw new DomainError('This profile is locked by the current Kivuno plan.', 403);
+    return member;
   }
   canStart(memberId?: string) {
     try {
@@ -261,7 +353,7 @@ export class Workspace {
     };
   }
   home(id: string) {
-    this.store.get<Member>('member', id);
+    this.assertProfileUnlocked(id);
     return path.join(this.dataDir, 'profiles', id);
   }
   log(
@@ -276,8 +368,10 @@ export class Workspace {
   }
   async client(id: string): Promise<CodexClient> {
     if (this.closing) throw new DomainError('The coordinator is shutting down.');
-    if (this.store.get<Member>('member', id).removedAt)
+    const member = this.store.get<Member>('member', id);
+    if (member.removedAt)
       throw new DomainError('This teammate was removed. Add a new account in Team.', 410);
+    this.assertProfileUnlocked(id);
     const existing = this.clients.get(id);
     if (existing) return existing;
     const pending = this.connecting.get(id);
@@ -321,8 +415,14 @@ export class Workspace {
       });
       this.store.updateMember(id, { status: 'connecting', error: null });
       try {
+        if (this.store.get<Member>('member', id).entitlementLocked)
+          throw new DomainError('This profile is locked by the current Kivuno plan.', 403);
         await client.start();
-        if (this.closing) throw new DomainError('The coordinator is shutting down.');
+        if (this.closing || this.store.get<Member>('member', id).entitlementLocked) {
+          await client.stop();
+          if (this.closing) throw new DomainError('The coordinator is shutting down.');
+          throw new DomainError('This profile is locked by the current Kivuno plan.', 403);
+        }
         if (client.provider === 'codex') {
           const probe = await probeCodex();
           this.runtime.codexAvailable = probe.available;
@@ -347,6 +447,7 @@ export class Workspace {
     const epoch = this.accountEpoch.get(id) || 0;
     const profile = this.store.get<Member>('member', id);
     if (profile.removedAt) throw new DomainError('This teammate was removed.', 410);
+    this.assertProfileUnlocked(id);
     if (isExternalMember(profile)) return profile;
     const client = await this.client(id);
     const account = await readAccount(client);
@@ -430,6 +531,7 @@ export class Workspace {
   async login(id: string, method: 'browser' | 'device') {
     const profile = this.store.get<Member>('member', id);
     if (profile.removedAt) throw new DomainError('This teammate was removed.', 410);
+    this.assertProfileUnlocked(id);
     if (isExternalMember(profile))
       throw new DomainError('Connect this teammate using the external MESH bridge.');
     if (this.running.has(id) || this.sessions.hasLive(id))
@@ -465,11 +567,12 @@ export class Workspace {
   async logout(id: string) {
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before signing out.');
-    const client = await this.client(id);
+    const profile = this.store.get<Member>('member', id);
+    const client = profile.entitlementLocked ? this.clients.get(id) : await this.client(id);
     // Invalidate reads that were started before logout.
     this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
     if (this.loginOwner === id) this.loginGeneration++;
-    await client.request('account/logout');
+    if (client) await client.request('account/logout');
     if (this.loginOwner === id) {
       this.loginOwner = null;
       this.loginId = null;
@@ -628,7 +731,9 @@ export class Workspace {
     const connection = isExternalMember(member)
       ? undefined
       : this.clients.get(id) ||
-        (member.connectedAt || member.account ? this.client(id) : undefined);
+        (!member.entitlementLocked && (member.connectedAt || member.account)
+          ? this.client(id)
+          : undefined);
     this.store.updateMember(id, { removedAt: new Date().toISOString() });
     try {
       for (const session of sessions)
@@ -679,7 +784,11 @@ export class Workspace {
     memberIds?: string[];
     initializeGit?: boolean;
   }) {
-    for (const id of input.memberIds || []) this.store.get<Member>('member', id);
+    for (const id of input.memberIds || []) {
+      const member = this.store.get<Member>('member', id);
+      if (member.entitlementLocked)
+        throw new DomainError('Unlock this profile before adding it to a project.', 403);
+    }
     const selectedPath = await realpath(input.path).catch(() => null);
     const privatePath = await realpath(this.dataDir).catch(() => path.resolve(this.dataDir));
     if (selectedPath && inside(privatePath, selectedPath))
@@ -702,10 +811,9 @@ export class Workspace {
     return project;
   }
   async importSkills(id: string) {
-    if (
-      this.store.get<Member>('member', id).provider &&
-      this.store.get<Member>('member', id).provider !== 'codex'
-    )
+    const member = this.store.get<Member>('member', id);
+    this.assertProfileUnlocked(id);
+    if (member.provider && member.provider !== 'codex')
       throw new DomainError(
         'Provider-specific skill imports require review. Share capability inventories through the project group.',
       );
@@ -969,6 +1077,7 @@ export class Workspace {
       }[task.kind];
       const available = groupMembers(this.store, projectId).filter(
         (m) =>
+          !m.entitlementLocked &&
           m.status === 'ready' &&
           memberPresence(this, m).presence !== 'offline' &&
           m.account &&
@@ -1356,6 +1465,7 @@ export class Workspace {
   decide(id: string, decision: 'accept' | 'decline') {
     const approval = this.approvals.get(id);
     if (!approval) return this.sessions.decide(id, decision);
+    this.assertProfileUnlocked(approval.public.memberId);
     const run = this.running.get(approval.public.memberId);
     if (
       !run ||

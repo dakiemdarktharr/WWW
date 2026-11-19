@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld(
     prepareProvider: (provider) => ipcRenderer.invoke('relay:prepare-provider', provider),
     signInAntigravityWithGoogle: () => ipcRenderer.invoke('relay:antigravity-google-sign-in'),
     groups: (input) => ipcRenderer.invoke('relay:groups', input),
+    profiles: (input) => ipcRenderer.invoke('relay:profiles', input),
     signOut: () => ipcRenderer.invoke('relay:sign-out'),
     openExternal: (url) => ipcRenderer.invoke('relay:external', url),
     openPreview: (url) => ipcRenderer.invoke('relay:preview', url),

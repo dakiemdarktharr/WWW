@@ -127,6 +127,8 @@ export class Autonomy {
   }
   reserve(id: string, memberId?: string) {
     const member = memberId ? this.host.store.get<Member>('member', memberId) : undefined;
+    if (member?.entitlementLocked)
+      throw new DomainError('This profile is locked by the current Kivuno plan.', 403);
     const machine = member?.runnerId || 'cloud';
     const node = member?.runnerId ? this.host.runners.assertReady(member.runnerId) : undefined;
     if (node?.busy)
@@ -171,7 +173,8 @@ export class Autonomy {
         );
       const preferred = this.fair.preferred((ticket) => {
         const peer = this.host.store.members().find((entry) => entry.id === ticket.memberId);
-        if (!peer?.account || (peer.runnerId || 'cloud') !== machine) return false;
+        if (!peer?.account || peer.entitlementLocked || (peer.runnerId || 'cloud') !== machine)
+          return false;
         if (['offline', 'connecting', 'error'].includes(peer.status)) return false;
         if (
           [...this.reservations.keys()].some(
@@ -351,13 +354,18 @@ export class Autonomy {
       }
     }
   }
-  addAccount(provider: Member['provider'] = 'codex') {
+  addAccount(provider: Member['provider'] = 'codex', profileId?: string) {
     return this.host.store.transaction(() => {
       const members = this.host.store.members();
       const used = new Set(members.map((member) => member.name.toLowerCase()));
-      const name = names.find((name) => !used.has(name.toLowerCase()));
-      if (!name) throw new DomainError('This workspace already has its maximum team size.');
+      let name = names.find((candidate) => !used.has(candidate.toLowerCase()));
+      if (!name) {
+        let suffix = 1;
+        do name = `Profile ${suffix++}`;
+        while (used.has(name.toLowerCase()));
+      }
       const member = this.host.store.addMember({
+        ...(profileId ? { id: profileId } : {}),
         name,
         provider,
         integration: isExternalProvider(provider) ? 'external' : 'native',
@@ -369,7 +377,10 @@ export class Autonomy {
   join(memberId?: string, projectId?: string) {
     const members = this.host.store
       .members()
-      .filter((member) => member.account && (!memberId || member.id === memberId));
+      .filter(
+        (member) =>
+          member.account && !member.entitlementLocked && (!memberId || member.id === memberId),
+      );
     for (const project of this.host.store
       .projects()
       .filter((project) => !projectId || project.id === projectId))
@@ -419,6 +430,7 @@ export class Autonomy {
   }
   async ready(memberId: string) {
     if (this.host.closing) return;
+    if (this.host.store.get<Member>('member', memberId).entitlementLocked) return;
     let pending = this.onboarding.get(memberId);
     if (!pending) {
       pending = this.onboard(memberId).finally(() => this.onboarding.delete(memberId));
@@ -428,7 +440,7 @@ export class Autonomy {
   }
   private async onboard(memberId: string) {
     const member = this.host.store.get<Member>('member', memberId);
-    if (!member.account) return;
+    if (!member.account || member.entitlementLocked) return;
     if (isExternalMember(member)) return;
     this.join(memberId);
     // Await on the next turn too; login does not start model work.
@@ -444,6 +456,7 @@ export class Autonomy {
   }
   publish(memberId: string) {
     const member = this.host.store.get<Member>('member', memberId);
+    if (member.entitlementLocked) return;
     const digest = createHash('sha256')
       .update(JSON.stringify([member.skills, member.plugins]))
       .digest('hex');
@@ -477,7 +490,8 @@ export class Autonomy {
   }
   shareSkills(memberId: string): Promise<void> {
     const member = this.host.store.get<Member>('member', memberId);
-    if (member.provider && member.provider !== 'codex') return Promise.resolve();
+    if (member.entitlementLocked || (member.provider && member.provider !== 'codex'))
+      return Promise.resolve();
     const existing = this.syncing.get(memberId);
     if (existing) return existing;
     if (Date.now() - (this.lastSync.get(memberId) || 0) < 60_000) return Promise.resolve();
@@ -499,10 +513,12 @@ export class Autonomy {
       return;
     let copied = 0;
     const member = this.host.store.get<Member>('member', memberId);
+    if (member.entitlementLocked) return;
     for (const source of this.host.store.members().filter(
       (source) =>
         (!source.provider || source.provider === 'codex') &&
         source.id !== memberId &&
+        !source.entitlementLocked &&
         source.account &&
         this.host.store.projects().some((project) => {
           const ids = groupMembers(this.host.store, project.id).map((member) => member.id);
