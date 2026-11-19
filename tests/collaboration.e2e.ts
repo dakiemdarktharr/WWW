@@ -251,7 +251,26 @@ try {
   assert.equal(cloud.all('sharedSadeRun').length, 1);
   const poll = (active: string[] = [], readUpdates?: { jobId: string; through: number }[]) =>
     dispatch({ action: 'sade-poll', grants: [grantId], active, taskUpdates: true, readUpdates });
+  const firstPlan = (poll() as { delivery: SharedDelivery }).delivery;
+  const question = 'Should Alice Codex or Bob Codex check the plan?';
+  dispatch({
+    action: 'sade-finish',
+    jobId: firstPlan.id,
+    result: { kind: 'question', summary: question },
+  });
+  const progress = a.page.getByRole('region', { name: 'Sade progress' });
+  const peerProgress = b.page.getByRole('region', { name: 'Sade progress' });
+  for (const { page } of [a, b])
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(peerProgress).toContainText(question);
+  await expect(peerProgress.getByLabel('Reply to Sade')).toHaveCount(0);
+  const clarification = progress.getByLabel('Reply to Sade');
+  await clarification.fill('Alice Codex should check the plan.');
+  await progress.getByRole('button', { name: 'Send reply', exact: true }).click();
+  await expect(clarification).toHaveCount(0);
   const plan = (poll() as { delivery: SharedDelivery }).delivery;
+  assert.notEqual(plan.id, firstPlan.id);
+  assert.equal(plan.clarification?.answer, 'Alice Codex should check the plan.');
   dispatch({
     action: 'sade-finish',
     jobId: plan.id,
@@ -276,7 +295,9 @@ try {
     },
   });
   const task = (poll() as { delivery: SharedDelivery }).delivery;
-  const progress = a.page.getByRole('region', { name: 'Sade progress' });
+  await expect(
+    progress.getByRole('listitem').filter({ hasText: /^Check the current plan\s+·/ }),
+  ).toContainText('Alice Codex · Alice');
   await progress.getByRole('button', { name: 'Update task', exact: true }).click();
   await progress.getByLabel('Task update', { exact: true }).fill('Use the revised checklist.');
   await progress.getByRole('button', { name: 'Send update', exact: true }).click();
@@ -288,7 +309,6 @@ try {
   poll([task.id], [{ jobId: task.id, through: 1 }]);
   await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(progress.getByText('1/1 task updates read')).toBeVisible();
-  const peerProgress = b.page.getByRole('region', { name: 'Sade progress' });
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(peerProgress.getByText('1/1 task updates read')).toBeVisible();
   await expect(peerProgress.getByRole('button', { name: 'Update task', exact: true })).toHaveCount(

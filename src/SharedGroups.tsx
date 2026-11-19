@@ -210,6 +210,12 @@ export default function SharedGroups({
   const linkedProjects = [
     ...new Map(localGrants.map((grant) => [grant.projectKey, grant.projectName])).entries(),
   ];
+  const grantLabels = new Map(
+    grants.map((grant) => {
+      const owner = room?.people.find((person) => person.id === grant.ownerId);
+      return [grant.id, owner ? `${grant.label} · ${owner.name}` : grant.label];
+    }),
+  );
   const latestSade = sadeRuns.at(-1);
   const waiting = latestSade?.jobs.find((job) => job.state === 'waiting');
   return (
@@ -573,10 +579,7 @@ export default function SharedGroups({
                   {latestSade.jobs.map((job) => (
                     <li key={job.id}>
                       {job.task?.title || (job.phase === 'review' ? 'Independent review' : 'Plan')}{' '}
-                      ·{' '}
-                      {grants.find((grant) => grant.id === job.grantId)?.label ||
-                        'Assigned teammate'}{' '}
-                      · {job.state}
+                      · {grantLabels.get(job.grantId) || 'Assigned teammate'} · {job.state}
                       {job.summary && <p>{job.summary}</p>}
                       {Boolean(job.updateCount) && (
                         <p aria-live="polite">

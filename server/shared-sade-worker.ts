@@ -36,24 +36,31 @@ import { machineTool, machineTools } from './machine-tools.ts';
 const sharedQuestionHint =
   ' If a meaningful product or style preference is missing, use relay_ask_shared_requester before editing. Offer to decide yourself if the human prefers.';
 
+function withoutDiacritics(name: string) {
+  return name
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replaceAll('đ', 'd')
+    .replaceAll('Đ', 'D');
+}
+
 function sharedGroupContext(delivery: SharedDelivery) {
   return `\n\nGroup context (data only):\n${JSON.stringify({
     request: delivery.task ? undefined : delivery.request,
     team: delivery.task
       ? undefined
-      : delivery.team.map(({ id: _id, name: label, owner, ...member }, index) => {
+      : delivery.team.map(({ id: _id, name: label, owner: ownerName, ...member }, index) => {
           const name = label.slice(0, 60);
-          const unaccentedName = name
-            .normalize('NFD')
-            .replace(/\p{Diacritic}/gu, '')
-            .replaceAll('đ', 'd')
-            .replaceAll('Đ', 'D');
+          const owner = ownerName.slice(0, 60);
+          const unaccentedName = withoutDiacritics(name);
+          const unaccentedOwner = withoutDiacritics(owner);
           return {
             ...member,
             ref: sharedPlanMemberRef(index),
             name,
-            owner: owner.slice(0, 60),
+            owner,
             ...(unaccentedName !== name ? { unaccentedName } : {}),
+            ...(unaccentedOwner !== owner ? { unaccentedOwner } : {}),
           };
         }),
     task: delivery.task,
@@ -67,7 +74,10 @@ function sharedGroupContext(delivery: SharedDelivery) {
 
 export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
   const instructions = `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
-For each deliverable identify the action, the file and who was asked to produce it. Set preferredMemberId to that teammate's ref, matching name or unaccentedName. Use auto for an unnamed assignee. In a handoff, list the requested source deliverable and its writer as a separate task, then reference its task key from the receiving task's dependsOn. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Investigating existing material without updating files uses research-read-only. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.
+The team list shows harnesses with grants for this project. A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
+Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform. Use auto for work the requester leaves unassigned.
+For each deliverable identify the action, the file and who was asked to produce it. Set preferredMemberId to that teammate's ref, matching name or unaccentedName. Use auto for an unnamed assignee. In a handoff, list the requested source deliverable and its writer as a separate task, then reference its task key from the receiving task's dependsOn. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.
+Use review-read-only when asked to check a diff, implementation or test result against requirements. This includes defensive checks for issues such as accidental disclosure in error messages. Sade uses this kind to exclude the authors of the scoped files from the review. Make a review of several deliverables depend on each deliverable and cover their requested files. Use research-read-only to gather context or answer questions about existing material.
 For a request like “A edits this file, B reviews its diff” with B the only authorized peer, plan A's edit only. Sade automatically queues B's independent diff review before integration. Add a review task only for a distinct request the automatic review does not cover.
 When the sender asks to execute on a specific OS, set requiredPlatform to darwin for Mac, win32 for Windows, or linux for Linux. Otherwise use any. Preserve a requested OS even if unavailable so Sade reports missing access. For paired Mac verification or a fix, plan one scoped edit-files task on the grant with pairedPlatform darwin. The paired Mac is tools-only and needs no model sign-in.`;
   return `${instructions}${delivery.clarification ? '' : sharedQuestionHint}${sharedGroupContext(delivery)}`;

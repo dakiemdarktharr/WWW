@@ -287,7 +287,7 @@ export const groupPlanTool = {
               ...planTool.inputSchema.properties.tasks.items.properties.kind,
               enum: Object.keys(sharedPlanKinds),
               description:
-                'Choose by action and permissions: edit-files creates or updates files such as docs, code or config, or uses paired OS tools. edit-design edits visual assets. research-read-only investigates without editing. review-read-only inspects existing work without editing.',
+                'Choose by action and permissions: edit-files creates or updates files such as docs, code or config, or uses paired OS tools. edit-design edits visual assets. research-read-only gathers information. review-read-only checks a diff, implementation or test result against requirements, including defensive checks. Review excludes the authors of scoped files.',
             },
             preferredMemberId: {
               type: 'string',
@@ -641,9 +641,14 @@ export class GroupSade {
         const job = run.jobs.find((item) => item.id === command.jobId);
         if (!job || job.state !== 'waiting' || !job.summary || final(run))
           throw new DomainError('This question is no longer waiting.', 409);
-        const grant = this.grants(group).find((item) => item.id === job.grantId);
+        const grants = this.grants(group);
+        const grant = grants.find((item) => item.id === job.grantId);
         if (!grant || !this.usable(grant, group) || unreservedTurns(run, grant, job) < 1)
           throw new DomainError('The harness needs a remaining granted turn to continue.', 409);
+        if (job.phase === 'plan')
+          run.roster = grants
+            .filter((entry) => entry.projectKey === run.projectKey && this.usable(entry, group))
+            .map((entry) => entry.id);
         // Each attempt has its own receipt. The task key still identifies dependencies.
         run.jobs[run.jobs.indexOf(job)] = {
           ...job,

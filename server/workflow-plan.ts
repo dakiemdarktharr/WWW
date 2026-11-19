@@ -143,7 +143,9 @@ export function collectPrerequisites<T>(
   return ordered;
 }
 
-/** Balance estimated effort first; specialism only breaks equal-load ties. */
+const maxSharedAllocationRetries = 1024;
+
+/** Use role and load ranking, with alternate assignments for Shared Groups. */
 export function allocatePlan(
   plan: TeamPlan,
   members: Pick<Member, 'id' | 'role'>[],
@@ -177,8 +179,7 @@ export function allocatePlan(
       b.effort - a.effort ||
       compareKey(a.key, b.key),
   );
-  const ownerOf = (id: string) => options.ownerByMember?.get(id) ?? id;
-  for (const task of byEffort) {
+  const rankedTasks = byEffort.map((task) => {
     let reviewedKeys = task.kind === 'review' ? task.dependsOn : [];
     if (options.ownerByMember && reviewedKeys.length) {
       reviewedKeys = collectPrerequisites(task.dependsOn, tasksByKey, (item) => item.dependsOn)
@@ -189,41 +190,54 @@ export function allocatePlan(
         )
         .map((prior) => prior.key);
     }
+    return {
+      task,
+      reviewedKeys,
+      supported: members.filter((member) => options.supports?.(member.id, task) ?? true),
+    };
+  });
+  const ownerOf = (id: string) => options.ownerByMember?.get(id) ?? id;
+  function candidates({ task, reviewedKeys, supported }: (typeof rankedTasks)[number]) {
     const authors = new Set(
       reviewedKeys.flatMap((key) => {
         const memberId = assignments.get(key);
         return memberId ? [ownerOf(memberId)] : [];
       }),
     );
-    const capable = members.filter(
-      (member) => !authors.has(ownerOf(member.id)) && (options.supports?.(member.id, task) ?? true),
-    );
+    const capable = supported.filter((member) => !authors.has(ownerOf(member.id)));
     if (!capable.length)
-      throw new DomainError(
+      return new DomainError(
         task.kind === 'review'
           ? 'Independent review needs another connected teammate.'
           : `No authorized teammate can run “${task.title}”.`,
       );
     if (task.preferredMemberId && !capable.some((member) => member.id === task.preferredMemberId))
-      throw new DomainError(
+      return new DomainError(
         'The requested teammate is unavailable or would review their own work.',
       );
     const eligible = capable.filter(
       (member) =>
-        !remaining ||
-        (remaining.get(member.id) || 0) >
-          (member.id === task.preferredMemberId ? 0 : requested.get(member.id) || 0),
+        (!task.preferredMemberId || member.id === task.preferredMemberId) &&
+        (!remaining ||
+          (remaining.get(member.id) || 0) >
+            (member.id === task.preferredMemberId ? 0 : requested.get(member.id) || 0)),
     );
-    if (
-      !eligible.length ||
-      (task.preferredMemberId && !eligible.some((member) => member.id === task.preferredMemberId))
-    )
-      throw new DomainError('The plan needs more prompt turns than a teammate granted.');
+    return eligible.length
+      ? eligible
+      : new DomainError('The plan needs more prompt turns than a teammate granted.');
+  }
+
+  let retries = options.ownerByMember ? maxSharedAllocationRetries : 0;
+  function assign(index: number): DomainError | undefined {
+    if (index === rankedTasks.length) return;
+    const item = rankedTasks[index];
+    const { task } = item;
+    const eligible = candidates(item);
+    if (eligible instanceof DomainError) return eligible;
     const role = (a: Pick<Member, 'role'>, b: Pick<Member, 'role'>) =>
       Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]);
-    const member = [...eligible].sort(
+    eligible.sort(
       (a, b) =>
-        Number(b.id === task.preferredMemberId) - Number(a.id === task.preferredMemberId) ||
         (options.available
           ? Number(options.available.has(b.id)) - Number(options.available.has(a.id))
           : 0) ||
@@ -231,14 +245,41 @@ export function allocatePlan(
         load.get(a.id)! - load.get(b.id)! ||
         role(a, b) ||
         compareKey(a.id, b.id),
-    )[0];
-    assignments.set(task.key, member.id);
-    load.set(member.id, load.get(member.id)! + task.effort);
-    if (remaining) {
-      remaining.set(member.id, remaining.get(member.id)! - 1);
-      if (task.preferredMemberId) requested.set(member.id, requested.get(member.id)! - 1);
+    );
+    let firstFailure: DomainError | undefined;
+    for (const { id } of eligible) {
+      if (firstFailure) {
+        if (retries <= 0) break;
+        retries--;
+      }
+      assignments.set(task.key, id);
+      load.set(id, load.get(id)! + task.effort);
+      if (remaining) {
+        remaining.set(id, remaining.get(id)! - 1);
+        if (task.preferredMemberId) requested.set(id, requested.get(id)! - 1);
+      }
+      // A writer or a spent turn can remove the last option for later work.
+      const blocked = options.ownerByMember
+        ? rankedTasks
+            .slice(index + 1)
+            .map(candidates)
+            .find((result) => result instanceof DomainError)
+        : undefined;
+      const failure = blocked ?? assign(index + 1);
+      if (!failure) return;
+
+      firstFailure ??= failure;
+      assignments.delete(task.key);
+      load.set(id, load.get(id)! - task.effort);
+      if (remaining) {
+        remaining.set(id, remaining.get(id)! + 1);
+        if (task.preferredMemberId) requested.set(id, requested.get(id)! + 1);
+      }
     }
+    return firstFailure;
   }
+  const failure = assign(0);
+  if (failure) throw failure;
   return plan.tasks.map((task) => ({ key: task.key, memberId: assignments.get(task.key)! }));
 }
 

@@ -43,8 +43,10 @@ function fixture(
     mac?: boolean;
     key?: string;
     members?: string[];
+    names?: [string, string];
     patchHandoff?: boolean;
     taskUpdates?: boolean;
+    roleA?: 'researcher';
     roleB?: 'reviewer' | 'researcher';
   } = {},
 ) {
@@ -78,7 +80,13 @@ function fixture(
     call(index, {
       action: 'teammates',
       groupId,
-      teammates: [{ localId: member, provider: providers[index], name: index ? 'Mây' : 'Bếp' }],
+      teammates: [
+        {
+          localId: member,
+          provider: providers[index],
+          name: options.names?.[index] || (index ? 'Mây' : 'Bếp'),
+        },
+      ],
     });
     if (!index || options.grantB !== false)
       call(index, {
@@ -88,7 +96,7 @@ function fixture(
         teammateId: member,
         projectKey: options.key || key,
         projectName: 'Fixture project',
-        role: index ? options.roleB || 'reviewer' : 'engineer',
+        role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
         platform: index && options.mac ? 'darwin' : 'win32',
         allowWrites: true,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
@@ -653,6 +661,7 @@ test(
     });
     const plannerCalls = JSON.stringify(planner.peer.calls);
     assert.match(plannerCalls, /unaccentedName.*Bep/);
+    assert.match(plannerCalls, /unaccentedOwner.*Binh/);
     assert.doesNotMatch(plannerCalls, new RegExp(cloud.grants.join('|')));
     const validPlan = {
       summary: 'Build architecture then inspect the result in another harness.',
@@ -1601,6 +1610,140 @@ test('matching owner on a different device cannot receive a granted job; another
   }
 });
 
+test('Shared Sade balances open implementation work without consuming the only independent reviewer', () => {
+  for (const pinBackend of [false, true]) {
+    const f = fixture(['gemini', 'codex']);
+    try {
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content:
+          'Bếp làm hợp đồng, Mây làm giao diện. Sade chia backend rồi nhờ một người độc lập kiểm tra cả giao diện và backend.',
+        sade: { projectKey: key },
+      });
+      const planner = f.poll(0).delivery!;
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Use one contract for frontend and backend, then independently review both.',
+          tasks: [
+            work('contract', {
+              kind: 'code',
+              scope: ['docs/contract.md'],
+              preferredMemberId: f.grants[0],
+            }),
+            work('frontend', {
+              kind: 'design',
+              preferredMemberId: f.grants[1],
+              dependsOn: ['contract'],
+            }),
+            work('backend', {
+              kind: 'code',
+              dependsOn: ['contract'],
+              ...(pinBackend && { preferredMemberId: f.grants[0] }),
+            }),
+            work('review', {
+              kind: 'review',
+              scope: ['src/frontend.ts', 'src/backend.ts'],
+              dependsOn: ['frontend', 'backend'],
+            }),
+          ],
+        },
+      });
+      const run = f.view().sadeRuns[0];
+      if (pinBackend) {
+        assert.equal(run.state, 'blocked');
+        assert.match(run.error || '', /Independent review needs another/);
+        assert.equal(f.poll(0).delivery, undefined);
+        assert.equal(f.poll(1).delivery, undefined);
+        continue;
+      }
+      assert.equal(run.state, 'running', run.error ?? 'The plan should be runnable.');
+      assert.deepEqual(
+        run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job.grantId]),
+        [
+          ['contract', f.grants[0]],
+          ['frontend', f.grants[1]],
+          ['backend', f.grants[1]],
+          ['review', f.grants[0]],
+        ],
+      );
+      const contract = f.poll(0).delivery!;
+      assert.equal(contract.task?.key, 'contract');
+      f.finish(0, contract.id, {
+        kind: 'unchanged',
+        revision: sha,
+        summary: 'The required contract already exists.',
+      });
+      for (const name of ['frontend', 'backend']) {
+        const implementation = f.poll(1).delivery!;
+        assert.equal(implementation.task?.key, name);
+        const diff = { ...patch, files: [`src/${name}.ts`] };
+        f.finish(1, implementation.id, { kind: 'change', diff, summary: `Updated ${name}.` });
+        const patchReview = f.poll(0).delivery!;
+        assert.equal(patchReview.phase, 'review');
+        assert.deepEqual(patchReview.review, diff);
+        f.finish(0, patchReview.id, {
+          kind: 'review',
+          verdict: 'approved',
+          summary: 'The patch matches the assigned scope.',
+        });
+        f.finish(1, implementation.id, {
+          kind: 'done',
+          revision: sha,
+          published: true,
+          summary: `Integrated ${name}.`,
+        });
+      }
+      const review = f.poll(0).delivery!;
+      assert.equal(review.task?.key, 'review');
+      assert.deepEqual(review.task?.scope, ['src/frontend.ts', 'src/backend.ts']);
+      f.finish(0, review.id, { kind: 'done', summary: 'Both integrated files checked.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+    } finally {
+      f.store.close();
+    }
+  }
+});
+
+test('Shared Sade saves the last turn on the desktop required by a later task', () => {
+  const f = fixture(['gemini', 'codex'], { turnsA: 2, mac: true, roleA: 'researcher' });
+  try {
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Đọc phần cấu hình chung, rồi kiểm tra lỗi mở app trên Windows.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Keep a Windows turn available for verification after checking the configuration.',
+        tasks: [
+          work('configuration', { effort: 8 }),
+          work('windows-check', { requiredPlatform: 'win32', dependsOn: ['configuration'] }),
+        ],
+      },
+    });
+    const run = f.view().sadeRuns[0];
+    assert.equal(run.state, 'running', run.error ?? 'The plan should be runnable.');
+    assert.equal(f.poll(0).delivery, undefined);
+    assert.equal(run.jobs.find((job) => job.task?.key === 'windows-check')?.grantId, f.grants[0]);
+    const configuration = f.poll(1).delivery!;
+    assert.equal(configuration.task?.key, 'configuration');
+    f.finish(1, configuration.id, { kind: 'done', summary: 'Read the shared configuration.' });
+    const windows = f.poll(0).delivery!;
+    assert.equal(windows.task?.key, 'windows-check');
+    f.finish(0, windows.id, { kind: 'done', summary: 'Windows check completed.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+  } finally {
+    f.store.close();
+  }
+});
+
 test('an opted-in status update can close planning without assigning any work', () => {
   const f = fixture();
   try {
@@ -1628,6 +1771,133 @@ test('an opted-in status update can close planning without assigning any work', 
       [['plan', 'done']],
     );
     assert.equal(run.jobs[0].summary, 'The message shares progress with the group.');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('only the requester can clarify a duplicate harness name before any Shared Sade task starts', () => {
+  const f = fixture(['gemini', 'gemini'], { names: ['Gemini', 'Gemini'] });
+  try {
+    const id = randomUUID();
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id,
+      content: 'Nhờ Gemini kiểm tra phần cấu hình.',
+      sade: { projectKey: key },
+    });
+    const original = f.poll(0).delivery!;
+    assert.deepEqual(
+      original.team.map(({ name, owner, ownedByRequester }) => [name, owner, ownedByRequester]),
+      [
+        ['Gemini', 'An', true],
+        ['Gemini', 'Bình', false],
+      ],
+    );
+    const summary = 'Bạn muốn Gemini của An hay Gemini của Bình kiểm tra cấu hình?';
+    f.finish(0, original.id, { kind: 'question', summary });
+    assert.equal(f.view().sadeRuns[0].jobs[0].state, 'waiting');
+    assert.equal(f.poll(0).delivery, undefined);
+    assert.equal(f.poll(1).delivery, undefined);
+    const answer = {
+      action: 'sade-answer',
+      groupId: f.groupId,
+      runId: id,
+      jobId: original.id,
+      answer: 'Gemini của Bình nhé.',
+    };
+    assert.throws(() => f.call(1, answer), /only the request author/i);
+    f.call(0, answer);
+    const resumed = f.poll(0).delivery!;
+    assert.notEqual(resumed.id, original.id);
+    assert.deepEqual(resumed.clarification, { question: summary, answer: answer.answer });
+    assert.throws(
+      () => f.finish(0, resumed.id, { kind: 'question', summary }),
+      /cannot ask another question/,
+    );
+    const task = work('config', {
+      preferredMemberId: sharedPlanMemberRef(
+        resumed.team.findIndex((entry) => entry.owner === 'Bình'),
+      ),
+    });
+    const plan = parseSharedGroupPlan(
+      {
+        summary: 'Check the configuration with the requester’s selected harness.',
+        tasks: [{ ...task, kind: 'research-read-only', requiredPlatform: 'any' }],
+      },
+      resumed.team.map((entry) => entry.id),
+    );
+    f.finish(0, resumed.id, { kind: 'plan', plan });
+    assert.equal(f.poll(0).delivery, undefined);
+    const delivery = f.poll(1).delivery!;
+    assert.equal(delivery.grantId, f.grants[1]);
+    assert.equal(delivery.task?.key, 'config');
+    f.finish(1, delivery.id, { kind: 'done', summary: 'Reviewed the scoped configuration.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('a requester can resume planning after the named owner grants this project access', () => {
+  const f = fixture(['gemini', 'gemini'], { grantB: false, turnsA: 2 });
+  try {
+    const id = randomUUID();
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id,
+      content: 'Nhờ Gemini của Bình kiểm tra phần cấu hình.',
+      sade: { projectKey: key },
+    });
+    const original = f.poll(0).delivery!;
+    assert.deepEqual(
+      original.team.map((entry) => entry.id),
+      [f.grants[0]],
+    );
+    f.finish(0, original.id, {
+      kind: 'question',
+      summary: 'Bình cần cấp quyền cho project này. Báo lại khi quyền đã được bật nhé.',
+    });
+    const grant = {
+      action: 'sade-grant',
+      groupId: f.groupId,
+      teammateId: f.members[1],
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    };
+    f.call(1, { ...grant, id: randomUUID(), projectKey: 'b'.repeat(64) });
+    f.call(1, { ...grant, id: f.grants[1], projectKey: key });
+    assert.equal(f.poll(1).delivery, undefined, 'granting access must not resume the request');
+    f.call(0, {
+      action: 'sade-answer',
+      groupId: f.groupId,
+      runId: id,
+      jobId: original.id,
+      answer: 'Bình đã cấp quyền cho project này.',
+    });
+    const resumed = f.poll(0).delivery!;
+    assert.deepEqual(
+      resumed.team.map((entry) => entry.id),
+      f.grants,
+    );
+    f.finish(0, resumed.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Use the newly granted teammate to read the configuration.',
+        tasks: [work('config', { preferredMemberId: f.grants[1] })],
+      },
+    });
+    const check = f.poll(1).delivery!;
+    assert.equal(check.grantId, f.grants[1]);
+    assert.equal(check.task?.key, 'config');
+    f.finish(1, check.id, { kind: 'done', summary: 'Configuration checked in scope.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+    assert.equal(f.view().messages.filter((message) => message.id === id).length, 1);
   } finally {
     f.store.close();
   }

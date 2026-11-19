@@ -6,9 +6,13 @@ Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế h
 
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.
 
+Sade dùng tên chủ tài khoản và quyền của project để phân biệt các harness trùng tên. **Sade progress** hiển thị tên harness cùng tên chủ tài khoản. Nếu còn mơ hồ, người gửi dùng **Reply to Sade**. Nếu teammate chưa được cấp quyền, chủ tài khoản xác nhận quyền trên desktop rồi người gửi báo lại trong cùng yêu cầu. Sade đọc các quyền còn hiệu lực của đúng project ở lượt lập kế hoạch tiếp theo.
+
 Biểu mẫu lập kế hoạch gọi rõ hành động sửa file, sửa thiết kế, nghiên cứu chỉ đọc và review chỉ đọc. Sửa tài liệu là tác vụ sửa file. Sade chuyển các tên hành động về loại tác vụ nội bộ trước khi áp dụng quyền đã cấp và yêu cầu hệ điều hành.
 
 Khi chia việc, Sade tính khối lượng của các tác vụ đã chỉ định trước khi chọn harness cho việc còn trống. Với tác vụ review trong kế hoạch, Sade lần theo cả các bước phụ thuộc gián tiếp và loại profile của chủ tài khoản đã nhận quyền ghi vào các file thuộc phạm vi review. Người chỉ chạy test hoặc viết file ngoài phạm vi đó vẫn đủ điều kiện. Sade kiểm tra lại trước khi giao một lượt review đã được lập từ bản cũ.
+
+Trước khi giao việc, Sade thử phương án phân công khác nếu lựa chọn ban đầu làm mất người review độc lập hoặc lấy mất lượt cuối dành cho tác vụ chỉ chạy trên một hệ điều hành. Tác vụ đã chỉ định người vẫn giữ nguyên phân công. Hai bài hồi quy dùng grant và ngân sách thử nghiệm. Bài thứ nhất giữ Gemini làm hợp đồng, giao thêm backend cho chủ harness làm frontend để Gemini còn đủ điều kiện review cả hai file nguồn. Bài thứ hai giao việc đọc cấu hình sang Mac để dành lượt Windows cho bài kiểm tra mở app.
 
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
 
@@ -164,8 +168,49 @@ Bài hồi quy bộ phân công cho thấy một tác vụ backend chưa chỉ �
 
 Trên commit `3fc1d2f`, tôi chấm lại các phản hồi Qwen đã lưu với cùng hash prompt và schema. Tập chính giữ 16/18 và tập năm đầu việc giữ 0/4. Lần chấm lại đi qua bộ điều phối mới bằng dữ liệu đã ghi từ trước.
 
+Sau khi sửa phân công để giữ lượt Windows và reviewer độc lập, chấm lại cùng đầu ra vẫn đạt 16/18 và 0/4. Hai bài hồi quy phân công dùng kế hoạch có đủ tác vụ. Các ca Qwen bỏ sót đầu việc, chọn sai người hoặc khai dependency sai vẫn được tính lỗi.
+
 ```powershell
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-full-handoff.json --full-handoff
+```
+
+### Kiểm tra một kế hoạch bằng Codex đăng nhập
+
+Chạy hai lượt Codex CLI trên Windows bằng phiên ChatGPT có sẵn và cùng tin nhắn tổng hợp `full-handoff/1`. Cả hai lượt xuất kế hoạch JSON trong thư mục chỉ đọc. Lượt đầu có đủ năm tác vụ nhưng gắn kiểm tra dữ liệu lỗi là nghiên cứu. Vì vậy nó không qua điều kiện review độc lập. Sau khi prompt và schema mô tả rõ mục đích của từng loại việc, lượt thứ hai đạt 1/1. Kế hoạch giữ Gemini làm hợp đồng, Astra hỏi phong cách hoặc đề nghị tự chọn, Sade tự giao backend và test theo dependency, rồi chọn Antigravity mô phỏng cho review độc lập trên hai file nguồn.
+
+Codex nhận prompt và schema hiện hành qua CLI. Kivuno chấm kết quả bằng parser, Shared Groups và grant mô phỏng. Hai lượt chỉ lập kế hoạch và không chạy hành động nhóm. Phần chạy nhiều provider trên tài khoản thật vẫn cần được kiểm chứng.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-prompt.json --full-handoff --case full-handoff/1 --export-prompt
+$bundle = Get-Content .local/codex-plan-prompt.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$schema = Join-Path (Get-Location).Path '.local/codex-plan-schema.json'
+$answer = Join-Path (Get-Location).Path '.local/codex-plan-answer.json'
+[IO.File]::WriteAllText($schema, ($bundle.tool.inputSchema | ConvertTo-Json -Depth 35))
+$sandbox = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$instruction = 'This is a synthetic, read-only benchmark. Do not execute work, run commands, use tools, or read files. Return the argument object for relay_submit_plan as the final structured response.'
+($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
+node --import tsx scripts/eval-shared-sade-planner.ts .local/codex-plan-score.json --full-handoff --case full-handoff/1 --external-plan $answer
+```
+
+### Phân biệt chủ tài khoản khi harness trùng tên
+
+Codex CLI đã đăng nhập chạy bốn tin tổng hợp trước và sau khi sửa prompt. Bản cũ đạt 3/4. Khi Gemini của Bình đã được chia sẻ trong nhóm nhưng chưa có quyền cho project, model nhầm thành thiếu thành viên. Bản mới đạt 4/4. Hai câu có đủ thông tin tạo đúng việc viết hợp đồng rồi bàn giao giao diện. Câu có hai Astra hỏi người gửi chọn Bình hay Chi. Câu thiếu quyền yêu cầu Bình cấp quyền cho đúng project. Phần chấm chạy qua Shared Groups với các chủ quyền mô phỏng.
+
+Bài hồi quy xác nhận chỉ người gửi được trả lời câu hỏi và chưa có tác vụ nào được giao trước đó. Khi Bình cấp quyền rồi người gửi trả lời, Sade tiếp tục cùng workflow và giao đúng công việc. Quyền mà Bình cấp cho project khác bị loại khỏi danh sách của lượt lập kế hoạch. Bài kiểm thử hai cửa sổ Shared Groups xác nhận cả hai người nhìn thấy câu hỏi, người gửi có ô trả lời và việc được giao hiển thị tên chủ harness.
+
+```powershell
+$case = 'owner/ungranted'
+node --import tsx scripts/eval-shared-sade-planner.ts .local/owner-prompt.json --owner-handoff --case $case --export-prompt
+$bundle = Get-Content .local/owner-prompt.json -Raw -Encoding UTF8 | ConvertFrom-Json
+$schema = Join-Path (Get-Location).Path '.local/owner-schema.json'
+$answer = Join-Path (Get-Location).Path '.local/owner-answer.json'
+[IO.File]::WriteAllText($schema, ($bundle.decisionSchema | ConvertTo-Json -Depth 45))
+$sandbox = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+$instruction = 'This is a synthetic, read-only benchmark. Do not execute work, run commands, use tools, or read files. Return the action you would take and its arguments as the final structured decision.'
+($bundle.prompt + "`n`n" + $instruction) | codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only -C $sandbox.FullName -c "forced_login_method='chatgpt'" -c "approval_policy='never'" -c 'analytics.enabled=false' --output-schema $schema --output-last-message $answer --json -
+node --import tsx scripts/eval-shared-sade-planner.ts .local/owner-score.json --owner-handoff --case $case --external-decision $answer
 ```
 
 ### Qwen review bản vá chức năng
