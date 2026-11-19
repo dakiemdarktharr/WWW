@@ -2,6 +2,8 @@
 
 19/11/2026 · Đối chiếu GitHub `main` tại `1c0e168`, các sửa lỗi Mac ở PR #2 và adapter/quyền máy ở PR #3. Manual audit tập trung vào đường Chat → kế hoạch → task → quyền → Git; bộ kiểm thử rộng hơn bao phủ web, desktop, auth, dữ liệu, cloud, adapter và runner. Đây là đánh giá ứng dụng và dependency, không phải chứng nhận an toàn.
 
+Kết quả sau đợt nghiên cứu này gồm luồng Shared Groups, bộ 1.000 tin nhắn và thử nghiệm LoRA trên Windows. [Báo cáo kiểm chứng Shared Groups](shared-sade-verification.vi.md)
+
 ## Cấu hình chọn cho bản hiện tại
 
 **Một lượt lập kế hoạch chỉ đọc bằng tài khoản đã kết nối, sau đó Sade phân công bằng quy tắc trong ứng dụng.** Với bốn profile, bước chuẩn bị giảm từ năm lượt (bốn đề xuất và một tổng hợp) xuống một lượt, giảm 80% số lượt lập kế hoạch. Các lượt viết code, xác minh và review tính riêng. Một lượt harness có thể thực hiện nhiều lần suy luận hoặc gọi công cụ nội bộ. Chưa có số đo tiền/token hoặc độ trễ trên model thật.

@@ -29,7 +29,7 @@ Runner hỗ trợ truyền từng phần giới hạn mỗi gói dữ liệu ở
 
 Thử thực tế trên Windows đã chuyển đủ 267 file của repo Kivuno sang một runner cục bộ biệt lập, xuất trở lại và so khớp từng byte. Snapshot chứa khoảng 5,5 MiB file gốc, dùng 10 gói mỗi chiều. Node đọc thành công `package.json` trong worktree đích. Bài hồi quy `machine-execution.test.ts` còn đi qua broker và runner agent với asset 3 MiB, đồng thời kiểm tra rằng huỷ khi đang gửi một phần không áp dụng file.
 
-CI trên macOS arm64 với Node 24.22.1 đã chạy commit `6983211`. `npm run check` đạt 291 bài, gồm bàn giao patch qua ba bước, và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 296 bài, bỏ qua một bài theo nền tảng, và giao diện Shared Groups đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44441530347)
+CI trên macOS arm64 với Node 24.22.1 đã chạy commit `94006a6`. `npm run check` đạt 292 bài và bỏ qua 6 bài theo nền tảng. Electron Desktop và giao diện Shared Groups đều đạt, gồm gửi chỉ đạo và hiển thị xác nhận đã đọc. Audit dependency runtime đạt ngưỡng high và báo 20 mục moderate. Trên Windows, `check` đạt 297 bài, bỏ qua một bài theo nền tảng, và các bài Electron, Shared Groups và Cloud đều đạt. [GitHub Actions macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44444107770)
 
 CI dùng máy ảo macOS và fixture provider. Bằng chứng này xác minh chạy runner, build và UI trên Darwin. Phiên Windows → máy Mac của một chủ tài khoản khác qua Kivuno và model đăng nhập thật vẫn cần một lần thử riêng.
 
@@ -68,7 +68,7 @@ python scripts/train-sade-qwen.py --root .local/sade-qwen --output .local/sade-q
 
 Checkpoint dùng định dạng Safetensors. `metrics.json` ghi phiên bản model, seed, dấu vân tay dữ liệu, đỉnh VRAM, kết quả theo nhãn và ID mẫu dự đoán sai. Trọng số và log nằm trong `.local` trên máy thử.
 
-Trên RTX 5050 Laptop 8 GB, lần chạy thành công dùng LoRA rank 8, 350 mẫu, hai epoch và 176 bước. Tổng thời gian là 82,9 giây, tính cả nạp model và chấm. PyTorch ghi nhận đỉnh VRAM cấp phát 3.916 MiB. Trình nạp đọc từng tensor để tránh lỗi truy cập bộ nhớ khi nạp shard trên Windows.
+Trên RTX 5050 Laptop 8 GB, lần chạy thành công dùng LoRA rank 8, 350 mẫu, hai epoch và 176 bước. Tổng thời gian là 82,9 giây, tính cả nạp model và chấm. Bộ cấp phát PyTorch giữ đỉnh 3.916 MiB VRAM (`max_memory_reserved`). Trình nạp đọc từng tensor để tránh lỗi truy cập bộ nhớ khi nạp shard trên Windows.
 
 | Cùng tập chấm 144 mẫu            | Kết quả         |
 | -------------------------------- | --------------- |
