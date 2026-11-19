@@ -22,6 +22,7 @@ import { providerCapabilities } from './providers.ts';
 import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
+import { registerBillingRoutes } from './billing.ts';
 
 const text = z.string().trim().min(1).max(200);
 const id = z.string().uuid();
@@ -182,6 +183,7 @@ export async function buildApp(
           '/api/desktop/revoke',
           '/api/desktop/bridge/poll',
           '/api/desktop/groups',
+          '/api/desktop/profiles',
         ].includes(pathname)
       ) {
         desktopIdentity!.authenticate(request.headers.authorization);
@@ -195,6 +197,13 @@ export async function buildApp(
         '/api/session',
         '/api/desktop/request',
         '/api/desktop/approve',
+        '/api/billing/summary',
+        '/api/billing/profiles',
+        '/api/billing/profiles/select',
+        '/api/billing/wallet/challenge',
+        '/api/billing/wallet/bind',
+        '/api/billing/intent',
+        '/api/billing/verify',
       ].includes(pathname);
       const user = await cloud.auth.currentUser(request.headers);
       if (!user || (!desktopBrowserRoute && user.id !== 'workspace-owner'))
@@ -220,7 +229,12 @@ export async function buildApp(
     if (
       !cloud &&
       options.desktopSecret &&
-      ['/api/desktop/bridge-config', '/api/desktop/shared-sade'].includes(pathname)
+      [
+        '/api/desktop/bridge-config',
+        '/api/desktop/shared-sade',
+        '/api/desktop/profile-reservation',
+        '/api/desktop/profile-locks',
+      ].includes(pathname)
     ) {
       if (!safeEqual(String(request.headers['x-relay-control'] || ''), options.desktopSecret))
         return reply
@@ -270,6 +284,13 @@ export async function buildApp(
       const user = options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
+  if (options.cloud)
+    registerBillingRoutes(
+      app,
+      workspace.store,
+      (request) => options.cloud!.auth.currentUser(request.headers),
+      desktopIdentity,
+    );
   registerAegisRoutes(app, workspace.aegis);
   if (!options.cloud) registerExternalRoutes(app, external);
   app.get('/api/desktop/release', async () => {
@@ -425,6 +446,52 @@ export async function buildApp(
     reply.raw.on('close', cleanup);
   });
   const params = (request: FastifyRequest) => z.object({ id }).parse(request.params).id;
+  const unlockedMember = (request: FastifyRequest) =>
+    workspace.assertProfileUnlocked(params(request));
+  const unlockedSession = (request: FastifyRequest) => {
+    const session = workspace.sessions.get(params(request));
+    workspace.assertProfileUnlocked(session.memberId);
+    return session;
+  };
+  const consumeProfileReservation = (profileId: string | undefined) => {
+    if (!options.desktopSecret || options.cloud) return;
+    if (!profileId)
+      throw new DomainError('Reserve this profile with your Kivuno account before adding it.', 403);
+    const reservation = workspace.store.lookup<{ id: string; expiresAt: number }>(
+      'localProfileReservation',
+      profileId,
+    );
+    if (!reservation || reservation.expiresAt <= Date.now())
+      throw new DomainError(
+        'Profile reservation is missing or expired. Retry while connected to Kivuno.',
+        409,
+      );
+    workspace.store.remove('localProfileReservation', profileId);
+  };
+  if (!options.cloud && options.desktopSecret) {
+    app.post('/api/desktop/profile-reservation', async (request) => {
+      const input = z
+        .object({ action: z.enum(['store', 'release']), profileId: id })
+        .strict()
+        .parse(request.body);
+      if (input.action === 'release') {
+        workspace.store.remove('localProfileReservation', input.profileId);
+        return { released: true };
+      }
+      workspace.store.put('localProfileReservation', {
+        id: input.profileId,
+        expiresAt: Date.now() + 5 * 60_000,
+      });
+      return { reserved: true };
+    });
+    app.post('/api/desktop/profile-locks', { bodyLimit: 4 * 1024 * 1024 }, async (request) => {
+      const input = z
+        .object({ lockedIds: z.array(id) })
+        .strict()
+        .parse(request.body);
+      return workspace.applyProfileLocks(input.lockedIds);
+    });
+  }
   if (!options.cloud && options.desktopSecret)
     app.post('/api/desktop/shared-sade', { bodyLimit: 4 * 1024 * 1024 }, async (request) =>
       workspace.sharedSade.execute(request.body),
@@ -492,11 +559,13 @@ export async function buildApp(
     const input = z
       .object({
         runnerId: id.optional(),
+        profileId: id.optional(),
         provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
         managedRuntime: z.boolean().default(false),
       })
       .strict()
       .parse(request.body);
+    consumeProfileReservation(input.profileId);
     if (input.provider !== 'codex' && input.runnerId)
       throw new DomainError('This provider currently connects on this computer.');
     if (options.cloud && input.provider !== 'codex')
@@ -508,7 +577,7 @@ export async function buildApp(
     if (input.managedRuntime && isExternalProvider(input.provider)) {
       await resolveManagedCommand(input.provider as 'claude' | 'antigravity');
     }
-    let member = workspace.autonomy.addAccount(input.provider);
+    let member = workspace.autonomy.addAccount(input.provider, input.profileId);
     if (input.managedRuntime && isExternalProvider(input.provider)) {
       member = workspace.store.updateMember(member.id, {
         integration: 'native',
@@ -537,6 +606,7 @@ export async function buildApp(
   app.post('/api/members', async (request) => {
     const input = z
       .object({
+        profileId: id.optional(),
         name: text,
         provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
         role: z.enum(['engineer', 'researcher', 'designer', 'reviewer']),
@@ -547,7 +617,9 @@ export async function buildApp(
       })
       .strict()
       .parse(request.body);
+    consumeProfileReservation(input.profileId);
     const member = workspace.store.addMember({
+      ...(input.profileId ? { id: input.profileId } : {}),
       ...input,
       integration: isExternalProvider(input.provider) ? 'external' : 'native',
     });
@@ -556,6 +628,7 @@ export async function buildApp(
   });
   app.patch('/api/members/:id', async (request) => {
     const memberId = params(request);
+    workspace.assertProfileUnlocked(memberId);
     const patch = z
       .object({
         name: text.optional(),
@@ -589,6 +662,7 @@ export async function buildApp(
         403,
       );
     const memberId = params(request);
+    workspace.assertProfileUnlocked(memberId);
     const member = workspace.store.get<Member>('member', memberId);
     if (!isExternalProvider(member.provider) || member.removedAt || member.runnerId)
       throw new DomainError('Choose a local Claude or Antigravity profile.');
@@ -625,9 +699,10 @@ export async function buildApp(
     );
     return updated;
   });
-  app.post('/api/members/:id/quota/refresh', async (request) =>
-    workspace.quota.refresh(params(request)),
-  );
+  app.post('/api/members/:id/quota/refresh', async (request) => {
+    const member = unlockedMember(request);
+    return workspace.quota.refresh(member.id);
+  });
   app.get('/api/providers', async () =>
     (await providerCapabilities()).map((provider) =>
       options.cloud && provider.id !== 'codex'
@@ -641,9 +716,10 @@ export async function buildApp(
         : provider,
     ),
   );
-  app.post('/api/members/:id/quota/turn-grants', async (request) =>
-    workspace.quota.grantTurns(
-      params(request),
+  app.post('/api/members/:id/quota/turn-grants', async (request) => {
+    const member = unlockedMember(request);
+    return workspace.quota.grantTurns(
+      member.id,
       z
         .object({
           projectId: id,
@@ -653,15 +729,16 @@ export async function buildApp(
         })
         .strict()
         .parse(request.body),
-    ),
-  );
+    );
+  });
   app.post('/api/quota/turn-grants/:id/revoke', async (request) => {
     z.object({}).strict().parse(request.body);
     return workspace.quota.revokeTurns(params(request));
   });
   app.post('/api/members/:id/quota/grants', async (request) => {
+    const member = unlockedMember(request);
     const grant = workspace.quota.grant(
-      params(request),
+      member.id,
       z
         .object({
           projectId: id,
@@ -679,37 +756,39 @@ export async function buildApp(
   app.post('/api/quota/grants/:id/revoke', async (request) =>
     workspace.quota.revoke(params(request)),
   );
-  app.post('/api/sessions', async (request) =>
-    workspace.sessions.create(
-      z
-        .object({
-          memberId: id,
-          projectId: id,
-          taskId: id.optional(),
-          title: text.optional(),
-          scope: z.array(scopePath).max(50).optional(),
-          readOnly: z.boolean().default(true),
-          prompt: z.string().max(16000).optional(),
-          model: z.string().min(1).max(200).nullable().optional(),
-          reasoningEffort: z.string().min(1).max(40).nullable().optional(),
-          modelPolicy: z.enum(['auto', 'manual']).optional(),
-        })
-        .strict()
-        .parse(request.body),
-    ),
-  );
-  app.get('/api/sessions/:id/events', async (request) =>
-    workspace.sessions.events(params(request)),
-  );
+  app.post('/api/sessions', async (request) => {
+    const input = z
+      .object({
+        memberId: id,
+        projectId: id,
+        taskId: id.optional(),
+        title: text.optional(),
+        scope: z.array(scopePath).max(50).optional(),
+        readOnly: z.boolean().default(true),
+        prompt: z.string().max(16000).optional(),
+        model: z.string().min(1).max(200).nullable().optional(),
+        reasoningEffort: z.string().min(1).max(40).nullable().optional(),
+        modelPolicy: z.enum(['auto', 'manual']).optional(),
+      })
+      .strict()
+      .parse(request.body);
+    workspace.assertProfileUnlocked(input.memberId);
+    return workspace.sessions.create(input);
+  });
+  app.get('/api/sessions/:id/events', async (request) => {
+    const session = unlockedSession(request);
+    return workspace.sessions.events(session.id);
+  });
   app.get('/api/sessions/:id/remote-output', async (request, reply) => {
-    const session = workspace.sessions.get(params(request));
+    const session = unlockedSession(request);
     const packet = workspace.store.get('remoteRecovery', session.taskId);
     reply.header('Content-Disposition', 'attachment; filename="remote-recovery.json"');
     return packet;
   });
-  app.patch('/api/sessions/:id/config', async (request) =>
-    workspace.sessions.configure(
-      params(request),
+  app.patch('/api/sessions/:id/config', async (request) => {
+    const session = unlockedSession(request);
+    return workspace.sessions.configure(
+      session.id,
       z
         .object({
           model: z.string().min(1).max(200).nullable(),
@@ -718,37 +797,41 @@ export async function buildApp(
         })
         .strict()
         .parse(request.body),
-    ),
-  );
-  app.get('/api/members/:id/models', async (request) =>
-    readModels(await workspace.client(params(request))),
-  );
+    );
+  });
+  app.get('/api/members/:id/models', async (request) => {
+    const member = unlockedMember(request);
+    return readModels(await workspace.client(member.id));
+  });
   app.post('/api/hackathons', async (request) => createHackathonProject(workspace, request.body));
-  app.post('/api/sessions/:id/send', async (request) =>
-    workspace.sessions.send(
-      params(request),
+  app.post('/api/sessions/:id/send', async (request) => {
+    const session = unlockedSession(request);
+    return workspace.sessions.send(
+      session.id,
       z
         .object({ prompt: z.string().trim().min(1).max(16000) })
         .strict()
         .parse(request.body).prompt,
-    ),
-  );
+    );
+  });
   app.post('/api/sessions/:id/stop', async (request) => workspace.sessions.stop(params(request)));
   app.post('/api/sessions/:id/pause', async (request) =>
     workspace.sessions.interrupt(params(request), 'Paused by the human.'),
   );
-  app.post('/api/sessions/:id/resume', async (request) =>
-    workspace.sessions.resume(params(request)),
-  );
-  app.post('/api/sessions/:id/recover', async (request) =>
-    workspace.sessions.recover(
-      params(request),
+  app.post('/api/sessions/:id/resume', async (request) => {
+    const session = unlockedSession(request);
+    return workspace.sessions.resume(session.id);
+  });
+  app.post('/api/sessions/:id/recover', async (request) => {
+    const session = unlockedSession(request);
+    return workspace.sessions.recover(
+      session.id,
       z
         .object({ confirmedStopped: z.literal(true) })
         .strict()
         .parse(request.body),
-    ),
-  );
+    );
+  });
   app.get('/api/mesh/:id/inbox', async (request) => {
     const query = z
       .object({

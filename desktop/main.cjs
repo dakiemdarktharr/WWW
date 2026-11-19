@@ -86,6 +86,7 @@ let signInGeneration = 0;
 let bridgeGeneration = 0;
 let sharedSadeConsentVersion = 0;
 let pendingSharedSadeRevocations = 0;
+let profileSyncQueue = Promise.resolve();
 let identityTransition = false;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const projectBrowser = new ProjectBrowser({
@@ -151,6 +152,34 @@ async function cloudRequest(route, body, token) {
     throw new Error('The Kivuno website is not ready. Try again.');
   }
   return { response, body: bodyValue };
+}
+
+async function localControlRequest(route, body, context = {}) {
+  const origin = context.origin || backendOrigin;
+  const secret = context.secret || desktopSecret;
+  if (!origin || !secret) throw new Error('The local Kivuno workspace is not ready.');
+  const response = await fetch(origin + route, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: origin,
+      'X-Relay-Desktop': secret,
+      'X-Relay-Control': secret,
+    },
+    body: JSON.stringify(body),
+    redirect: 'error',
+    signal: AbortSignal.timeout(10000),
+  });
+  const raw = await response.text();
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error('The local Kivuno workspace returned an invalid response.');
+  }
+  if (!response.ok)
+    throw new Error(value.error || 'The local Kivuno workspace rejected the request.');
+  return value;
 }
 
 async function inspectDesktopUpdate() {
@@ -924,6 +953,7 @@ function registerIpc() {
     )
       throw new Error('Invalid group request.');
     const generation = signInGeneration;
+    const localContext = { origin: backendOrigin, secret: desktopSecret };
     const current = () =>
       identity === owner && generation === signInGeneration && !identityTransition;
     let cloudInput = input;
@@ -988,6 +1018,128 @@ function registerIpc() {
     }
     if (!response.ok) throw new Error(body.error || 'Group request failed. Try again.');
     return body;
+  });
+  ipcMain.handle('relay:profiles', async (event, input) => {
+    trusted(event);
+    const owner = identity;
+    if (!owner || identityTransition || Date.parse(owner.expiresAt) <= Date.now())
+      throw new Error('Sign in to Kivuno first.');
+    const localContext = { origin: backendOrigin, secret: desktopSecret };
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('Invalid profile request.');
+    const profileIdPattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const providers = new Set(['codex', 'gemini', 'claude', 'antigravity']);
+    const validProfile = (profile) =>
+      profile &&
+      typeof profile === 'object' &&
+      !Array.isArray(profile) &&
+      profileIdPattern.test(profile.profileId) &&
+      typeof profile.name === 'string' &&
+      profile.name.trim().length > 0 &&
+      profile.name.length <= 100 &&
+      providers.has(profile.provider);
+    if (input.action === 'reserve') {
+      if (!validProfile(input)) throw new Error('Invalid profile reservation.');
+    } else if (input.action === 'commit') {
+      if (!input || !profileIdPattern.test(input.profileId))
+        throw new Error('Invalid profile confirmation.');
+      if (
+        (input.name !== undefined &&
+          (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 100)) ||
+        (input.provider !== undefined && !providers.has(input.provider))
+      )
+        throw new Error('Invalid profile confirmation.');
+    } else if (input.action === 'release') {
+      if (!profileIdPattern.test(input.profileId)) throw new Error('Invalid profile release.');
+    } else if (input.action === 'sync') {
+      if (!Array.isArray(input.profiles) || !input.profiles.every(validProfile))
+        throw new Error('Invalid profile synchronization.');
+      const ids = input.profiles.map((profile) => profile.profileId);
+      if (new Set(ids).size !== ids.length) throw new Error('Profile IDs must be unique.');
+    } else {
+      throw new Error('Unknown profile request.');
+    }
+    if (Buffer.byteLength(JSON.stringify(input)) > 5 * 1024 * 1024)
+      throw new Error('Profile request is too large.');
+
+    const generation = signInGeneration;
+    const current = () =>
+      identity === owner && generation === signInGeneration && !identityTransition;
+    const send = async () => {
+      if (!current()) throw new Error('Account changed. Open your current workspace.');
+      const { response, body } = await cloudRequest(
+        '/api/desktop/profiles',
+        input,
+        owner.accessToken,
+      );
+      if (identity !== owner || generation !== signInGeneration)
+        throw new Error('Account changed. Open your current workspace.');
+      if (response.status === 401) {
+        void signOutWorkspace();
+        throw new Error('Your Kivuno session expired. Sign in again.');
+      }
+      if (!response.ok) throw new Error(body.error || 'Profile request failed. Try again.');
+      if (!current()) throw new Error('Account changed. Open your current workspace.');
+      if (input.action === 'reserve') {
+        try {
+          await localControlRequest(
+            '/api/desktop/profile-reservation',
+            {
+              action: 'store',
+              profileId: input.profileId,
+            },
+            localContext,
+          );
+        } catch (error) {
+          await cloudRequest(
+            '/api/desktop/profiles',
+            { action: 'release', profileId: input.profileId },
+            owner.accessToken,
+          ).catch(() => {});
+          throw new Error(
+            `Kivuno reserved the profile but could not prepare the local workspace: ${error instanceof Error ? error.message : 'request failed'}`,
+          );
+        }
+        return body;
+      }
+      if (input.action === 'release') {
+        await localControlRequest(
+          '/api/desktop/profile-reservation',
+          {
+            action: 'release',
+            profileId: input.profileId,
+          },
+          localContext,
+        );
+        return body;
+      }
+      if (input.action === 'sync') {
+        const submitted = new Set(input.profiles.map((profile) => profile.profileId));
+        if (
+          !body ||
+          !Array.isArray(body.lockedIds) ||
+          !body.lockedIds.every(
+            (id) => typeof id === 'string' && profileIdPattern.test(id) && submitted.has(id),
+          ) ||
+          new Set(body.lockedIds).size !== body.lockedIds.length
+        )
+          throw new Error('Kivuno returned an invalid profile lock list.');
+        await localControlRequest(
+          '/api/desktop/profile-locks',
+          { lockedIds: body.lockedIds },
+          localContext,
+        );
+      }
+      return body;
+    };
+    if (input.action !== 'sync') return send();
+    const queued = profileSyncQueue.then(send, send);
+    profileSyncQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
   });
   ipcMain.handle('relay:cancel-sign-in', async (event) => {
     trusted(event);

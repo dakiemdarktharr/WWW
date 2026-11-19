@@ -454,7 +454,9 @@ export class GroupSade {
       !grant.revoked &&
       grant.expiresAt > this.now() &&
       (!checkBudget || grant.used < grant.turns) &&
-      group.people.some((person) => person.id === grant.ownerId && person.state === 'active') &&
+      group.people.some(
+        (person) => person.id === grant.ownerId && person.state === 'active' && !person.quotaLocked,
+      ) &&
       group.teammates.some(
         (member) => member.ownerId === grant.ownerId && member.localId === grant.teammateId,
       ),
@@ -912,7 +914,7 @@ export class GroupSade {
         this.block(
           run,
           invalid,
-          'A harness grant expired, ran out of turns, was revoked, or lost contact. Work stays on its owner’s desktop.',
+          'A harness grant expired, ran out of turns, was revoked, lost its group seat, or lost contact. Work stays on its owner’s desktop.',
         );
         continue;
       }

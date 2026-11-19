@@ -85,7 +85,12 @@ export default async function handler(
     const machine =
       url.pathname === '/api/runner/exchange' || url.pathname.startsWith('/api/desktop/bridge/');
     const desktop = url.pathname.startsWith('/api/desktop/');
-    const bodyLimit = machine ? 4 * 1024 * 1024 : 128 * 1024;
+    const bodyLimit =
+      machine ||
+      url.pathname === '/api/desktop/profiles' ||
+      url.pathname === '/api/billing/profiles/select'
+        ? 4 * 1024 * 1024
+        : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
       if (request.body !== undefined) {

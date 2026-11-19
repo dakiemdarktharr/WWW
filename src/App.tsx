@@ -359,6 +359,44 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     cloud ? 'hackathon' : 'initialize',
   );
   const [profileProvider, setProfileProvider] = useState<ProviderId>('codex');
+  const profileSyncQueue = useRef<Promise<void>>(Promise.resolve());
+  const profileSyncSequence = useRef(0);
+
+  const syncProfileEntitlements = useCallback((profiles: Member[]) => {
+    const desktop = window.relayDesktop;
+    if (!desktop) return;
+    const sequence = ++profileSyncSequence.current;
+    const payload = profiles.map((member) => ({
+      profileId: member.id,
+      name: member.name,
+      provider: member.provider || 'codex',
+    }));
+    profileSyncQueue.current = profileSyncQueue.current
+      .catch(() => {})
+      .then(async () => {
+        try {
+          const result = await desktop.profiles<{ lockedIds: string[] }>({
+            action: 'sync',
+            profiles: payload,
+          });
+          if (sequence !== profileSyncSequence.current) return;
+          const locked = new Set(result.lockedIds);
+          setState((current) =>
+            current
+              ? {
+                  ...current,
+                  members: current.members.map((member) => ({
+                    ...member,
+                    entitlementLocked: locked.has(member.id),
+                  })),
+                }
+              : current,
+          );
+        } catch {
+          // Keep the last server-provided lock state when the cloud is temporarily unavailable.
+        }
+      });
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -373,10 +411,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         handoffs: data.handoffs || [],
       });
       setLoadError('');
+      syncProfileEntitlements(data.members);
     } catch (err) {
       setLoadError((err as Error).message);
     }
-  }, []);
+  }, [syncProfileEntitlements]);
   const closeModal = useCallback(() => {
     setModal(null);
     setDiff(null);
@@ -516,6 +555,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const project = state?.projects.find((p) => p.id === selectedProject) || state?.projects[0];
   const tasks = state?.tasks.filter((t) => t.projectId === project?.id) || [];
   const members = state?.members || [];
+  const availableMembers = members.filter((member) => !member.entitlementLocked);
   const reviews = tasks.filter((t) => t.status === 'review');
   const approvals = state?.approvals.filter((a) => tasks.some((t) => t.id === a.taskId)) || [];
   const selectedTask =
@@ -552,6 +592,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       });
   }
   async function login(member: Member, method: 'browser' | 'device') {
+    if (member.entitlementLocked) {
+      setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
+      return;
+    }
     const provider = providerOf(member);
     if (window.relayDesktop && !member.runnerId) {
       setBusy(`prepare-${provider}`);
@@ -574,6 +618,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     if (result) setModal({ type: 'login', memberId: member.id, result });
   }
   async function antigravityGoogleSignIn(member: Member) {
+    if (member.entitlementLocked) {
+      setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
+      return;
+    }
     setBusy(`antigravity-google-${member.id}`);
     try {
       if (!window.relayDesktop)
@@ -590,24 +638,60 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   }
   async function connectAccount(provider: ProviderId, managedRuntime = false) {
     const runnerId = selectedMachine && !isExternalProvider(provider) ? selectedMachine : '';
+    const profileId = crypto.randomUUID();
+    let reserved = false;
+    let created = false;
     setBusy(`prepare-${provider}`);
     try {
+      if (window.relayDesktop) {
+        await window.relayDesktop.profiles({
+          action: 'reserve',
+          profileId,
+          name: `${provider} profile`,
+          provider,
+        });
+        reserved = true;
+      }
       if (window.relayDesktop && !runnerId) await window.relayDesktop.prepareProvider(provider);
       const result = await perform<{ member: Member; login: LoginResult }>(
         'connect-account',
         '/accounts/connect',
-        { provider, managedRuntime, ...(runnerId ? { runnerId } : {}) },
+        { profileId, provider, managedRuntime, ...(runnerId ? { runnerId } : {}) },
       );
       if (result) {
+        created = true;
+        if (window.relayDesktop)
+          try {
+            await window.relayDesktop.profiles({
+              action: 'commit',
+              profileId,
+              name: result.member.name,
+              provider: providerOf(result.member),
+            });
+          } catch (error) {
+            setToast({
+              text: `Profile created, but its Kivuno plan record could not be confirmed: ${(error as Error).message}`,
+              error: true,
+            });
+          }
         navigate('team');
         setModal(
           isExternalMember(result.member)
             ? { type: 'external', memberId: result.member.id }
             : { type: 'login', memberId: result.member.id, result: result.login },
         );
+      } else if (reserved && window.relayDesktop) {
+        await window.relayDesktop.profiles({ action: 'release', profileId });
       }
     } catch (error) {
-      setToast({ text: (error as Error).message, error: true });
+      let message = (error as Error).message;
+      if (reserved && !created && window.relayDesktop)
+        try {
+          await window.relayDesktop.profiles({ action: 'release', profileId });
+        } catch (releaseError) {
+          message += ` Profile reservation cleanup also failed: ${(releaseError as Error).message}`;
+        }
+      setToast({ text: message, error: true });
     } finally {
       setBusy('');
     }
@@ -623,6 +707,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     closeModal();
   }
   async function openSetup(member: Member) {
+    if (member.entitlementLocked) {
+      setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
+      return;
+    }
     try {
       const result = await api<{ home: string; instructions: string }>(
         `/members/${member.id}/setup`,
@@ -919,7 +1007,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           )}
           {view === 'mesh' && state && chatMode === 'groups' && window.relayDesktop && (
             <SharedGroups
-              members={state.members}
+              members={availableMembers}
               projects={state.projects}
               addTeammate={() => setModal({ type: 'connect' })}
               initialGroupId={selectedShared}
@@ -1447,32 +1535,42 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           />
         </Modal>
       )}
-      {modal?.type === 'external' && members.find((member) => member.id === modal.memberId) && (
-        <Modal
-          title={`${providerLabels[providerOf(members.find((member) => member.id === modal.memberId))]} · MESH connection`}
-          close={closeModal}
-        >
-          <ExternalConnection
-            member={members.find((member) => member.id === modal.memberId)!}
-            projects={state?.projects || []}
-            googleBusy={pending}
-            enableManaged={async () => {
-              const existing = members.find((member) => member.id === modal.memberId);
-              if (existing && window.relayDesktop)
-                await window.relayDesktop.prepareProvider(providerOf(existing));
-              const member = await perform<Member>(
-                'enable-managed',
-                `/members/${modal.memberId}/managed-runtime`,
-                { acknowledgeLocalExecution: true },
-              );
-              if (member) await login(member, 'browser');
-            }}
-            googleSignIn={() =>
-              void antigravityGoogleSignIn(members.find((member) => member.id === modal.memberId)!)
-            }
-          />
-        </Modal>
-      )}
+      {modal?.type === 'external' &&
+        members.find((member) => member.id === modal.memberId && !member.entitlementLocked) && (
+          <Modal
+            title={`${providerLabels[providerOf(members.find((member) => member.id === modal.memberId))]} · MESH connection`}
+            close={closeModal}
+          >
+            <ExternalConnection
+              member={members.find((member) => member.id === modal.memberId)!}
+              projects={state?.projects || []}
+              googleBusy={pending}
+              enableManaged={async () => {
+                const existing = members.find((member) => member.id === modal.memberId);
+                if (existing?.entitlementLocked) {
+                  setToast({
+                    text: 'This profile is locked by your current Kivuno plan.',
+                    error: true,
+                  });
+                  return;
+                }
+                if (existing && window.relayDesktop)
+                  await window.relayDesktop.prepareProvider(providerOf(existing));
+                const member = await perform<Member>(
+                  'enable-managed',
+                  `/members/${modal.memberId}/managed-runtime`,
+                  { acknowledgeLocalExecution: true },
+                );
+                if (member) await login(member, 'browser');
+              }}
+              googleSignIn={() =>
+                void antigravityGoogleSignIn(
+                  members.find((member) => member.id === modal.memberId)!,
+                )
+              }
+            />
+          </Modal>
+        )}
       {modal?.type === 'member' && (
         <Modal title="Add account" close={closeModal}>
           <form
@@ -1480,20 +1578,62 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             onSubmit={async (e) => {
               e.preventDefault();
               const data = new FormData(e.currentTarget);
-              const result = await perform(
-                'create-member',
-                '/members',
-                {
-                  name: data.get('name'),
-                  role: data.get('role'),
-                  color: data.get('color'),
-                  provider: profileProvider,
-                },
-                'Profile created. Sign in to connect this agent.',
-              );
-              if (result) {
-                closeModal();
-                navigate('team');
+              const profileId = crypto.randomUUID();
+              const name = String(data.get('name') || '').trim();
+              let reserved = false;
+              let created = false;
+              try {
+                if (window.relayDesktop) {
+                  await window.relayDesktop.profiles({
+                    action: 'reserve',
+                    profileId,
+                    name,
+                    provider: profileProvider,
+                  });
+                  reserved = true;
+                }
+                const result = await perform<Member>(
+                  'create-member',
+                  '/members',
+                  {
+                    profileId,
+                    name,
+                    role: data.get('role'),
+                    color: data.get('color'),
+                    provider: profileProvider,
+                  },
+                  'Profile created. Sign in to connect this agent.',
+                );
+                if (result) {
+                  created = true;
+                  if (window.relayDesktop)
+                    try {
+                      await window.relayDesktop.profiles({
+                        action: 'commit',
+                        profileId,
+                        name: result.name,
+                        provider: profileProvider,
+                      });
+                    } catch (error) {
+                      setToast({
+                        text: `Profile created, but its Kivuno plan record could not be confirmed: ${(error as Error).message}`,
+                        error: true,
+                      });
+                    }
+                  closeModal();
+                  navigate('team');
+                } else if (reserved && window.relayDesktop) {
+                  await window.relayDesktop.profiles({ action: 'release', profileId });
+                }
+              } catch (error) {
+                let message = (error as Error).message;
+                if (reserved && !created && window.relayDesktop)
+                  try {
+                    await window.relayDesktop.profiles({ action: 'release', profileId });
+                  } catch (releaseError) {
+                    message += ` Profile reservation cleanup also failed: ${(releaseError as Error).message}`;
+                  }
+                setToast({ text: message, error: true });
               }
             }}
           >
@@ -1622,7 +1762,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   Project owner
                   <select aria-label="Project owner" name="memberId" required defaultValue="">
                     <option value="">Choose profile</option>
-                    {state?.members.map((member) => (
+                    {availableMembers.map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.name}
                       </option>
@@ -1776,7 +1916,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 Owner
                 <select name="assignedTo">
                   <option value="">Assign when dispatched</option>
-                  {members.map((m) => (
+                  {availableMembers.map((m) => (
                     <option value={m.id} key={m.id}>
                       {m.name} · {m.role}
                     </option>
@@ -2169,10 +2309,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                         onChange={(e) => setDetailMember(e.target.value)}
                       >
                         <option value="">Choose an agent</option>
-                        {members
+                        {availableMembers
                           .filter(
                             (m) =>
                               m.status === 'ready' &&
+                              !m.entitlementLocked &&
                               !isExternalMember(m) &&
                               project?.memberIds?.includes(m.id) &&
                               !tasks.some(
@@ -2379,6 +2520,11 @@ function MemberCard({
           <span className="role-label">
             {providerLabels[provider]} · {member.runnerName}
           </span>
+          {member.entitlementLocked && (
+            <span className="quota-state blocked" role="status">
+              <LockKeyhole size={12} /> Locked by Kivuno plan
+            </span>
+          )}
         </div>
         <span className={`member-presence ${member.presence || 'offline'}`}>
           <i />
@@ -2474,12 +2620,20 @@ function MemberCard({
           )}
           {member.capabilitiesError && <p className="error-text">{member.capabilitiesError}</p>}
           {provider === 'codex' && (
-            <button className="text-button accent" onClick={importSkills} disabled={busy}>
+            <button
+              className="text-button accent"
+              onClick={importSkills}
+              disabled={busy || member.entitlementLocked}
+            >
               <ArrowDownLeft size={14} /> Import local skills
             </button>
           )}
           {provider === 'codex' ? (
-            <button className="text-button capability-setup" onClick={setup}>
+            <button
+              className="text-button capability-setup"
+              onClick={setup}
+              disabled={member.entitlementLocked}
+            >
               <Terminal size={14} /> Configure skills & plugins
             </button>
           ) : (
@@ -2499,23 +2653,23 @@ function MemberCard({
             <Button
               primary
               onClick={googleSignIn}
-              disabled={busy}
+              disabled={busy || member.entitlementLocked}
               title="Opens the official Antigravity Google sign-in in Terminal."
             >
               <ArrowUpRight size={15} /> Sign in with Google
             </Button>
-            <Button onClick={external} disabled={busy}>
+            <Button onClick={external} disabled={busy || member.entitlementLocked}>
               <ExternalLink size={15} /> MESH connection
             </Button>
           </div>
         ) : isExternalMember(member) ? (
-          <Button primary onClick={external} disabled={busy}>
+          <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
             <ExternalLink size={15} />
             MESH connection
           </Button>
         ) : member.account ? (
           <>
-            <Button onClick={refresh} disabled={busy}>
+            <Button onClick={refresh} disabled={busy || member.entitlementLocked}>
               <RefreshCw size={14} /> Refresh
             </Button>
           </>
@@ -2524,7 +2678,7 @@ function MemberCard({
             <Button
               primary
               onClick={() => login(member.runnerId ? 'device' : 'browser')}
-              disabled={busy || (cloud && provider === 'gemini')}
+              disabled={busy || member.entitlementLocked || (cloud && provider === 'gemini')}
               title={
                 cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
               }
@@ -2533,7 +2687,11 @@ function MemberCard({
               {provider === 'claude' ? 'Claude' : provider === 'codex' ? 'OpenAI' : 'Google'}
             </Button>
             {provider === 'codex' && (
-              <button className="text-button" disabled={busy} onClick={() => login('browser')}>
+              <button
+                className="text-button"
+                disabled={busy || member.entitlementLocked}
+                onClick={() => login('browser')}
+              >
                 Browser sign-in
               </button>
             )}
@@ -2551,11 +2709,17 @@ function MemberCard({
       </div>
       <details className="member-settings">
         <summary>Settings</summary>
-        {children}
+        {member.entitlementLocked ? (
+          <p className="quota-unknown" role="status">
+            This profile is retained, but plan locked profiles cannot change settings or run.
+          </p>
+        ) : (
+          children
+        )}
         {member.account && !isExternalMember(member) && (
           <button
             className="text-button"
-            disabled={busy || member.status === 'working'}
+            disabled={busy || (!member.entitlementLocked && member.status === 'working')}
             onClick={() => {
               if (window.confirm(`Sign ${member.name} out?`)) logout();
             }}

@@ -34,7 +34,8 @@ export default function SharedGroups({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [chosenTeammates, setChosenTeammates] = useState<string[]>([]);
+  const [chosenSeats, setChosenSeats] = useState<string[]>([]);
   const [grants, setGrants] = useState<SharedHarnessGrant[]>([]);
   const [sadeRuns, setSadeRuns] = useState<SharedSadeRun[]>([]);
   const [grantMember, setGrantMember] = useState('');
@@ -74,7 +75,20 @@ export default function SharedGroups({
       inFlight = true;
       try {
         const next = await request<GroupListing>({ action: 'list' });
-        if (active) setListing(next);
+        if (active) {
+          setListing(next);
+          if (
+            selectedRef.current &&
+            !next.groups.some((group) => group.id === selectedRef.current)
+          ) {
+            selectedRef.current = '';
+            setSelected('');
+            setRoom(undefined);
+            setMessages([]);
+            setGrants([]);
+            setSadeRuns([]);
+          }
+        }
       } catch (cause) {
         if (active) setError((cause as Error).message);
       } finally {
@@ -289,6 +303,31 @@ export default function SharedGroups({
             </button>
           </div>
         ))}
+        {Boolean(listing?.lockedGroups.length) && (
+          <div className="locked-groups" aria-label="Groups with locked seats">
+            <h3>Locked groups</h3>
+            {listing?.lockedGroups.map((group) => (
+              <div className="locked-group-row" key={group.id}>
+                <div>
+                  <strong>{group.name}</strong>
+                  <span>Your seat is locked. You can leave the group.</span>
+                </div>
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(async () => {
+                      await request({ action: 'leave', groupId: group.id });
+                      await refreshList();
+                    })
+                  }
+                >
+                  Leave
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <nav aria-label="Shared groups">
           {listing?.groups.map((group) => (
             <button
@@ -319,10 +358,15 @@ export default function SharedGroups({
                 className="button compact"
                 onClick={() => {
                   setEditing(!editing);
-                  setChosen(
+                  setChosenTeammates(
                     room.teammates
                       .filter((member) => member.ownerId === ownerId)
                       .map((member) => member.localId),
+                  );
+                  setChosenSeats(
+                    room.people
+                      .filter((person) => person.id !== ownerId && !person.quotaLocked)
+                      .map((person) => person.id),
                   );
                 }}
               >
@@ -335,7 +379,11 @@ export default function SharedGroups({
                   {room.people.map((person) => (
                     <li key={person.id}>
                       {person.name} {person.id === ownerId ? '(you)' : ''} ·{' '}
-                      {person.state === 'invited' ? 'Invited' : 'Joined'}
+                      {person.quotaLocked
+                        ? 'Locked'
+                        : person.state === 'invited'
+                          ? 'Invited'
+                          : 'Joined'}
                       {isOwner && person.id !== ownerId && (
                         <button
                           className="text-button"
@@ -348,7 +396,16 @@ export default function SharedGroups({
                                 groupId: room.id,
                                 userId: person.id,
                               });
-                              if (selectedRef.current === updated.id) setRoom(updated);
+                              if (selectedRef.current === updated.id) {
+                                setRoom(updated);
+                                setChosenSeats(
+                                  updated.people
+                                    .filter(
+                                      (member) => member.id !== ownerId && !member.quotaLocked,
+                                    )
+                                    .map((member) => member.id),
+                                );
+                              }
                             })
                           }
                         >
@@ -368,7 +425,14 @@ export default function SharedGroups({
                           groupId: room.id,
                           account,
                         });
-                        if (selectedRef.current === updated.id) setRoom(updated);
+                        if (selectedRef.current === updated.id) {
+                          setRoom(updated);
+                          setChosenSeats(
+                            updated.people
+                              .filter((member) => member.id !== ownerId && !member.quotaLocked)
+                              .map((member) => member.id),
+                          );
+                        }
                         setAccount('');
                       });
                     }}
@@ -385,15 +449,73 @@ export default function SharedGroups({
                     </button>
                   </form>
                 )}
+                {isOwner && (
+                  <section className="group-seat-picker" aria-label="Active group seats">
+                    <h3>Active group seats</h3>
+                    <p>
+                      The owner always uses one seat.{' '}
+                      {room.seatLimit === null
+                        ? `${chosenSeats.length + 1} people selected · no plan cap.`
+                        : `${chosenSeats.length + 1} of ${room.seatLimit} seats selected.`}
+                    </p>
+                    <label>
+                      <input type="checkbox" checked disabled />
+                      {room.people.find((person) => person.id === ownerId)?.name || 'Group owner'} ·
+                      Owner (required)
+                    </label>
+                    {room.people
+                      .filter((person) => person.id !== ownerId)
+                      .map((person) => (
+                        <label key={person.id}>
+                          <input
+                            type="checkbox"
+                            checked={chosenSeats.includes(person.id)}
+                            onChange={(event) =>
+                              setChosenSeats((previous) =>
+                                event.target.checked
+                                  ? [...previous, person.id]
+                                  : previous.filter((id) => id !== person.id),
+                              )
+                            }
+                          />
+                          {person.name} · {person.state === 'invited' ? 'Invited' : 'Joined'}
+                          {person.quotaLocked ? ' · Locked' : ''}
+                        </label>
+                      ))}
+                    <button
+                      className="button"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(async () => {
+                          const updated = await request<SharedGroup>({
+                            action: 'seats',
+                            groupId: room.id,
+                            userIds: [ownerId!, ...chosenSeats],
+                          });
+                          if (selectedRef.current === updated.id) {
+                            setRoom(updated);
+                            setChosenSeats(
+                              updated.people
+                                .filter((person) => person.id !== ownerId && !person.quotaLocked)
+                                .map((person) => person.id),
+                            );
+                          }
+                        })
+                      }
+                    >
+                      Save active seats
+                    </button>
+                  </section>
+                )}
                 <h3>Your teammates</h3>
                 <div role="group" aria-label="Your teammates">
                   {members.map((member) => (
                     <label key={member.id}>
                       <input
                         type="checkbox"
-                        checked={chosen.includes(member.id)}
+                        checked={chosenTeammates.includes(member.id)}
                         onChange={(event) =>
-                          setChosen((previous) =>
+                          setChosenTeammates((previous) =>
                             event.target.checked
                               ? [...previous, member.id]
                               : previous.filter((id) => id !== member.id),
@@ -414,7 +536,7 @@ export default function SharedGroups({
                           action: 'teammates',
                           groupId: room.id,
                           teammates: members
-                            .filter((member) => chosen.includes(member.id))
+                            .filter((member) => chosenTeammates.includes(member.id))
                             .map((member) => ({
                               localId: member.id,
                               name: member.name,

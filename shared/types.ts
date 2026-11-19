@@ -83,6 +83,8 @@ export interface Member {
   connectedAt?: string;
   /** Removed from the team; retained only for historical task/message attribution. */
   removedAt?: string;
+  /** Local profile retained after the account's current Kivuno plan quota is exceeded. */
+  entitlementLocked?: boolean;
   runnerId?: string;
   runnerName?: string;
 }

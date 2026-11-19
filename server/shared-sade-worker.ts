@@ -3,11 +3,7 @@ import { ProviderQuotaUnavailable } from './quota.ts';
 import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
-import {
-  sharedGroupMemberLimit,
-  sharedSadePollGrantLimit,
-  sharedTeammatesPerOwnerLimit,
-} from '../shared/collaboration.ts';
+import { sharedSadePollGrantLimit } from '../shared/collaboration.ts';
 import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { assertGroupMember } from './groups.ts';
@@ -42,7 +38,6 @@ import { machineTool, machineTools } from './machine-tools.ts';
 
 const sharedQuestionHint =
   ' If a meaningful product or style preference is missing, use relay_ask_shared_requester before editing. Offer to decide yourself if the human prefers.';
-const maxSharedSadeRoster = sharedGroupMemberLimit * sharedTeammatesPerOwnerLimit;
 const rosterPageSize = 12;
 const rosterLookupInput = z
   .object({
@@ -51,7 +46,7 @@ const rosterLookupInput = z
     ownedByRequester: z.boolean().optional().describe('Filter by whether the sender owns it.'),
     provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).optional(),
     platform: z.enum(['darwin', 'win32', 'linux']).optional().describe('Native or paired OS.'),
-    offset: z.number().int().min(0).max(maxSharedSadeRoster).optional(),
+    offset: z.number().int().min(0).optional(),
   })
   .strict();
 const groupRosterLookupTool = {
@@ -200,23 +195,21 @@ const deliveryInput = z
     acceptsUpdates: z.literal(true).optional(),
     updates: sharedSadeUpdates.optional(),
     request: z.string().max(8000),
-    team: z
-      .array(
-        z
-          .object({
-            id,
-            name: z.string().max(100),
-            provider: z.string().max(30),
-            role: z.string().max(30),
-            platform: z.string().max(12),
-            pairedPlatform: z.string().max(12).optional(),
-            allowWrites: z.boolean(),
-            owner: z.string().max(200),
-            ownedByRequester: z.boolean(),
-          })
-          .strict(),
-      )
-      .max(maxSharedSadeRoster),
+    team: z.array(
+      z
+        .object({
+          id,
+          name: z.string().max(100),
+          provider: z.string().max(30),
+          role: z.string().max(30),
+          platform: z.string().max(12),
+          pairedPlatform: z.string().max(12).optional(),
+          allowWrites: z.boolean(),
+          owner: z.string().max(200),
+          ownedByRequester: z.boolean(),
+        })
+        .strict(),
+    ),
     task: z.unknown().optional(),
     review: z
       .object({
@@ -311,7 +304,7 @@ export class SharedSadeWorker {
   }
   private binding(input: GrantInput) {
     const { store } = this.host;
-    const member = store.get<Member>('member', input.teammateId);
+    const member = this.host.assertProfileUnlocked(input.teammateId);
     const project = store.get<Project>('project', input.projectId);
     assertGroupMember(store, project.id, member.id);
     if (!member.account || member.removedAt || member.runnerId || isExternalMember(member))

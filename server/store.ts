@@ -187,16 +187,17 @@ export class Store extends EventEmitter {
     return this.leases().find((l) => l.taskId === taskId);
   }
   addMember(input: {
+    id?: string;
     name: string;
     role: Member['role'];
     color?: string;
     provider?: Member['provider'];
     integration?: Member['integration'];
   }): Member {
-    if (this.members().length >= 16)
-      throw new DomainError('This room supports up to 16 local profiles.');
+    if (input.id && this.all<Member>('member').some((member) => member.id === input.id))
+      throw new DomainError('This profile ID already exists.', 409);
     return this.put('member', {
-      id: randomUUID(),
+      id: input.id || randomUUID(),
       provider: input.provider || 'codex',
       integration: input.integration || 'native',
       name: input.name,
@@ -308,6 +309,8 @@ export class Store extends EventEmitter {
       const task = this.get<Task>('task', taskId),
         member = this.get<Member>('member', memberId);
       if (member.removedAt) throw new DomainError('This teammate was removed.', 410);
+      if (member.entitlementLocked)
+        throw new DomainError('This profile is locked by the current Kivuno plan.', 403);
       const session = sessionId ? this.get<CodexSession>('session', sessionId) : null;
       const project = this.get<Project>('project', task.projectId);
       if (task.reviewOfTaskId) {

@@ -718,7 +718,7 @@ test(
       }
     }
     const observerGrantId = 'ffffffff-ffff-4fff-bfff-ffffffffffff';
-    const observerGrant = (await receivingDesktop.workspace.sharedSade.execute({
+    const observerConsent = {
       action: 'grant',
       groupId: cloud.groupId,
       id: observerGrantId,
@@ -726,7 +726,21 @@ test(
       teammateId: observer.id,
       allowWrites: false,
       turns: 1,
-    })) as { projectKey: string; platform: string; role: string };
+    };
+    receivingDesktop.store.updateMember(observer.id, { entitlementLocked: true });
+    await assert.rejects(
+      receivingDesktop.workspace.sharedSade.execute(observerConsent),
+      /profile is locked/,
+    );
+    assert.equal(receivingDesktop.store.lookup('sharedSadeLocalGrant', observerGrantId), undefined);
+    receivingDesktop.store.updateMember(observer.id, { entitlementLocked: false });
+    const observerGrant = (await receivingDesktop.workspace.sharedSade.execute(
+      observerConsent,
+    )) as {
+      projectKey: string;
+      platform: string;
+      role: string;
+    };
     cloud.call(1, {
       action: 'sade-grant',
       groupId: cloud.groupId,
@@ -1921,6 +1935,81 @@ test('a quota fallback can write the same scope using another write grant and in
       f.store.close();
     }
   }
+});
+
+test('a locked group seat cannot stall another project on the same desktop', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const groupId = randomUUID();
+  const secondProject = 'c'.repeat(64);
+  const eligibleGrant = randomUUID();
+  f.call(1, { action: 'create', id: groupId, name: 'Another project' });
+  f.call(1, {
+    action: 'teammates',
+    groupId,
+    teammates: [{ localId: f.members[1], name: 'Mây', provider: 'codex' }],
+  });
+  f.call(1, {
+    action: 'sade-grant',
+    groupId,
+    id: eligibleGrant,
+    teammateId: f.members[1],
+    projectKey: secondProject,
+    projectName: 'Another project',
+    role: 'researcher',
+    platform: 'win32',
+    turns: 2,
+    allowWrites: false,
+  });
+  f.call(1, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Nhờ Mây đọc tài liệu cho nhóm thứ nhất.',
+    sade: { projectKey: key },
+  });
+  f.call(1, {
+    action: 'message',
+    groupId,
+    id: randomUUID(),
+    content: 'Nhờ Mây đọc tài liệu cho nhóm thứ hai.',
+    sade: { projectKey: secondProject },
+  });
+  f.call(0, { action: 'seats', groupId: f.groupId, userIds: ['owner-A'] });
+
+  const result = f.poll(1, [], [f.grants[1], eligibleGrant]);
+  assert.equal(result.delivery?.grantId, eligibleGrant);
+  assert.deepEqual(f.poll(1, [result.delivery.id], [f.grants[1], eligibleGrant]).active, [
+    result.delivery.id,
+  ]);
+  const locked = f.view().sadeRuns[0];
+  assert.equal(locked.state, 'blocked');
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
+  assert.throws(
+    () => f.finish(1, locked.jobs[0].id, { kind: 'done', summary: 'Stale contribution' }),
+    /seat is locked/,
+  );
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Đọc lại tài liệu nhóm thứ nhất với teammate còn quyền.',
+    sade: { projectKey: key },
+  });
+  const replanned = f.poll(0);
+  assert.deepEqual(
+    replanned.delivery?.team.map(({ id }) => id),
+    [f.grants[0]],
+  );
+  assert.throws(
+    () => f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[0] }),
+    /Only this harness owner/,
+  );
+  assert.deepEqual(f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[1] }), {
+    revoked: true,
+  });
+  f.call(0, { action: 'seats', groupId: f.groupId, userIds: ['owner-A', 'owner-B'] });
+  assert.equal(f.store.get<{ revoked: boolean }>('sharedSadeGrant', f.grants[1]).revoked, true);
 });
 
 test('the desktop polls all valid grants across project pages', async (t) => {

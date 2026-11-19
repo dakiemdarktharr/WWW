@@ -64,6 +64,36 @@
   border: 1px solid var(--line-soft);
   border-radius: 12px;
 }
+.locked-groups,
+.group-seat-picker {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+}
+.locked-groups h3,
+.group-seat-picker h3,
+.group-seat-picker p {
+  margin: 0;
+}
+.locked-group-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
+.locked-group-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.locked-group-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
 .shared-group-members label {
   display: flex;
   align-items: center;
@@ -79,7 +109,10 @@
 .shared-group-members li {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 10px;
   padding: 6px 0;
+  overflow-wrap: anywhere;
 }
 .shared-group-roster {
   display: flex;
@@ -131,5 +164,8 @@
   }
   .shared-group-members form {
     flex-wrap: wrap;
+  }
+  .locked-group-row {
+    align-items: flex-start;
   }
 }

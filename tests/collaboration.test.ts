@@ -70,6 +70,155 @@ test('groups isolate accounts, require invitation acceptance and protect teammat
   assert.deepEqual(call(stranger, 'decline'), { declined: true });
 });
 
+test('free group seats include the owner, reserve invitations, and let locked people leave', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-group-seats-'));
+  const store = new Store(path.join(dir, 'groups.db'));
+  t.after(async () => {
+    store.close();
+    assert.equal(path.dirname(dir), os.tmpdir());
+    await rm(dir, { recursive: true, force: true });
+  });
+  const owner = { id: 'seat-owner', name: 'Owner' };
+  const bob = { id: 'seat-bob', name: 'Bob' };
+  const charlie = { id: 'seat-charlie', name: 'Charlie' };
+  const dave = { id: 'seat-dave', name: 'Dave' };
+  const accounts = [owner, bob, charlie, dave];
+  const groups = new SharedGroups(
+    store,
+    (account) => accounts.find((user) => user.id === account) || null,
+  );
+  const group = groups.execute(owner, {
+    action: 'create',
+    id: randomUUID(),
+    name: 'Seat-limited group',
+  }) as SharedGroup;
+  const call = (who: typeof owner, action: string, extra = {}) =>
+    groups.execute(who, { action, groupId: group.id, ...extra }) as any;
+
+  call(owner, 'invite', { account: bob.id });
+  call(owner, 'invite', { account: charlie.id });
+  assert.throws(() => call(owner, 'invite', { account: dave.id }), /3 active group seats/);
+
+  const selected = call(owner, 'seats', { userIds: [owner.id, bob.id] }) as SharedGroup;
+  assert.equal(selected.people.find((person) => person.id === charlie.id)?.quotaLocked, true);
+  const charlieListing = groups.execute(charlie, { action: 'list' }) as any;
+  assert.deepEqual(charlieListing.lockedGroups, [{ id: group.id, name: group.name }]);
+  assert.throws(() => call(charlie, 'accept'), /seat is locked/);
+  assert.throws(() => call(charlie, 'read'), /seat is locked/);
+  assert.equal(
+    (call(owner, 'read').group as SharedGroup).people.some((person) => person.id === charlie.id),
+    true,
+  );
+
+  call(owner, 'remove', { userId: charlie.id });
+  call(owner, 'invite', { account: charlie.id });
+  assert.throws(() => call(owner, 'invite', { account: dave.id }), /3 active group seats/);
+  call(owner, 'seats', { userIds: [owner.id] });
+  assert.equal((groups.execute(bob, { action: 'list' }) as any).lockedGroups.length, 1);
+  assert.equal(call(bob, 'leave').id, group.id);
+  call(owner, 'invite', { account: dave.id });
+
+  assert.throws(
+    () => call(owner, 'seats', { userIds: [bob.id] }),
+    /owner must have an active seat/,
+  );
+  assert.throws(
+    () => call(owner, 'seats', { userIds: [owner.id, 'missing'] }),
+    /only people already in this group/,
+  );
+});
+
+test('Plus and Max group seats follow the owner tier and preserve people after a downgrade', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-group-plan-seats-'));
+  const store = new Store(path.join(dir, 'groups.db'));
+  t.after(async () => {
+    store.close();
+    assert.equal(path.dirname(dir), os.tmpdir());
+    await rm(dir, { recursive: true, force: true });
+  });
+  const owner = { id: 'plan-owner', name: 'Plan owner' };
+  const invitees = Array.from({ length: 39 }, (_, index) => ({
+    id: `plan-member-${index}`,
+    name: `Member ${index}`,
+  }));
+  const accounts = [owner, ...invitees];
+  const groups = new SharedGroups(
+    store,
+    (account) => accounts.find((user) => user.id === account) || null,
+  );
+  const paidUntil = Date.now() + 30 * 86400000;
+  const entitlement = (tier: 'plus' | 'max') =>
+    store.put('billingEntitlement', {
+      id: owner.id,
+      ownerId: owner.id,
+      tier,
+      paidUntil,
+      syncedBlock: 100,
+      updatedAt: new Date().toISOString(),
+    });
+  const group = groups.execute(owner, {
+    action: 'create',
+    id: randomUUID(),
+    name: 'Plan group',
+  }) as SharedGroup;
+  const call = (who: typeof owner, action: string, extra = {}) =>
+    groups.execute(who, { action, groupId: group.id, ...extra }) as any;
+
+  entitlement('plus');
+  for (const member of invitees.slice(0, 9)) call(owner, 'invite', { account: member.id });
+  assert.throws(() => call(owner, 'invite', { account: invitees[9].id }), /10 active group seats/);
+
+  entitlement('max');
+  for (const member of invitees.slice(9)) call(owner, 'invite', { account: member.id });
+  const maxSeats = call(owner, 'seats', { userIds: [owner.id] }) as SharedGroup;
+  assert.equal(maxSeats.people.length, 40);
+  assert.equal(
+    maxSeats.people.every((person) => !person.quotaLocked),
+    true,
+  );
+  call(invitees[0], 'accept');
+  call(owner, 'message', { id: randomUUID(), content: 'Keep this history' });
+
+  store.remove('billingEntitlement', owner.id);
+  const listing = groups.execute(owner, { action: 'list' }) as any;
+  const downgraded = listing.groups.find(
+    (item: SharedGroup) => item.id === group.id,
+  ) as SharedGroup;
+  assert.equal(downgraded.seatLimit, 3);
+  assert.equal(downgraded.people.length, 40);
+  assert.equal(downgraded.people.find((person) => person.id === owner.id)?.quotaLocked, false);
+  assert.equal(
+    downgraded.people
+      .filter((person) => person.id !== owner.id)
+      .every((person) => person.quotaLocked),
+    true,
+  );
+  assert.equal(call(owner, 'read').messages[0].content, 'Keep this history');
+
+  const lockedListing = groups.execute(invitees[0], { action: 'list' }) as any;
+  assert.deepEqual(lockedListing.groups, []);
+  assert.deepEqual(lockedListing.lockedGroups, [{ id: group.id, name: group.name }]);
+  assert.throws(() => call(invitees[0], 'read'), /seat is locked/);
+  assert.throws(
+    () => call(invitees[0], 'message', { id: randomUUID(), content: 'Blocked' }),
+    /seat is locked/,
+  );
+  call(owner, 'remove', { userId: invitees[1].id });
+  assert.equal(call(invitees[0], 'leave').id, group.id);
+
+  const selected = call(owner, 'seats', {
+    userIds: [owner.id, invitees[2].id, invitees[3].id],
+  }) as SharedGroup;
+  assert.equal(selected.people.filter((person) => !person.quotaLocked).length, 3);
+  assert.throws(
+    () =>
+      call(owner, 'seats', {
+        userIds: [owner.id, ...invitees.slice(2, 5).map((person) => person.id)],
+      }),
+    /up to 3 active group seats/,
+  );
+});
+
 test('real account login and PKCE tokens authenticate group API; cookies and revoked tokens cannot bypass it', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'kivuno-groups-auth-'));
   const store = new Store(path.join(dir, 'workspace.db'));

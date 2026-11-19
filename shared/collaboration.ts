@@ -1,6 +1,5 @@
 import type { PlanTask, ProviderId, Role } from './types';
 
-export const sharedGroupMemberLimit = 32;
 export const sharedTeammatesPerOwnerLimit = 32;
 export const sharedSadePollGrantLimit = 32;
 
@@ -8,6 +7,8 @@ export interface GroupPerson {
   id: string;
   name: string;
   state: 'invited' | 'active';
+  /** True when the owner has not assigned this person an active group seat. */
+  quotaLocked?: boolean;
 }
 export interface SharedTeammate {
   localId: string;
@@ -23,6 +24,8 @@ export interface SharedGroup {
   name: string;
   ownerId: string;
   people: GroupPerson[];
+  /** Current owner plan cap, attached to API responses and never stored. Null means unlimited. */
+  seatLimit?: number | null;
   teammates: SharedTeammate[];
   createdAt: string;
 }
@@ -80,6 +83,7 @@ export interface SharedSadeRun {
 export interface GroupListing {
   groups: SharedGroup[];
   invitations: { id: string; name: string }[];
+  lockedGroups: { id: string; name: string }[];
   owner: { id: string; name: string };
 }
 export type GroupCommand =
@@ -89,6 +93,7 @@ export type GroupCommand =
   | { action: 'invite'; groupId: string; account: string }
   | { action: 'accept' | 'decline' | 'leave'; groupId: string }
   | { action: 'remove'; groupId: string; userId: string }
+  | { action: 'seats'; groupId: string; userIds: string[] }
   | { action: 'teammates'; groupId: string; teammates: Omit<SharedTeammate, 'ownerId'>[] }
   | {
       action: 'message';
