@@ -1,0 +1,19 @@
+{
+  "grant": {
+    "schema": "kivuno.qr.simulated-grant.v1",
+    "chainId": 43113,
+    "issuer": "0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805",
+    "plan": "max",
+    "grantedAt": "2026-11-19T13:34:42.409Z",
+    "paidUntil": "2026-12-19T13:34:42.409Z",
+    "localChainId": 31337,
+    "localCommitment": "0x2cc12e172a4eb464ce15f75712c478c5f55bee507c77991575ffc85f3eb0e7cd",
+    "localTxHash": "0x52a74da05a0ed73ac30f1a1a3d45f93061fea9f73ab090b2e35a115adcbf1648"
+  },
+  "commitment": "0x3715dec6ff8197ea53a946c8ceaff7f99d3ef100c5d058f85070594476a33b5e",
+  "transaction": {
+    "hash": "0xa84e75b8c8524e6c307a3121092cde377cdb4a525e7d0785422d00bc87e1eb97",
+    "blockNumber": 61332957,
+    "blockHash": "0xefed7827f100608b41019e41e2469e1d9782c869d26fb97212ea7763a7479881"
+  }
+}

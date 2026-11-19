@@ -13,6 +13,7 @@ type Order = {
   amountUsdc: number;
   rateVndPerUsdc: number;
   expiresAt: string;
+  paidUntil?: string;
   status: 'pending' | 'paid' | 'expired';
   bankName: string;
   accountName: string;
@@ -139,6 +140,7 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
   const [config, setConfig] = useState<Quote | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [proof, setProof] = useState<Proof | null>(null);
+  const [fujiHash, setFujiHash] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const orderId = order?.id;
@@ -206,6 +208,7 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
   async function choose(plan: Plan) {
     const updatedOrder = await api<Order>('/billing/bank/order', { plan });
     setProof(null);
+    setFujiHash('');
     update(updatedOrder);
     history.replaceState(null, '', '/billing?receipt=' + encodeURIComponent(updatedOrder.id));
   }
@@ -293,6 +296,26 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
                       if (!receipt.verified || receipt.chainId !== 31337)
                         throw Error('Chưa xác minh được biên nhận cục bộ.');
                       setProof(receipt);
+                      setFujiHash('');
+                      try {
+                        const response = await fetch('/kivuno-qr-fuji.json', { cache: 'no-store' });
+                        if (!response.ok) return;
+                        const published = await response.json();
+                        const grant = published.grant;
+                        const hash = published.transaction?.hash;
+                        if (
+                          grant?.chainId === 43113 &&
+                          grant.localChainId === receipt.chainId &&
+                          grant.localTxHash === receipt.txHash &&
+                          grant.localCommitment === receipt.commitment &&
+                          grant.plan === order.plan &&
+                          grant.paidUntil === order.paidUntil &&
+                          /^0x[0-9a-f]{64}$/.test(hash)
+                        )
+                          setFujiHash(hash);
+                      } catch {
+                        // A local receipt remains available when the public example cannot be loaded.
+                      }
                     })
                   }
                 >
@@ -308,6 +331,17 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
                   <code>{proof.txHash}</code>
                   <p>Mã cam kết</p>
                   <code>{proof.commitment}</code>
+                  {fujiHash && (
+                    <p>
+                      <a
+                        href={'https://build.avax.network/explorer/fuji/c-chain/tx/' + fujiHash}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Đối chiếu biên nhận của gói {planName(order.plan)} trên Fuji
+                      </a>
+                    </p>
+                  )}
                 </div>
               )}
             </>
