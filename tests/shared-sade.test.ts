@@ -828,14 +828,23 @@ test(
       : undefined;
     if (live) assert.equal(process.platform, 'win32');
     closeBridge = live?.close;
-    const permission = (await live?.ready()) || {
+    const remotePermission = await live?.ready();
+    if (remotePermission) {
+      assert.equal(remotePermission.platform, 'darwin');
+      console.log(
+        `Tool-only paired runner ready on ${remotePermission.platform} ${remotePermission.arch}`,
+      );
+    }
+    const permission = remotePermission || {
       id: randomUUID(),
       projectId,
       fullAccess: true,
       expiresAt: new Date(Date.now() + 120_000).toISOString(),
     };
-    const remoteWorker = new MachineExecutor(path.join(root, 'paired-machine'), permission);
-    t.after(() => remoteWorker.stop());
+    const remoteWorker = live
+      ? undefined
+      : new MachineExecutor(path.join(root, 'paired-machine'), permission);
+    t.after(() => remoteWorker?.stop());
     const advertise = async (access = permission) =>
       workspace.runners.exchange(node.id, {
         epoch: workspace.runners.epoch,
@@ -847,9 +856,8 @@ test(
       });
     if (!live) await advertise();
     let simulateRequestedOS = false;
-    const machineCall = live
-      ? undefined
-      : t.mock.method(
+    const machineCall = remoteWorker
+      ? t.mock.method(
           workspace.runners,
           'call',
           async (...[peer, command]: Parameters<typeof workspace.runners.call>) => {
@@ -863,7 +871,8 @@ test(
               ? { ...result, platform: pairedPlatform }
               : result;
           },
-        );
+        )
+      : undefined;
     const nextGrant = {
       id: randomUUID(),
       groupId: cloud.groupId,
