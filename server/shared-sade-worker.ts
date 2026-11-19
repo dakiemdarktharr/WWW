@@ -34,7 +34,7 @@ import type { Workspace } from './service.ts';
 import { parsePlanTask } from './workflow-plan.ts';
 import { reviewDigest } from './sade.ts';
 import { inspectMachineChecks } from './machine-checks.ts';
-import { machineTool, machineTools } from './machine-tools.ts';
+import { machineTool, machineTools, parseMachineOperation } from './machine-tools.ts';
 
 const sharedQuestionHint =
   ' If a meaningful product or style preference is missing, use relay_ask_shared_requester before editing. Offer to decide yourself if the human prefers.';
@@ -450,14 +450,14 @@ export class SharedSadeWorker {
       z.object({}).strict().parse(input);
       return [{ id: machine.nodeId, name: machine.name, platform: machine.platform }];
     }
-    const request = z.object({ runnerId: id, operation: z.string() }).passthrough().parse(input);
+    const request = parseMachineOperation(name, input);
     if (request.runnerId !== machine.nodeId)
       throw new DomainError('Only the approved paired machine is available to this task.', 403);
     if (request.operation !== 'info' && !receipt.machineVerified)
       throw new DomainError(
         'Verify the paired machine operating system before using its workspace.',
       );
-    const result = await machineTool(this.host, session, name, input, current);
+    const result = await machineTool(this.host, session, 'machine_use', request, current);
     if (
       ['info', 'sync', 'run'].includes(request.operation) &&
       result?.platform !== machine.platform
@@ -1133,7 +1133,7 @@ export class SharedSadeWorker {
         ? sharedGroupPlanningPrompt(delivery)
         : delivery.phase === 'review'
           ? sharedGroupReviewPrompt(delivery)
-          : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS. Sync the owned worktree, run the project check on that machine, and pull only scoped changes for review. Report the actual outcome.' : ''}${context}`;
+          : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS and sync the owned worktree. Run the project check with machine_run, then use machine_use to pull only scoped changes for review. Report the actual outcome.' : ''}${context}`;
     await this.host.sessions.send(
       session.id,
       delivery.acceptsUpdates

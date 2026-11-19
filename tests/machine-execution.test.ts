@@ -384,13 +384,30 @@ test(
     await assert.rejects(readFile(path.join(target, '.claude', 'settings.json')), {
       code: 'ENOENT',
     });
-    const result: any = await use('run', {
-      command: 'node',
-      args: [
-        '-e',
-        "require('fs').writeFileSync('sample.txt','fixed on '+process.platform);console.log(process.platform)",
-      ],
-    });
+    await assert.rejects(
+      machineTool(
+        host,
+        session,
+        'machine_run',
+        { runnerId: node.id, executable: 'node --version' },
+        guard,
+      ),
+      /argv/,
+    );
+    const result: any = await machineTool(
+      host,
+      session,
+      'machine_run',
+      {
+        runnerId: node.id,
+        executable: 'node',
+        argv: [
+          '-e',
+          "require('fs').writeFileSync('sample.txt','fixed on '+process.platform);console.log(process.platform)",
+        ],
+      },
+      guard,
+    );
     assert.equal(result.stdout.trim(), process.platform);
     await assert.rejects(use('sync'), /Remote files changed/);
     assert.equal(
@@ -411,8 +428,8 @@ test(
       machineTool(
         host,
         { ...session, readOnly: true },
-        'machine_use',
-        { runnerId: node.id, operation: 'run', args: { command: 'node' } },
+        'machine_run',
+        { runnerId: node.id, executable: 'node', argv: [] },
         guard,
       ),
       /Read-only/,

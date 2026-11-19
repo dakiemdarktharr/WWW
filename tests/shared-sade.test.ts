@@ -1455,18 +1455,33 @@ test(
         () => {},
       );
     await assert.rejects(use('sync'), /Verify/);
+    await assert.rejects(
+      workspace.sharedSade.usePairedMachine(
+        debugJob.id,
+        debuggerSession.session,
+        'machine_run',
+        { runnerId: node.id, executable: 'node', argv: ['--version'] },
+        () => {},
+      ),
+      /Verify/,
+    );
     await assert.rejects(use('info', {}, randomUUID()), /Only the approved/);
     if (machineCall) {
       assert.equal(machineCall.mock.callCount(), 0);
       await assert.rejects(use('info'), /requested operating system/);
       simulateRequestedOS = true;
     }
-    const machine = async (operation: string, args: object = {}) => {
-      const result = await submit(0, debuggerSession.session, debuggerSession.peer, 'machine_use', {
-        runnerId: node.id,
-        operation,
-        args,
-      });
+    const machine = async (operation: string, args: Record<string, unknown> = {}) => {
+      const machineRun = operation === 'run';
+      const result = await submit(
+        0,
+        debuggerSession.session,
+        debuggerSession.peer,
+        machineRun ? 'machine_run' : 'machine_use',
+        machineRun
+          ? { runnerId: node.id, executable: args.command, argv: args.args }
+          : { runnerId: node.id, operation, args },
+      );
       return JSON.parse(result.contentItems?.[0]?.text || '{}');
     };
     if (live) {

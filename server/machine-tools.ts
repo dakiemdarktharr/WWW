@@ -37,18 +37,15 @@ export const machineTools: DynamicTool[] = [
     type: 'function',
     name: 'machine_use',
     description:
-      'Use a granted machine: sync the owned worktree, run a bounded command there, read/write a scoped remote file, or pull reviewed remote changes back into the same owned scope. Full-access commands require the machine owner’s explicit grant. Use info to verify the actual OS. Never send credentials.',
+      'Verify the OS of a granted machine, sync the owned worktree, read or write a remote file, or pull remote changes into scope. Use machine_run to execute a command. Never send credentials.',
     inputSchema: {
       type: 'object',
       properties: {
         runnerId: { type: 'string' },
-        operation: { type: 'string', enum: ['info', 'sync', 'read', 'write', 'run', 'pull'] },
+        operation: { type: 'string', enum: ['info', 'sync', 'read', 'write', 'pull'] },
         args: {
           type: 'object',
           properties: {
-            command: { type: 'string' },
-            args: { type: 'array', items: { type: 'string' } },
-            timeoutMs: { type: 'integer', maximum: 60000 },
             path: { type: 'string' },
             content: { type: 'string', maxLength: 100000 },
           },
@@ -56,6 +53,28 @@ export const machineTools: DynamicTool[] = [
         },
       },
       required: ['runnerId', 'operation'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'machine_run',
+    description:
+      'Run one executable in an already synchronized worktree on the approved machine. A smoke check such as node platform-smoke.cjs uses executable "node" and argv ["platform-smoke.cjs"]. The machine owner must grant full access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        runnerId: { type: 'string' },
+        executable: { type: 'string', description: 'Executable name or path, such as node.' },
+        argv: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'One array entry per command argument. Use [] for a command with no arguments.',
+        },
+        timeoutMs: { type: 'integer', minimum: 100, maximum: 60000 },
+      },
+      required: ['runnerId', 'executable', 'argv'],
       additionalProperties: false,
     },
   },
@@ -67,6 +86,23 @@ const inputSchema = z
     args: z.record(z.string(), z.unknown()).default({}),
   })
   .strict();
+const runInputSchema = z
+  .object({
+    runnerId: inputSchema.shape.runnerId,
+    executable: machineCommand.shape.command,
+    argv: machineCommand.shape.args.unwrap(),
+    timeoutMs: machineCommand.shape.timeoutMs,
+  })
+  .strict();
+
+export function parseMachineOperation(name: string, input: unknown): z.infer<typeof inputSchema> {
+  if (name === 'machine_run') {
+    const { runnerId, executable, argv, timeoutMs } = runInputSchema.parse(input);
+    return { runnerId, operation: 'run', args: { command: executable, args: argv, timeoutMs } };
+  }
+  if (name !== 'machine_use') throw new DomainError('Unknown machine tool.');
+  return inputSchema.parse(input);
+}
 type Snapshot = { id: string; local: RunnerFile[]; remote: RunnerFile[]; grantId: string };
 const inFlight = new WeakMap<Workspace, Set<string>>();
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -155,8 +191,7 @@ export async function machineTool(
         recoverableChecks: node.execution!.fullAccess && node.capabilities.recoverableChecks,
       }));
   }
-  if (name !== 'machine_use') throw new DomainError('Unknown machine tool.');
-  const values = inputSchema.parse(input);
+  const values = parseMachineOperation(name, input);
   const node = host.runners.assertReady(values.runnerId);
   const grant = node.execution;
   if (!grant || grant.projectId !== session.projectId || Date.parse(grant.expiresAt) <= Date.now())

@@ -1036,7 +1036,7 @@ export class SessionManager {
         } else if (
           sharedJob &&
           this.host.sharedSade.hasPendingUpdates(sharedJob) &&
-          (params.tool === 'workspace_write_file' || params.tool === 'machine_use')
+          ['workspace_write_file', 'machine_use', 'machine_run'].includes(params.tool)
         ) {
           throw new DomainError(
             'Read the latest task update with relay_read_shared_updates before continuing.',
