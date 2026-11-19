@@ -2,9 +2,11 @@
 
 Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let Sade use your teammate**, chọn project và xác nhận trên desktop. Hai project phải dùng cùng Git origin và nhánh. Mỗi quyền áp dụng cho một harness trên máy của chủ tài khoản, hết hạn sau một giờ và giới hạn từ một đến mười lượt. Quyền này cũng cấp lượt cho công việc của nhóm khi provider không báo quota. Quyền xem là mặc định. Tùy chọn sửa file cho phép chuẩn bị thay đổi trong worktree riêng và chuyển diff đã lọc cho người kiểm tra.
 
-Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi đã chọn **Ask Sade** nhưng chỉ báo tình hình, planner có thể kết thúc với phần giải thích và danh sách nhiệm vụ rỗng. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
+Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi chỉ báo tình hình qua **Ask Sade**, planner có thể kết thúc bằng một thao tác riêng, kèm lời giải thích. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
 Trong **Sade progress**, người gửi yêu cầu, chủ nhóm và chủ harness đang chạy có thể chọn **Update task**. Codex nhận tín hiệu trong lượt hiện tại. Gemini, Claude và Antigravity đọc chỉ đạo qua công cụ Kivuno trong cùng lượt. Phạm vi, quyền và số lượt đã cấp tiếp tục áp dụng. Nhóm thấy số chỉ đạo đã được chuyển đến harness. Nếu lượt kết thúc khi còn chỉ đạo chưa đọc, Sade giữ thay đổi trong worktree và chặn việc giao nhiệm vụ tiếp theo.
+
+Shared Groups nhận một workflow đang hoạt động cho mỗi nhóm hoặc project. Bài hồi quy dùng hai người gửi và xác nhận tin yêu cầu thứ hai bị từ chối khi tác vụ ghi đang chạy. Sau khi tác vụ kết thúc, cùng ID tin nhắn có thể được gửi lại để mở workflow mới.
 
 Kivuno dùng tài khoản provider đã đăng nhập trên desktop của từng chủ quyền. Máy chủ nhận ID quyền, thông tin công việc và kết quả cần chia sẻ. Khi người dùng bật sửa file, hộp thoại xác nhận nêu rõ việc gửi diff cho reviewer độc lập và bàn giao patch đã duyệt cho harness được phân công. Patch chỉ đi qua hàng đợi công việc theo quyền. Worktree, đường dẫn cục bộ và credential của provider nằm ở máy sở hữu. Thu hồi quyền, hết lượt hoặc mất heartbeat sẽ dừng cấp việc mới và chặn bàn giao patch chưa gửi.
 
@@ -72,6 +74,28 @@ gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/shared-groups-sade
 ```powershell
 node --import tsx scripts/eval-shared-sade-local.ts --port 11565 --output .local/shared-sade-baseline.jsonl
 node --import tsx scripts/eval-shared-sade-local.ts --port 11565 --categories --output .local/shared-sade-categories.jsonl
+```
+
+### Qwen lập kế hoạch A–D qua công cụ thật
+
+Dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ và 18 tin tổng hợp. Mỗi tình huống có ba cách nhắn thường, không dấu và kỹ thuật song ngữ. Model nhận prompt và schema của planner. Kế hoạch đi qua bộ kiểm tra của Shared Groups với grant thử nghiệm. Bài chấm đo đúng người, phạm vi file, dependency, số việc review và yêu cầu macOS. Phần thực thi provider, sửa code và quyền trên máy của người dùng được kiểm tra riêng.
+
+| Tình huống                              | Công cụ cũ | Công cụ và prompt mới |
+| --------------------------------------- | ---------- | --------------------- |
+| A. Đúng hai người và thứ tự bàn giao    | 0/3        | 1/3                   |
+| B. Một người ghi vào file được nêu      | 0/3        | 3/3                   |
+| C. Review độc lập trong một lượt review | 0/3        | 0/3                   |
+| D. Chọn Mac ghép cặp                    | 0/3        | 3/3                   |
+| D. Báo thiếu Mac và giữ đúng yêu cầu OS | 0/3        | 3/3                   |
+| Chỉ báo tình hình trong Ask Sade        | 3/3        | 2/3                   |
+| Tổng số ca đúng                         | 3/18       | 12/18                 |
+
+Công cụ cũ tạo danh sách việc rỗng cho cả 18 tin. Kết quả này lặp lại qua cả chế độ ép JSON và gọi công cụ trực tiếp. Công cụ mới yêu cầu danh sách việc có ít nhất một mục, dành riêng một công cụ để đóng tin không giao việc và xác thực các trường người được chỉ định cùng hệ điều hành. Kết quả mới có 16/18 phản hồi qua được kiểm tra cấu trúc. Các ca còn lại gồm chọn sai người, dependency thiếu, hai kế hoạch thêm bước review dư, một lỗi HTTP 500 từ Ollama và một tin cập nhật bị phân loại thành yêu cầu rồi bị chặn. Điểm số này dùng để cải thiện hợp đồng lập kế hoạch. Cấu hình sản phẩm tiếp tục dùng tài khoản harness đã được cấp quyền.
+
+Chạy Ollama trên `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M`, digest `0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`. Kết quả JSON ghi digest model, hash schema và prompt, từng kế hoạch, trạng thái, lỗi và thời gian. Commit `dfb8edc` giữ phiên bản đối chứng. Chạy cùng lệnh thêm `--native` ở commit đó để kiểm tra lại chế độ gọi công cụ cũ.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-native.json
 ```
 
 ## Cấu hình dùng trong Shared Groups

@@ -4,7 +4,12 @@ import { test } from 'node:test';
 import type { CodexSession, ProviderId, PlanTask, Task } from '../shared/types.ts';
 import type { SharedSadeRun } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
-import { sharedSadeUpdates, type SharedDelivery, type SharedFinish } from '../server/group-sade.ts';
+import {
+  parseSharedGroupPlan,
+  sharedSadeUpdates,
+  type SharedDelivery,
+  type SharedFinish,
+} from '../server/group-sade.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
@@ -607,7 +612,7 @@ test(
           preferredMemberId: cloud.grants[0],
           dependsOn: ['frontend'],
         }),
-      ],
+      ].map((task) => ({ ...task, requiredPlatform: task.requiredPlatform || 'any' })),
     });
     await complete(0, planner.session, planner.peer, 'Plan submitted.');
     const writer = (await pump(0))!;
@@ -1041,6 +1046,31 @@ test(
       assert.equal(await remoteHead(), startingRevision);
       await live.finish();
     }
+    const update = {
+      ...chat,
+      id: randomUUID(),
+      content: 'Tui báo tình hình thôi, khoan giao việc nha.',
+    };
+    cloud.call(0, update);
+    const noWorkJob = (await pump(0))!;
+    assert.equal(noWorkJob.phase, 'plan');
+    const noWork = await sessionFor(0, noWorkJob);
+    const empty = await callTool(0, noWork.session, noWork.peer, 'relay_submit_plan', {
+      summary: 'A status update for the team.',
+      tasks: [],
+    });
+    assert.equal(empty?.success, false);
+    await submit(0, noWork.session, noWork.peer, 'relay_finish_shared_without_work', {
+      summary: 'A status update for the team.',
+    });
+    await complete(0, noWork.session, noWork.peer, 'A status update for the team.');
+    assert.equal(await pump(0), undefined);
+    const closed = cloud.view().sadeRuns.at(-1);
+    assert.equal(closed?.state, 'done');
+    assert.deepEqual(
+      closed?.jobs.map((job) => job.phase),
+      ['plan'],
+    );
   },
 );
 
@@ -1093,6 +1123,64 @@ test('an opted-in status update can close planning without assigning any work', 
       [['plan', 'done']],
     );
     assert.equal(run.jobs[0].summary, 'The message shares progress with the group.');
+  } finally {
+    f.store.close();
+  }
+});
+
+test('planner routing defaults do not become a grant or platform requirement', () => {
+  const reviewer = randomUUID();
+  const plan = parseSharedGroupPlan({
+    summary: 'Review a general request and an explicitly assigned Mac check.',
+    tasks: [
+      { ...work('general'), preferredMemberId: 'auto', requiredPlatform: 'any' },
+      work('named', { preferredMemberId: reviewer, requiredPlatform: 'darwin' }),
+    ],
+  });
+  assert.equal(plan.tasks[0].preferredMemberId, undefined);
+  assert.equal(plan.tasks[0].requiredPlatform, undefined);
+  assert.equal(plan.tasks[1].preferredMemberId, reviewer);
+  assert.equal(plan.tasks[1].requiredPlatform, 'darwin');
+  assert.throws(
+    () => parseSharedGroupPlan({ summary: plan.summary, tasks: [work('missing')] }),
+    /requiredPlatform/,
+  );
+});
+
+test('an active request rejects a second Shared Groups dispatch until it completes', () => {
+  const f = fixture();
+  try {
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Check src/menu.ts.',
+      sade: { projectKey: key },
+    };
+    const followup = { ...request, id: randomUUID(), content: 'Check the menu branch again.' };
+    f.call(0, request);
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Check existing commits before editing the menu.',
+        tasks: [
+          work('menu', { kind: 'code', scope: ['src/menu.ts'], preferredMemberId: f.grants[0] }),
+        ],
+      },
+    });
+    const writing = f.poll(0).delivery!;
+    assert.equal(writing.task?.key, 'menu');
+    assert.throws(() => f.call(1, followup), /active Sade request/);
+    assert.equal(f.view().messages.length, 1);
+    assert.equal(f.poll(1).delivery, undefined);
+    f.finish(0, writing.id, {
+      kind: 'unchanged',
+      summary: 'The first scoped change was already present.',
+    });
+    f.call(1, followup);
+    assert.equal(f.view().messages.length, 2);
+    assert.equal(f.poll(1).delivery?.phase, 'plan');
   } finally {
     f.store.close();
   }

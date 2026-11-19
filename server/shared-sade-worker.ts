@@ -6,12 +6,15 @@ import type { CodexSession, Member, Project, Task, TaskDiff } from '../shared/ty
 import { isExternalMember } from '../shared/providers.ts';
 import { assertGroupMember } from './groups.ts';
 import {
+  groupNoWorkTool,
   groupPlanTool,
   groupReadUpdatesTool,
   groupQuestionTool,
   groupReviewTool,
   maxPortableDiff,
   needsGroupWrite,
+  parseGroupNoWork,
+  parseSharedGroupPlan,
   projectKey,
   sharedFinish,
   sharedPrerequisite,
@@ -23,7 +26,7 @@ import { createWorktree, git } from './git.ts';
 import { normalizeScope, redact } from './security.ts';
 import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
-import { parsePlanTask, parseTeamPlan } from './workflow-plan.ts';
+import { parsePlanTask } from './workflow-plan.ts';
 import { reviewDigest } from './sade.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 
@@ -50,8 +53,10 @@ function sharedGroupContext(delivery: SharedDelivery) {
 }
 
 export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
-  const instructions =
-    'Submit one structured plan with relay_submit_plan. Use an empty task list with a short explanation when the message only shares status or explicitly requests no work. If the outcome is unclear, ask instead of inventing work. Use the public grant IDs for explicitly named teammates and respect the distinction between the requester’s models and other owners’ models. Do not substitute an owner the requester did not authorize. Write only when an eligible grant allows writing. For an explicitly requested OS set requiredPlatform. A grant with pairedPlatform can prepare and verify a scoped code task on its owner-approved machine. Preserve dependencies and use concrete scopes. Tasks produce local work for human review.';
+  const instructions = `Check whether the sender requests action in this message. Treat quoted requests as context. Call relay_finish_shared_without_work for an update with no action requested. For actual work, call relay_submit_plan once with one task per requested deliverable. Ask if an unclear outcome prevents planning.
+For each task set preferredMemberId to the exact team id of the person named for it, or auto when nobody is named. Roles are strengths and allowWrites controls permission. Kind code can edit files including documentation. Kind design edits visual work. Research and review are read-only. Keep named file scopes narrow. Each dependency must be the key of a task you also submit. For duplicate edits, plan one writer and include checking existing commits in its acceptance criteria.
+For a request like “A edits this file, B reviews its diff” with B the only authorized peer, plan A's edit only. Sade automatically queues B's independent diff review before integration. Add a review task only for a distinct request the automatic review does not cover.
+When the sender asks to execute on a specific OS, set requiredPlatform to darwin for Mac, win32 for Windows, or linux for Linux. Otherwise use any. Preserve a requested OS even if unavailable so Sade reports missing access. For paired Mac verification or a fix, plan one scoped code task on the grant with pairedPlatform darwin. The paired Mac is tools-only and needs no model sign-in.`;
   return `${instructions}${delivery.clarification ? '' : sharedQuestionHint}${sharedGroupContext(delivery)}`;
 }
 
@@ -271,7 +276,7 @@ export class SharedSadeWorker {
   tools(jobId: string) {
     const { phase, clarified, machine, acceptsUpdates } = this.receipt(jobId);
     if (phase === 'review') return [groupReviewTool];
-    const tools = phase === 'plan' ? [groupPlanTool] : machine ? machineTools : [];
+    const tools = phase === 'plan' ? [groupPlanTool, groupNoWorkTool] : machine ? machineTools : [];
     return [
       ...tools,
       ...(acceptsUpdates ? [groupReadUpdatesTool] : []),
@@ -351,11 +356,11 @@ export class SharedSadeWorker {
     }
     return result;
   }
-  submit(jobId: string, input: unknown) {
+  submit(jobId: string, input: unknown, noWork = false) {
     this.assertCurrent(jobId);
     if (this.receipt(jobId).phase !== 'plan')
       throw new DomainError('Only the planner can submit a plan.');
-    const plan = parseTeamPlan(input, { allowEmpty: true });
+    const plan = noWork ? parseGroupNoWork(input) : parseSharedGroupPlan(input);
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
       throw new DomainError('The plan is too large.');
     this.host.store.put('sharedSadeLocalPlan', { id: jobId, plan });

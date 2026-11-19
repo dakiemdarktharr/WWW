@@ -3,7 +3,14 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SharedGroups } from '../server/collaboration.ts';
-import { groupPlanTool, needsGroupWrite, type SharedDelivery } from '../server/group-sade.ts';
+import {
+  groupNoWorkTool,
+  groupPlanTool,
+  needsGroupWrite,
+  parseGroupNoWork,
+  parseSharedGroupPlan,
+  type SharedDelivery,
+} from '../server/group-sade.ts';
 import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
 import { parseTeamPlan } from '../server/workflow-plan.ts';
@@ -46,8 +53,7 @@ type Case = keyof typeof messages;
 const endpoint = 'http://127.0.0.1:11565';
 const model = 'qwen3:4b-instruct-2507-q4_K_M';
 const output = path.resolve(process.argv[2] || '.local/shared-sade-planner.json');
-const nativeTools = process.argv.includes('--native');
-const tools = [groupPlanTool].map(({ type, name, description, inputSchema }) => ({
+const tools = [groupPlanTool, groupNoWorkTool].map(({ type, name, description, inputSchema }) => ({
   type,
   function: { name, description, parameters: inputSchema },
 }));
@@ -179,6 +185,11 @@ function assess(scenario: Case, plan: ReturnType<typeof parseTeamPlan>, run: Sha
       plan.tasks.some((task) => task.requiredPlatform === 'darwin'),
       'keep the Mac requirement',
     );
+    assert.match(
+      run.error || '',
+      /No authorized teammate can run/,
+      'report the missing eligible Mac',
+    );
     assert.ok(!run.jobs.some((job) => job.phase === 'task'));
     return;
   }
@@ -244,6 +255,7 @@ for (const { scenario, id, message } of cases) {
     let plan;
     let run;
     let error;
+    let toolName;
     try {
       const response = await local('/api/chat', {
         method: 'POST',
@@ -254,19 +266,21 @@ for (const { scenario, id, message } of cases) {
           think: false,
           keep_alive: '45s',
           options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: 768 },
-          ...(nativeTools ? { tools } : { format: groupPlanTool.inputSchema }),
+          tools,
           messages: [{ role: 'user', content: prompt }],
         }),
         signal: AbortSignal.timeout(60_000),
       });
       if (!response.ok) throw new Error(`Ollama returned HTTP ${response.status}`);
       const { message: reply } = await response.json();
-      if (nativeTools) {
-        assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
-        const tool = reply.tool_calls[0].function;
-        assert.equal(tool.name, groupPlanTool.name);
-        plan = parseTeamPlan(tool.arguments, { allowEmpty: true });
-      } else plan = parseTeamPlan(JSON.parse(reply.content), { allowEmpty: true });
+      assert.equal(reply.tool_calls?.length, 1, 'expected exactly one tool call');
+      const tool = reply.tool_calls[0].function;
+      toolName = tool.name;
+      if (toolName === groupNoWorkTool.name) plan = parseGroupNoWork(tool.arguments);
+      else {
+        assert.equal(toolName, groupPlanTool.name);
+        plan = parseSharedGroupPlan(tool.arguments);
+      }
       parsed = true;
       group.finish(plan);
       run = group.jobs();
@@ -283,6 +297,7 @@ for (const { scenario, id, message } of cases) {
       pass: !error,
       milliseconds: Math.round(performance.now() - started),
       plan,
+      toolName,
       state: run?.state,
       error,
     };
@@ -303,7 +318,7 @@ for (const { scenario, id, message } of cases) {
       {
         model,
         digest: selected.digest,
-        schemaSha256: sha256(JSON.stringify(groupPlanTool.inputSchema)),
+        toolsSha256: sha256(JSON.stringify(tools)),
         rows,
       },
       null,

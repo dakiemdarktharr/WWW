@@ -1031,8 +1031,16 @@ export class SessionManager {
           throw new DomainError(
             'Read the latest task update with relay_read_shared_updates before continuing.',
           );
-        } else if (sharedJob && params.tool === 'relay_submit_plan') {
-          result = this.host.sharedSade.submit(sharedJob, args);
+        } else if (
+          sharedJob &&
+          (params.tool === 'relay_submit_plan' ||
+            params.tool === 'relay_finish_shared_without_work')
+        ) {
+          result = this.host.sharedSade.submit(
+            sharedJob,
+            args,
+            params.tool === 'relay_finish_shared_without_work',
+          );
         } else if (sharedJob && params.tool === 'relay_submit_shared_review') {
           result = this.host.sharedSade.submitReview(sharedJob, args);
         } else if (sharedJob && params.tool === 'relay_ask_shared_requester') {

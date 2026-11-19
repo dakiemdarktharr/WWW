@@ -225,29 +225,81 @@ const grantMs = 60 * 60_000;
 export const groupPlanTool = {
   ...planTool,
   description:
-    'Submit a scoped Shared Groups plan. For a status update or conversation with no request for work, submit an empty task list and a short explanation. Use the question tool when the requested outcome is unclear.',
+    'Submit the scoped tasks requested by the user. At least one task is required. Preserve named owners, dependencies and required platforms.',
   inputSchema: {
     ...planTool.inputSchema,
     properties: {
       ...planTool.inputSchema.properties,
       tasks: {
         ...planTool.inputSchema.properties.tasks,
-        minItems: 0,
         items: {
           ...planTool.inputSchema.properties.tasks.items,
           properties: {
             ...planTool.inputSchema.properties.tasks.items.properties,
+            kind: {
+              ...planTool.inputSchema.properties.tasks.items.properties.kind,
+              description:
+                'Use code for a file change (including documents) or paired OS tools. Research and review are read-only.',
+            },
+            preferredMemberId: {
+              type: 'string',
+              minLength: 4,
+              maxLength: 36,
+              description:
+                'Copy the exact id of the named teammate from team. Use auto only if the requester did not name a teammate.',
+            },
             requiredPlatform: {
               type: 'string',
-              enum: ['win32', 'darwin', 'linux'],
-              description: 'Use only when the human asks for real verification on this OS.',
+              enum: ['any', 'win32', 'darwin', 'linux'],
+              description:
+                'Use darwin for a Mac or macOS requirement even if unavailable. Use any when no OS is required.',
             },
           },
+          required: [
+            ...planTool.inputSchema.properties.tasks.items.required,
+            'preferredMemberId',
+            'requiredPlatform',
+          ],
         },
       },
     },
   },
 };
+
+const sharedPlanRouting = z
+  .object({
+    preferredMemberId: z
+      .union([z.literal('auto'), id])
+      .transform((value) => (value === 'auto' ? undefined : value)),
+    requiredPlatform: z
+      .enum(['any', 'win32', 'darwin', 'linux'])
+      .transform((value) => (value === 'any' ? undefined : value)),
+  })
+  .passthrough();
+const sharedPlanInput = z
+  .object({ tasks: z.array(sharedPlanRouting).min(1).max(32) })
+  .passthrough();
+export function parseSharedGroupPlan(input: unknown) {
+  return parseTeamPlan(sharedPlanInput.parse(input));
+}
+
+export const groupNoWorkTool = {
+  type: 'function',
+  name: 'relay_finish_shared_without_work',
+  description:
+    'Close planning when the message only shares information or explicitly requests no action. Use the planning tool for requested work, including work that needs an unavailable machine.',
+  inputSchema: {
+    type: 'object',
+    properties: { summary: planTool.inputSchema.properties.summary },
+    required: ['summary'],
+    additionalProperties: false,
+  },
+} as const;
+
+export function parseGroupNoWork(input: unknown) {
+  const result = z.object({ summary: z.string() }).strict().parse(input);
+  return parseTeamPlan({ ...result, tasks: [] }, { allowEmpty: true });
+}
 
 export const groupReviewTool = {
   type: 'function',
