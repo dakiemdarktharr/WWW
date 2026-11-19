@@ -189,6 +189,21 @@ node --import tsx scripts/eval-shared-sade-local.ts --port 11565 --output .local
 node --import tsx scripts/eval-shared-sade-local.ts --port 11565 --categories --output .local/shared-sade-categories.jsonl
 ```
 
+### Chạy model trên runner CI
+
+Chế độ `sade-eval` của **Verify RELAY** chạy khi được yêu cầu trên repo công khai. Runner Ubuntu tải Ollama 0.40.16 và kiểm tra SHA-256 của gói cài. Sau đó runner kiểm tra digest của Qwen3 4B Instruct 2507 Q4_K_M trước khi chạy trên CPU với một lượt tại một thời điểm. Các bài chỉ đọc chat tổng hợp và không cần tài khoản của thành viên. [Bản phát hành Ollama](https://github.com/ollama/ollama/releases/tag/v0.40.16) · [Runner công khai của GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#standard-github-hosted-runners-for-public-repositories)
+
+`pilot` đo việc lập kế hoạch trên năm ca phương án dự phòng và 18 ca A–D cùng nhóm đối chứng. Lượt này cũng lấy một mẫu 40 tin để đo thời gian phân loại. `corpus` chạy đủ 1.000 tin theo năm phần gồm 200 ID riêng mỗi phần. `contrast` so sánh hai prompt phân loại trên 15 cặp tin viết riêng, mỗi cặp có một yêu cầu làm việc và một cập nhật cho nhóm. Kết quả corpus và contrast đo phân loại ý định. Quyết định cấp quyền, phân công và thực thi theo kế hoạch được chấm ở các bài Shared Groups và luồng A–D riêng.
+
+```powershell
+$ref = 'codex/sade-shared-groups-verification'
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=pilot
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=corpus
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $ref -f platform=sade-eval -f sade_suite=contrast
+```
+
+Khi lượt chạy kết thúc, tải bằng `gh run download <run-id> --repo dakiemdarktharr/WWW --dir .local/sade-ci-results`. Pilot lưu JSON của các kế hoạch và JSONL phân loại mẫu. Corpus lưu năm file JSONL. Mỗi dòng JSONL có ID, digest model, hash prompt, thời gian, đáp án và dự đoán hoặc lỗi. Dùng một thư mục riêng cho từng run để đối chiếu. Artifact CI giữ trong bảy ngày.
+
 ### Qwen lập kế hoạch A–D qua công cụ thật
 
 Dùng Qwen3 4B Instruct 2507 Q4_K_M qua Ollama cục bộ và 18 tin tổng hợp. Mỗi tình huống có ba cách nhắn thường, không dấu và kỹ thuật song ngữ. Model nhận prompt và schema của planner. Kế hoạch đi qua bộ kiểm tra của Shared Groups với grant thử nghiệm. Bài chấm đo đúng người, phạm vi file, dependency, số việc review và yêu cầu macOS. Phần thực thi provider, sửa code và quyền trên máy của người dùng được kiểm tra riêng.

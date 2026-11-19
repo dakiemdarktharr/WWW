@@ -4,6 +4,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { sharedSadeCorpus } from '../tests/fixtures/shared-sade-corpus.ts';
+import { challengePairs } from './sade-qwen-contrast.ts';
 
 const { values } = parseArgs({
   options: {
@@ -13,6 +14,8 @@ const { values } = parseArgs({
     sample: { type: 'boolean', default: false },
     shard: { type: 'string', default: '0/1' },
     categories: { type: 'boolean', default: false },
+    contrast: { type: 'boolean', default: false },
+    'intent-prompt': { type: 'string', default: 'baseline' },
     output: { type: 'string', default: '.local/shared-sade-local-eval.jsonl' },
   },
 });
@@ -27,6 +30,10 @@ if (!/^\d+\/[1-9]\d*$/.test(values.shard) || shard >= shardCount || shardCount >
   throw new Error('Use a zero-based shard such as 0/5 with no more shards than cases.');
 if (!/^qwen3:(?:1\.7b|4b(?:-instruct-2507)?)(?:-q4_K_M)?$/.test(values.model))
   throw new Error('Choose an installed local Qwen3 model.');
+if (!['baseline', 'ordered'].includes(values['intent-prompt']))
+  throw new Error('Choose baseline or ordered for the intent prompt.');
+if ((values.contrast || values['intent-prompt'] === 'ordered') && !values.categories)
+  throw new Error('Contrast cases and ordered intents use --categories.');
 
 const outputSchema = z
   .object({
@@ -56,16 +63,40 @@ Examples:
 "app lên Windows rồi, test qua Mac giúp tôi" → mac.
 "Chưa nhờ ai làm đâu, chỉ hỏi thôi" → chat.
 "Nhờ tìm log. Tắt lượt nếu bị thu hồi quyền" → general.`;
-const prompt = values.categories ? categoryPrompt : system;
+const orderedCategoryPrompt = `Classify the action requested now in a Vietnamese or English group chat. Ignore names, subscription labels and decorative headers. Select the first rule that applies:
+1. chat when the sender is only updating or quoting, withdraws or delays the request, or asks people to respond while leaving the AI idle. Check the sender's actual request even if the message mentions committed code, review, or a Mac.
+2. mac when the requested action must run on an actual Mac, macOS, or Apple Silicon.
+3. review when the author asks someone to check an implementation or code change for correctness, regressions, or readiness to merge. A writer followed by an independent reviewer is review even though it contains two ordered steps.
+4. scope when asked to prevent duplicate or overlapping edits. Reading an existing file, checking proposed requirements or agreeing on scope do not by themselves create overlapping edits.
+5. handoff when someone's output or decision must be passed to another teammate for follow-on work, including checking a requirements document without a code change.
+6. general for any other active request. Mentioning quota, access, or a connection problem by itself does not decide the work category.
+Examples:
+"Đã gửi bản sửa rồi, nói để cả nhóm biết thôi" → chat.
+"Tạo dữ liệu mẫu xong cho người khác rà lỗi phần code đã sửa" → review.
+"Chốt danh sách trường và chuyển nó cho người viết tài liệu" → handoff.
+"Bản này có sẵn rồi, đừng để hai bên sửa lại cùng chỗ" → scope.`;
+const prompt = values.categories
+  ? values['intent-prompt'] === 'ordered'
+    ? orderedCategoryPrompt
+    : categoryPrompt
+  : system;
 const promptDigest = createHash('sha256').update(prompt).digest('hex');
-const cases = sharedSadeCorpus();
-const stride = cases.length / limit;
+const cases = values.contrast
+  ? challengePairs.flatMap(([scenario, request, chat], index) => [
+      { id: `contrast/${index + 1}/request`, message: request, style: 'request', scenario },
+      { id: `contrast/${index + 1}/chat`, message: chat, style: 'chat', scenario: 'chat' },
+    ])
+  : sharedSadeCorpus();
+const count = Math.min(limit, cases.length);
+const stride = cases.length / count;
 const selection = values.sample
   ? Array.from(
-      { length: limit },
+      { length: count },
       (_, index) => cases[Math.floor(index * stride) + (stride >= 5 ? index % 5 : 0)],
     )
-  : cases.slice(0, limit);
+  : cases.slice(0, count);
+if (shardCount > selection.length)
+  throw new Error('The selected suite has fewer cases than shards.');
 const selected = selection.slice(
   Math.floor((selection.length * shard) / shardCount),
   Math.floor((selection.length * (shard + 1)) / shardCount),
@@ -121,7 +152,7 @@ for (const item of selected) {
     order: item.scenario === 'handoff' ? 'a-then-b' : 'other',
     sameScope: item.scenario === 'scope',
     review: item.scenario === 'review',
-    mac: item.scenario === 'platform' || item.scenario === 'no-platform',
+    mac: ['mac', 'platform', 'no-platform'].includes(item.scenario),
   };
   const started = performance.now();
   const row: Row = {
