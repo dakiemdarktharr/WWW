@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-followup') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints') && '[0,1]' || '[0,1,2,3,4]') }}
+        shard: ${{ fromJSON(inputs.sade_suite == 'referenced-requests' && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -159,8 +159,10 @@ jobs:
             node --import tsx scripts/eval-shared-sade-planner.ts "$results/referenced-requests.json" \
               --referenced-requests --timeout-ms 120000
           elif [[ "$SADE_SUITE" == quota-followup ]]; then
-            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota-followup.json" \
-              --quota-followup --timeout-ms 120000
+            prompts=(baseline quota-compact)
+            mode="${prompts[$SADE_SHARD]}"
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota-followup-$mode.json" \
+              --quota-followup --planning-prompt "$mode" --timeout-ms 180000
           elif [[ "$SADE_SUITE" == planner-constraints ]]; then
             if [[ "$SADE_SHARD" == 0 ]]; then
               node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota.json" \

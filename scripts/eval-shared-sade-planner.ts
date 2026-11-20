@@ -329,8 +329,8 @@ assert.ok(
   'Use a zero-based shard such as 0/3.',
 );
 assert.ok(
-  ['baseline', 'constraints'].includes(values['planning-prompt']),
-  'Choose baseline or constraints for the planning prompt.',
+  ['baseline', 'constraints', 'quota-compact'].includes(values['planning-prompt']),
+  'Choose baseline, constraints or quota-compact for the planning prompt.',
 );
 assert.ok(
   [
@@ -858,6 +858,10 @@ const externalDecision = z.object({
 function planningPrompt(delivery: SharedDelivery) {
   const base = sharedGroupPlanningPrompt(delivery);
   if (values['planning-prompt'] === 'baseline') return base;
+  if (values['planning-prompt'] === 'quota-compact')
+    return `For each requested file, submit one short task. Use a brief summary and one short sentence each for description and acceptance. A conditional backup belongs in that task's fallbackMemberId. Use none for every task with no authorized backup, even if an earlier task has one. Keep the exact file, read-only action and prerequisite for each task.
+
+${base}`;
   return `Before submitting a plan, verify these three constraints:
 For a request to read, explain or summarize an existing file, use research-read-only. “Read-only”, “chỉ đọc”, “chỉ xem” and “dung sua” rule out creating or editing files for that task. Do not invent an implementation or an independent review for a request to explain a file.
 “A does the work, B only if A has no quota” is one task. Its preferredMemberId is A’s ref and its fallbackMemberId is B’s ref. Put the backup in that field even when the summary already mentions it. Use auto in that field only if the requester delegates the backup choice. Use none when the user requires the named assignee.
