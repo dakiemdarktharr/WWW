@@ -377,16 +377,25 @@ export interface IntegrationOptions {
     context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
   ) => void | Promise<void>;
 }
-async function changedTreeFiles(repo: string, from: string, to: string) {
+export async function changedTreeFiles(
+  repo: string,
+  from: string,
+  to: string,
+  files: string[] = [],
+) {
   return (
     await git(repo, [
+      '--literal-pathspecs',
       'diff',
       '--name-only',
       '--no-renames',
+      '--no-ext-diff',
       '--ignore-submodules=none',
       '-z',
       from,
       to,
+      '--',
+      ...files,
     ])
   )
     .split('\0')

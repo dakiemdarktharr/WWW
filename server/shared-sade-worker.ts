@@ -28,7 +28,7 @@ import {
   type SharedDelivery,
   type SharedFinish,
 } from './group-sade.ts';
-import { createWorktree, git } from './git.ts';
+import { changedTreeFiles, createWorktree, git } from './git.ts';
 import { normalizeScope, redact, scopesOverlap } from './security.ts';
 import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
@@ -751,6 +751,7 @@ export class SharedSadeWorker {
     const tip = await publishedTip();
     if (!tip || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(tip))
       throw new DomainError('Publish the integrated revision to the linked Git branch first.');
+    let publishedRevision = revision;
     if (tip !== revision) {
       const available = await git(project.path, ['cat-file', '-e', `${tip}^{commit}`]).then(
         () => true,
@@ -774,48 +775,48 @@ export class SharedSadeWorker {
             'The linked Git branch could not be checked. Check your connection and retry.',
           );
         });
-        if ((await publishedTip()) !== tip)
-          throw new DomainError(
-            'The linked Git branch moved during verification. Try sharing again.',
-          );
       }
-      const isPublished = await git(project.path, [
-        'merge-base',
-        '--is-ancestor',
-        revision,
-        tip,
-      ]).then(
-        () => true,
-        () => false,
-      );
-      if (!isPublished)
+      const base = await git(project.path, ['merge-base', revision, tip]).catch(() => '');
+      if (!base)
         throw new DomainError('Publish the integrated revision to the linked Git branch first.');
-      if (receipt.result?.kind !== 'change' || reviewDigest(receipt.result.diff) !== reviewedDigest)
+      if (
+        receipt.result?.kind !== 'change' ||
+        !receipt.result.diff.files.length ||
+        reviewDigest(receipt.result.diff) !== reviewedDigest
+      )
         throw new DomainError('The reviewed file list is unavailable for publication.');
-      const changed = await git(project.path, [
-        '--literal-pathspecs',
-        'diff',
-        '--name-only',
-        '--no-renames',
-        '--no-ext-diff',
-        '--ignore-submodules=none',
-        '-z',
+      const required = new Set([...receipt.result.diff.files, ...(receipt.inheritedFiles || [])]);
+      if (base !== revision) {
+        // A cherry-pick or independent commit must also carry the rest of the local integration.
+        for (const file of await changedTreeFiles(project.path, base, revision)) required.add(file);
+        publishedRevision = tip;
+      }
+      const changed = await changedTreeFiles(
+        project.path,
         revision,
         tip,
-        '--',
-        ...receipt.result.diff.files,
-      ]);
-      if (changed)
+        base === revision ? [...required] : undefined,
+      );
+      if (changed.some((file) => required.has(file)))
         throw new DomainError(
-          'The published branch changed the reviewed files. Review the current files before sharing.',
+          base === revision
+            ? 'The published branch changed the reviewed files. Review the current files before sharing.'
+            : 'Publish the integrated revision to the linked Git branch first. The linked branch is missing part of the integration.',
+        );
+      if ((await publishedTip()) !== tip)
+        throw new DomainError(
+          'The linked Git branch moved during verification. Try sharing again.',
         );
     }
     await assertPublicationTarget();
     this.result(jobId, {
       kind: 'done',
-      revision,
+      revision: publishedRevision,
       published: true,
-      summary: redact(task.summary || 'Integrated reviewed changes.').slice(0, 4000),
+      summary:
+        publishedRevision !== revision
+          ? 'The reviewed changes are already on the linked branch.'
+          : redact(task.summary || 'Integrated reviewed changes.').slice(0, 4000),
     });
     return { shared: true };
   }

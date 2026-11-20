@@ -263,29 +263,47 @@ test('accepting a reviewed change already present on the project creates no dupl
   assert.equal(await git(f.repo, ['status', '--porcelain']), '');
 });
 
-for (const remoteChange of ['unrelated file', 'reviewed file', 'rewritten history'] as const) {
+for (const remoteChange of [
+  'unrelated file',
+  'reviewed file',
+  'rewritten history',
+  'the same change under another commit',
+  'only the final reviewed file',
+] as const) {
   test(`Shared Sade checks a published revision after a teammate pushes ${remoteChange}`, async (t) => {
     const f = await fixture(t);
     const remote = path.join(f.root, 'bare remote');
     const teammate = path.join(f.root, 'teammate clone');
     const origin = 'https://example.test/shared/published-review.git';
     const base = await git(f.repo, ['rev-parse', 'HEAD']);
+    const copiesReviewed =
+      remoteChange === 'the same change under another commit' ||
+      remoteChange === 'only the final reviewed file';
+    const rewrites = remoteChange === 'rewritten history';
     await writeFile(path.join(f.repo, 'shared.txt'), 'reviewed change\n');
     const diff = await taskDiff(f.repo, base);
-    await git(f.repo, ['add', 'shared.txt']);
+    if (remoteChange === 'only the final reviewed file')
+      await writeFile(path.join(f.repo, 'required.txt'), 'Earlier reviewed prerequisite\n');
+    await git(f.repo, ['add', '--all']);
     await git(f.repo, ['commit', '-m', 'Integrate the reviewed change']);
     const revision = await git(f.repo, ['rev-parse', 'HEAD']);
     await git(f.root, ['init', '--bare', '-b', 'main', remote]);
     await git(f.repo, ['remote', 'add', 'origin', origin]);
     await git(f.repo, ['config', `url.${remote}.insteadOf`, origin]);
-    await git(f.repo, ['push', '-u', 'origin', 'main']);
+    await git(f.repo, ['push', 'origin', `${copiesReviewed ? base : revision}:refs/heads/main`]);
     await git(f.repo, ['fetch', '--no-tags', 'origin', 'main']);
     await git(f.root, ['clone', '--', remote, teammate]);
-    if (remoteChange === 'rewritten history')
-      await git(teammate, ['switch', '-c', 'replacement', base]);
-    const file = remoteChange === 'reviewed file' ? 'shared.txt' : 'team.txt';
-    await writeFile(path.join(teammate, file), 'unrelated teammate update\n');
+    if (rewrites) await git(teammate, ['switch', '-c', 'replacement', base]);
+    const file = remoteChange === 'reviewed file' || copiesReviewed ? 'shared.txt' : 'team.txt';
+    await writeFile(
+      path.join(teammate, file),
+      copiesReviewed ? 'reviewed change\n' : 'unrelated teammate update\n',
+    );
     await git(teammate, ['add', file]);
+    if (copiesReviewed) {
+      await writeFile(path.join(teammate, 'team.txt'), 'Separate teammate change\n');
+      await git(teammate, ['add', 'team.txt']);
+    }
     await git(teammate, [
       '-c',
       'user.name=Team fixture',
@@ -296,11 +314,12 @@ for (const remoteChange of ['unrelated file', 'reviewed file', 'rewritten histor
       'Teammate update',
     ]);
     const tip = await git(teammate, ['rev-parse', 'HEAD']);
+    assert.notEqual(tip, revision);
+    if (rewrites || copiesReviewed)
+      await assert.rejects(git(teammate, ['merge-base', '--is-ancestor', revision, tip]));
     await git(teammate, [
       'push',
-      ...(remoteChange === 'rewritten history'
-        ? [`--force-with-lease=refs/heads/main:${revision}`]
-        : []),
+      ...(rewrites ? [`--force-with-lease=refs/heads/main:${revision}`] : []),
       'origin',
       'HEAD:refs/heads/main',
     ]);
@@ -340,13 +359,18 @@ for (const remoteChange of ['unrelated file', 'reviewed file', 'rewritten histor
       result: { kind: 'change', diff, summary: 'Reviewed draft.' },
     });
     t.mock.method(workspace.sharedSade, 'assertCurrent', (id: string) => assert.equal(id, jobId));
-    if (remoteChange === 'unrelated file') {
+    if (
+      remoteChange === 'unrelated file' ||
+      remoteChange === 'the same change under another commit'
+    ) {
       assert.deepEqual(await workspace.sharedSade.shareRevision(task.id), { shared: true });
       assert.deepEqual(store.get<typeof receipt>('sharedSadeLocalReceipt', jobId).result, {
         kind: 'done',
-        revision,
+        revision: copiesReviewed ? tip : revision,
         published: true,
-        summary: 'Integrated reviewed changes.',
+        summary: copiesReviewed
+          ? 'The reviewed changes are already on the linked branch.'
+          : 'Integrated reviewed changes.',
       });
     } else {
       const reason =
