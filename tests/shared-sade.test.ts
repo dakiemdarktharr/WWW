@@ -2079,6 +2079,32 @@ test(
         console.log(
           'Windows passed; macOS diagnostic exit 1 and signed verification exit 0. Verification was stale before pulling only path-label.cjs and passed after pull.',
         );
+        if (live.revocationDiagnostic) {
+          const stoppedRun = assert.rejects(
+            workspace.sharedSade.usePairedMachine(
+              debugJob.id,
+              debuggerSession.session,
+              'machine_run',
+              live.revocationDiagnostic,
+              () => {},
+            ),
+            /Waiting for the paired machine to reconnect and deliver its check result|Machine stopped/,
+          );
+          await Promise.all([live.finish(), stoppedRun]);
+          const afterStop = (await workspace.reviewDiff(debuggerSession.task.id)).machineChecks;
+          assert.ok(afterStop?.passed, 'revocation preserves the earlier signed verification');
+          assert.equal(afterStop.attempts.length, afterPull.attempts.length + 1);
+          assert.deepEqual(afterStop.attempts.slice(0, -1), afterPull.attempts);
+          const revoked = afterStop.attempts.at(-1);
+          assert.equal(revoked?.purpose, 'diagnostic');
+          assert.equal(revoked.signer, undefined);
+          assert.equal(revoked.output, undefined);
+          assert.notEqual(revoked.status, 'passed');
+          await assert.rejects(use('info'), /offline or needs process recovery/);
+          console.log(
+            'The Mac owner stopped an active diagnostic. Windows received no signed outcome for that diagnostic and rejected further use.',
+          );
+        }
       } finally {
         clearInterval(timer);
         await heartbeat;
@@ -2187,7 +2213,7 @@ test(
     );
     if (live) {
       assert.equal(await remoteHead(), startingRevision);
-      await live.finish();
+      if (!live.revocationDiagnostic) await live.finish();
     }
     const update = {
       ...chat,

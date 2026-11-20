@@ -19,6 +19,7 @@ const bootstrapPath = '/paired-test/config';
 const statusPath = '/paired-test/status';
 const exchangePath = '/api/desktop/bridge/exchange';
 const enrollmentRequired = 'An unused, matching CI identity is required.';
+const revocationExitDelayMs = 55_000;
 const key = () => randomBytes(32).toString('base64url');
 
 export function tunnelOrigin(input: string) {
@@ -91,6 +92,7 @@ export async function startCrossHostBridge(
   const localApp = await buildApp(workspace, { desktopSecret });
   const edge = Fastify();
   const runnerAuthorization = `Bearer ${node.token}`;
+  const revocationProbeId = options.ownerDesktop ? randomUUID() : undefined;
   let provisioned = false;
   let verified = false;
   let acknowledged = false;
@@ -131,6 +133,7 @@ export async function startCrossHostBridge(
       token: node.token,
       bridgeKey,
       exchangeUrl: `${origin}${exchangePath}?host=${desktop.deviceId}`,
+      revocationProbeId,
     };
   });
   registerDesktopRoutes(edge, identity, () => owner);
@@ -176,6 +179,25 @@ export async function startCrossHostBridge(
   }
   return {
     close,
+    revocationDiagnostic: revocationProbeId
+      ? {
+          runnerId: node.id,
+          executable: 'node',
+          argv: [
+            '-e',
+            `const { writeFileSync, renameSync } = require('node:fs');
+const { homedir } = require('node:os');
+const { join } = require('node:path');
+const marker = join(homedir(), process.argv[1]);
+writeFileSync(marker + '.pending', JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+renameSync(marker + '.pending', marker + '.started.json');
+setTimeout(() => writeFileSync(marker + '.completed', 'finished'), ${revocationExitDelayMs});`,
+            revocationProbeId,
+          ],
+          timeoutMs: 60_000,
+          purpose: 'diagnostic',
+        }
+      : undefined,
     async finish() {
       verified = true;
       const deadline = Date.now() + (options.ownerDesktop ? 60_000 : 10_000);
@@ -237,7 +259,14 @@ export async function runCrossHostMac(url: string, ownerDesktop = false) {
     redirect: 'error',
   });
   if (!response.ok) throw new Error(`Fixture enrollment was rejected (${response.status}).`);
-  const { projectId, id, token: runnerToken, bridgeKey, exchangeUrl } = await response.json();
+  const {
+    projectId,
+    id,
+    token: runnerToken,
+    bridgeKey,
+    exchangeUrl,
+    revocationProbeId,
+  } = await response.json();
   async function status(stopped = false) {
     const result = await fetch(`${origin}${statusPath}`, {
       method: 'POST',
@@ -260,6 +289,7 @@ export async function runCrossHostMac(url: string, ownerDesktop = false) {
   }
 
   if (ownerDesktop) {
+    assert.match(revocationProbeId, /^[0-9a-f-]{36}$/);
     const { joinCrossHostMacDesktop } = await import('./shared-sade-mac-desktop.ts');
     const mac = await joinCrossHostMacDesktop({
       origin,
@@ -271,7 +301,7 @@ export async function runCrossHostMac(url: string, ownerDesktop = false) {
     });
     try {
       await waitForVerification();
-      await mac.stop();
+      await mac.stopDuringDiagnostic(revocationProbeId, revocationExitDelayMs);
       assert.equal(await status(true), true);
     } finally {
       await mac.close();
@@ -282,6 +312,7 @@ export async function runCrossHostMac(url: string, ownerDesktop = false) {
         arch: process.arch,
         result: 'round-trip-verified',
         desktopGrant: 'removed',
+        activeDiagnostic: 'terminated-before-completion',
       }),
     );
     return;

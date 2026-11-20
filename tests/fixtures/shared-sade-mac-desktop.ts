@@ -16,6 +16,16 @@ type Config = {
 
 type DialogProgress = typeof globalThis & { kivunoPairFixtureDialog?: 'cancel' | 'allow' };
 
+function processExists(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
 async function installFixtureIdentity(desktop: ElectronApplication, origin: string) {
   const owner = { id: 'paired-test-mac-owner', name: 'Mac fixture owner' };
   const deviceId = randomUUID();
@@ -214,11 +224,37 @@ export async function joinCrossHostMacDesktop(config: Config) {
     assert.equal((await lstat(grantFile)).mode & 0o777, 0o600);
 
     return {
-      async stop() {
+      async stopDuringDiagnostic(probeId: string, naturalExitDelay: number) {
+        const probe = path.join(machineDirectory, 'state', 'execution-home', probeId);
+        const startedFile = probe + '.started.json';
+        await expect
+          .poll(
+            () =>
+              lstat(startedFile).then(
+                (entry) => entry.isFile(),
+                (error: NodeJS.ErrnoException) => {
+                  if (error.code === 'ENOENT') return false;
+                  throw error;
+                },
+              ),
+            { timeout: 25_000 },
+          )
+          .toBe(true);
+        const { pid, startedAt } = JSON.parse(await readFile(startedFile, 'utf8'));
+        assert.ok(Number.isSafeInteger(pid) && pid > 1);
+        assert.ok(
+          Number.isSafeInteger(startedAt) && Date.now() - startedAt < naturalExitDelay,
+          'the diagnostic must still be within its natural runtime before revocation',
+        );
+        assert.equal(processExists(pid), true, 'the diagnostic must be running before revocation');
+        await assert.rejects(lstat(probe + '.completed'), { code: 'ENOENT' });
         await joinedMachine.getByRole('button', { name: 'Stop connection', exact: true }).click();
         await expect(joinedMachine.getByText('Stopped', { exact: true })).toBeVisible({
           timeout: 45_000,
         });
+        assert.equal(processExists(pid), false, 'the owner stop must terminate the diagnostic');
+        assert.ok(Date.now() - startedAt < naturalExitDelay, 'the diagnostic stopped early');
+        await assert.rejects(lstat(probe + '.completed'), { code: 'ENOENT' });
         await assert.rejects(lstat(grantFile), { code: 'ENOENT' });
         await assert.rejects(lstat(marker), { code: 'ENOENT' });
         const connections = JSON.parse(
