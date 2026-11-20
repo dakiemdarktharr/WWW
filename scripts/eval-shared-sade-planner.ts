@@ -329,8 +329,8 @@ assert.ok(
   'Use a zero-based shard such as 0/3.',
 );
 assert.ok(
-  ['baseline', 'constraints', 'quota-compact'].includes(values['planning-prompt']),
-  'Choose baseline, constraints or quota-compact for the planning prompt.',
+  ['baseline', 'constraints', 'quota-compact', 'quota-example'].includes(values['planning-prompt']),
+  'Unknown planning prompt.',
 );
 assert.ok(
   [
@@ -860,6 +860,13 @@ function planningPrompt(delivery: SharedDelivery) {
   if (values['planning-prompt'] === 'baseline') return base;
   if (values['planning-prompt'] === 'quota-compact')
     return `For each requested file, submit one short task. Use a brief summary and one short sentence each for description and acceptance. A conditional backup belongs in that task's fallbackMemberId. Use none for every task with no authorized backup, even if an earlier task has one. Keep the exact file, read-only action and prerequisite for each task.
+
+${base}`;
+  if (values['planning-prompt'] === 'quota-example')
+    return `A quota fallback changes who performs an existing task. It never adds a task, changes the scope, or changes the dependency. For this example only, use these assignments if the request says "P reads X, then P checks Y using the first result. If P is out of quota, Q reads X and R checks Y":
+read-x: preferredMemberId=P, fallbackMemberId=Q, scope=[X], dependsOn=[]
+check-y: preferredMemberId=P, fallbackMemberId=R, scope=[Y], dependsOn=[read-x]
+If only X has an authorized backup, check-y has fallbackMemberId=none. When the primary is named once for a sequence, keep that primary for each task unless the requester says otherwise. Copy the real harness refs from the current granted team. Use short task descriptions, acceptance criteria and summaries. Keep every requested action and scope.
 
 ${base}`;
   return `Before submitting a plan, verify these three constraints:
