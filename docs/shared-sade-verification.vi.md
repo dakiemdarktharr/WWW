@@ -249,6 +249,30 @@ Các lượt có phản hồi mất 48,4–112,8 giây với prompt đang dùng 
 
 Tám đầu ra kiểm soát đúng đều qua bộ chấm. Tám đầu ra cố ý sai bị loại, gồm thay chủ chưa cấp quyền và tự bật dự phòng. Bộ chấm câu hỏi dùng từ khóa và có thể cho qua câu nhắc đúng từ nhưng hỏi sai ý. Đối chiếu phản hồi thô cho lần chạy này xác nhận cả hai prompt gửi kế hoạch trong hai ca cần hỏi, nên hạn chế đó không làm thay đổi điểm. Artifact lưu prompt, phản hồi và phép đo. Bản tải về và bảng ghép cặp nằm trong `.local/sade-owner-routing-check/44698224337` trên worktree.
 
+`d6ab76d1fe1b5dafd61a49b85df853c32f9cf877` sửa hai ca giao nhầm Astra ở bộ điều phối. Với yêu cầu đọc trực tiếp một file có đường dẫn rõ, Sade xác định danh tính đã chia sẻ trước khi xét grant của project. Nếu trùng tên và chưa rõ chủ, Sade hỏi người gửi chọn. Nếu đúng chủ chưa cấp quyền, Sade giữ nguyên tin chờ và tiếp tục khi grant cho đúng project và đúng lần chia sẻ xuất hiện. Hai ca chờ đều dùng 0 lượt planner. Một harness vừa lập kế hoạch vừa đọc cần đủ hai lượt. Sade có thể dùng một harness khác đã được chính người gửi cấp làm planner để giữ lại lượt đọc.
+
+Sau khi xác định đúng chủ, bộ điều phối chỉ nhận một tác vụ nghiên cứu chỉ đọc trên đúng file, đúng grant và không kèm phương án dự phòng. Desktop hỗ trợ trường mới gửi phản hồi lỗi ngay trong lượt hiện tại để planner có thể sửa kế hoạch. Bộ điều phối kiểm tra cả kế hoạch từ desktop chưa nhận trường này. Các hồi quy cũng kiểm tra grant trên project khác, thu hồi rồi chia sẻ lại cùng hồ sơ, câu phủ định một người làm, và tin trích dẫn chỉ để báo nhóm. Câu giao nhiều việc như nguyên văn A vẫn dựa vào planner để hiểu các mục giao việc.
+
+```powershell
+node --import tsx --test --test-name-pattern 'Shared Sade (holds Astra|asks before spending|enforces a single named read|corrects a pinned read draft|keeps the last turn|keeps a named read)' tests/shared-sade.test.ts
+$originalOllamaHost = $env:OLLAMA_HOST
+try {
+  $env:OLLAMA_HOST = '127.0.0.1:1'
+  node --import tsx scripts/eval-shared-sade-planner.ts .local/preflight-missing-chi.json --owner-routing --case owner-routing/missing-exact-owner-with-alternative
+  node --import tsx scripts/eval-shared-sade-planner.ts .local/preflight-two-astras.json --owner-routing --case owner-routing/relative-owner-ambiguous
+} finally {
+  $env:OLLAMA_HOST = $originalOllamaHost
+}
+```
+
+Hai lệnh eval ghi `execution: coordinator-preflight`, mỗi lệnh xác nhận một ca điều phối và 0 ca model. Có thể lặp lại với `--planning-prompt owner-routing`. Dùng checkout `0dd3f05` để đối chiếu đúng các lượt model lịch sử. Ở bản sửa, lệnh CI `owner-routing` chỉ chấm model trên những tin thực sự được chuyển tới planner.
+
+Windows cục bộ qua 17/17 ca hồi quy tập trung, 102/102 ca Shared Sade và 189/189 ca Sade. Hai shard CI tương ứng tải được cả bốn báo cáo điều phối, một báo cáo mỗi ca cho mỗi lựa chọn prompt. Báo cáo cho thấy không có lượt model, không có hash prompt và không có số đo thời gian suy luận. [CI hỏi chủ Astra](https://github.com/dakiemdarktharr/WWW/actions/runs/44700562147/job/136167632793) · [CI chờ đúng grant của Chi](https://github.com/dakiemdarktharr/WWW/actions/runs/44700562147/job/136167632484)
+
+Trên sáu ca độc lập còn chuyển đến Qwen, prompt hiện tại đạt 3/6 và biến thể đạt 2/6. Cả hai vẫn đạt 0/4 trên nhóm A. Hai ca đã được chặn ở điều phối không tính vào điểm model. Việc chọn model và reasoning giữ nguyên. Bản tải đủ 24 đầu ra và bảng đã đối chiếu nằm trong `.local/sade-read-assignment-verification/44700562147/complete` trên worktree. [Lượt đo và artifact trên bản sửa](https://github.com/dakiemdarktharr/WWW/actions/runs/44700562147)
+
+`npm run check` trên đúng `d6ab76d` qua 475 ca Windows, 471 Ubuntu và 470 macOS arm64, với 0 lỗi. Số ca bỏ qua theo nền tảng lần lượt là một, năm và sáu. Cả ba qua corpus 1.000 tin với kế hoạch mô phỏng và ca desktop sửa kế hoạch sai trong cùng lượt. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44700561777) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44700561375)
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
