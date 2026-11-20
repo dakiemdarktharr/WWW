@@ -525,6 +525,8 @@ Qwen3 4B Instruct ở lượt đầu đạt 3/4 trên bộ ca riêng. Nó đọc
 
 Ở `a064d0b`, model đạt 4/5 và giao đúng người trong cả hai ca không dấu. Ca còn lỗi nêu đúng `docs/contract.md` và commit `4107e5e` trong mô tả nhưng dùng phạm vi đọc `.`. Prompt bổ sung cách ghi đường dẫn file được tham chiếu vào trường phạm vi và ghi mã commit vào mô tả hoặc điều kiện nghiệm thu. [Lượt chấm với dữ liệu đối chiếu tên](https://github.com/dakiemdarktharr/WWW/actions/runs/44669278899)
 
+Ở `52364fd`, Qwen đạt 5/5. Bốn yêu cầu đọc giữ đúng file, commit và người nhận. Tin báo tình hình không tạo tác vụ dù tin tham chiếu chứa yêu cầu sửa file. Thời gian mỗi ca trên CPU runner từ 32,5 đến 99,6 giây. Cùng commit, macOS arm64 đạt 433 bài, bỏ qua sáu bài theo nền tảng, rồi qua Electron và giao diện Shared Groups. Bộ 1.000 tin với kế hoạch mô phỏng thuộc lượt kiểm tra đó. [Kết quả Qwen](https://github.com/dakiemdarktharr/WWW/actions/runs/44670144695) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44670144393)
+
 Chạy lại phép đo bằng Ollama tại `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M`. Kết quả ghi hash prompt, digest model, quyết định từng ca và thời gian. Qwen lập kế hoạch trên tin tổng hợp, Shared Groups nộp kế hoạch và kiểm tra người nhận, phạm vi và trạng thái bằng fixture.
 
 ```powershell
