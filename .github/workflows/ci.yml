@@ -209,20 +209,7 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - name: Verify signed Antigravity managed startup without sign-in
         shell: pwsh
-        run: |
-          $ProgressPreference = 'SilentlyContinue'
-          $uri = 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/windows-x64/cli_windows_x64.exe'
-          $cli = Join-Path $env:RUNNER_TEMP ('antigravity-' + [guid]::NewGuid().ToString('N') + '.exe')
-          try {
-            Invoke-WebRequest -Uri $uri -OutFile $cli -MaximumRedirection 0 -TimeoutSec 120
-            $evidence = & node --import tsx scripts/verify-antigravity-preflight.ts $cli
-            $status = $LASTEXITCODE
-            $evidence | Write-Output
-            if ($status -ne 0) { throw 'Antigravity managed startup preflight failed.' }
-            $evidence | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'antigravity-preflight.json') -Encoding utf8
-          } finally {
-            if (Test-Path -LiteralPath $cli) { Remove-Item -LiteralPath $cli }
-          }
+        run: ./scripts/run-antigravity-preflight.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: antigravity-managed-preflight
