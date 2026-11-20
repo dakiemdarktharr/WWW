@@ -237,6 +237,18 @@ Qwen3 4B Instruct 2507 trên `74f938a` đạt **0/4 với cả hai prompt**. Khi
 
 Thời gian của các lượt có phản hồi là 47,2–84,3 giây với prompt cũ và 53,8–78,2 giây với biến thể. Trong từng cặp, mẫu bộ nhớ hai prompt bằng nhau. Ollama báo 3,19 GB RAM và 0 VRAM trên hai runner, hoặc 1,01 GB RAM và 2,54 GB VRAM trên hai runner còn lại. Phép đo dùng Ollama cục bộ trên runner chuẩn của repo công khai, chi phí 0 đồng. Có thể đối chiếu tám đầu ra trong `.local/sade-frontend-style-eval/44693097763` của worktree. Kivuno tiếp tục dùng prompt đang triển khai vì phép đo chưa cho thấy biến thể cải thiện khả năng phân công.
 
+Phép đo `owner-routing` trên `0dd3f05` đối chiếu prompt đang dùng với biến thể đưa quyết định về chủ harness lên đầu. Biến thể dùng ngay một harness khớp duy nhất trong danh sách có quyền, hỏi đúng lựa chọn khi trùng chủ, hỏi quyền hoặc khả dụng khi không có harness phù hợp, và đưa quyết định phong cách vào tác vụ frontend. Tám tin mới được giữ riêng khỏi phần viết prompt. Chúng gồm tên chủ rõ ràng, cách gọi không dấu, hai harness trùng tên, chủ chỉ định chưa cấp quyền, phủ định việc giao cho một harness, trích dẫn để báo nhóm và hai quyết định dự phòng quota. Bốn ca A trước đó chạy cùng phép đo. Mỗi cặp dùng cùng digest, bộ công cụ, đầu vào, seed và runner. Thứ tự chạy đảo ở các shard lẻ.
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=owner-routing
+```
+
+Cả hai prompt đạt **2/8** trên tập độc lập và **0/4** trên nhóm A. Prompt đang dùng giữ đúng hai chủ trong ca bàn giao có hai Astra trùng tên. Biến thể hỏi lại ở ca đó, nhưng giữ đúng Astra khi người gửi cấm chuyển việc do hết quota. Cả hai đóng đúng tin chỉ báo nhóm. Cả hai tự chọn Astra của Bình khi người gửi nói rõ Astra của Chi và người này chưa cấp quyền. Chúng cũng tự chọn Bình trong ca có hai Astra mà người gửi chưa phân biệt. Bộ điều phối nhận được kế hoạch hợp lệ theo quyền của Bình và xếp việc trong fixture. Sai ở đây là chủ được chọn khác yêu cầu. [CI và 24 đầu ra](https://github.com/dakiemdarktharr/WWW/actions/runs/44698224337)
+
+Các lượt có phản hồi mất 48,4–112,8 giây với prompt đang dùng và 30,3–108,4 giây với biến thể. Một lượt prompt đang dùng hết thời gian sau 120 giây. Số thời gian gồm cả nạp model và có thể chênh lệch giữa lượt đầu và lượt sau trên cùng runner. Mẫu bộ nhớ cấp cho model bằng nhau trong từng cặp. Hai cấu hình runner ghi lần lượt 3,19 GB RAM và 0 VRAM, hoặc 1,01 GB RAM và 2,54 GB VRAM. Phép đo dùng Ollama trên runner chuẩn của repo công khai, chi phí 0 đồng. Kivuno vẫn dùng prompt hiện tại. Cần xác minh ràng buộc chủ harness trước khi cho kế hoạch như hai ca chọn sai ở trên được xếp việc.
+
+Tám đầu ra kiểm soát đúng đều qua bộ chấm. Tám đầu ra cố ý sai bị loại, gồm thay chủ chưa cấp quyền và tự bật dự phòng. Bộ chấm câu hỏi dùng từ khóa và có thể cho qua câu nhắc đúng từ nhưng hỏi sai ý. Đối chiếu phản hồi thô cho lần chạy này xác nhận cả hai prompt gửi kế hoạch trong hai ca cần hỏi, nên hạn chế đó không làm thay đổi điểm. Artifact lưu prompt, phản hồi và phép đo. Bản tải về và bảng ghép cặp nằm trong `.local/sade-owner-routing-check/44698224337` trên worktree.
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
@@ -327,6 +339,14 @@ Hai lượt tiếp theo qua kiểm tra chữ ký rồi dừng ở Credential Man
 
 CI trên `a063db921bfd9aad04dd56086a5cf78fa836d9ab` đã qua trên Windows x64. CLI 1.5.13 có chữ ký Google LLC, khởi động qua adapter Kivuno, báo ACP 1 và hỗ trợ `oauth-personal`. `session/new` trả `-32000 Authentication required` và `account/read` trả tài khoản rỗng. Không mở đăng nhập và không gọi model. Bộ kiểm tra xác nhận tiến trình đã dừng và thư mục thử đã được dọn. Artifact `antigravity-managed-preflight` có SHA-256 của tệp JSON là `986c1eeccf4450a4a54cd13965f7ea742efbb7a0932005519f9f3a5474ace4f2`. Bàn giao Claude ↔ Antigravity từ hai tài khoản đã đăng nhập và có quyền riêng vẫn cần chạy. [CI và artifact Windows](https://github.com/dakiemdarktharr/WWW/actions/runs/44696825770)
 
+Trước `026b515`, lỗi phiên của Claude và Antigravity có thể yêu cầu người dùng đăng nhập ChatGPT hoặc nhắc tới danh mục model Codex. Các lỗi về đăng nhập, model đã chọn và danh mục trống giờ dùng đúng tên provider. Test chạy các adapter Claude và Antigravity với tiến trình giao thức mô phỏng, xác nhận không gửi prompt, không mở đăng nhập và không sửa file khi bị chặn. Cục bộ có 38/38 ca Codex, Gemini và managed provider đạt trên Node 24.22.1.
+
+```powershell
+node --import tsx --test --test-concurrency=2 tests/codex.test.ts tests/managed-providers.test.ts tests/providers.test.ts
+```
+
+CI trên `026b515758e526a3b483be7727833cb86c8c4097` qua 458 ca Windows, 454 Ubuntu và 453 macOS arm64, không có ca lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. Ba nền tảng đều qua corpus 1.000 tin với kế hoạch mô phỏng. Windows cục bộ qua 85/85 ca Shared Sade và 172/172 ca Sade. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44698275592) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44698280109)
+
 ```powershell
 gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=antigravity-preflight
 ```
@@ -370,6 +390,8 @@ Chế độ `paired-macos-desktop` chạy trên `1ea993d9aff645ae932224fcd75331d
 Sau khi Windows hoàn tất, bài thử nhấn **Stop connection**, thấy trạng thái **Stopped**, kiểm tra grant đã bị xóa và kết nối lưu trên Mac đã bị tắt. Mac báo `round-trip-verified` và `desktopGrant: removed`. Bài Windows đạt 1/1 sau 207,7 giây và tunnel đã được dừng. Lần đầu ở `8315a46` bị hộp hướng dẫn lần đầu chặn nút **Team**. Lần chạy lại đóng hộp hướng dẫn bằng nút thật. Phép thử xác nhận thời hạn được cấp và thu hồi qua desktop. Việc dừng lệnh khi quyền hết hạn chạy trong nhóm hồi quy riêng. Quyền do một chủ máy Mac thật xác nhận vẫn cần lượt thực địa. [CI ghép qua desktop macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44688823268) · [Lần đầu bị hộp hướng dẫn chặn](https://github.com/dakiemdarktharr/WWW/actions/runs/44688379502)
 
 Chạy lại chế độ `paired-macos-desktop` trên `9d2fc5f` sau khi thêm công cụ Git. Windows đạt 1/1 sau 134,6 giây. Mac tái hiện lỗi đường dẫn, xác minh bản sửa có chữ ký, chuyển đúng file và xác nhận xóa grant sau **Stop connection**. [CI chạy lại ghép macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44690828175)
+
+Lượt `762daaf57427638a4f8dd45443e11b2e02d903f7` lặp lại vòng chẩn đoán, sửa và kéo đúng file, rồi chạy một lệnh Node chẩn đoán vô hại làm đối chứng thu hồi. Electron trên macOS arm64 xác nhận PID còn chạy trước khi chủ Mac mô phỏng bấm **Stop connection**. Tiến trình dừng trước thời điểm tự kết thúc, không tạo mốc hoàn thành, và Mac xóa grant cùng dấu phiên runner. Windows không nhận đầu ra hay chữ ký của lệnh bị dừng, từ chối yêu cầu mới và giữ biên nhận đã ký của lần xác minh trước. Windows chờ hết thời hạn của yêu cầu đang gửi mới báo lỗi kết nối. Bài Windows qua 1/1 sau 227,9 giây và đóng tunnel. [CI Mac và kết quả thu hồi](https://github.com/dakiemdarktharr/WWW/actions/runs/44698551233)
 
 Biên nhận chạy từ máy ghép cặp gắn với mã tác vụ Shared Groups tại lúc gửi. Khi kết quả đến sau gián đoạn, bộ điều phối kiểm tra quyền của cả máy ghép cặp lẫn đúng tác vụ Shared Groups trước khi ghi nhận kết quả đạt. Bài hồi quy chạy Node thật trên máy thử, nhận kết quả có chữ ký qua giao thức runner và mô phỏng lần gửi lại đến sau khi phiên không còn hoặc tác vụ đã được thay. Hai ca đó giữ trạng thái chưa xác nhận. Ca đối chứng mô phỏng quyền của tác vụ còn hiệu lực và xác nhận lưu đúng biên nhận. Chạy riêng bằng `node --import tsx --test --test-name-pattern "delayed signed machine result" tests/runners.test.ts`.
 
