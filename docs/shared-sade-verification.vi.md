@@ -14,6 +14,21 @@ Khi project có hơn 32 harness đã cấp quyền, planner tra cứu theo từn
 
 Một desktop có thể cấp quyền cho nhiều project. Desktop gửi tối đa 32 grant mỗi lượt, luôn kèm grant của công việc đang chạy và luân phiên các grant còn lại. Nếu cuộc gọi thất bại, desktop thử lại cùng trang. Bài hồi quy thêm 35 grant của project khác rồi xác nhận việc còn chờ được giao ở lượt kế tiếp và tiếp tục nhận tín hiệu duy trì phiên khi desktop sang trang.
 
+### Chi phí hỏi việc và báo kết quả
+
+Từ commit `836e445`, máy chủ lấy từng grant trong trang desktop gửi, đối chiếu cả chủ tài khoản lẫn mã desktop, sau đó mới đọc workflow đang hoạt động của các nhóm tương ứng. Khi desktop báo kết quả, SQLite tìm mã công việc và ứng dụng giải mã workflow khớp một lần. Việc kiểm tra ghế nhóm, quyền harness và kết quả gửi lặp vẫn áp dụng. Bài hồi quy dùng hai nhóm có công việc đồng thời, trộn grant của chủ khác vào cùng trang, rồi xác nhận mỗi desktop chỉ nhận công việc và duy trì phiên của mình.
+
+Phép đo dùng SQLite trong bộ nhớ trên cùng máy Windows, gồm 3.000 workflow đã kết thúc, 250 workflow đang chờ ở nhóm khác và một công việc được cấp quyền. Mỗi thao tác được chạy thử năm lần rồi đo 60 lần. Lượt báo kết quả đo tình huống desktop gửi lại kết quả đã ghi nhận.
+
+| Thao tác                | Trung vị `0fc839f` | Trung vị `836e445` | p95 `0fc839f` | p95 `836e445` |
+| ----------------------- | -----------------: | -----------------: | ------------: | ------------: |
+| Desktop hỏi việc        |           18,86 ms |            0,30 ms |      42,35 ms |       0,58 ms |
+| Desktop gửi lại kết quả |           85,59 ms |            7,47 ms |     126,48 ms |      17,78 ms |
+
+Mã đo trên máy thử nằm tại `.local/sade-model-evaluation/scheduler-history-benchmark.source.txt`. Chạy từ checkout của từng commit bằng `Get-Content -Raw -LiteralPath $source | node --import tsx --input-type=module`, với `$source` trỏ đến tệp đó. Kết quả trên đo bộ điều phối cục bộ. Mạng và model được đo ở các lượt riêng.
+
+Commit `836e445` qua 63 bài collaboration và Shared Sade trên Windows, gồm bộ 1.000 tin với kế hoạch mô phỏng. Build và Electron đạt. Chromium đóng giữa lần chạy giao diện đầu ở bước đọc xác nhận cập nhật. Lần chạy riêng trên cùng commit qua toàn bộ bài giao diện. CI macOS arm64 qua 388 bài, bỏ qua sáu bài theo nền tảng, rồi qua build, Electron và giao diện Shared Groups. Bài bàn giao Windows–Mac trên cùng commit tái hiện lỗi đường dẫn trên runner macOS arm64, chạy lại sau sửa và trả đúng file về Windows. Planner và reviewer dùng fixture. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44641351396) · [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44642221784)
+
 Khi kết nối gián đoạn lúc đăng ký grant, desktop thử lại với cùng mã và phạm vi đã được người dùng xác nhận. Nếu chưa xác định được kết quả, desktop giữ phê duyệt cục bộ và hướng người dùng kiểm tra lại nhóm. Khi chủ harness thu hồi, desktop bỏ quyền ngay trong workspace rồi lưu yêu cầu đồng bộ trong cơ sở dữ liệu của tài khoản đó. Yêu cầu được gửi lại khi kết nối phục hồi, kể cả khi desktop đã hết grant để lấy việc. Máy chủ chỉ chấp nhận lệnh thu hồi từ chủ grant. Nếu người đó đã rời nhóm, phản hồi chỉ xác nhận thu hồi.
 
 Khi một người tự rời nhóm hoặc bị gỡ, máy chủ thu hồi các grant của người đó trong nhóm ngay trong cùng giao dịch. Bỏ chia sẻ một harness hoặc đổi provider của profile đó cũng thu hồi grant của riêng harness. Mời lại hoặc chia sẻ lại cần phê duyệt mới. Desktop gắn mỗi lần xác nhận với mã lần chia sẻ để máy chủ từ chối yêu cầu đăng ký đến muộn sau khi chia sẻ lại. Đổi tên giữ nguyên lần chia sẻ.
