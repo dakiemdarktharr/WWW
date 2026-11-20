@@ -706,7 +706,7 @@ test(
       })) as any;
       for (const result of hello.results)
         cloud.finish(index, result.jobId, result.result, result.updatesRead);
-      const { supportsReviewRevision, supportsRosterLookup, ...packet } = cloud.poll(
+      const packet = cloud.poll(
         index,
         hello.active,
         hello.grants,
@@ -715,8 +715,9 @@ test(
         hello.waitingForRevisions,
         true,
       );
-      assert.equal(supportsReviewRevision, true);
-      assert.equal(supportsRosterLookup, true);
+      assert.equal(packet.supportsReviewRevision, true);
+      assert.equal(packet.supportsRosterLookup, true);
+      assert.equal(packet.supportsCapacityWait, true);
       assert.doesNotMatch(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
@@ -724,7 +725,13 @@ test(
       if (response === 'drop') return packet.delivery;
       const exchange = {
         action: 'exchange',
-        ...packet,
+        active: packet.active,
+        delivery: packet.delivery,
+        reviews: packet.reviews,
+        updates: packet.updates,
+        revisionHandoff: packet.revisionHandoff,
+        quotaFailover: packet.quotaFailover,
+        planQuotaFailover: packet.planQuotaFailover,
         acknowledged: hello.results.map(
           ({ jobId, version }: { jobId: string; version: number }) => ({ jobId, version }),
         ),
