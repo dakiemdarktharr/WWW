@@ -219,6 +219,24 @@ Trong project được AEGIS bảo vệ, approval vẫn xác minh chính xác t�
 | C. Review độc lập                         | Codex đã đăng nhập, dùng GPT-6-Luna với reasoning cao, yêu cầu sửa bản sai ở ngưỡng giảm giá và duyệt bản đúng. Tác giả Gemini dùng fixture. Tích hợp kiểm lại digest. Qwen cục bộ chặn đúng 8/9 bản lỗi và duyệt đúng 6/9 bản đúng trong phép đo riêng. |
 | D. Windows nhờ Mac kiểm tra               | Codex đã đăng nhập trên Windows tái hiện lỗi và chạy lại thành công trên runner macOS arm64 chỉ dùng công cụ. Bản sửa về đúng một file trong scope. Review fixture cho phép tích hợp cục bộ, với Git remote giữ nguyên.                                  |
 
+Ca A trên `74f938a` gửi nguyên văn “Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của ông làm frontend, codebase, backend, cyber nhé.” Fixture cấp quyền cho hai chủ harness riêng và trả kế hoạch năm việc. Gửi lại tin và thử nhận việc lần nữa chỉ giữ một lượt planner. Astra chờ kiến trúc của Gemini qua review và nhận đúng đầu ra trước khi hỏi người gửi muốn chọn phong cách hay để Astra chọn. Hai bước codebase và backend tiếp tục trong lúc câu hỏi chờ. Người gửi trả lời và Astra tiếp tục cùng tác vụ với đầu ra kiến trúc. Rà soát phòng thủ chỉ đọc đợi cả ba phần triển khai. Ca này xác minh điều phối với kế hoạch và phản hồi harness được kiểm soát.
+
+```powershell
+node --import tsx --test --test-name-pattern 'hands Gemini architecture' tests/shared-sade.test.ts
+```
+
+Windows cục bộ qua 85/85 ca Shared Sade và 172/172 ca Sade, gồm corpus 1.000 tin với kế hoạch fixture. Lần CI đầu báo lỗi kiểu ở thông báo của một assertion trong ca mới. Sau khi sửa assertion trên `38215fd922905dce942b7842446f3a949d7686ab`, `npm run check` qua 458 ca Windows, 454 Ubuntu và 453 macOS arm64, với 0 lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44693599187) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44693599004)
+
+Phép đo `frontend-style` đối chiếu prompt cũ với phiên bản giao việc hỏi phong cách cho frontend sau khi đủ phụ thuộc. Bốn ca dùng cùng bản đồ project tổng hợp từ tin trước, gồm nguyên văn A, thêm phong cách cụ thể, cho Astra tự chọn, và thiếu quyền project của Astra. Hai prompt dùng cùng model, schema và seed, chạy theo cặp trên cùng runner. Thứ tự đảo ở hai shard. Báo cáo giữ prompt, kỳ vọng, phản hồi thô, digest model, thời gian và bộ nhớ model do Ollama báo sau lượt gọi. Đây là số bộ nhớ cấp cho model, chưa đo đỉnh RAM của cả runner. [Ollama API](https://docs.ollama.com/api/ps)
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=frontend-style
+```
+
+Qwen3 4B Instruct 2507 trên `74f938a` đạt **0/4 với cả hai prompt**. Khi Gemini và Astra đều có quyền, model vẫn hỏi lại việc phân công trước khi lập kế hoạch. Khi thiếu quyền của Astra, model hỏi về khả năng nhầm tên thay vì yêu cầu chủ Astra cấp quyền. Cả hai lượt ở ca giao Astra tự chọn đều hết thời gian 120 giây. Trong sáu lượt có phản hồi, bốn câu hỏi vượt giới hạn 500 ký tự. Không có kế hoạch được chấp nhận trong phép đo này. [Kết quả và artifact của bốn cặp](https://github.com/dakiemdarktharr/WWW/actions/runs/44693097763)
+
+Thời gian của các lượt có phản hồi là 47,2–84,3 giây với prompt cũ và 53,8–78,2 giây với biến thể. Trong từng cặp, mẫu bộ nhớ hai prompt bằng nhau. Ollama báo 3,19 GB RAM và 0 VRAM trên hai runner, hoặc 1,01 GB RAM và 2,54 GB VRAM trên hai runner còn lại. Phép đo dùng Ollama cục bộ trên runner chuẩn của repo công khai, chi phí 0 đồng. Có thể đối chiếu tám đầu ra trong `.local/sade-frontend-style-eval/44693097763` của worktree. Kivuno tiếp tục dùng prompt đang triển khai vì phép đo chưa cho thấy biến thể cải thiện khả năng phân công.
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
@@ -298,6 +316,20 @@ Bản ghi `claude-managed-preflight.json` và mã thử nằm trong `.local/sade
 ```
 
 Đã kiểm tra chữ ký Google LLC và phiên bản 1.5.0 của `agy.exe` có sẵn ngoài đường dẫn mặc định của Kivuno. Antigravity có thể tự chọn phiên từ Windows Credential Manager dù dùng thư mục cấu hình trống. Phiên kiểm tra managed cho Antigravity cần tài khoản hệ điều hành tách biệt với kho đăng nhập trống. Hai chủ provider vẫn cần tự đăng nhập và cấp quyền cho cùng Git origin và nhánh trước khi chạy thử. [Đăng nhập Antigravity CLI](https://antigravity.google/docs/install)
+
+Phép thử `antigravity-preflight` dùng runner Windows chuẩn mới của repo công khai. Tệp CLI 1.5.13 ghim theo manifest Google. Runner kiểm tra SHA-512, chữ ký Authenticode của Google LLC và Credential Manager trống trước khi mở CLI trong thư mục tạm. Bộ kiểm tra dùng `AntigravityClient` thật và chỉ cho gửi ACP `initialize` cùng `session/new` để thăm dò trạng thái đăng nhập. Báo cáo lưu mã và kết quả xác thực đã lọc. [Manifest Windows chính thức](https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/windows_amd64.json) · [Xác thực ACP](https://antigravity.google/docs/ide/extensions/acp/#authentication)
+
+Lần đầu dừng ở bước kiểm tra chữ ký trước khi mở CLI. Thử riêng cùng tệp xác nhận SHA-512 và chữ ký Google LLC hợp lệ. Lỗi do Windows PowerShell 5.1 kế thừa `PSModulePath` của PowerShell 7, khiến module Authenticode không nạp được. `c8b9168` bỏ biến kế thừa riêng cho tiến trình kiểm tra chữ ký và giữ nguyên điều kiện xác minh. [Lần CI đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44694261261)
+
+Hai lượt tiếp theo qua kiểm tra chữ ký rồi dừng ở Credential Manager trước khi mở CLI. Kết quả trên `2a22e35` xác định tài khoản mặc định của runner có mục lưu. Log chỉ ghi `contains-entries`. [Lần thử chữ ký](https://github.com/dakiemdarktharr/WWW/actions/runs/44695058033) · [Lần kiểm tra kho đăng nhập](https://github.com/dakiemdarktharr/WWW/actions/runs/44695759341)
+
+`a063db9` tạo một tài khoản Windows cục bộ không có quyền quản trị trên runner tạm. Tiến trình con kiểm tra đúng SID và profile đã nạp trước khi đọc trạng thái Credential Manager của tài khoản thử. Bộ kiểm tra giữ nguyên điều kiện hash, chữ ký và kho đăng nhập trống. Mật khẩu sinh cho tài khoản hệ điều hành chỉ nằm trong bộ nhớ. [Tài liệu Start-Process](https://learn.microsoft.com/powershell/module/Microsoft.PowerShell.Management/Start-Process) · [Runner GitHub chuẩn](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+
+CI trên `a063db921bfd9aad04dd56086a5cf78fa836d9ab` đã qua trên Windows x64. CLI 1.5.13 có chữ ký Google LLC, khởi động qua adapter Kivuno, báo ACP 1 và hỗ trợ `oauth-personal`. `session/new` trả `-32000 Authentication required` và `account/read` trả tài khoản rỗng. Không mở đăng nhập và không gọi model. Bộ kiểm tra xác nhận tiến trình đã dừng và thư mục thử đã được dọn. Artifact `antigravity-managed-preflight` có SHA-256 của tệp JSON là `986c1eeccf4450a4a54cd13965f7ea742efbb7a0932005519f9f3a5474ace4f2`. Bàn giao Claude ↔ Antigravity từ hai tài khoản đã đăng nhập và có quyền riêng vẫn cần chạy. [CI và artifact Windows](https://github.com/dakiemdarktharr/WWW/actions/runs/44696825770)
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=antigravity-preflight
+```
 
 ### Kiểm tra thông tin xác thực trong bản vá
 
