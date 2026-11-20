@@ -28,6 +28,7 @@ import {
 } from './shared-sade-assignment.ts';
 import {
   resolveSharedSadeHandoffAssignment,
+  sharedSadeExplicitHandoffReview,
   type SharedSadeHandoffBinding,
   type SharedSadeHandoffDeliverables,
 } from './shared-sade-handoff-assignment.ts';
@@ -314,6 +315,7 @@ export function assertSharedHandoffPlan(
   plan: TeamPlan,
   assignments: HandoffAssignments,
   deliverables?: SharedSadeHandoffDeliverables,
+  exactReviewScope = false,
 ) {
   function writer(key: string, { grantId, scope }: { grantId?: string; scope?: string }) {
     const found = plan.tasks.filter(
@@ -360,23 +362,41 @@ export function assertSharedHandoffPlan(
 
   const contains = (scope: string, target: string) =>
     scope === target || target.startsWith(`${scope}/`);
-  const writtenScopes = [...requestedWrites].flatMap((task) => task.scope);
+  const reviewedScopes = [...receiver.scope, ...backend.scope];
+  const allowedReviewScopes = exactReviewScope
+    ? reviewedScopes
+    : [...requestedWrites].flatMap((task) => task.scope);
+  const withinReviewScope = (task: PlanTask) =>
+    task.scope.every((scope) => allowedReviewScopes.some((allowed) => contains(allowed, scope)));
+  if (
+    exactReviewScope &&
+    plan.tasks.some(
+      (task) =>
+        task.kind === 'review' &&
+        scopesOverlap(task.scope, reviewedScopes) &&
+        !withinReviewScope(task),
+    )
+  )
+    throw new DomainError(
+      'Limit the defensive review to the requested frontend and backend scopes.',
+    );
   const review = plan.tasks.find((task) => {
     if (task.kind !== 'review') return false;
     const upstream = prerequisites(task);
     return (
       upstream.includes(receiver) &&
       upstream.includes(backend) &&
-      [...receiver.scope, ...backend.scope].every((scope) =>
+      reviewedScopes.every((scope) =>
         task.scope.some((reviewScope) => contains(reviewScope, scope)),
       ) &&
-      task.scope.every((scope) => writtenScopes.some((written) => contains(written, scope)))
+      withinReviewScope(task)
     );
   });
   if (!review)
     throw new DomainError(
       'Include a read-only defensive review that follows and covers the frontend and backend, within the requested outputs.',
     );
+  return review;
 }
 export type SharedDelivery = {
   id: string;
@@ -2196,6 +2216,7 @@ export class GroupSade {
       if (job.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
       try {
         const plan = parseTeamPlan(result.plan, { allowEmpty: true });
+        let reviewRequirement: { key: string; brief: string } | undefined;
         const eligible = grants.filter(
           (entry) => run.roster.includes(entry.id) && this.usableForRun(entry, group, run),
         );
@@ -2210,7 +2231,14 @@ export class GroupSade {
         if (run.handoffAssignments) {
           const status = this.handoffReadiness(run, group, eligible);
           if (status.state !== 'ready') throw new DomainError(status.reason);
-          assertSharedHandoffPlan(plan, status.assignments, run.handoffDeliverables);
+          const directive = run.handoffDeliverables && sharedSadeExplicitHandoffReview(run.content);
+          const review = assertSharedHandoffPlan(
+            plan,
+            status.assignments,
+            run.handoffDeliverables,
+            directive?.exactFrontendAndBackend,
+          );
+          if (review && directive) reviewRequirement = { key: review.key, brief: directive.brief };
         }
         if (run.readOnly && plan.tasks.some(writes))
           throw new DomainError(
@@ -2246,7 +2274,12 @@ export class GroupSade {
           task: {
             ...task,
             description: redact(task.description),
-            acceptance: redact(task.acceptance),
+            acceptance:
+              task.key === reviewRequirement?.key
+                ? redact(
+                    `Requester’s read-only review requirement: ${reviewRequirement.brief}\n\n${task.acceptance}`,
+                  ).slice(0, 3000)
+                : redact(task.acceptance),
           },
           state: 'queued',
         }));

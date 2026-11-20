@@ -99,11 +99,30 @@ const negatedDefensiveAction =
   /\b(?:khong (?:can|nen|phai)|dung|bo qua|do not|no need to|skip|omit) (?:doc|read|ra soat|kiem tra|xem|check|inspect|review|report)\b/;
 const bothReviewedFiles =
   /\b(?:hai (?:file|tep)|ca hai|chung|(?:both|those two|the two) (?:source )?files)\b/;
-const reviewReadVerb = /\b(?:doc|read(?![ -]only\b))\b/;
+const reviewReadVerb = /\b(?:doc|read(?!-only\b))\b/;
 const reviewDesignation = /\b(?:cyber|review|ra soat|bao mat)\b/;
 const reviewDirective =
   /^(?:(?:phan|ve phan|please|chi|only|just) )?(?:ra soat|cyber|review|inspect)\b|\b(?:backend|frontend)[ -]only\b/;
 const readOnlyReminder = /^(?:(?:that|the|this) )?review (?:is|must be|stays) read[ -]only\b/;
+const explicitFilePair =
+  /\b(?:hai (?:file|tep)(?: nguon)?(?: do)?|(?:(?:those|the|exactly) two|both) (?:source )?files)\b/;
+const reviewersOfFilePair = new RegExp(
+  `\\b(?:khong viet|did not (?:write|author)) ${explicitFilePair.source}`,
+);
+const exactFilePair = new RegExp(`^(?:(?:dung|ca) )?${explicitFilePair.source}$`);
+const exactReviewRole = new RegExp(
+  `^(?:(?:the|phan) )?(?:${frontend.source}|${backendRole.source})$`,
+);
+const additionalReviewScope =
+  /\b(?:cung voi|kem theo|con ca|doc them|them ca|tep khac|file khac|plus|as well as|in addition to|also (?:read|review|check|inspect)|other (?:source )?files)\b/;
+const mixedReviewWrites =
+  /(?:, *|\b(?:roi|va|sau do|then|and) )(?:hay |please )?(?:sua|chinh sua|viet lai|cap nhat|fix|edit|write|rewrite|change|patch|update|modify)\b/;
+const reviewAuthorWrites =
+  /\b(?:reviewer|nguoi (?:ra soat|doc)) (?:should|must|will|phai|se|hay) (?:fix|edit|write|patch|update|modify|sua|chinh sua|viet lai|cap nhat)\b/;
+const tentativeReview =
+  /\b(?:fyi|maybe|perhaps|might (?:ask|review|check)|co the (?:nho|giao)|for your information)\b/;
+const cancelReview =
+  /\b(?:bo qua (?:viec do|phan do)|dung lam (?:viec do|phan do)|khong can (?:lam |thuc hien )?(?:viec do|phan do|kiem tra nua)|(?:skip|cancel) (?:it|that|the) (?:review|check)|(?:skip it|do not do (?:it|that)|no need to do (?:it|that)))\b/;
 
 function inlineDeliverables(receiverWork: string) {
   const parts = foldSharedSadeName(receiverWork)
@@ -141,8 +160,9 @@ function exactScope(work: string): string | null | undefined {
   return null;
 }
 
-function reviewSubjects(text: string) {
-  const action = reviewReadVerb.exec(text) ?? defensiveAction.exec(text);
+const reviewTargetVerb = (text: string) => reviewReadVerb.exec(text) ?? defensiveAction.exec(text);
+
+function reviewSubjects(text: string, action = reviewTargetVerb(text)) {
   if (!action) return '';
   return text.slice(action.index + action[0].length).split(defensiveAction, 1)[0];
 }
@@ -196,6 +216,70 @@ function keepsScope(sentence: string, scopes: (string | undefined)[]) {
   );
 }
 
+const reviewText = (sentence: string) => foldSharedSadeName(sentence.replace(fileToken, ''));
+
+function boundedHandoffMessage(message: string) {
+  const input = message.trim();
+  if (input.length > 700) return;
+  // Only allow backticks for exact paths and apostrophes for English possessives.
+  const quotes = input
+    .replace(/(?<=\p{L})['’]s(?= )/giu, 's')
+    .replace(/`([^`]+)`/gu, (token, file: string) => (exactScope(file) === file ? file : token));
+  if (/[\r\n"'`“”‘’«»<>]/u.test(quotes) || noTransfer.test(foldSharedSadeName(input))) return;
+  return input;
+}
+
+function onlyFrontendAndBackend(brief: string, text: string) {
+  const action = reviewTargetVerb(text);
+  if (!action || additionalReviewScope.test(text) || brief.match(fileToken)?.length) return false;
+  const subjects = reviewSubjects(text, action);
+  if (architecture.test(subjects) || codebaseRole.test(subjects)) return false;
+  const preamble = text.slice(0, action.index);
+  const targets = subjects
+    .trim()
+    .replace(/\b(?:de|for|to|and|va|chi|roi|then)$/u, '')
+    .trim()
+    .replace(/[,.;]$/u, '')
+    .trim();
+  const only = /^(?:only|just|rieng) | (?:only|thoi)$/gu;
+  const scopedTargets = targets.replace(only, '');
+  if (exactFilePair.test(scopedTargets) || (!targets && reviewersOfFilePair.test(preamble)))
+    return true;
+  if (!/\bchi $/.test(preamble) && scopedTargets === targets) return false;
+  const roles = scopedTargets.split(/\s*(?:[&/]|\b(?:and|va|voi|lan)\b)\s*/u);
+  return roles.length === 2 && roles.every((role) => exactReviewRole.test(role));
+}
+
+/** Extract an explicit review brief from the current message of a recognized handoff. */
+export function sharedSadeExplicitHandoffReview(
+  message: string,
+): { brief: string; exactFrontendAndBackend: boolean } | undefined {
+  const input = boundedHandoffMessage(message);
+  if (!input || tentativeReview.test(foldSharedSadeName(input))) return;
+  const sentences = input.split(/(?<=[.!?;])\s+/u).map((sentence) => {
+    const brief = sentence.trim();
+    return { brief, text: reviewText(brief) };
+  });
+  const matches = sentences.filter(({ text }) => requestsDefensiveReview(text));
+  if (matches.length !== 1) return;
+  const [{ brief, text }] = matches;
+  if (
+    mixedReviewWrites.test(text) ||
+    sentences.some(
+      (sentence) =>
+        cancelReview.test(sentence.text) ||
+        reviewAuthorWrites.test(sentence.text) ||
+        negatedDefensiveAction.test(sentence.text) ||
+        restrictsDefensiveReview(sentence.brief, sentence.text) ||
+        (correction.test(sentence.text) &&
+          (reviewDesignation.test(sentence.text) || defensiveAction.test(sentence.text))),
+    )
+  )
+    return;
+
+  return { brief, exactFrontendAndBackend: onlyFrontendAndBackend(brief, text) };
+}
+
 function supportingDeliverables(
   receiverWork: string,
   tail: string[],
@@ -209,8 +293,7 @@ function supportingDeliverables(
   )
     return;
 
-  const textForRole = (sentence: string) => foldSharedSadeName(sentence.replace(fileToken, ''));
-  const tailText = tail.map(textForRole);
+  const tailText = tail.map(reviewText);
   if (tail.some((sentence, index) => restrictsDefensiveReview(sentence, tailText[index]))) return;
   if (inlineDeliverables(receiverWork)) return { backend: {}, codebase: {}, defensiveReview: true };
   if (!tailText.some(requestsDefensiveReview)) return;
@@ -219,7 +302,7 @@ function supportingDeliverables(
   let backend = false;
   let codebase = false;
   for (const sentence of tail) {
-    const text = textForRole(sentence);
+    const text = reviewText(sentence);
     if (pastWork.test(text) || !delegatedWork.test(text) || defensiveRead.test(text)) continue;
     const scopes = [...sentence.matchAll(fileToken)].flatMap((mention) => {
       const [file] = mention;
@@ -314,13 +397,8 @@ export function resolveSharedSadeHandoffAssignment(
   requesterId: string,
   group: Pick<SharedGroup, 'people' | 'teammates'>,
 ): SharedSadeHandoffAssignment | undefined {
-  const input = message.trim();
-  if (input.length > 700) return;
-  // Only allow backticks for exact paths and apostrophes for English possessives.
-  const quotes = input
-    .replace(/(?<=\p{L})['’]s(?= )/giu, 's')
-    .replace(/`([^`]+)`/gu, (token, file: string) => (exactScope(file) === file ? file : token));
-  if (/[\r\n"'`“”‘’«»<>]/u.test(quotes) || noTransfer.test(foldSharedSadeName(input))) return;
+  const input = boundedHandoffMessage(message);
+  if (!input) return;
 
   for (const [transfer, firstClause, secondClause, language] of [
     [viTransfer, viProducer, viReceiver, 'vi'],

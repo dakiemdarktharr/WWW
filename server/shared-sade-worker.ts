@@ -34,7 +34,10 @@ import {
   type SharedDelivery,
   type SharedFinish,
 } from './group-sade.ts';
-import type { SharedSadeHandoffDeliverables } from './shared-sade-handoff-assignment.ts';
+import {
+  sharedSadeExplicitHandoffReview,
+  type SharedSadeHandoffDeliverables,
+} from './shared-sade-handoff-assignment.ts';
 import { changedTreeFiles, createWorktree, git } from './git.ts';
 import { inspectSharedGit } from './shared-sade-git.ts';
 import { resolveProviderPath } from './provider-files.ts';
@@ -280,6 +283,7 @@ type Receipt = {
   readAssignment?: SharedDelivery['readAssignment'];
   handoffAssignments?: SharedDelivery['handoffAssignments'];
   handoffDeliverables?: SharedSadeHandoffDeliverables;
+  exactHandoffReview?: true;
   sessionId?: string;
   result?: SharedFinish;
   version?: number;
@@ -690,7 +694,12 @@ export class SharedSadeWorker {
     if (!this.host.store.lookup('sharedSadeLocalPlan', jobId)) {
       if (receipt.readAssignment) assertSharedReadPlan(plan, receipt.readAssignment);
       if (receipt.handoffAssignments)
-        assertSharedHandoffPlan(plan, receipt.handoffAssignments, receipt.handoffDeliverables);
+        assertSharedHandoffPlan(
+          plan,
+          receipt.handoffAssignments,
+          receipt.handoffDeliverables,
+          receipt.exactHandoffReview,
+        );
       this.checkDraftCapabilities(jobId, plan, receipt.planMembers || []);
     }
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
@@ -1200,6 +1209,10 @@ export class SharedSadeWorker {
           readAssignment: delivery.readAssignment,
           handoffAssignments: delivery.handoffAssignments,
           handoffDeliverables: delivery.handoffDeliverables,
+          ...(delivery.handoffDeliverables &&
+          sharedSadeExplicitHandoffReview(delivery.request)?.exactFrontendAndBackend
+            ? { exactHandoffReview: true }
+            : {}),
           clarified: Boolean(delivery.clarification),
           revisionHandoff: command.revisionHandoff,
           unchangedRevisionScopes: command.unchangedRevisionScopes,
@@ -1299,6 +1312,7 @@ export class SharedSadeWorker {
         planMembers: undefined,
         handoffAssignments: undefined,
         handoffDeliverables: undefined,
+        exactHandoffReview: undefined,
         updates: undefined,
       });
     if (result.kind !== 'change') this.leases.delete(jobId);

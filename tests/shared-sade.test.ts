@@ -1004,6 +1004,8 @@ async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
   const projectKey = canonicalSharedRepository(origin, 'main');
   const scope = handoff ? workshopFiles.architecture : 'docs/returns.md';
   const turns = handoff ? 6 : 1;
+  const reviewBrief =
+    'Khi frontend và backend xong, giao người khác đọc đúng hai file đó để xem lỗi có lộ email khách không.';
   const store = new Store(':memory:');
   const workspace = new Workspace(store, data, repo);
   const member = store.addMember({ name: 'Gemini', role: 'engineer', provider: 'gemini' });
@@ -1067,7 +1069,7 @@ async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
     groupId: cloud.groupId,
     id: randomUUID(),
     content: handoff
-      ? fullWorkshopHandoff
+      ? `${fullWorkshopHandoff} ${reviewBrief}`
       : `Nhờ Astra của Bình đọc ${scope} và tóm tắt điều kiện trả hàng giúp mình.`,
     sade: { projectKey },
   });
@@ -1113,6 +1115,17 @@ async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
       requiredPlatform: 'any',
     }));
     const summary = 'Arrange the four scoped writes and independent defensive review.';
+    const expandedReview = await submit('relay_submit_plan', {
+      summary,
+      tasks: tasks.map((task) =>
+        task.kind === 'review-read-only'
+          ? { ...task, scope: [...task.scope, workshopFiles.tests] }
+          : task,
+      ),
+    });
+    assert.equal(expandedReview?.success, false);
+    assert.match(expandedReview?.contentItems?.[0]?.text ?? '', /review/i);
+    assert.equal(store.lookup('sharedSadeLocalPlan', offer.id), undefined);
     const incomplete = await submit('relay_submit_plan', {
       summary,
       tasks: tasks.filter(({ key }) => key !== 'codebase'),
@@ -1170,6 +1183,9 @@ async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
       run.jobs.filter(({ phase }) => phase === 'task').map(({ task }) => task?.key),
       ['architecture', 'frontend', 'backend', 'codebase', 'defensive-review'],
     );
+    const review = run.jobs.find(({ task }) => task?.key === 'defensive-review')?.task;
+    assert.deepEqual(review?.scope, [workshopFiles.frontend, workshopFiles.backend]);
+    assert.ok(review?.acceptance.includes(reviewBrief));
     assert.equal(cloud.poll(1).delivery, undefined, 'Frontend must wait for architecture');
   } else {
     const task = cloud.poll(1).delivery!;
@@ -1183,7 +1199,7 @@ async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
 
 test('Shared Sade corrects a pinned read draft in the same provider turn', (t) =>
   checkSharedPlanCorrection(t));
-test('Shared Sade corrects an incomplete handoff draft in the same provider turn', (t) =>
+test('Shared Sade corrects expanded review and incomplete handoff drafts in the same provider turn', (t) =>
   checkSharedPlanCorrection(t, true));
 
 test(
@@ -4501,6 +4517,7 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
   const review = f.poll(0).delivery!;
   assert.equal(review.task?.key, 'defensive-review');
   assert.equal(review.task?.kind, 'review');
+  assert.deepEqual(review.task?.scope, ['src/frontend.ts', 'src/codebase.ts', 'src/backend.ts']);
   assert.equal(review.grantId, gemini);
   assert.equal(review.prerequisites.length, 4);
   f.finish(0, review.id, { kind: 'done', summary: 'Reviewed all integrated outputs.' });
@@ -5051,6 +5068,10 @@ test('Shared Sade requires each explicitly requested handoff deliverable', async
           run.jobs.filter(({ phase }) => phase === 'task').map(({ task }) => task?.key),
           ['architecture', 'frontend', 'backend', 'codebase', 'defensive-review'],
         );
+        assert.equal(
+          run.jobs.find(({ task }) => task?.key === review.key)?.task?.acceptance,
+          review.acceptance,
+        );
         assert.equal(f.poll(1).delivery, undefined, 'Frontend still waits for architecture');
         assert.equal(f.poll(0).delivery?.task?.key, 'architecture');
         return;
@@ -5066,6 +5087,114 @@ test('Shared Sade requires each explicitly requested handoff deliverable', async
       assert.equal(f.poll(1).delivery, undefined);
       assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
     });
+  }
+});
+
+test('Shared Sade limits explicitly scoped handoff reviews and preserves the requester’s brief', async (t) => {
+  const reviewStarts = [
+    ['library-implicit-style', 'Sau khi xong giao diện với API'],
+    ['parcel-explicit-owner-and-style', 'Khi cả giao diện lẫn backend xong'],
+    ['booking-unaccented-style-delegation', 'doi frontend va backend xong'],
+    ['refill-english-transfer', 'When the frontend and backend are ready'],
+  ];
+  for (const [caseId, reviewStart] of reviewStarts) {
+    const scenario = handoffPlanningCases.find(({ id }) => id.endsWith(`/${caseId}`))!;
+    const { expected, message, reference } = scenario;
+    assert.equal(expected.kind, 'plan');
+    const reviewOffset = message.indexOf(reviewStart);
+    assert.notEqual(reviewOffset, -1);
+    const brief = message.slice(reviewOffset).split('. ', 1)[0].replace(/\.$/, '');
+    for (const expandScope of [true, false]) {
+      await t.test(
+        `${caseId} with ${expandScope ? 'an extra test file' : 'the requested files'}`,
+        (t) => {
+          const f = fixture(['gemini', 'codex', 'codex', 'antigravity'], {
+            names: [
+              'Gemini',
+              'Astra',
+              expected.owners.frontend === 2 ? 'Astra' : 'Claude',
+              'Antigravity',
+            ],
+            grantC: true,
+            grantD: true,
+            handoffAssignments: true,
+            ...(expandScope ? {} : { handoffDeliverables: true }),
+          });
+          t.after(() => f.store.close());
+          const replyTo = randomUUID();
+          const staleReview =
+            'Khi frontend và backend xong, giao người khác chỉ đọc hai file để xem có lộ mã màu tím không.';
+          f.call(1, {
+            action: 'message',
+            groupId: f.groupId,
+            id: replyTo,
+            content: [reference, staleReview].filter(Boolean).join(' '),
+          });
+          f.call(0, {
+            action: 'message',
+            groupId: f.groupId,
+            id: randomUUID(),
+            content: message,
+            sade: { projectKey: key, replyTo },
+          });
+          const planner = f.poll(0).delivery!;
+          assert.equal(planner.phase, 'plan');
+          assert.ok(planner.referencedMessage?.content.includes(staleReview));
+          const { files, owners } = expected;
+          const tasks = pinnedHandoffTasks(
+            files,
+            f.grants[owners.architecture],
+            f.grants[owners.frontend],
+          );
+          const review = tasks[4];
+          review.description = 'review-read-only';
+          review.acceptance = 'None required.';
+          // Archived Qwen shards 5 and 6 also included the tests in this review.
+          if (expandScope) review.scope.push(files.tests);
+          const result = {
+            kind: 'plan' as const,
+            plan: {
+              summary: 'Implement the requested handoff and schedule the defensive review.',
+              tasks,
+            },
+          };
+          f.finish(0, planner.id, result);
+          const [run] = f.view().sadeRuns;
+          if (expandScope) {
+            assert.equal(run.state, 'blocked');
+            assert.match(run.error || '', /review/i);
+            assert.deepEqual(
+              run.jobs.map(({ phase }) => phase),
+              ['plan'],
+            );
+            for (const [owner, grantId] of f.grants.entries()) {
+              assert.equal(f.poll(owner).delivery, undefined);
+              assert.equal(
+                f.store.get<{ used: number }>('sharedSadeGrant', grantId).used,
+                owner ? 0 : 1,
+              );
+            }
+            return;
+          }
+
+          assert.equal(
+            run.state,
+            'running',
+            run.error || 'The requested two-file review should run',
+          );
+          const reviewed = run.jobs.find(({ task }) => task?.key === review.key)!;
+          assert.deepEqual(reviewed.task?.scope, [files.frontend, files.backend]);
+          const acceptance = reviewed.task!.acceptance;
+          assert.equal(acceptance.split(brief).length - 1, 1);
+          assert.doesNotMatch(acceptance, /màu tím/);
+          assert.deepEqual(f.finish(0, planner.id, result), { accepted: true });
+          assert.deepEqual(
+            f.view().sadeRuns[0].jobs.filter(({ task }) => task?.key === review.key),
+            [reviewed],
+          );
+        },
+      );
+    }
   }
 });
 
