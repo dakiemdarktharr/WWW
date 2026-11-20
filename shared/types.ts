@@ -388,9 +388,11 @@ export interface LoginResult {
   verificationUrl?: string;
   userCode?: string;
 }
+export type MachineCheckPurpose = 'verification' | 'diagnostic';
 export interface MachineCheckView {
   id: string;
   current: boolean;
+  purpose?: MachineCheckPurpose;
   status: 'passed' | 'stale' | 'failed' | 'unconfirmed' | 'awaiting result' | 'preparing';
   runner: string;
   platform: string;

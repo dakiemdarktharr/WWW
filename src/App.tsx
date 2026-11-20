@@ -2129,15 +2129,17 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                         <Button disabled={pending} onClick={() => setReviewRefresh((n) => n + 1)}>
                           Refresh checks
                         </Button>
-                        {!diff.machineChecks.attempts.length && (
-                          <p>This task needs a check from an updated paired runner.</p>
-                        )}
+                        {!diff.machineChecks.passed &&
+                          diff.machineChecks.attempts.every(
+                            (check) => check.purpose === 'diagnostic',
+                          ) && <p>This task needs a verification check on the paired machine.</p>}
                         {diff.machineChecks.attempts
                           .slice()
                           .reverse()
                           .map((check) => (
                             <details key={check.id} open={check.current || undefined}>
                               <summary>
+                                {check.purpose === 'diagnostic' && 'Diagnostic · '}
                                 {check.runner} · {check.platform}/{check.arch} · {check.status}
                                 {!check.current && ' (previous attempt)'}
                               </summary>

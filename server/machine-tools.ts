@@ -73,6 +73,12 @@ export const machineTools: DynamicTool[] = [
             'One array entry per command argument. Use [] for a command with no arguments.',
         },
         timeoutMs: { type: 'integer', minimum: 100, maximum: 60000 },
+        purpose: {
+          type: 'string',
+          enum: ['verification', 'diagnostic'],
+          description:
+            'Use diagnostic for a temporary investigation or reproduction command. Use verification for checks the finished patch must pass. Defaults to verification.',
+        },
       },
       required: ['runnerId', 'executable', 'argv'],
       additionalProperties: false,
@@ -84,6 +90,7 @@ const inputSchema = z
     runnerId: z.string().uuid(),
     operation: z.enum(['info', 'sync', 'read', 'write', 'run', 'pull']),
     args: z.record(z.string(), z.unknown()).default({}),
+    purpose: z.enum(['verification', 'diagnostic']).optional(),
   })
   .strict();
 const runInputSchema = z
@@ -92,13 +99,19 @@ const runInputSchema = z
     executable: machineCommand.shape.command,
     argv: machineCommand.shape.args.unwrap(),
     timeoutMs: machineCommand.shape.timeoutMs,
+    purpose: inputSchema.shape.purpose,
   })
   .strict();
 
 export function parseMachineOperation(name: string, input: unknown): z.infer<typeof inputSchema> {
   if (name === 'machine_run') {
-    const { runnerId, executable, argv, timeoutMs } = runInputSchema.parse(input);
-    return { runnerId, operation: 'run', args: { command: executable, args: argv, timeoutMs } };
+    const { runnerId, executable, argv, timeoutMs, purpose } = runInputSchema.parse(input);
+    return {
+      runnerId,
+      operation: 'run',
+      args: { command: executable, args: argv, timeoutMs },
+      purpose,
+    };
   }
   if (name !== 'machine_use') throw new DomainError('Unknown machine tool.');
   return inputSchema.parse(input);
@@ -332,14 +345,12 @@ export async function machineTool(
         throw new DomainError('The runner changed its recovery capability during synchronization.');
       const check = reviewAttempt
         ? host.store.put('machineCheck:' + task.id, { ...reviewAttempt, preparingEpoch: undefined })
-        : beginMachineCheck(
-            host.store,
-            task,
-            node,
-            grant,
-            recipe,
-            recoverable ? { clientId: session.id, expiresAt: grant.expiresAt } : undefined,
-          );
+        : beginMachineCheck(host.store, task, node, grant, recipe, {
+            delivery: recoverable
+              ? { clientId: session.id, expiresAt: grant.expiresAt }
+              : undefined,
+            purpose: values.purpose,
+          });
       const kind = 'machineCheck:' + task.id;
       try {
         const result = await call('run', recipe, check.id);
@@ -359,6 +370,7 @@ export async function machineTool(
           arch: result.evidence.arch,
           timedOut: result.evidence.timedOut,
           outputTruncated: result.evidence.outputTruncated,
+          purpose: check.purpose ?? 'verification',
         };
       } catch (error) {
         if (!(recoverable && error instanceof MachineDeliveryInterrupted))

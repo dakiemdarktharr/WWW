@@ -506,7 +506,7 @@ export class SharedSadeWorker {
         ...this.receipt(jobId),
         machineVerified: true,
       });
-    if (request.operation === 'run') {
+    if (request.operation === 'run' && request.purpose !== 'diagnostic') {
       const run = z
         .object({
           platform: z.literal(machine.platform),
@@ -1276,7 +1276,7 @@ export class SharedSadeWorker {
         ? sharedGroupPlanningPrompt(delivery)
         : delivery.phase === 'review'
           ? sharedGroupReviewPrompt(delivery)
-          : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS and sync the owned worktree. Run the project check with machine_run, then use machine_use to pull only scoped changes for review. Report the actual outcome.' : ''}${context}`;
+          : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS and sync the owned worktree. Use machine_run with purpose diagnostic for temporary investigation. Run the requested project check with purpose verification on the finished files, then use machine_use to pull only scoped changes. Report the actual outcome.' : ''}${context}`;
     await this.host.sessions.send(
       session.id,
       delivery.acceptsUpdates
@@ -1320,11 +1320,10 @@ export class SharedSadeWorker {
     if (!receipt.machine || receipt.question) return true;
     const checks = await inspectMachineChecks(this.host.store, task, true);
     this.assertCurrent(jobId);
-    if (!checks?.attempts.length)
-      throw new DomainError('The paired machine has not returned a verification result.');
-    const verified = checks.attempts.findLast(
-      ({ current, status }) => current && status === 'passed',
-    );
+    const verification = checks?.attempts.filter(({ purpose }) => purpose !== 'diagnostic');
+    if (!checks || !verification?.length)
+      throw new DomainError('The paired task needs a verification command on the finished files.');
+    const verified = verification.findLast(({ current, status }) => current && status === 'passed');
     if (!checks.passed || !verified) {
       this.waitingForMachineChecks.add(jobId);
       return false;

@@ -1002,6 +1002,32 @@ test(
     await assert.rejects(host.accept(task.id), /passing paired-machine/);
     const second = (await host.reviewDiff(task.id)).machineChecks!.attempts.at(-1)!;
     await writeFile(target, 'good v3');
+    await use('sync');
+    const diagnostic = await machineTool(
+      host,
+      session,
+      'machine_run',
+      { runnerId: node.id, executable: recipe.command, argv: recipe.args, purpose: 'diagnostic' },
+      guard,
+      true,
+    );
+    assert.equal(diagnostic.code, 0);
+    const afterDiagnostic = (await host.reviewDiff(task.id)).machineChecks!;
+    assert.equal(
+      afterDiagnostic.passed,
+      false,
+      'a diagnostic cannot supersede failed verification',
+    );
+    const diagnosticAttempt = afterDiagnostic.attempts.at(-1)!;
+    assert.equal(diagnosticAttempt.purpose, 'diagnostic');
+    assert.equal(diagnosticAttempt.status, 'passed');
+    assert.equal(
+      afterDiagnostic.attempts.find(({ id }) => id === failed.attempts.at(-1)?.id)?.current,
+      true,
+    );
+    const repeatedDiagnostic = await host.repeatMachineCheck(task.id, diagnosticAttempt.id);
+    assert.equal(repeatedDiagnostic.machineChecks?.attempts.at(-1)?.purpose, 'diagnostic');
+    assert.equal(repeatedDiagnostic.machineChecks?.passed, false);
     await host.repeatMachineCheck(task.id, second.id);
     const passed = (await host.repeatMachineCheck(task.id, original.id)).machineChecks!;
     assert.equal(passed.passed, true);

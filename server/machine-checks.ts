@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { MachineCheckView, Task } from '../shared/types.ts';
+import type { MachineCheckPurpose, MachineCheckView, Task } from '../shared/types.ts';
 import { signerFingerprint, verifyMachineSignature } from './machine-signature.ts';
 import { canonicalJson } from './canonical-json.ts';
 import { machineInput } from './runner-files.ts';
@@ -58,6 +58,7 @@ export interface MachineCheck {
   runnerName: string;
   grantId: string;
   sharedSadeJobId?: string;
+  purpose?: MachineCheckPurpose;
   platform: string;
   arch: string;
   base: string | null;
@@ -83,8 +84,15 @@ export function beginMachineCheck(
   },
   grant: { id: string; platform: string; arch: string },
   recipe: MachineCommand,
-  delivery?: { clientId: string; expiresAt: string },
-  preparingEpoch?: string,
+  {
+    delivery,
+    preparingEpoch,
+    purpose,
+  }: {
+    delivery?: { clientId: string; expiresAt: string };
+    preparingEpoch?: string;
+    purpose?: MachineCheckPurpose;
+  } = {},
 ) {
   const parts = [recipe.command, ...recipe.args];
   const safe = parts.every(
@@ -94,11 +102,14 @@ export function beginMachineCheck(
   );
   const check: MachineCheck = {
     id: randomUUID(),
-    key: evidenceHash([runner.id, recipe]),
+    key: evidenceHash(
+      purpose === 'diagnostic' ? [runner.id, recipe, purpose] : [runner.id, recipe],
+    ),
     runnerId: runner.id,
     runnerName: runner.name,
     grantId: grant.id,
     ...(task.sharedSadeJobId ? { sharedSadeJobId: task.sharedSadeJobId } : {}),
+    ...(purpose ? { purpose } : {}),
     platform: grant.platform,
     arch: grant.arch,
     base: task.baseCommit,
@@ -196,6 +207,7 @@ export async function inspectMachineChecks(
     return {
       id: row.id,
       current: latest.get(row.key) === row.id,
+      purpose: row.purpose ?? 'verification',
       status,
       runner: row.runnerName,
       platform: row.platform,
@@ -217,8 +229,13 @@ export async function inspectMachineChecks(
       repeatable: !!row.repeat,
     };
   });
+  const verification = attempts.filter((row) => row.current && row.purpose !== 'diagnostic');
+  const verificationRequired = required || verification.length > 0;
   return {
-    passed: attempts.length > 0 && attempts.every((a) => !a.current || a.status === 'passed'),
+    verificationRequired,
+    passed:
+      !verificationRequired ||
+      (verification.length > 0 && verification.every((row) => row.status === 'passed')),
     attempts,
   };
 }
@@ -228,5 +245,5 @@ export async function assertMachineChecks(store: Store, task: Task, required: bo
     throw new DomainError(
       'This patch needs a passing paired-machine check on its current files. Open Reviews to inspect or rerun the check.',
     );
-  return !!checks;
+  return Boolean(checks?.verificationRequired);
 }

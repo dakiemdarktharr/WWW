@@ -1768,7 +1768,12 @@ test(
         debuggerSession.peer,
         machineRun ? 'machine_run' : 'machine_use',
         machineRun
-          ? { runnerId: node.id, executable: args.command, argv: args.args }
+          ? {
+              runnerId: node.id,
+              executable: args.command,
+              argv: args.args,
+              ...(args.purpose ? { purpose: args.purpose } : {}),
+            }
           : { runnerId: node.id, operation, args },
       );
       return JSON.parse(result.contentItems?.[0]?.text || '{}');
@@ -1795,7 +1800,7 @@ test(
         assert.ok(synced.files.includes('platform-smoke.cjs'));
         assert.ok(!synced.files.includes('.env.local'));
         const args = { command: 'node', args: ['platform-smoke.cjs'] };
-        const failed = await machine('run', args);
+        const failed = await machine('run', { ...args, purpose: 'diagnostic' });
         assert.equal(failed.platform, 'darwin');
         assert.equal(failed.code, 1);
         assert.match(failed.stderr, /registration/);
@@ -1832,6 +1837,15 @@ test(
       await mkdir(path.dirname(file), { recursive: true });
       await writeFile(file, 'export const passed = 1;\n');
       await machine('sync');
+      const diagnostic = await machine('run', {
+        command: 'node',
+        args: ['-e', 'process.exit(1)'],
+        purpose: 'diagnostic',
+      });
+      assert.equal(diagnostic.code, 1);
+      const diagnosed = (await workspace.reviewDiff(debuggerSession.task.id)).machineChecks!;
+      assert.equal(diagnosed.passed, false, 'a diagnostic alone cannot open paired review');
+      assert.equal(diagnosed.attempts[0]?.purpose, 'diagnostic');
       const prior = await machine('run', {
         command: 'node',
         args: [
@@ -1876,15 +1890,18 @@ test(
       await waitForVerification();
       const stale = (await workspace.reviewDiff(taskId)).machineChecks!;
       assert.equal(stale.attempts.at(-1)?.status, 'stale');
-      const failed = await workspace.repeatMachineCheck(taskId, stale.attempts[0].id);
+      const verificationId = stale.attempts.at(-1)!.id;
+      const failed = await workspace.repeatMachineCheck(taskId, verificationId);
       assert.equal(failed.machineChecks?.attempts.at(-1)?.status, 'failed');
       await waitForVerification();
       await writeFile(
         path.join(debuggerSession.task.worktree!, 'src/platform-smoke.ts'),
         'export const passed = 1; // verified update\n',
       );
-      const passed = await workspace.repeatMachineCheck(taskId, stale.attempts[0].id);
+      const passed = await workspace.repeatMachineCheck(taskId, verificationId);
       assert.ok(passed.machineChecks?.passed);
+      assert.equal(passed.machineChecks.attempts[0].status, 'failed');
+      assert.equal(passed.machineChecks.attempts[0].purpose, 'diagnostic');
     }
     {
       let review: SharedDelivery | undefined;

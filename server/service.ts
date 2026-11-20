@@ -1562,6 +1562,7 @@ export class Workspace {
       evidence: row.evidence,
       proof: row.proof,
       runnerId: row.runnerId,
+      purpose: row.purpose ?? 'verification',
       fingerprint: this.store.get<{ fingerprint: string }>('machineCheckSigner', row.runnerId)
         .fingerprint,
     };
@@ -1616,17 +1617,13 @@ export class Workspace {
       const grant = runner.execution!;
       if (!grant.fullAccess || Date.parse(grant.expiresAt) <= Date.now())
         throw new DomainError('The original full-access grant is no longer active.');
-      const attempt = beginMachineCheck(
-        this.store,
-        task,
-        runner,
-        grant,
-        row.repeat,
-        runner.capabilities.recoverableChecks
+      const attempt = beginMachineCheck(this.store, task, runner, grant, row.repeat, {
+        delivery: runner.capabilities.recoverableChecks
           ? { clientId: session.id, expiresAt: grant.expiresAt }
           : undefined,
-        this.runners.epoch,
-      );
+        preparingEpoch: this.runners.epoch,
+        purpose: row.purpose,
+      });
       if (requestId)
         this.store.put(requests, { id: requestId, source: checkId, attemptId: attempt.id });
       return { attempt };

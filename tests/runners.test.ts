@@ -9,7 +9,11 @@ import { Workspace } from '../server/service.ts';
 import { MachineAgent } from '../server/runner-agent.ts';
 import { MachineExecutor } from '../server/machine-execution.ts';
 import { checkRecoveryProtocol } from '../server/machine-check-outbox.ts';
-import { beginMachineCheck, inspectMachineChecks } from '../server/machine-checks.ts';
+import {
+  assertMachineChecks,
+  beginMachineCheck,
+  inspectMachineChecks,
+} from '../server/machine-checks.ts';
 import type { RunnerEvent } from '../server/runners.ts';
 import { CodexClient } from '../server/codex.ts';
 import { git } from '../server/git.ts';
@@ -87,6 +91,41 @@ test('remote file transfer rejects traversal, out-of-scope edits, stale bases an
   assert.equal(await readFile(path.join(repo, 'safe.txt'), 'utf8'), 'local edit');
 });
 
+test('a diagnostic cannot create or satisfy a verification requirement', async (t) => {
+  const { root, store } = await fixture(t);
+  const project = store.put('project', {
+    id: randomUUID(),
+    name: 'Local fixture',
+    path: root,
+    goal: '',
+    createdAt: new Date().toISOString(),
+  } satisfies Project);
+  const task = store.addTask({
+    projectId: project.id,
+    title: 'Local diagnostic fixture',
+    description: '',
+    kind: 'code',
+    priority: 'medium',
+    dependsOn: [],
+    scope: ['README.md'],
+    acceptance: '',
+    status: 'ready',
+  });
+  beginMachineCheck(
+    store,
+    task,
+    { id: randomUUID(), name: 'Fixture runner' },
+    { id: randomUUID(), platform: process.platform, arch: process.arch },
+    { command: 'node', args: ['--version'], timeoutMs: 1000 },
+    { purpose: 'diagnostic' },
+  );
+  const report = await inspectMachineChecks(store, task, false);
+  assert.equal(report?.attempts[0].purpose, 'diagnostic');
+  assert.equal(report?.passed, true);
+  assert.equal(await assertMachineChecks(store, task, false), false);
+  await assert.rejects(assertMachineChecks(store, task, true), /passing paired-machine check/);
+});
+
 for (const shared of ['active', 'ended', 'replaced'] as const) {
   test(`a delayed signed machine result checks its original Shared Groups job when ${shared}`, async (t) => {
     const { host, store, root } = await fixture(t);
@@ -141,7 +180,7 @@ for (const shared of ['active', 'ended', 'replaced'] as const) {
         { id: node.id, name: 'Paired machine fixture' },
         grant,
         recipe,
-        { clientId, expiresAt },
+        { delivery: { clientId, expiresAt } },
       );
       const result = await executor.perform(check.id, {
         ...operation,
