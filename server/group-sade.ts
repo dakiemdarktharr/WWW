@@ -520,13 +520,7 @@ export class GroupSade {
       )
       .all(group.id)
       .reverse()
-      .map((row) => {
-        const run = JSON.parse(String(row.data)) as Run;
-        return {
-          ...run,
-          jobs: run.jobs.map(({ canReviseReview, reviewRevision, rejectedDigest, ...job }) => job),
-        };
-      });
+      .map((row) => JSON.parse(String(row.data)) as Run);
   }
   private usable(grant: Grant, group: SharedGroup, checkBudget = true) {
     let device;
@@ -557,16 +551,21 @@ export class GroupSade {
     );
   }
   view(group: SharedGroup, ownerId?: string) {
-    const grants = this.grants(group);
+    const grants = new Map(
+      this.grants(group)
+        .filter((grant) => this.usable(grant, group, false))
+        .map((grant) => [grant.id, grant]),
+    );
     return {
       supportsReferencedMessage: true as const,
-      sadeGrants: grants
-        .filter((grant) => this.usable(grant, group, false))
-        .map(({ deviceId, sharingId, revoked, ...view }) => view),
-      sadeRuns: this.runs(group).map(
-        ({ authorId, content, replyTo, roster, readOnly, unavailableGrants, ...run }) => ({
+      sadeGrants: [...grants.values()].map(({ deviceId, sharingId, revoked, ...view }) => view),
+      sadeRuns: this.runs(group).map((stored) => {
+        // Chat may stay open when all desktops stop polling.
+        this.stopInvalidJob(stored, (id) => grants.get(id));
+        const { authorId, content, replyTo, roster, readOnly, unavailableGrants, ...run } = stored;
+        return {
           ...run,
-          canAnswer: ownerId === authorId,
+          canAnswer: ownerId === authorId && !final(stored),
           jobs: run.jobs.map(
             ({
               deadline,
@@ -576,6 +575,9 @@ export class GroupSade {
               change,
               reviewOf,
               reviewGrantId,
+              canReviseReview,
+              reviewRevision,
+              rejectedDigest,
               reviewedDigest,
               clarification,
               portable,
@@ -594,17 +596,12 @@ export class GroupSade {
                 (deadline || 0) > this.now() &&
                 (job.updateCount || 0) < maxTaskUpdates &&
                 run.state === 'running' &&
-                this.canUpdate(
-                  group,
-                  authorId,
-                  grants.find((grant) => grant.id === job.grantId),
-                  ownerId,
-                ),
+                this.canUpdate(group, authorId, grants.get(job.grantId), ownerId),
               ),
             }),
           ),
-        }),
-      ),
+        };
+      }),
     };
   }
   private canUpdate(
@@ -1024,6 +1021,27 @@ export class GroupSade {
     }
     this.store.put('sharedSadeRun', run);
   }
+  private stopInvalidJob(run: Run, authorizedGrant: (id: string) => Grant | undefined) {
+    if (final(run)) return false;
+    const now = this.now();
+    for (const job of run.jobs) {
+      const needsTurn = job.state === 'queued' || job.state === 'waiting';
+      const holdsLease = job.state === 'running' || job.state === 'reviewing';
+      if (!needsTurn && !holdsLease) continue;
+      const grant = authorizedGrant(job.grantId);
+      const reason = !grant
+        ? 'The assigned teammate’s project grant ended.'
+        : needsTurn && grant.used >= grant.turns
+          ? 'The assigned teammate has no granted turns left.'
+          : holdsLease && (job.deadline || 0) <= now
+            ? 'The assigned desktop lost contact before completing its task.'
+            : undefined;
+      if (!reason) continue;
+      this.block(run, job, `${reason} Work stays on its owner’s desktop.`);
+      return true;
+    }
+    return false;
+  }
   private reviseAfterReview(
     run: Run,
     source: Job,
@@ -1170,23 +1188,13 @@ export class GroupSade {
         )
       )
         continue;
-      const invalid = run.jobs.find((job) => {
-        if (!['queued', 'running', 'reviewing', 'waiting'].includes(job.state)) return false;
-        const grant = grants.get(job.grantId);
-        return (
-          !grant ||
-          !this.usable(grant, group, ['queued', 'waiting'].includes(job.state)) ||
-          (['running', 'reviewing'].includes(job.state) && (job.deadline || 0) <= this.now())
-        );
-      });
-      if (invalid) {
-        this.block(
-          run,
-          invalid,
-          'A harness grant expired, ran out of turns, was revoked, lost its group seat, or lost contact. Work stays on its owner’s desktop.',
-        );
+      if (
+        this.stopInvalidJob(run, (id) => {
+          const grant = grants.get(id);
+          return grant && this.usable(grant, group, false) ? grant : undefined;
+        })
+      )
         continue;
-      }
       const dependencies = new Map(
         run.jobs
           .filter((job) => job.state === 'queued' || awaitingDelivery(job))

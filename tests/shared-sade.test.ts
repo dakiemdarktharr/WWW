@@ -356,8 +356,8 @@ for (const kind of ['research', 'code'] as const) {
   });
 }
 
-test('a new Shared Sade request recovers an offline run once all prior leases expire', (t) => {
-  const f = fixture();
+test('a group read reports a lost desktop while the remaining lease still fences new work', (t) => {
+  const f = fixture(undefined, { turnsB: 1 });
   t.after(() => f.store.close());
   const message = {
     action: 'message',
@@ -379,6 +379,7 @@ test('a new Shared Sade request recovers an offline run once all prior leases ex
     },
   });
   const tasks = [f.poll(0).delivery!, f.poll(1).delivery!];
+  assert.equal(f.view().sadeRuns[0].state, 'running');
   const expire = (jobId: string) => {
     const record = f.store.get<{ id: string; jobs: { id: string; deadline?: number }[] }>(
       'sharedSadeRun',
@@ -390,8 +391,20 @@ test('a new Shared Sade request recovers an offline run once all prior leases ex
   const retry = { ...message, id: randomUUID(), content: 'Thử xem lại hai file giúp mình.' };
   expire(tasks[0].id);
   assert.throws(() => f.call(0, retry), /active Sade request/);
-  assert.equal(f.view().messages.length, 1);
-  assert.equal(f.view().sadeRuns[0].state, 'running');
+  const peer = f.call(1, { action: 'read', groupId: f.groupId });
+  assert.equal(peer.messages.length, 1);
+  assert.equal(peer.sadeRuns[0].state, 'blocked');
+  assert.match(peer.sadeRuns[0].error, /lost contact/);
+  assert.equal(
+    peer.sadeRuns[0].jobs.find(({ id }: { id: string }) => id === tasks[0].id)?.state,
+    'blocked',
+  );
+  assert.throws(() => f.call(0, retry), /previous Sade request is stopping/);
+  assert.throws(
+    () =>
+      f.finish(0, tasks[0].id, { kind: 'done', summary: 'Late result from the offline desktop.' }),
+    /no longer running/,
+  );
 
   expire(tasks[1].id);
   f.call(0, retry);
@@ -409,6 +422,30 @@ test('a new Shared Sade request recovers an offline run once all prior leases ex
   assert.equal(next.phase, 'plan');
   assert.equal(next.request, retry.content);
   assert.notEqual(next.id, plan.id);
+});
+
+test('a group read reports that a queued harness grant expired before it could start', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const id = randomUUID();
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id,
+    content: 'Nhờ Bếp kiểm tra hợp đồng trước nha.',
+    sade: { projectKey: key },
+  });
+  const grant = f.store.get<{ id: string; used: number; expiresAt: number }>(
+    'sharedSadeGrant',
+    f.grants[0],
+  );
+  assert.equal(grant.used, 0);
+  f.store.put('sharedSadeGrant', { ...grant, expiresAt: Date.now() - 1 });
+  const view = f.view();
+  assert.equal(view.sadeRuns[0].state, 'blocked');
+  assert.match(view.sadeRuns[0].error || '', /grant ended/);
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', grant.id).used, 0);
 });
 
 test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {

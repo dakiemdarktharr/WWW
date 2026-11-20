@@ -362,6 +362,17 @@ try {
     0,
   );
 
+  const storedRun = cloud.all<{ id: string; jobs: { id: string; deadline?: number }[] }>(
+    'sharedSadeRun',
+  )[0];
+  storedRun.jobs.find(({ id }) => id === task.id)!.deadline = Date.now() - 1;
+  cloud.put('sharedSadeRun', storedRun);
+  await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(peerProgress.getByText('Sade · blocked', { exact: true })).toBeVisible();
+  await expect(
+    peerProgress.getByRole('listitem').filter({ hasText: /^Check the current plan\s+·/ }),
+  ).toContainText('The assigned desktop lost contact');
+
   await a.page.getByRole('button', { name: 'Members', exact: true }).click();
   await a.page.getByRole('button', { name: 'Remove Bob', exact: true }).click();
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -411,7 +422,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, messages, task updates and read receipts, reload persistence, membership revocation, Codex/Gemini login and skills loading. No model turns.',
+    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, messages, task updates and read receipts, offline Sade status, reload persistence, membership revocation, Codex/Gemini login and skills loading. No model turns.',
   );
 } finally {
   await browser.close();
