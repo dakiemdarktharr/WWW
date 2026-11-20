@@ -35,6 +35,10 @@ async function preflight() {
   const system32 = path.join(systemRoot, 'System32');
   const run = promisify(execFile);
   phase = 'signature';
+  // The workflow shell uses PowerShell 7. Let Windows PowerShell load its own built-in modules.
+  const signatureEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !/^PSModulePath$/i.test(name)),
+  );
   await run(
     path.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     [
@@ -44,7 +48,7 @@ async function preflight() {
       "$ErrorActionPreference = 'Stop'; $signature = Get-AuthenticodeSignature -LiteralPath $env:KIVUNO_PREFLIGHT_BINARY; if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(?i)(^|,\s*)(CN|O)=Google LLC(,|$)') { exit 1 }",
     ],
     {
-      env: { ...process.env, KIVUNO_PREFLIGHT_BINARY: command },
+      env: { ...signatureEnv, KIVUNO_PREFLIGHT_BINARY: command },
       timeout: 60_000,
       windowsHide: true,
     },
