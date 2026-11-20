@@ -283,9 +283,10 @@ export async function createTitleScene(
     host.dataset.rotation = `${rotationX.value.toFixed(4)},${rotationY.value.toFixed(4)}`;
     renderer.render(world, camera);
   }
-  function tick(time: number) {
+  function tick() {
     frame = 0;
     if (disposed || !visible || document.hidden) return;
+    const time = performance.now();
     const dt = previousTime ? (time - previousTime) / 1000 : 1 / 60;
     previousTime = time;
     if (reduced.matches) {
@@ -323,7 +324,8 @@ export async function createTitleScene(
   function reset() {
     targetX = 0;
     targetY = 0;
-    previousTime = 0;
+    // Count a delayed first frame from the input that started the return.
+    previousTime = performance.now();
     requestPaint();
   }
   function release() {
