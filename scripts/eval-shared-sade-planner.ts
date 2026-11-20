@@ -448,6 +448,7 @@ const externalReply: unknown = externalPath
 type SavedRun = {
   model?: string;
   digest?: string;
+  handoffDeliverables?: true;
   toolsSha256: string;
   rows: {
     id: string;
@@ -462,6 +463,8 @@ type SavedRun = {
   }[];
 };
 const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
+// Replay the original prompt while applying today's coordinator to the saved plan.
+const useHandoffDeliverables = !saved || saved.handoffDeliverables === true;
 const plannerTools =
   values['owner-handoff'] ||
   values['frontend-style'] ||
@@ -622,6 +625,7 @@ async function withGroup<T>(
             ? { reviewedRevisionFiles: true, unchangedRevisionScopes: true }
             : {}),
           ...(namedHandoff ? { handoffAssignments: true } : {}),
+          ...(namedHandoff && useHandoffDeliverables ? { handoffDeliverables: true } : {}),
           ...(ownerRouting ? { readAssignment: true } : {}),
         }) as { delivery?: SharedDelivery }
       ).delivery;
@@ -666,6 +670,14 @@ async function withGroup<T>(
       } else {
         assert.deepEqual(producer, { grantId: grants[0] });
         assert.deepEqual(receiver, { grantId: grants[1] });
+      }
+      if (useHandoffDeliverables) {
+        const files = expected?.kind === 'plan' ? expected.files : workshop;
+        assert.deepEqual(delivery.handoffDeliverables, {
+          backend: message.includes(files.backend) ? { scope: files.backend } : {},
+          codebase: message.includes(files.tests) ? { scope: files.tests } : {},
+          defensiveReview: true,
+        });
       }
     }
     if (fixtureRoster) {
@@ -1368,9 +1380,13 @@ function plannerInput(delivery: SharedDelivery) {
     const approved = JSON.stringify({
       architecture: ref(assignments.producer),
       frontend: ref(assignments.receiver),
+      ...delivery.handoffDeliverables,
     });
+    const supportingWork = delivery.handoffDeliverables
+      ? ' Include separate edit-files tasks keyed backend and codebase after architecture. Add one independent review-read-only task (by auto) after frontend and backend with both of their scopes.'
+      : '';
     return {
-      prompt: `Use these coordinator-approved handoff bindings, even if the advisory context below differs: ${approved}. Return a plan with separate writing tasks keyed architecture and frontend, with frontend depending on architecture. Use each binding's by ref, with fallback none. Where the binding contains a scope, that exact file is the only scope for its task. Do not ask for confirmation of these grants.\n\n${prompt}`,
+      prompt: `Use these coordinator-approved handoff bindings, even if the advisory context below differs: ${approved}. Return a plan with separate writing tasks keyed architecture and frontend, with frontend depending on architecture. Use each binding's by ref, with fallback none. Where the binding contains a scope, that exact file is the only scope for its task. Do not ask for confirmation of these grants.${supportingWork}\n\n${prompt}`,
       format: handoffDraftSchema,
     };
   }
@@ -1836,6 +1852,9 @@ for (const plannerCase of selectedCases) {
         ...(values['frontend-style'] || values['owner-routing'] || values['handoff-planning']
           ? {
               planningPrompt: values['planning-prompt'],
+              ...(useHandoffDeliverables && (values['frontend-style'] || values['handoff-planning'])
+                ? { handoffDeliverables: true }
+                : {}),
               generation: {
                 ...generation,
                 num_predict: values['frontend-style'] || values['handoff-planning'] ? 1600 : 768,

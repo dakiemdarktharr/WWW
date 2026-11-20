@@ -52,21 +52,23 @@ const patch = {
   truncated: false,
 };
 function fixture(
-  providers: readonly [ProviderId, ProviderId] = ['gemini', 'codex'],
+  providers: readonly [ProviderId, ProviderId, ProviderId?, ProviderId?] = ['gemini', 'codex'],
   options: {
     grantB?: boolean;
     grantC?: boolean;
+    grantD?: true;
     ownerNameC?: string;
     turnsA?: number;
     turnsB?: number;
     mac?: boolean;
     key?: string;
     members?: string[];
-    names?: [string, string, string?];
+    names?: [string, string, string?, string?];
     patchHandoff?: boolean;
     reviewRevision?: boolean;
     readAssignment?: true;
     handoffAssignments?: true;
+    handoffDeliverables?: true;
     taskUpdates?: boolean;
     roleA?: 'researcher';
     allowWritesB?: boolean;
@@ -78,8 +80,17 @@ function fixture(
     { id: 'owner-A', name: 'An' },
     { id: 'owner-B', name: 'Bình' },
   ];
-  if (options.grantC !== undefined)
+  if (options.grantC !== undefined || options.grantD)
     people.push({ id: 'owner-C', name: options.ownerNameC ?? 'Chi' });
+  if (options.grantD) {
+    people.push({ id: 'owner-D', name: 'Dũng' });
+    store.put('billingEntitlement', {
+      id: people[0].id,
+      ownerId: people[0].id,
+      tier: 'plus',
+      paidUntil: Date.now() + 86400000,
+    });
+  }
   const devices = people.map(() => randomUUID());
   const members = people.map((_, index) => options.members?.[index] ?? randomUUID());
   const grants = people.map(() => randomUUID());
@@ -133,7 +144,7 @@ function fixture(
         },
       ],
     });
-    if (!index || (index === 1 ? options.grantB !== false : options.grantC)) grant(index);
+    if ([true, options.grantB !== false, options.grantC, options.grantD][index]) grant(index);
   }
   const poll = (
     index: number,
@@ -155,6 +166,7 @@ function fixture(
         referencedMessage: true,
         ...(options.readAssignment ? { readAssignment: true } : {}),
         ...(options.handoffAssignments ? { handoffAssignments: true } : {}),
+        ...(options.handoffDeliverables ? { handoffDeliverables: true } : {}),
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(rosterLookup ? { rosterLookup } : {}),
@@ -982,13 +994,15 @@ test('Shared Sade reads scoped Git evidence in the same turn before planning exi
   assert.equal(await git(repo, ['status', '--porcelain']), statusBefore);
 });
 
-test('Shared Sade corrects a pinned read draft in the same provider turn', async (t) => {
-  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-read-pin-')));
+async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
+  const prefix = 'shared-sade-plan-pin-';
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
   const repo = path.join(root, 'project');
   const data = path.join(root, 'desktop');
-  const origin = 'https://example.test/shared/read-pin.git';
+  const origin = 'https://example.test/shared/plan-pin.git';
   const projectKey = canonicalSharedRepository(origin, 'main');
-  const scope = 'docs/returns.md';
+  const scope = handoff ? workshopFiles.architecture : 'docs/returns.md';
+  const turns = handoff ? 6 : 1;
   const store = new Store(':memory:');
   const workspace = new Workspace(store, data, repo);
   const member = store.addMember({ name: 'Gemini', role: 'engineer', provider: 'gemini' });
@@ -996,21 +1010,23 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
     key: projectKey,
     names: ['Gemini', 'Astra'],
     members: [member.id, randomUUID()],
-    turnsA: 1,
-    readAssignment: true,
+    turnsA: turns,
+    ...(handoff
+      ? { handoffAssignments: true, handoffDeliverables: true }
+      : { readAssignment: true }),
   });
   t.after(async () => {
     await workspace.close();
     store.close();
     cloud.store.close();
     assert.equal(path.dirname(root), await realpath(os.tmpdir()));
-    assert.ok(path.basename(root).startsWith('shared-sade-read-pin-'));
+    assert.ok(path.basename(root).startsWith(prefix));
     await rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
   await mkdir(path.join(repo, 'docs'), { recursive: true });
   await mkdir(data);
   await git(repo, ['init', '-b', 'main']);
-  await writeFile(path.join(repo, scope), 'Returns policy fixture\n');
+  await writeFile(path.join(repo, scope), 'Scoped project fixture\n');
   await git(repo, ['add', '--', scope]);
   await git(repo, [
     '-c',
@@ -1019,7 +1035,7 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
     'user.email=fixture@example.test',
     'commit',
     '-m',
-    'Add returns policy',
+    'Add scoped project fixture',
   ]);
   await git(repo, ['remote', 'add', 'origin', origin]);
   const peer = new DesktopPeer(repo, 'gemini');
@@ -1030,8 +1046,8 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
   const project = store.put('project', {
     id: randomUUID(),
     path: repo,
-    name: 'Pinned read fixture',
-    goal: 'Read the returns policy',
+    name: 'Pinned plan fixture',
+    goal: 'Check correction in a single planner turn',
     memberIds: [member.id],
     createdAt: new Date().toISOString(),
   });
@@ -1042,20 +1058,27 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
     id: cloud.grants[0],
     projectId: project.id,
     teammateId: member.id,
-    turns: 1,
-    allowWrites: false,
+    turns,
+    allowWrites: handoff,
   });
   cloud.call(0, {
     action: 'message',
     groupId: cloud.groupId,
     id: randomUUID(),
-    content: `Nhờ Astra của Bình đọc ${scope} và tóm tắt điều kiện trả hàng giúp mình.`,
+    content: handoff
+      ? fullWorkshopHandoff
+      : `Nhờ Astra của Bình đọc ${scope} và tóm tắt điều kiện trả hàng giúp mình.`,
     sade: { projectKey },
   });
   const packet = cloud.poll(0);
-  assert.equal(packet.supportsReadAssignment, true);
   const offer = packet.delivery!;
-  assert.deepEqual(offer.readAssignment, { scope, grantId: cloud.grants[1] });
+  const deliverables = { backend: {}, codebase: {}, defensiveReview: true };
+  if (handoff) {
+    assert.deepEqual(offer.handoffDeliverables, deliverables);
+  } else {
+    assert.equal(packet.supportsReadAssignment, true);
+    assert.deepEqual(offer.readAssignment, { scope, grantId: cloud.grants[1] });
+  }
   const selectedRef = sharedPlanMemberRef(offer.team.findIndex(({ id }) => id === cloud.grants[1]));
   const exchange = { action: 'exchange', active: [], delivery: offer, acknowledged: [] };
   await worker.execute(exchange);
@@ -1068,7 +1091,7 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
   const turn = { threadId: session.threadId, turnId: session.turnId };
   assert.equal(cloud.poll(0, [offer.id]).delivery, undefined);
   const prompt = peer.calls.find(({ method }) => method === 'turn/start')?.params.input[0].text;
-  assert.ok(prompt.includes(JSON.stringify({ scope, ref: selectedRef })));
+  assert.ok(prompt.includes(JSON.stringify(handoff ? deliverables : { scope, ref: selectedRef })));
   const submit = async (tool: string, args: object) => {
     peer.responded = undefined;
     await workspace.sessions.request(session.id, peer, {
@@ -1078,35 +1101,57 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
     });
     return peer.responded as DesktopPeer['responded'];
   };
-  const draft = {
-    ...work('returns', { scope: [scope] }),
-    kind: 'research-read-only',
-    preferredMemberId: selectedRef,
-    requiredPlatform: 'any',
-  };
-  assert.equal(
-    (
-      await submit('relay_submit_plan', {
-        summary: 'Read returns policy.',
-        tasks: [{ ...draft, preferredMemberId: 'auto' }],
-      })
-    )?.success,
-    false,
-  );
-  assert.equal(
-    (await submit('relay_finish_shared_without_work', { summary: 'No work.' }))?.success,
-    false,
-  );
-  assert.equal(
-    (await submit('relay_ask_shared_requester', { summary: 'Who should read the file?' }))?.success,
-    false,
-  );
-  assert.equal(store.lookup('sharedSadeLocalPlan', offer.id), undefined);
-  assert.equal(
-    (await submit('relay_submit_plan', { summary: 'Read returns policy.', tasks: [draft] }))
-      ?.success,
-    true,
-  );
+  if (handoff) {
+    const [producer, receiver] = cloud.grants.map((id) =>
+      sharedPlanMemberRef(offer.team.findIndex((entry) => entry.id === id)),
+    );
+    const tasks = pinnedHandoffTasks(workshopFiles, producer, receiver).map((task) => ({
+      ...task,
+      kind: task.kind === 'review' ? 'review-read-only' : 'edit-files',
+      preferredMemberId: task.preferredMemberId ?? 'auto',
+      requiredPlatform: 'any',
+    }));
+    const summary = 'Arrange the four scoped writes and independent defensive review.';
+    const incomplete = await submit('relay_submit_plan', {
+      summary,
+      tasks: tasks.filter(({ key }) => key !== 'codebase'),
+    });
+    assert.equal(incomplete?.success, false);
+    assert.match(incomplete?.contentItems?.[0]?.text ?? '', /codebase/i);
+    assert.equal(store.lookup('sharedSadeLocalPlan', offer.id), undefined);
+    assert.equal((await submit('relay_submit_plan', { summary, tasks }))?.success, true);
+  } else {
+    const draft = {
+      ...work('returns', { scope: [scope] }),
+      kind: 'research-read-only',
+      preferredMemberId: selectedRef,
+      requiredPlatform: 'any',
+    };
+    assert.equal(
+      (
+        await submit('relay_submit_plan', {
+          summary: 'Read returns policy.',
+          tasks: [{ ...draft, preferredMemberId: 'auto' }],
+        })
+      )?.success,
+      false,
+    );
+    assert.equal(
+      (await submit('relay_finish_shared_without_work', { summary: 'No work.' }))?.success,
+      false,
+    );
+    assert.equal(
+      (await submit('relay_ask_shared_requester', { summary: 'Who should read the file?' }))
+        ?.success,
+      false,
+    );
+    assert.equal(store.lookup('sharedSadeLocalPlan', offer.id), undefined);
+    assert.equal(
+      (await submit('relay_submit_plan', { summary: 'Read returns policy.', tasks: [draft] }))
+        ?.success,
+      true,
+    );
+  }
   await workspace.sessions.notification(session.id, peer, 'turn/completed', {
     ...turn,
     turn: { id: session.turnId, status: 'completed' },
@@ -1117,13 +1162,28 @@ test('Shared Sade corrects a pinned read draft in the same provider turn', async
   assert.equal(snapshot.results.length, 1);
   assert.equal(snapshot.results[0].jobId, offer.id);
   cloud.finish(0, offer.id, snapshot.results[0].result);
-  const task = cloud.poll(1).delivery!;
-  assert.equal(task.grantId, cloud.grants[1]);
-  assert.equal(task.task?.kind, 'research');
-  assert.deepEqual(task.task?.scope, [scope]);
+  if (handoff) {
+    const [run] = cloud.view().sadeRuns;
+    assert.equal(run.state, 'running', run.error || 'The corrected handoff should run');
+    assert.deepEqual(
+      run.jobs.filter(({ phase }) => phase === 'task').map(({ task }) => task?.key),
+      ['architecture', 'frontend', 'backend', 'codebase', 'defensive-review'],
+    );
+    assert.equal(cloud.poll(1).delivery, undefined, 'Frontend must wait for architecture');
+  } else {
+    const task = cloud.poll(1).delivery!;
+    assert.equal(task.grantId, cloud.grants[1]);
+    assert.equal(task.task?.kind, 'research');
+    assert.deepEqual(task.task?.scope, [scope]);
+  }
   assert.equal(peer.calls.filter(({ method }) => method === 'turn/start').length, 1);
   assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 1);
-});
+}
+
+test('Shared Sade corrects a pinned read draft in the same provider turn', (t) =>
+  checkSharedPlanCorrection(t));
+test('Shared Sade corrects an incomplete handoff draft in the same provider turn', (t) =>
+  checkSharedPlanCorrection(t, true));
 
 test(
   'two desktop workspaces hand off reviewed code without a Git push and verify a consented paired runner',
@@ -4297,6 +4357,7 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
   const f = fixture(['gemini', 'antigravity'], {
     names: ['Gemini', 'Astra'],
     handoffAssignments: true,
+    handoffDeliverables: true,
     patchHandoff: true,
     turnsA: 6,
     turnsB: 5,
@@ -4313,6 +4374,18 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
   };
   const run = () => f.view().sadeRuns[0];
   assert.deepEqual(f.call(0, request), f.call(0, request));
+  const discovery = f.call(0, { action: 'sade-poll', grants: [], active: [] });
+  assert.equal(discovery.supportsHandoffAssignments, true);
+  assert.equal(discovery.supportsHandoffDeliverables, true);
+  assert.equal(discovery.delivery, undefined);
+  assert.deepEqual(
+    run().jobs.map(({ phase, state }) => [phase, state]),
+    [['plan', 'queued']],
+  );
+  assert.deepEqual(
+    f.grants.map((id) => f.store.get<{ used: number }>('sharedSadeGrant', id).used),
+    [0, 0],
+  );
   assert.equal(f.poll(1).delivery, undefined);
   const planner = f.poll(0).delivery!;
   assert.equal(planner.phase, 'plan');
@@ -4329,6 +4402,11 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
   assert.deepEqual(planner.handoffAssignments, {
     producer: { grantId: gemini },
     receiver: { grantId: astra },
+  });
+  assert.deepEqual(planner.handoffDeliverables, {
+    backend: {},
+    codebase: {},
+    defensiveReview: true,
   });
   const prompt = sharedGroupPlanningPrompt(planner);
   assert.match(prompt, /frontend task after its dependencies/);
@@ -4811,6 +4889,207 @@ test('Shared Sade keeps the selected handoff receiver when the provider is unava
   assert.equal(run.jobs.find(({ task }) => task?.key === 'frontend')?.grantId, f.grants[2]);
   assert.equal(f.poll(1).delivery, undefined, 'Another Astra cannot take the pinned frontend');
   assert.deepEqual(f.turnsUsed(), [2, 0, 0]);
+});
+
+const fullWorkshopHandoff =
+  'Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của ông làm frontend, codebase, backend, cyber nhé.';
+const workshopFiles: HandoffFiles = {
+  architecture: 'docs/workshop-contract.md',
+  frontend: 'src/workshop/Form.tsx',
+  backend: 'src/workshop/signup.ts',
+  tests: 'tests/workshop-signup.test.ts',
+};
+const workshopReference = `Bản đồ dự án Workshop của Bình: cấu trúc chung nằm ở ${workshopFiles.architecture}; frontend ở ${workshopFiles.frontend}; codebase là bộ test ở ${workshopFiles.tests}; backend ở ${workshopFiles.backend}. Phần cyber là rà soát phòng thủ, chỉ đọc frontend và backend để xem thông báo lỗi có làm lộ địa chỉ email không.`;
+
+test('Shared Sade blocks the four incomplete Qwen handoff drafts before allocating tasks', async (t) => {
+  const refill = handoffPlanningCases.find(({ id }) => id.endsWith('/refill-english-transfer'))!;
+  assert.equal(refill.expected.kind, 'plan');
+  const drafts = [
+    { label: 'workshop unspecified style', message: fullWorkshopHandoff, files: workshopFiles },
+    {
+      label: 'workshop supplied style',
+      message: `${fullWorkshopHandoff} Riêng frontend dùng phong cách tối giản, nền xanh navy.`,
+      files: workshopFiles,
+    },
+    {
+      label: 'workshop delegated style',
+      message: `${fullWorkshopHandoff} Về phong cách frontend thì để Astra tự chọn luôn.`,
+      files: workshopFiles,
+    },
+    { label: 'refill English transfer', message: refill.message, files: refill.expected.files },
+  ];
+  for (const [index, { label, message, files }] of drafts.entries()) {
+    await t.test(label, (t) => {
+      const f = fixture(['gemini', 'codex', 'claude', 'antigravity'], {
+        names: ['Gemini', 'Astra', 'Claude', 'Antigravity'],
+        grantC: true,
+        grantD: true,
+      });
+      t.after(() => f.store.close());
+      const refillDraft = index === 3;
+      const replyTo = randomUUID();
+      if (!refillDraft)
+        f.call(1, {
+          action: 'message',
+          groupId: f.groupId,
+          id: replyTo,
+          content: workshopReference,
+        });
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content: message,
+        sade: { projectKey: key, ...(refillDraft ? {} : { replyTo }) },
+      });
+      const planner = f.poll(0).delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.equal(planner.handoffAssignments, undefined);
+      const [architecture, frontend, backend] = pinnedHandoffTasks(files, f.grants[0], f.grants[1]);
+      // Preserve the normalized task graph from CI run 44705873623, shards 0, 1, 2 and 9.
+      // The captured grant IDs are remapped to these four synthetic group members.
+      const tasks: PlanTask[] = [
+        { ...architecture, requiredPlatform: 'win32' },
+        { ...frontend, requiredPlatform: 'win32' },
+      ];
+      if (refillDraft) {
+        tasks.push(
+          {
+            ...backend,
+            dependsOn: ['frontend'],
+            preferredMemberId: f.grants[2],
+            requiredPlatform: 'win32',
+          },
+          work('review', {
+            kind: 'review',
+            scope: [files.backend, files.tests],
+            dependsOn: ['frontend', 'backend'],
+            preferredMemberId: f.grants[3],
+            requiredPlatform: 'win32',
+          }),
+        );
+      } else {
+        tasks.push(
+          work(index === 0 ? 'cyber' : 'cyber-check', {
+            kind: 'research',
+            scope: index === 0 ? [files.backend, files.frontend] : [files.frontend, files.backend],
+            dependsOn: ['frontend'],
+            ...(index === 0 ? { preferredMemberId: f.grants[1] } : {}),
+            ...(index === 1 ? {} : { requiredPlatform: 'win32' }),
+          }),
+        );
+        if (index === 0)
+          tasks.push(
+            work('backend-cyber-check', {
+              scope: [files.backend],
+              dependsOn: ['frontend'],
+              requiredPlatform: 'win32',
+            }),
+          );
+      }
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: { summary: 'Replay the captured incomplete handoff draft.', tasks },
+      });
+      const [run] = f.view().sadeRuns;
+      assert.equal(run.state, 'blocked');
+      assert.match(run.error || '', /backend|codebase|review/i);
+      assert.deepEqual(
+        run.jobs.map(({ phase }) => phase),
+        ['plan'],
+      );
+      for (const [owner, grantId] of f.grants.entries()) {
+        assert.equal(f.poll(owner).delivery, undefined);
+        assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', grantId).used, owner ? 0 : 1);
+      }
+    });
+  }
+});
+
+test('Shared Sade requires each explicitly requested handoff deliverable', async (t) => {
+  for (const variant of [
+    'complete',
+    'complete with transitive review prerequisites',
+    'missing backend',
+    'missing codebase',
+    'research instead of defensive review',
+    'review scope omits backend',
+    'review dependency omits backend',
+    'review assigned to writer',
+  ]) {
+    await t.test(variant, (t) => {
+      const f = ownerRoutingFixture(t, false, true);
+      f.send(fullWorkshopHandoff.replace('Astra của ông', 'Astra của Bình'), workshopReference);
+      const planner = f.poll(0).delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.equal(planner.handoffAssignments?.receiver.grantId, f.grants[1]);
+      assert.equal(planner.handoffDeliverables, undefined, 'Old clients only receive owner pins');
+      const tasks = pinnedHandoffTasks(workshopFiles, f.grants[0], f.grants[1]);
+      const review = tasks[4];
+      if (variant === 'complete with transitive review prerequisites') {
+        tasks[3].dependsOn = ['frontend', 'backend'];
+        review.dependsOn = ['codebase'];
+      }
+      if (variant === 'missing backend') {
+        tasks.splice(2, 1);
+        review.dependsOn = ['frontend'];
+      }
+      if (variant === 'missing codebase') tasks.splice(3, 1);
+      if (variant === 'research instead of defensive review') review.kind = 'research';
+      if (variant === 'review scope omits backend') review.scope = [workshopFiles.frontend];
+      if (variant === 'review dependency omits backend') review.dependsOn = ['frontend'];
+      if (variant === 'review assigned to writer') review.preferredMemberId = f.grants[1];
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: { summary: 'Check every requested handoff deliverable.', tasks },
+      });
+      const [run] = f.view().sadeRuns;
+      if (variant.startsWith('complete')) {
+        assert.equal(run.state, 'running', run.error || 'The complete handoff should run');
+        assert.deepEqual(
+          run.jobs.filter(({ phase }) => phase === 'task').map(({ task }) => task?.key),
+          ['architecture', 'frontend', 'backend', 'codebase', 'defensive-review'],
+        );
+        assert.equal(f.poll(1).delivery, undefined, 'Frontend still waits for architecture');
+        assert.equal(f.poll(0).delivery?.task?.key, 'architecture');
+        return;
+      }
+      assert.equal(run.state, 'blocked', `Expected scheduler to block ${variant}`);
+      if (variant !== 'review assigned to writer')
+        assert.match(run.error || '', /backend|codebase|review/i);
+      assert.deepEqual(
+        run.jobs.map(({ phase }) => phase),
+        ['plan'],
+      );
+      assert.equal(f.poll(0).delivery, undefined);
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+    });
+  }
+});
+
+test('Shared Sade accepts a short handoff that requests just architecture and frontend', (t) => {
+  const f = ownerRoutingFixture(t, false, true);
+  f.send('Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của Bình làm frontend.');
+  const planner = f.poll(0).delivery!;
+  assert.deepEqual(planner.handoffAssignments, {
+    producer: { grantId: f.grants[0] },
+    receiver: { grantId: f.grants[1] },
+  });
+  assert.equal(planner.handoffDeliverables, undefined);
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Arrange the two requested handoff stages.',
+      tasks: pinnedHandoffTasks(workshopFiles, f.grants[0], f.grants[1]).slice(0, 2),
+    },
+  });
+  const [run] = f.view().sadeRuns;
+  assert.equal(run.state, 'running', run.error || 'The short handoff should run');
+  assert.deepEqual(
+    run.jobs.filter(({ phase }) => phase === 'task').map(({ task }) => task?.key),
+    ['architecture', 'frontend'],
+  );
 });
 
 test('Shared Sade avoids mandatory pins for quoted or conditional handoffs and conflicting instructions', async (t) => {

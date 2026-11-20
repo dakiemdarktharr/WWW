@@ -17,6 +17,13 @@ export type SharedSadeHandoffBinding = {
 export type SharedSadeHandoffAssignment = {
   producer: SharedSadeHandoffBinding;
   receiver: SharedSadeHandoffBinding;
+  deliverables?: SharedSadeHandoffDeliverables;
+};
+
+export type SharedSadeHandoffDeliverables = {
+  backend: { scope?: string };
+  codebase: { scope?: string };
+  defensiveReview: true;
 };
 
 const name = String.raw`[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]{0,99}?`;
@@ -66,6 +73,42 @@ const reassignment = new RegExp(
 );
 const keepPath =
   /\b(?:giu nguyen|khong (?:duoc )?(?:sua|ghi|dung vao)|do not (?:edit|change|write)|leave .+ unchanged|for reference only)\b/;
+const supportRoles =
+  'backend|back[ -]end|api|codebase|bo test|tests?|kiem thu|cyber|defensive review|ra soat';
+const negatedSupport = new RegExp(
+  `\\b(?:(?:dung|bo qua|chot lai,? bo|khong (?:can|phai|duoc)|do not|skip|omit|drop|without|no) (?:(?:lam|viet|them|giao|implement|write|add|do|run) )?(?:${supportRoles})|(?:${supportRoles})(?: thi)? (?:khong can|bo qua|is out of scope|is not needed))\\b`,
+);
+const removeSupport =
+  /\bbỏ (?:backend|api|codebase|bộ test|tests?|kiểm thử|cyber|defensive review|rà soát)/iu;
+const inlineRole = new RegExp(
+  `^(?:frontend|front[ -]end|giao dien|ui|ra soat (?:bao mat )?phong thu|${supportRoles})$`,
+);
+const backendRole = /\b(?:backend|back[ -]end|api)\b/;
+const codebaseRole = /\b(?:codebase|bo test|tests?|kiem thu)\b/;
+const testFile = /(?:^|\/)(?:tests?|__tests__|specs?)\/|\.(?:test|spec)\.[^/]+$/i;
+const implementationFile = /\.(?:[cm]?[jt]s|py|go|rs|rb|php|java|kt|cs)$/i;
+const delegatedWork =
+  /\bsade (?:(?:tu|hay|co the) )?(?:chia|giao|tim nguoi|can assign|should assign|assigns?)\b|^(?:hay |please )?(?:lam|viet|them|build|implement|write|add)\b/;
+const pastWork =
+  /\b(?:tin (?:nhan )?truoc|ke hoach cu|hom qua|da lam|already (?:done|assigned)|previous (?:message|plan)|was (?:assigned|done))\b/;
+const defensiveRead = /\b(?:chi doc|doc|read[ -]only|read)\b/;
+const defensiveAction = /\b(?:ra soat|kiem tra|xem|check|inspect|review|report whether)\b/;
+const defensiveConcern =
+  /\b(?:phong thu|defensive|lo|lot|hien|expos(?:e[ds]?|ure)|leak(?:s|age)?|disclos(?:e[ds]?|ure))\b/;
+
+function inlineDeliverables(receiverWork: string) {
+  const parts = foldSharedSadeName(receiverWork)
+    .replace(/ (?:nhe|nha|please|giup minh|giup tui)$/u, '')
+    .split(/\s*,\s*(?:(?:va|and) )?|\s+(?:va|and|voi)\s+/u);
+  return (
+    parts.length === 4 &&
+    parts.every((part) => inlineRole.test(part)) &&
+    parts.some((part) => frontend.test(part)) &&
+    parts.some((part) => backendRole.test(part)) &&
+    parts.some((part) => codebaseRole.test(part)) &&
+    parts.some((part) => /^(?:cyber|defensive review|ra soat (?:bao mat )?phong thu)$/u.test(part))
+  );
+}
 
 function exactScope(work: string): string | null | undefined {
   if (/\\|(?:^|[\s`])(?:[a-z]:)?\/|:\/\//iu.test(work)) return null;
@@ -89,6 +132,86 @@ function exactScope(work: string): string | null | undefined {
   return null;
 }
 
+function requestsDefensiveReview(text: string) {
+  return (
+    !pastWork.test(text) &&
+    defensiveRead.test(text) &&
+    defensiveAction.test(text) &&
+    defensiveConcern.test(text) &&
+    (/\b(?:giao|nho|de mot nguoi|ask|have|let)\b/.test(text) ||
+      /^(?:ra soat|kiem tra|review|inspect)\b/.test(text))
+  );
+}
+
+function keepsScope(sentence: string, scopes: (string | undefined)[]) {
+  return (
+    keepPath.test(foldSharedSadeName(sentence)) &&
+    (sentence.match(fileToken) ?? []).some((file) =>
+      scopes.some((scope) => scope?.toLowerCase() === file.toLowerCase()),
+    )
+  );
+}
+
+function supportingDeliverables(
+  receiverWork: string,
+  tail: string[],
+  primaryScopes: (string | undefined)[],
+): SharedSadeHandoffDeliverables | undefined {
+  if (
+    [receiverWork, ...tail].some(
+      (sentence) =>
+        removeSupport.test(sentence) || negatedSupport.test(foldSharedSadeName(sentence)),
+    )
+  )
+    return;
+  if (inlineDeliverables(receiverWork)) return { backend: {}, codebase: {}, defensiveReview: true };
+
+  const textForRole = (sentence: string) => foldSharedSadeName(sentence.replace(fileToken, ''));
+  const reviews = tail.map(textForRole).filter(requestsDefensiveReview);
+  if (!reviews.length) return;
+  const backendReview = reviews.some((text) => backendRole.test(text));
+  const backendScopes = new Set<string>();
+  const codebaseScopes = new Set<string>();
+  let backend = false;
+  let codebase = false;
+  for (const sentence of tail) {
+    const text = textForRole(sentence);
+    if (pastWork.test(text) || !delegatedWork.test(text) || defensiveRead.test(text)) continue;
+    const scopes = [...sentence.matchAll(fileToken)].flatMap((mention) => {
+      const [file] = mention;
+      if (primaryScopes.includes(file) || exactScope(file) !== file) return [];
+      const before = foldSharedSadeName(sentence.slice(0, mention.index));
+      const after = foldSharedSadeName(sentence.slice(mention.index + file.length)).replace(
+        /^[\s`)]+/u,
+        '',
+      );
+      return referenceBefore.test(before) || referenceAfter.test(after) ? [] : [file];
+    });
+    const tests = scopes.filter((file) => testFile.test(file));
+    const source = scopes.filter((file) => !testFile.test(file) && implementationFile.test(file));
+    if (codebaseRole.test(text) || tests.length) {
+      codebase = true;
+      tests.forEach((file) => codebaseScopes.add(file));
+    }
+    // A named backend review can disambiguate a single assigned source paired with tests.
+    if (
+      backendRole.test(text) ||
+      (backendReview && !frontend.test(text) && source.length === 1 && tests.length > 0)
+    ) {
+      backend = true;
+      source.forEach((file) => backendScopes.add(file));
+    }
+  }
+  if (!backend || !codebase) return;
+  const scopes = [...backendScopes, ...codebaseScopes];
+  if (tail.some((sentence) => keepsScope(sentence, scopes))) return;
+  return {
+    backend: backendScopes.size === 1 ? { scope: [...backendScopes][0] } : {},
+    codebase: codebaseScopes.size === 1 ? { scope: [...codebaseScopes][0] } : {},
+    defensiveReview: true,
+  };
+}
+
 function revisesHandoff(tail: string[], scopes: (string | undefined)[]) {
   return tail.some((sentence) => {
     const text = foldSharedSadeName(sentence);
@@ -110,8 +233,7 @@ function revisesHandoff(tail: string[], scopes: (string | undefined)[]) {
       )
         return true;
     }
-    if (!keepPath.test(text)) return false;
-    return (sentence.match(fileToken) ?? []).some((file) => scopes.includes(file));
+    return keepsScope(sentence, scopes);
   });
 }
 
@@ -193,7 +315,8 @@ export function resolveSharedSadeHandoffAssignment(
         )
       )
         continue;
-      return { producer, receiver };
+      const deliverables = supportingDeliverables(second.work, tail, [firstScope, secondScope]);
+      return { producer, receiver, ...(deliverables ? { deliverables } : {}) };
     }
   }
 }

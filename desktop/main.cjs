@@ -691,6 +691,7 @@ async function syncSharedSadeRevocations(revocations, owner, current, context) {
 async function sharedSadeLoop(generation, owner) {
   const current = () =>
     !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
+  let capabilitiesKnown = false;
   let supportsReviewRevision = false;
   let supportsRosterLookup = false;
   let supportsReviewedRevisionFiles = false;
@@ -698,8 +699,22 @@ async function sharedSadeLoop(generation, owner) {
   let supportsReferencedMessage = false;
   let supportsReadAssignment = false;
   let supportsHandoffAssignments = false;
+  let supportsHandoffDeliverables = false;
   let supportsCapacityWait = false;
   let supportsMachineCheckWait = false;
+  const readCapabilities = ({ response, body }) => {
+    supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
+    supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
+    supportsReviewedRevisionFiles = response.ok && body.supportsReviewedRevisionFiles === true;
+    supportsUnchangedRevisionScopes = response.ok && body.supportsUnchangedRevisionScopes === true;
+    supportsReferencedMessage = response.ok && body.supportsReferencedMessage === true;
+    supportsReadAssignment = response.ok && body.supportsReadAssignment === true;
+    supportsHandoffAssignments = response.ok && body.supportsHandoffAssignments === true;
+    supportsHandoffDeliverables = response.ok && body.supportsHandoffDeliverables === true;
+    supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
+    supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
+    capabilitiesKnown = response.ok;
+  };
   let grantCursor;
   let revocationSync;
   let nextRevocationSync = 0;
@@ -751,6 +766,17 @@ async function sharedSadeLoop(generation, owner) {
           acknowledged.push({ jobId, version });
       }
       if (!snapshotCurrent()) continue;
+      // Discover the coordinator protocol before offering grants that can claim new work.
+      if (!capabilitiesKnown && !snapshot.active?.length) {
+        const probe = await cloudRequest(
+          '/api/desktop/groups',
+          { action: 'sade-poll', grants: [], active: [] },
+          owner.accessToken,
+        );
+        if (!snapshotCurrent()) continue;
+        readCapabilities(probe);
+        if (!capabilitiesKnown) throw new Error('Shared Groups capability discovery failed.');
+      }
       const { response, body } = await cloudRequest(
         '/api/desktop/groups',
         {
@@ -763,6 +789,9 @@ async function sharedSadeLoop(generation, owner) {
           ...(supportsReferencedMessage ? { referencedMessage: true } : {}),
           ...(supportsReadAssignment ? { readAssignment: true } : {}),
           ...(supportsHandoffAssignments ? { handoffAssignments: true } : {}),
+          ...(supportsHandoffAssignments && supportsHandoffDeliverables
+            ? { handoffDeliverables: true }
+            : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -776,16 +805,7 @@ async function sharedSadeLoop(generation, owner) {
         owner.accessToken,
       );
       if (!snapshotCurrent()) continue;
-      supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
-      supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
-      supportsReviewedRevisionFiles = response.ok && body.supportsReviewedRevisionFiles === true;
-      supportsUnchangedRevisionScopes =
-        response.ok && body.supportsUnchangedRevisionScopes === true;
-      supportsReferencedMessage = response.ok && body.supportsReferencedMessage === true;
-      supportsReadAssignment = response.ok && body.supportsReadAssignment === true;
-      supportsHandoffAssignments = response.ok && body.supportsHandoffAssignments === true;
-      supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
-      supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
+      readCapabilities({ response, body });
       if (response.ok) {
         await localSharedSade({
           action: 'exchange',

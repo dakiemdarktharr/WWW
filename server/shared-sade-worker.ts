@@ -24,6 +24,7 @@ import {
   projectKey,
   sharedFinish,
   sharedHandoffAssignments,
+  sharedHandoffDeliverables,
   sharedMessageReference,
   sharedPlanMemberRef,
   sharedPrerequisite,
@@ -33,6 +34,7 @@ import {
   type SharedDelivery,
   type SharedFinish,
 } from './group-sade.ts';
+import type { SharedSadeHandoffDeliverables } from './shared-sade-handoff-assignment.ts';
 import { changedTreeFiles, createWorktree, git } from './git.ts';
 import { inspectSharedGit } from './shared-sade-git.ts';
 import { resolveProviderPath } from './provider-files.ts';
@@ -165,6 +167,7 @@ function sharedGroupContext(delivery: SharedDelivery) {
         ? { scope: assignment.scope, ref: sharedPlanMemberRef(assignmentIndex) }
         : undefined,
     requiredHandoffAssignments: producer && receiver ? { producer, receiver } : undefined,
+    requiredHandoffDeliverables: producer && receiver ? delivery.handoffDeliverables : undefined,
     task: delivery.task,
     clarification: delivery.clarification,
     prerequisites: delivery.prerequisites.map(
@@ -227,7 +230,11 @@ When the sender asks to execute on a specific OS, set requiredPlatform to darwin
   const handoffInstructions = delivery.handoffAssignments
     ? "\nThe coordinator resolved the two owner grants in requiredHandoffAssignments. Submit separate architecture and frontend writing tasks. Use each assignment's ref as preferredMemberId, even when the team is not listed inline, and set fallbackMemberId to none on both. Where an assignment supplies a scope, use exactly that file as its only scope. Otherwise use task key architecture for the producer or frontend for the receiver. Include the producer task key in the frontend task's dependsOn. Ask for missing project information only if it prevents planning. The two owner grants need no further confirmation."
     : '';
-  return `${instructions}${questionHint}${referenceInstructions}${assignmentInstructions}${handoffInstructions}${sharedGroupContext(delivery)}`;
+  const deliverableInstructions =
+    delivery.handoffAssignments && delivery.handoffDeliverables
+      ? '\nFollow requiredHandoffDeliverables. Plan separate backend and codebase edit-files tasks with the architecture task among their prerequisites. If a slot supplies a scope, use exactly that file as its only scope. Otherwise use task keys backend and codebase. Keep all writer scopes disjoint. Add a review-read-only task for the requested defensive check covering the frontend and backend scopes and depending on both writers. Keep the review within the requested outputs. Use defensive-review as its task key and auto as its assignee so Sade can choose an independent reviewer.'
+      : '';
+  return `${instructions}${questionHint}${referenceInstructions}${assignmentInstructions}${handoffInstructions}${deliverableInstructions}${sharedGroupContext(delivery)}`;
 }
 
 export function sharedGroupReviewPrompt(delivery: SharedDelivery) {
@@ -272,6 +279,7 @@ type Receipt = {
   planMembers?: string[];
   readAssignment?: SharedDelivery['readAssignment'];
   handoffAssignments?: SharedDelivery['handoffAssignments'];
+  handoffDeliverables?: SharedSadeHandoffDeliverables;
   sessionId?: string;
   result?: SharedFinish;
   version?: number;
@@ -312,6 +320,7 @@ const deliveryInput = z
     referencedMessage: sharedMessageReference.optional(),
     readAssignment: sharedReadAssignment.optional(),
     handoffAssignments: sharedHandoffAssignments.optional(),
+    handoffDeliverables: sharedHandoffDeliverables.optional(),
     team: z.array(
       z
         .object({
@@ -363,6 +372,10 @@ const deliveryInput = z
       message:
         'Handoff assignments require two distinct write grants in the delivered planner team.',
     },
+  )
+  .refine(
+    ({ handoffAssignments, handoffDeliverables }) => !handoffDeliverables || !!handoffAssignments,
+    { message: 'Handoff deliverables require the corresponding writer assignments.' },
   );
 export const sharedWorkerCommand = z.discriminatedUnion('action', [
   grantInput.extend({ action: z.literal('preview') }),
@@ -676,7 +689,8 @@ export class SharedSadeWorker {
       : parseSharedGroupPlan(input, receipt.planMembers || []);
     if (!this.host.store.lookup('sharedSadeLocalPlan', jobId)) {
       if (receipt.readAssignment) assertSharedReadPlan(plan, receipt.readAssignment);
-      if (receipt.handoffAssignments) assertSharedHandoffPlan(plan, receipt.handoffAssignments);
+      if (receipt.handoffAssignments)
+        assertSharedHandoffPlan(plan, receipt.handoffAssignments, receipt.handoffDeliverables);
       this.checkDraftCapabilities(jobId, plan, receipt.planMembers || []);
     }
     if (Buffer.byteLength(JSON.stringify(plan)) > 64 * 1024)
@@ -1185,6 +1199,7 @@ export class SharedSadeWorker {
             delivery.phase === 'plan' ? delivery.team.map((member) => member.id) : undefined,
           readAssignment: delivery.readAssignment,
           handoffAssignments: delivery.handoffAssignments,
+          handoffDeliverables: delivery.handoffDeliverables,
           clarified: Boolean(delivery.clarification),
           revisionHandoff: command.revisionHandoff,
           unchangedRevisionScopes: command.unchangedRevisionScopes,
@@ -1283,6 +1298,7 @@ export class SharedSadeWorker {
         reported: false,
         planMembers: undefined,
         handoffAssignments: undefined,
+        handoffDeliverables: undefined,
         updates: undefined,
       });
     if (result.kind !== 'change') this.leases.delete(jobId);

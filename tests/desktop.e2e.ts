@@ -21,10 +21,13 @@ let revoked = false;
 let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
 let sharedPolls = 0;
+const sharedCapabilityProbes: unknown[] = [];
 const rosterCapabilities: unknown[] = [];
 const revisionFileCapabilities: unknown[] = [];
 const unchangedScopeCapabilities: unknown[] = [];
 const referenceCapabilities: unknown[] = [];
+const handoffAssignmentCapabilities: unknown[] = [];
+const handoffDeliverableCapabilities: unknown[] = [];
 const sharedGrantPages: string[][] = [];
 let sharedGrantCursorSentToCloud = false;
 const reportedSharedJobs: string[] = [];
@@ -110,14 +113,20 @@ const fixture = createServer(async (request, response) => {
     if (reportedSharedJobs.length === 1) await firstSharedFinish;
     response.end('{}');
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-poll') {
-    sharedPolls++;
-    rosterCapabilities.push(payload.rosterLookup);
-    revisionFileCapabilities.push(payload.reviewedRevisionFiles);
-    unchangedScopeCapabilities.push(payload.unchangedRevisionScopes);
-    referenceCapabilities.push(payload.referencedMessage);
-    sharedGrantPages.push(payload.grants);
-    sharedGrantCursorSentToCloud ||= 'grantCursor' in payload || 'nextGrantCursor' in payload;
-    if (sharedGrantPages.length === 2) response.statusCode = 503;
+    if (!payload.grants.length && !payload.active.length) {
+      sharedCapabilityProbes.push(payload);
+    } else {
+      sharedPolls++;
+      rosterCapabilities.push(payload.rosterLookup);
+      revisionFileCapabilities.push(payload.reviewedRevisionFiles);
+      unchangedScopeCapabilities.push(payload.unchangedRevisionScopes);
+      referenceCapabilities.push(payload.referencedMessage);
+      handoffAssignmentCapabilities.push(payload.handoffAssignments);
+      handoffDeliverableCapabilities.push(payload.handoffDeliverables);
+      sharedGrantPages.push(payload.grants);
+      sharedGrantCursorSentToCloud ||= 'grantCursor' in payload || 'nextGrantCursor' in payload;
+      if (sharedGrantPages.length === 2) response.statusCode = 503;
+    }
     response.end(
       JSON.stringify({
         active: [],
@@ -127,6 +136,8 @@ const fixture = createServer(async (request, response) => {
         supportsReviewedRevisionFiles: true,
         supportsUnchangedRevisionScopes: true,
         supportsReferencedMessage: true,
+        supportsHandoffAssignments: true,
+        supportsHandoffDeliverables: true,
       }),
     );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
@@ -325,15 +336,17 @@ try {
     const pollsBeforeRevoke = sharedPolls;
     releaseFirstSharedFinish();
     await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
-    assert.equal(rosterCapabilities[0], undefined);
-    await expect.poll(() => rosterCapabilities.includes(true), { timeout: 15000 }).toBe(true);
-    assert.equal(revisionFileCapabilities[0], undefined);
-    assert.ok(revisionFileCapabilities.includes(true));
-    assert.equal(unchangedScopeCapabilities[0], undefined);
-    assert.ok(unchangedScopeCapabilities.includes(true));
-    assert.equal(referenceCapabilities[0], undefined);
-    assert.ok(referenceCapabilities.includes(true));
+    assert.deepEqual(sharedCapabilityProbes[0], { action: 'sade-poll', grants: [], active: [] });
+    assert.equal(rosterCapabilities[0], true);
+    assert.equal(revisionFileCapabilities[0], true);
+    assert.equal(unchangedScopeCapabilities[0], true);
+    assert.equal(referenceCapabilities[0], true);
+    assert.equal(handoffAssignmentCapabilities[0], true);
+    assert.equal(handoffDeliverableCapabilities[0], true);
     await expect.poll(() => sharedGrantPages.length, { timeout: 18000 }).toBeGreaterThanOrEqual(3);
+    assert.deepEqual(sharedCapabilityProbes[1], sharedCapabilityProbes[0]);
+    assert.equal(handoffAssignmentCapabilities[2], true);
+    assert.equal(handoffDeliverableCapabilities[2], true);
     assert.equal(sharedGrantPages[0].length, 32);
     assert.ok(!sharedGrantPages[0].includes(lastGrant));
     assert.ok(sharedGrantPages[1].includes(lastGrant));

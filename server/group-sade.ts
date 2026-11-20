@@ -29,6 +29,7 @@ import {
 import {
   resolveSharedSadeHandoffAssignment,
   type SharedSadeHandoffBinding,
+  type SharedSadeHandoffDeliverables,
 } from './shared-sade-handoff-assignment.ts';
 
 const id = z.string().uuid();
@@ -199,6 +200,7 @@ export const groupSadeCommands = [
       taskUpdates: z.literal(true).optional(),
       readAssignment: z.literal(true).optional(),
       handoffAssignments: z.literal(true).optional(),
+      handoffDeliverables: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
@@ -250,6 +252,7 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   unavailableGrants?: string[];
   readAssignment?: SharedSadeReadAssignment & { target?: SharedSadeAssignmentCandidate };
   handoffAssignments?: { producer: SelectedHandoff; receiver: SelectedHandoff };
+  handoffDeliverables?: SharedSadeHandoffDeliverables;
   jobs: Job[];
 };
 const referenceAuthorLimit = 100;
@@ -293,26 +296,41 @@ export const sharedHandoffAssignments = z
     message: 'The handoff needs different harness grants.',
   });
 type HandoffAssignments = z.infer<typeof sharedHandoffAssignments>;
+const handoffDeliverableScope = handoffSlot.omit({ grantId: true });
+export const sharedHandoffDeliverables = z
+  .object({
+    backend: handoffDeliverableScope,
+    codebase: handoffDeliverableScope,
+    defensiveReview: z.literal(true),
+  })
+  .strict() satisfies z.ZodType<SharedSadeHandoffDeliverables>;
 type HandoffReadiness =
   | { state: 'ready'; assignments: HandoffAssignments }
   | { state: 'waiting'; reason: string; choose?: 'producer' | 'receiver' }
   | { state: 'blocked'; reason: string };
 const handoffPlannerWait =
   'The request needs a separate granted planner turn and a turn for each handoff writer.';
-export function assertSharedHandoffPlan(plan: TeamPlan, assignments: HandoffAssignments) {
-  function writer(key: string, { grantId, scope }: z.infer<typeof handoffSlot>) {
+export function assertSharedHandoffPlan(
+  plan: TeamPlan,
+  assignments: HandoffAssignments,
+  deliverables?: SharedSadeHandoffDeliverables,
+) {
+  function writer(key: string, { grantId, scope }: { grantId?: string; scope?: string }) {
     const found = plan.tasks.filter(
-      (task) => writes(task) && (scope ? task.scope.includes(scope) : task.key === key),
+      (task) =>
+        (grantId ? writes(task) : task.kind === 'code') &&
+        (scope ? task.scope.includes(scope) : task.key === key),
     );
     const [task] = found;
     if (
       found.length !== 1 ||
-      task.preferredMemberId !== grantId ||
-      task.fallbackMemberId ||
-      (scope && task.scope.length !== 1)
+      (scope && task.scope.length !== 1) ||
+      (grantId && (task.preferredMemberId !== grantId || task.fallbackMemberId))
     )
       throw new DomainError(
-        `Pin the ${key} write to the requested harness, with its own scope and no fallback.`,
+        grantId
+          ? `Pin the ${key} write to the requested harness, with its own scope and no fallback.`
+          : `Include a separate ${key} code task with its own scope${scope ? ` of ${scope}` : ''}.`,
       );
     if (
       task.scope.includes('.') ||
@@ -326,8 +344,39 @@ export function assertSharedHandoffPlan(plan: TeamPlan, assignments: HandoffAssi
   const producer = writer('architecture', assignments.producer);
   const receiver = writer('frontend', assignments.receiver);
   const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
-  if (!collectPrerequisites(receiver.dependsOn, tasks, (task) => task.dependsOn).includes(producer))
+  const prerequisites = (task: PlanTask) =>
+    collectPrerequisites(task.dependsOn, tasks, (prior) => prior.dependsOn);
+  if (!prerequisites(receiver).includes(producer))
     throw new DomainError('The frontend must depend on the architecture handoff.');
+  if (!deliverables) return;
+
+  const backend = writer('backend', deliverables.backend);
+  const codebase = writer('codebase', deliverables.codebase);
+  const requestedWrites = new Set([producer, receiver, backend, codebase]);
+  if (requestedWrites.size !== 4)
+    throw new DomainError('Use distinct tasks for architecture, frontend, backend, and codebase.');
+  if (![backend, codebase].every((task) => prerequisites(task).includes(producer)))
+    throw new DomainError('The backend and codebase must depend on the architecture handoff.');
+
+  const contains = (scope: string, target: string) =>
+    scope === target || target.startsWith(`${scope}/`);
+  const writtenScopes = [...requestedWrites].flatMap((task) => task.scope);
+  const review = plan.tasks.find((task) => {
+    if (task.kind !== 'review') return false;
+    const upstream = prerequisites(task);
+    return (
+      upstream.includes(receiver) &&
+      upstream.includes(backend) &&
+      [...receiver.scope, ...backend.scope].every((scope) =>
+        task.scope.some((reviewScope) => contains(reviewScope, scope)),
+      ) &&
+      task.scope.every((scope) => writtenScopes.some((written) => contains(written, scope)))
+    );
+  });
+  if (!review)
+    throw new DomainError(
+      'Include a read-only defensive review that follows and covers the frontend and backend, within the requested outputs.',
+    );
 }
 export type SharedDelivery = {
   id: string;
@@ -339,6 +388,7 @@ export type SharedDelivery = {
   referencedMessage?: z.infer<typeof sharedMessageReference>;
   readAssignment?: z.infer<typeof sharedReadAssignment>;
   handoffAssignments?: HandoffAssignments;
+  handoffDeliverables?: SharedSadeHandoffDeliverables;
   team: {
     id: string;
     name: string;
@@ -663,6 +713,7 @@ export class GroupSade {
           unavailableGrants,
           readAssignment,
           handoffAssignments,
+          handoffDeliverables,
           ...run
         } = stored;
         return {
@@ -996,6 +1047,7 @@ export class GroupSade {
         producer: select(handoff.producer),
         receiver: select(handoff.receiver),
       };
+      if (handoff.deliverables) run.handoffDeliverables = handoff.deliverables;
       this.resumeHandoffAssignments(run, job, grants, this.handoffReadiness(run, group, grants));
       return;
     }
@@ -2017,6 +2069,12 @@ export class GroupSade {
             ? { readAssignment: { scope: run.readAssignment.scope, grantId: assignmentGrant.id } }
             : {}),
           ...(command.handoffAssignments && handoffAssignments ? { handoffAssignments } : {}),
+          ...(command.handoffAssignments &&
+          command.handoffDeliverables &&
+          handoffAssignments &&
+          run.handoffDeliverables
+            ? { handoffDeliverables: run.handoffDeliverables }
+            : {}),
           team,
           task: job.task,
           ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
@@ -2053,6 +2111,7 @@ export class GroupSade {
       supportsReferencedMessage: true as const,
       supportsReadAssignment: true as const,
       supportsHandoffAssignments: true as const,
+      supportsHandoffDeliverables: true as const,
       supportsCapacityWait: true as const,
       supportsMachineCheckWait: true as const,
       active,
@@ -2151,7 +2210,7 @@ export class GroupSade {
         if (run.handoffAssignments) {
           const status = this.handoffReadiness(run, group, eligible);
           if (status.state !== 'ready') throw new DomainError(status.reason);
-          assertSharedHandoffPlan(plan, status.assignments);
+          assertSharedHandoffPlan(plan, status.assignments, run.handoffDeliverables);
         }
         if (run.readOnly && plan.tasks.some(writes))
           throw new DomainError(
