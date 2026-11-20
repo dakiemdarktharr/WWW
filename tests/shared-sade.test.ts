@@ -3869,6 +3869,109 @@ for (const scenario of [
   });
 }
 
+for (const [backupChoice, expectation] of [
+  ['named', 'uses the named review backup'],
+  ['none', 'keeps the pinned reviewer'],
+  ['author', 'rejects a backup owned by the author'],
+] as const) {
+  test(`a revised patch ${expectation} when the first reviewer exhausts its turns`, (t) => {
+    const f = fixture(['gemini', 'codex'], { turnsA: 5, turnsB: 1, reviewRevision: true });
+    t.after(() => f.store.close());
+    const backupProfile = randomUUID();
+    const backup = randomUUID();
+    const backupOwner = backupChoice === 'author' ? 0 : 1;
+    f.call(backupOwner, {
+      action: 'teammates',
+      groupId: f.groupId,
+      teammates: [
+        {
+          localId: f.members[backupOwner],
+          provider: backupOwner ? 'codex' : 'gemini',
+          name: backupOwner ? 'Mây' : 'Bếp',
+        },
+        { localId: backupProfile, provider: 'claude', name: 'Sổ tay' },
+      ],
+    });
+    f.call(backupOwner, {
+      action: 'sade-grant',
+      groupId: f.groupId,
+      id: backup,
+      teammateId: backupProfile,
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'reviewer',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    });
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content:
+        backupChoice === 'named'
+          ? 'Bếp sửa file rồi Mây review. Nếu Mây hết lượt thì nhờ Sổ tay.'
+          : backupChoice === 'author'
+            ? 'Bếp sửa file rồi Mây review. Nếu Mây hết lượt thì nhờ Sổ tay của Bếp.'
+            : 'Bếp sửa file rồi chỉ nhờ Mây review.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Prepare the change and preserve the requested reviewer and fallback.',
+        tasks: [
+          work('write', { kind: 'code', scope: patch.files, preferredMemberId: f.grants[0] }),
+          work('audit', {
+            kind: 'review',
+            scope: patch.files,
+            dependsOn: ['write'],
+            preferredMemberId: f.grants[1],
+            ...(backupChoice === 'none' ? {} : { fallbackMemberId: backup }),
+          }),
+        ],
+      },
+    });
+    const writer = f.poll(0).delivery!;
+    f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'Initial change.' });
+    const review = f.poll(1, [], [f.grants[1], backup]).delivery!;
+    assert.equal(review.grantId, f.grants[1]);
+    const verdict = {
+      kind: 'review',
+      verdict: 'changes',
+      summary: 'Adjust the boundary.',
+    } as const;
+    f.finish(1, review.id, verdict);
+    if (backupChoice !== 'named') {
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      assert.equal(f.poll(1, [], [backup]).delivery, undefined);
+      assert.equal(f.poll(0, [writer.id], [f.grants[0], backup]).delivery, undefined);
+      return;
+    }
+
+    const revision = f.poll(0, [writer.id]).delivery!;
+    assert.equal(revision?.reviewRevision?.previousJobId, writer.id);
+    const revised = { ...patch, diff: '+export const value = 2;\n' };
+    f.finish(0, revision.id, { kind: 'change', diff: revised, summary: 'Corrected the boundary.' });
+    const second = f.poll(1, [], [f.grants[1], backup]).delivery!;
+    assert.equal(second.grantId, backup);
+    assert.equal(second.phase, 'review');
+    assert.deepEqual(second.review?.files, patch.files);
+    assert.equal(second.review?.diff, revised.diff);
+    assert.throws(() => f.finish(1, review.id, verdict), /unavailable/);
+    f.finish(1, second.id, {
+      kind: 'review',
+      verdict: 'approved',
+      summary: 'Verified the change.',
+    });
+    f.finish(0, revision.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+    for (const id of [f.grants[1], backup])
+      assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', id).used, 1);
+  });
+}
+
 test('planned patch reviews use their allocated turns and all verdicts are required', () => {
   const f = fixture(['gemini', 'codex'], { turnsB: 2 });
   try {

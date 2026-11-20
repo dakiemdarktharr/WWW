@@ -954,20 +954,55 @@ export class GroupSade {
     if (reviews.some((job) => job.state === 'running')) return false;
 
     const planned = reviews.filter((job) => job.task);
+    const reviewerGrants = this.reviewGrants(run, author, grants);
     const reviewer = planned.length
       ? undefined
-      : this.availableReviewer(run, source, group, this.reviewGrants(run, author, grants));
+      : this.availableReviewer(run, source, group, reviewerGrants);
     if (!planned.length && !reviewer) return false;
+    const reassigned = new Map<string, string>();
+    let needsReassignment = false;
     for (const grantId of new Set(planned.map((job) => job.grantId))) {
-      const grant = grants.find((entry) => entry.id === grantId);
+      const grant = reviewerGrants.find((entry) => entry.id === grantId);
+      if (!grant || !this.usable(grant, group, false)) return false;
       const completed = planned.filter((job) => job.grantId === grantId && job.state === 'done');
-      if (
-        !grant ||
-        grant.ownerId === author.ownerId ||
-        !this.usable(grant, group) ||
-        unreservedTurns(run, grant) < completed.length
-      )
-        return false;
+      if (!this.usableForRun(grant, group, run) || unreservedTurns(run, grant) < completed.length)
+        needsReassignment = true;
+    }
+    if (needsReassignment) {
+      const eligible = reviewerGrants.filter((grant) => this.usableForRun(grant, group, run));
+      const turns = new Map(
+        eligible.map((grant) => [
+          grant.id,
+          unreservedTurns(run, grant) +
+            planned.filter(
+              (job) => job.grantId === grant.id && ['queued', 'waiting'].includes(job.state),
+            ).length,
+        ]),
+      );
+      try {
+        const assignments = allocatePlan(
+          {
+            summary: 'Review the revised patch.',
+            tasks: planned.map((job) => ({
+              ...job.task!,
+              dependsOn: [],
+              fallbackMemberId: job.fallbackMemberId,
+            })),
+          },
+          eligible.map(({ id, role }) => ({ id, role })),
+          {
+            available: new Set(planned.map((job) => job.grantId)),
+            ownerByMember: new Map(eligible.map(({ id, ownerId }) => [id, ownerId])),
+            turns,
+            supports: (grantId, task) =>
+              eligible.some((grant) => grant.id === grantId && supportsTask(grant, task)),
+          },
+        );
+        for (const { key, memberId } of assignments) reassigned.set(key, memberId);
+      } catch (error) {
+        if (error instanceof DomainError) return false;
+        throw error;
+      }
     }
     const rejectedDigest = reviewDigest(source.change);
     run.jobs = run.jobs.map((job) => {
@@ -988,6 +1023,7 @@ export class GroupSade {
         return {
           ...job,
           id: randomUUID(),
+          grantId: reassigned.get(job.task!.key) ?? job.grantId,
           state: 'queued',
           reviewOf: undefined,
           deadline: undefined,
