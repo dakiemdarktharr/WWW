@@ -113,6 +113,7 @@ export const sharedReviewRevision = z
 const syncPrerequisiteSummary =
   'Sync the prerequisite Git revision into this desktop’s linked project. Sade will continue after the revision is available.';
 const capacityWaitSummary = 'Waiting for the teammate’s desktop to finish other work.';
+const machineCheckWaitSummary = 'Waiting for a passing check on the paired machine.';
 const reviewRevisionSummary = 'Revising after independent review.';
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
@@ -189,6 +190,7 @@ export const groupSadeCommands = [
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
+      waitingForMachineChecks: z.array(id).max(4).optional(),
     })
     .strict(),
   z
@@ -1183,6 +1185,7 @@ export class GroupSade {
     const held = new Set(command.active);
     const waitingForRevisions = new Set(command.waitingForRevisions);
     const waitingForCapacity = new Set(command.waitingForCapacity);
+    const waitingForMachineChecks = new Set(command.waitingForMachineChecks);
     const awaitingDelivery = (job: Job) =>
       job.state === 'running' && job.awaitingReceipt && !held.has(job.id);
     // Retry an outstanding delivery before considering newly queued work across groups.
@@ -1269,6 +1272,15 @@ export class GroupSade {
             if (job.state === 'running') {
               if (waitingForCapacity.has(job.id)) job.summary = capacityWaitSummary;
               else if (
+                waitingForMachineChecks.has(job.id) &&
+                job.phase === 'task' &&
+                writes(job.task) &&
+                grant.pairedPlatform &&
+                job.task?.requiredPlatform === grant.pairedPlatform &&
+                grant.platform !== grant.pairedPlatform
+              )
+                job.summary = machineCheckWaitSummary;
+              else if (
                 waitingForRevisions.has(job.id) &&
                 prerequisitesOf(run, job).some(
                   (prior) => prior.revision && (!prior.portable || prior.published),
@@ -1277,7 +1289,8 @@ export class GroupSade {
                 job.summary = syncPrerequisiteSummary;
               else if (
                 job.summary === syncPrerequisiteSummary ||
-                job.summary === capacityWaitSummary
+                job.summary === capacityWaitSummary ||
+                job.summary === machineCheckWaitSummary
               )
                 job.summary = job.reviewRevision ? reviewRevisionSummary : undefined;
             }
@@ -1541,6 +1554,7 @@ export class GroupSade {
       supportsUnchangedRevisionScopes: true as const,
       supportsReferencedMessage: true as const,
       supportsCapacityWait: true as const,
+      supportsMachineCheckWait: true as const,
       active,
       delivery,
       reviews,

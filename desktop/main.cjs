@@ -697,6 +697,7 @@ async function sharedSadeLoop(generation, owner) {
   let supportsUnchangedRevisionScopes = false;
   let supportsReferencedMessage = false;
   let supportsCapacityWait = false;
+  let supportsMachineCheckWait = false;
   let grantCursor;
   let revocationSync;
   let nextRevocationSync = 0;
@@ -762,6 +763,9 @@ async function sharedSadeLoop(generation, owner) {
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
           ...(supportsCapacityWait ? { waitingForCapacity: snapshot.waitingForCapacity } : {}),
+          ...(supportsMachineCheckWait
+            ? { waitingForMachineChecks: snapshot.waitingForMachineChecks }
+            : {}),
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -775,6 +779,7 @@ async function sharedSadeLoop(generation, owner) {
         response.ok && body.supportsUnchangedRevisionScopes === true;
       supportsReferencedMessage = response.ok && body.supportsReferencedMessage === true;
       supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
+      supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
       if (response.ok) {
         await localSharedSade({
           action: 'exchange',

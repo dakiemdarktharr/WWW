@@ -322,6 +322,7 @@ export class SharedSadeWorker {
   private starting = new Set<string>();
   private deferred = new Map<string, { delivery: SharedDelivery; waitingForRevision?: true }>();
   private readingChanges = new Set<string>();
+  private waitingForMachineChecks = new Set<string>();
   private notifiedUpdates = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
   constructor(private host: Workspace) {
@@ -1132,6 +1133,7 @@ export class SharedSadeWorker {
     this.planRosters.delete(jobId);
     this.deferred.delete(jobId);
     this.notifiedUpdates.delete(jobId);
+    this.waitingForMachineChecks.delete(jobId);
   }
   private startDelivery(delivery: SharedDelivery) {
     if (this.starting.has(delivery.id)) return;
@@ -1314,6 +1316,26 @@ export class SharedSadeWorker {
     }
     return pending;
   }
+  private async verifyPairedCheck(jobId: string, task: Task, receipt: Receipt) {
+    if (!receipt.machine || receipt.question) return true;
+    const checks = await inspectMachineChecks(this.host.store, task, true);
+    this.assertCurrent(jobId);
+    if (!checks?.attempts.length)
+      throw new DomainError('The paired machine has not returned a verification result.');
+    const verified = checks.attempts.findLast(
+      ({ current, status }) => current && status === 'passed',
+    );
+    if (!checks.passed || !verified) {
+      this.waitingForMachineChecks.add(jobId);
+      return false;
+    }
+    this.waitingForMachineChecks.delete(jobId);
+    this.host.store.put('sharedSadeLocalReceipt', {
+      ...this.receipt(jobId),
+      machineRun: { platform: verified.platform, code: 0, timedOut: false },
+    });
+    return true;
+  }
   private snapshot(grantCursor?: string) {
     for (const [jobId] of this.leases) {
       const receipt = this.receipt(jobId);
@@ -1341,20 +1363,12 @@ export class SharedSadeWorker {
               throw new DomainError(
                 'The revision produced no patch. Inspect the worktree locally.',
               );
-            if (receipt.machine && !receipt.question && !receipt.machineRun)
-              throw new DomainError('The paired machine has not returned a verification result.');
-            if (
-              unchanged &&
-              receipt.machine &&
-              !receipt.question &&
-              !(await inspectMachineChecks(this.host.store, task, true))?.passed
-            )
-              return;
             if (receipt.question || unchanged) {
               if (!unchanged)
                 throw new DomainError(
                   'The harness asked a question after editing. The change stays in its local worktree.',
                 );
+              if (!(await this.verifyPairedCheck(jobId, task, receipt))) return;
               const revision = receipt.checkoutRevision || task.baseCommit;
               if (!receipt.question && receipt.revisionHandoff && !revision)
                 throw new DomainError('Cannot verify the Git revision of the unchanged worktree.');
@@ -1379,12 +1393,19 @@ export class SharedSadeWorker {
               );
               return;
             }
-            reviewDigest(diff);
+            const previewDigest = reviewDigest(diff);
+            if (!(await this.verifyPairedCheck(jobId, task, receipt))) return;
             if (receipt.portableReview) {
               await git(task.worktree!, ['add', '--intent-to-add', '--all']);
               this.assertCurrent(jobId);
               diff = await this.host.diff(task.id);
-              reviewDigest(diff);
+              const portableDigest = reviewDigest(diff);
+              if (
+                receipt.machine &&
+                previewDigest !== portableDigest &&
+                !(await this.verifyPairedCheck(jobId, task, receipt))
+              )
+                return;
               if (Buffer.byteLength(JSON.stringify(diff)) > maxPortableDiff)
                 throw new DomainError(
                   'The reviewed patch exceeds the Shared Groups handoff limit.',
@@ -1478,6 +1499,9 @@ export class SharedSadeWorker {
       const pending = this.deferred.get(jobId);
       return pending && !pending.waitingForRevision;
     });
+    const waitingForMachineChecks = active.filter((jobId) =>
+      this.waitingForMachineChecks.has(jobId),
+    );
     return {
       grants: [...activeGrants, ...page],
       revocations: this.pendingRevocations(),
@@ -1485,6 +1509,7 @@ export class SharedSadeWorker {
       active,
       ...(waitingForRevisions.length ? { waitingForRevisions } : {}),
       ...(waitingForCapacity.length ? { waitingForCapacity } : {}),
+      ...(waitingForMachineChecks.length ? { waitingForMachineChecks } : {}),
       readUpdates: active.flatMap((jobId) => {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];
@@ -1507,5 +1532,6 @@ export class SharedSadeWorker {
     this.leases.clear();
     this.deferred.clear();
     this.notifiedUpdates.clear();
+    this.waitingForMachineChecks.clear();
   }
 }

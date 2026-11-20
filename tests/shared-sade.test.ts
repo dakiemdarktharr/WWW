@@ -120,6 +120,7 @@ function fixture(
     readUpdates: { jobId: string; through: number }[] = [],
     waitingForRevisions?: string[],
     rosterLookup?: true,
+    waitingForMachineChecks?: string[],
   ) =>
     call(
       index,
@@ -134,6 +135,7 @@ function fixture(
         ...(rosterLookup ? { rosterLookup } : {}),
         ...(options.taskUpdates ? { taskUpdates: true, readUpdates } : {}),
         waitingForRevisions,
+        waitingForMachineChecks,
       },
       deviceId,
     ) as {
@@ -142,6 +144,7 @@ function fixture(
       supportsReviewedRevisionFiles?: true;
       supportsUnchangedRevisionScopes?: true;
       supportsCapacityWait?: true;
+      supportsMachineCheckWait?: true;
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
@@ -864,10 +867,12 @@ test(
         hello.readUpdates,
         hello.waitingForRevisions,
         true,
+        hello.waitingForMachineChecks,
       );
       assert.equal(packet.supportsReviewRevision, true);
       assert.equal(packet.supportsRosterLookup, true);
       assert.equal(packet.supportsCapacityWait, true);
+      assert.equal(packet.supportsMachineCheckWait, true);
       assert.doesNotMatch(
         JSON.stringify(packet),
         /provider-private|accessToken|tokenHash|projectId/,
@@ -1823,10 +1828,22 @@ test(
       }
     } else {
       await machine('info');
+      const file = path.join(debuggerSession.task.worktree!, 'src/platform-smoke.ts');
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, 'export const passed = 1;\n');
       await machine('sync');
-      await machine('run', { command: 'node', args: ['--version'] });
+      const prior = await machine('run', {
+        command: 'node',
+        args: [
+          '-e',
+          "process.exit(require('node:fs').readFileSync('src/platform-smoke.ts','utf8').includes('passed = 1') ? 0 : 1)",
+        ],
+      });
+      assert.equal(prior.code, 0);
       await advertise({ ...permission, id: randomUUID() });
       await assert.rejects(use('info'), /authorization changed/);
+      await advertise();
+      await writeFile(file, 'export const passed = 0;\n');
     }
     await complete(
       0,
@@ -1834,14 +1851,50 @@ test(
       debuggerSession.peer,
       'Paired OS fixture finished the smoke check.',
     );
-    if (live) {
+    if (!live) {
+      const taskId = debuggerSession.task.id;
+      const reviewerTurns = () =>
+        cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[1]).used;
+      const turnsBefore = reviewerTurns();
+      const waitForVerification = async () => {
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await pump(0);
+          const progress = cloud.view().sadeRuns.at(-1)!;
+          assert.equal(
+            progress.jobs.some((job) => job.phase === 'review'),
+            false,
+          );
+          assert.equal(reviewerTurns(), turnsBefore);
+          if (
+            progress.jobs.find((job) => job.id === debugJob.id)?.summary?.includes('passing check')
+          )
+            return;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        assert.fail('the group should show the pending paired check before dispatching review');
+      };
+      await waitForVerification();
+      const stale = (await workspace.reviewDiff(taskId)).machineChecks!;
+      assert.equal(stale.attempts.at(-1)?.status, 'stale');
+      const failed = await workspace.repeatMachineCheck(taskId, stale.attempts[0].id);
+      assert.equal(failed.machineChecks?.attempts.at(-1)?.status, 'failed');
+      await waitForVerification();
+      await writeFile(
+        path.join(debuggerSession.task.worktree!, 'src/platform-smoke.ts'),
+        'export const passed = 1; // verified update\n',
+      );
+      const passed = await workspace.repeatMachineCheck(taskId, stale.attempts[0].id);
+      assert.ok(passed.machineChecks?.passed);
+    }
+    {
       let review: SharedDelivery | undefined;
       for (let attempt = 0; attempt < 100 && !review; attempt++) {
         await pump(0);
         review = await pump(1);
         if (!review) await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      assert.deepEqual(review?.review?.files, ['path-label.cjs']);
+      assert.deepEqual(review?.review?.files, [live ? 'path-label.cjs' : 'src/platform-smoke.ts']);
+      if (!live) assert.match(review?.review?.diff || '', /verified update/);
       const check = await sessionFor(1, review!);
       await submit(1, check.session, check.peer, 'relay_submit_shared_review', {
         verdict: 'approved',
