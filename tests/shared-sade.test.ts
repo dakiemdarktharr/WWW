@@ -4,6 +4,7 @@ import { test, type TestContext } from 'node:test';
 import type { CodexSession, Project, ProviderId, PlanTask, Task } from '../shared/types.ts';
 import type { SharedSadeRun, SharedTeammate } from '../shared/collaboration.ts';
 import { SharedGroups } from '../server/collaboration.ts';
+import { DesktopIdentity, type DesktopDevice } from '../server/desktop-auth.ts';
 import {
   parseSharedGroupPlan,
   sharedPlanMemberRef,
@@ -2527,6 +2528,53 @@ test('the owning desktop reports and clears a Shared Sade capacity wait', (t) =>
   assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
   heartbeat(0);
   assert.equal(summary(), undefined);
+});
+
+test('desktop identity revocation fences an active Shared Sade task and its dependants', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const identity = new DesktopIdentity(f.store, 'https://example.test');
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Nhờ Mây đọc tài liệu rồi để Bếp kiểm tra phần bàn giao.',
+    sade: { projectKey: key },
+  });
+  const planner = f.poll(0).delivery!;
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Read the document and then check the handoff.',
+      tasks: [
+        work('read', { preferredMemberId: f.grants[1] }),
+        work('verify', { preferredMemberId: f.grants[0], dependsOn: ['read'] }),
+      ],
+    },
+  });
+  const active = f.poll(1).delivery!;
+  assert.deepEqual(f.poll(1, [active.id]).active, [active.id]);
+  identity.revokeOwner('owner-B');
+  const old = f.store.get<DesktopDevice>('desktopDevice', f.devices[1]);
+  assert.equal(old.revoked, true);
+  assert.equal(f.store.get<DesktopDevice>('desktopDevice', f.devices[0]).revoked, false);
+  assert.throws(
+    () => f.finish(1, active.id, { kind: 'done', summary: 'Late result.' }),
+    /grant is no longer valid/,
+  );
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.view().sadeRuns[0].state, 'blocked');
+
+  const signedBackIn = randomUUID();
+  f.store.put('desktopDevice', {
+    ...old,
+    id: signedBackIn,
+    tokenHash: 'new-fixture-token-hash',
+    revoked: false,
+  });
+  assert.deepEqual(f.poll(1, [active.id], [f.grants[1]], signedBackIn).active, []);
+  assert.equal(f.poll(1, [], [f.grants[1]], signedBackIn).delivery, undefined);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
 });
 
 test('the desktop polls all valid grants across project pages', async (t) => {
