@@ -208,6 +208,8 @@ try {
   await expect(heading).toHaveText('Kivuno');
   const title = page.locator('.kp-puffy-title');
   const titleStage = page.locator('.kp-puffy-stage');
+  // Leave time for Chromium to paint the final frame on software WebGL runners.
+  const expectTitleReturn = expect.configure({ timeout: 10000 });
   await expect(title).toHaveAttribute('data-title-state', 'ready', { timeout: 20000 });
   await expect(titleStage.locator('canvas')).toBeVisible();
   await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
@@ -244,21 +246,21 @@ try {
     .toBeGreaterThan(0.15);
   await page.screenshot({ path: '.local/kivuno-title-drag.png' });
   await page.mouse.up();
-  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await expectTitleReturn(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
   await titleStage.focus();
   await page.keyboard.down('ArrowRight');
   await expect
     .poll(async () => Number((await titleStage.getAttribute('data-rotation'))?.split(',')[1]))
     .toBeGreaterThan(0.05);
   await page.keyboard.up('ArrowRight');
-  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await expectTitleReturn(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
   await page.keyboard.down('ArrowLeft');
   await expect
     .poll(async () => Number((await titleStage.getAttribute('data-rotation'))?.split(',')[1]))
     .toBeLessThan(-0.05);
   await page.keyboard.press('Home');
   await page.keyboard.up('ArrowLeft');
-  await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
+  await expectTitleReturn(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
   await expect(page.getByRole('button', { name: 'Windows chưa có bản tải' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Linux chưa có bản tải' })).toBeDisabled();
   await expect(
