@@ -117,8 +117,11 @@ test('ordinary folders and unborn repositories can be prepared safely for projec
 
 test('two real worktrees isolate edits to the same file and leave the project untouched', async (t) => {
   const f = await fixture(t);
-  const a = await createWorktree(f.repo, f.storage, 'task-alpha-1111');
-  const b = await createWorktree(f.repo, f.storage, 'task-bravo-2222');
+  const origin = await createWorktree(f.repo, f.storage, 'linked-origin-0000');
+  const [a, b] = await Promise.all([
+    createWorktree(f.repo, f.storage, 'task-alpha-1111'),
+    createWorktree(origin.worktree, f.storage, 'task-bravo-2222'),
+  ]);
   await writeFile(path.join(a.worktree, 'shared.txt'), 'engineer A\n');
   await writeFile(path.join(b.worktree, 'shared.txt'), 'engineer B\n');
   assert.equal(await readFile(path.join(f.repo, 'shared.txt'), 'utf8'), 'original\n');

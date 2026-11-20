@@ -236,6 +236,8 @@ function isPrivateInitialPath(file: string) {
     /\.(?:pem|p12|pfx|key)$/i.test(basename)
   );
 }
+const worktreeCreations = new Map<string, Promise<unknown>>();
+
 export async function createWorktree(
   repo: string,
   storage: string,
@@ -245,10 +247,25 @@ export async function createWorktree(
   const target = path.resolve(storage, 'worktrees', taskId);
   if (!inside(storage, target)) throw new Error('Invalid worktree target.');
   await mkdir(path.dirname(target), { recursive: true });
+  const commonDir = await realpath(
+    path.resolve(repo, await git(repo, ['rev-parse', '--git-common-dir'])),
+  );
+  const key = process.platform === 'win32' ? commonDir.toLowerCase() : commonDir;
+  const previous = worktreeCreations.get(key);
   const branch = `relay/${taskId.slice(0, 8)}`;
-  const baseCommit = revision ?? (await git(repo, ['rev-parse', 'HEAD']));
-  await git(repo, ['worktree', 'add', '-b', branch, '--', target, baseCommit]);
-  return { branch, worktree: target, baseCommit };
+  // Git reads sibling worktree metadata while creating a new entry.
+  const creation = (async () => {
+    await previous?.catch(() => {});
+    const baseCommit = revision ?? (await git(repo, ['rev-parse', 'HEAD']));
+    await git(repo, ['worktree', 'add', '-b', branch, '--', target, baseCommit]);
+    return { branch, worktree: target, baseCommit };
+  })();
+  worktreeCreations.set(key, creation);
+  try {
+    return await creation;
+  } finally {
+    if (worktreeCreations.get(key) === creation) worktreeCreations.delete(key);
+  }
 }
 export async function taskDiff(worktree: string, baseCommit = 'HEAD'): Promise<TaskDiff> {
   if (baseCommit !== 'HEAD' && !/^[a-f0-9]{40,64}$/i.test(baseCommit))
