@@ -89,10 +89,12 @@ const cases = values.contrast
   : sharedSadeCorpus();
 const count = Math.min(limit, cases.length);
 const stride = cases.length / count;
+const windowSize = Math.floor(stride);
+// Rotate within each sampling window so repeated style blocks do not mask source situations.
 const selection = values.sample
   ? Array.from(
       { length: count },
-      (_, index) => cases[Math.floor(index * stride) + (stride >= 5 ? index % 5 : 0)],
+      (_, index) => cases[Math.floor(index * stride) + (windowSize >= 5 ? index % windowSize : 0)],
     )
   : cases.slice(0, count);
 if (shardCount > selection.length)

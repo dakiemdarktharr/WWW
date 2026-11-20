@@ -459,7 +459,7 @@ test('a group read reports that a queued harness grant expired before it could s
 test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {
   const cases = sharedSadeCorpus();
   assert.equal(new Set(cases.map((item) => item.message)).size, 1000);
-  const counts: Record<string, number> = {};
+  const passed: typeof cases = [];
   for (const item of cases) {
     const f = fixture(item.providers, {
       grantB: item.scenario !== 'no-access',
@@ -498,7 +498,7 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
           f.store.put('sharedSadeRun', current);
           assert.equal(f.poll(0).delivery, undefined);
           assert.equal(f.view().sadeRuns[0].state, 'blocked');
-          counts[item.scenario] = (counts[item.scenario] || 0) + 1;
+          passed.push(item);
           continue;
         }
         const tasks =
@@ -647,18 +647,35 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
         }
       }
       assert.doesNotMatch(JSON.stringify(f.view()), /private-token-hash|"deviceId"/);
-      counts[item.scenario] = (counts[item.scenario] || 0) + 1;
+      passed.push(item);
     } catch (error) {
       throw new Error(`${item.id}: ${item.message}`, { cause: error });
     } finally {
       f.store.close();
     }
   }
-  assert.equal(
-    Object.values(counts).reduce((sum, count) => sum + count, 0),
-    1000,
+  assert.equal(passed.length, 1000);
+  const countBy = (labelFor: (item: (typeof cases)[number]) => string) => {
+    const counts: Record<string, number> = {};
+    for (const item of passed) {
+      const label = labelFor(item);
+      counts[label] = (counts[label] ?? 0) + 1;
+    }
+    return counts;
+  };
+  console.log(
+    'Shared Sade corpus (fixture, not live model semantics):',
+    JSON.stringify({
+      passed: passed.length,
+      byScenario: countBy((item) => item.scenario),
+      byStyle: countBy((item) => item.style),
+      byProviderPlanPair: countBy((item) =>
+        item.providers
+          .map((provider, index) => `${provider} ${item.subscriptions[index]}`)
+          .join(' / '),
+      ),
+    }),
   );
-  console.log('Shared Sade corpus (fixture, not live model semantics):', JSON.stringify(counts));
 });
 
 const crossHostOrigin = process.env.KIVUNO_CROSS_HOST_ORIGIN;
@@ -1372,6 +1389,17 @@ test(
     const existingArchitecture = await git(architectureRepo, ['rev-parse', 'HEAD']);
     assert.equal(await pump(1), undefined, 'Dependency still needs local human integration');
     await pump(0);
+    const authorContract = path.join(authorWorktree, 'architecture.txt');
+    const reviewedContract = await readFile(authorContract);
+    await writeFile(authorContract, 'Contract changed after independent review\n');
+    await assert.rejects(
+      setups[0].workspace.accept(author.task.id),
+      /independent Shared Sade review of the current change/,
+    );
+    assert.equal(await git(architectureRepo, ['rev-parse', 'HEAD']), existingArchitecture);
+    assert.equal(await git(authorWorktree, ['rev-parse', 'HEAD']), authorHead);
+    assert.equal(await pump(1), undefined, 'The changed contract cannot reach dependent work');
+    await writeFile(authorContract, reviewedContract);
     const accepted = await setups[0].workspace.accept(author.task.id);
     assert.match(accepted.summary || '', /already on the project branch/);
     assert.equal(await git(architectureRepo, ['rev-parse', 'HEAD']), existingArchitecture);
@@ -1686,7 +1714,10 @@ test(
     const debug = {
       ...chat,
       id: randomUUID(),
-      content: `Dùng AI của mình để kiểm thử project trên máy ghép cặp ${pairedPlatform} của bạn.`,
+      content:
+        pairedPlatform === 'darwin'
+          ? 'Windows chạy bình thường, trên macOS bị lỗi. Dùng Mac của tôi thử đi, nhưng tôi không có tài khoản ChatGPT.'
+          : 'Dùng AI của mình để kiểm thử project trên máy Windows ghép cặp của bạn.',
     };
     cloud.call(0, debug);
     const debugPlan = (await pump(0))!;
@@ -1803,7 +1834,15 @@ test(
         const fixed = await machine('run', args);
         assert.equal(fixed.code, 0, fixed.stderr);
         assert.equal(fixed.stdout.trim(), 'darwin');
+        const beforePull = (await workspace.reviewDiff(debuggerSession.task.id)).machineChecks;
+        assert.equal(beforePull?.passed, false);
+        assert.equal(beforePull?.attempts.at(-1)?.status, 'stale');
         await machine('pull');
+        const afterPull = (await workspace.reviewDiff(debuggerSession.task.id)).machineChecks;
+        assert.equal(afterPull?.passed, true);
+        assert.equal(afterPull?.attempts.at(-1)?.status, 'passed');
+        assert.ok(afterPull?.attempts.at(-1)?.signer);
+        assert.equal(afterPull.attempts[0].signer, afterPull.attempts.at(-1)?.signer);
         assert.equal(
           await readFile(path.join(root, 'path-label.cjs'), 'utf8'),
           portablePathProgram,
@@ -1820,7 +1859,7 @@ test(
           'win32',
         );
         console.log(
-          'Windows passed, macOS reproduced the path bug, macOS passed after the fix, and Windows received the scoped change.',
+          'Windows passed; macOS diagnostic exit 1 and signed verification exit 0. Verification was stale before pulling only path-label.cjs and passed after pull.',
         );
       } finally {
         clearInterval(timer);
