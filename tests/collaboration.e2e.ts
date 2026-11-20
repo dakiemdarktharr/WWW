@@ -107,6 +107,24 @@ const fixture = async (index: number) => {
   const app = await buildApp(workspace, { distDir: path.resolve('dist') });
   apps.push(app);
   const context = await browser.newContext();
+  let heldReads: { started: () => void; resume: Promise<void>; completed: () => void } | undefined;
+  const holdGroupReads = () => {
+    let started!: () => void;
+    let release!: () => void;
+    let completed!: () => void;
+    const firstRead = new Promise<void>((resolve) => (started = resolve));
+    const resume = new Promise<void>((resolve) => (release = resolve));
+    const sent = new Promise<void>((resolve) => (completed = resolve));
+    heldReads = { started, resume, completed };
+    return {
+      firstRead,
+      sent,
+      release() {
+        heldReads = undefined;
+        release();
+      },
+    };
+  };
   await context.addInitScript(`
     sessionStorage.setItem('kivuno-guide-v3', 'seen');
     const reservedProfiles = new Set();
@@ -132,7 +150,27 @@ const fixture = async (index: number) => {
       url = new URL(req.url());
     if (url.pathname === '/__groups') {
       try {
-        await route.fulfill({ json: groups.execute(user, req.postDataJSON(), deviceId) });
+        const input = req.postDataJSON();
+        const result = await groups.execute(user, input, deviceId);
+        if (input.action === 'read' && heldReads) {
+          const held = heldReads;
+          held.started();
+          await held.resume;
+          try {
+            await route.fulfill({ json: result });
+          } finally {
+            held.completed();
+          }
+        } else if (input.action === 'message' && input.sade) {
+          const sadeGroup = await groups.execute(
+            user,
+            { action: 'read', groupId: input.groupId, after: 10000 },
+            deviceId,
+          );
+          await route.fulfill({ json: { ...(result as object), sadeGroup } });
+        } else {
+          await route.fulfill({ json: result });
+        }
       } catch (cause) {
         await route.fulfill({ status: 403, json: { error: (cause as Error).message } });
       }
@@ -189,7 +227,7 @@ const fixture = async (index: number) => {
     console.error(await page.locator('body').innerText(), errors);
     throw error;
   }
-  return { page, store, workspace, deviceId };
+  return { page, store, workspace, deviceId, holdGroupReads };
 };
 try {
   const a = await fixture(0),
@@ -262,7 +300,36 @@ try {
   await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue(projectKey);
   await a.page.getByLabel('Read-only request').check();
   await a.page.getByLabel('Message group', { exact: true }).fill('Check the current plan.');
-  await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+  const progress = a.page.getByRole('region', { name: 'Sade progress' });
+  const stale = a.holdGroupReads();
+  try {
+    await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await stale.firstRead;
+    await groups.execute(
+      users[1],
+      {
+        action: 'message',
+        groupId: group.id,
+        id: randomUUID(),
+        content: 'Concurrent group update',
+      },
+      b.deviceId,
+    );
+    await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+    await expect(progress.getByText('Sade · planning', { exact: true })).toBeVisible();
+    await expect(a.page.getByRole('log').getByText('Check the current plan.')).toHaveCount(1);
+  } finally {
+    stale.release();
+  }
+  await stale.sent;
+  await a.page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+  await expect(progress.getByText('Sade · planning', { exact: true })).toBeVisible();
+  await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const history = a.page.getByRole('log', { name: 'Group messages' });
+  await expect(history).toContainText('Concurrent group update');
+  await expect(history.getByText('Check the current plan.')).toHaveCount(1);
   await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue('');
   await expect(selectedMessage).toHaveCount(0);
   await expect(a.page.getByLabel('Read-only request')).toHaveCount(0);
@@ -294,7 +361,6 @@ try {
     jobId: firstPlan.id,
     result: { kind: 'question', summary: question },
   });
-  const progress = a.page.getByRole('region', { name: 'Sade progress' });
   const peerProgress = b.page.getByRole('region', { name: 'Sade progress' });
   for (const { page } of [a, b])
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -302,7 +368,19 @@ try {
   await expect(peerProgress.getByLabel('Reply to Sade')).toHaveCount(0);
   const clarification = progress.getByLabel('Reply to Sade');
   await clarification.fill('Alice Codex should check the plan.');
-  await progress.getByRole('button', { name: 'Send reply', exact: true }).click();
+  const staleQuestion = a.holdGroupReads();
+  try {
+    await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await staleQuestion.firstRead;
+    await progress.getByRole('button', { name: 'Send reply', exact: true }).click();
+    await expect(clarification).toHaveCount(0);
+  } finally {
+    staleQuestion.release();
+  }
+  await staleQuestion.sent;
+  await a.page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
   await expect(clarification).toHaveCount(0);
   const plan = (poll() as { delivery: SharedDelivery }).delivery;
   assert.notEqual(plan.id, firstPlan.id);

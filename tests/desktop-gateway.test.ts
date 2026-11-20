@@ -28,12 +28,14 @@ test('Vercel rewrite metadata never reaches strict desktop lookup and bridge que
   assert.equal(gatewayTarget('/api/desktop/request?path=wrong').searchParams.get('path'), 'wrong');
 });
 
-test('public gateway never forwards private drain or immutable deployment requests to shared cloud state', async () => {
+test('public gateway never forwards private coordinator routes or immutable deployment requests', async () => {
   const previous = process.env.RELAY_PUBLIC_ORIGIN;
   process.env.RELAY_PUBLIC_ORIGIN = 'https://relay.example';
   try {
     for (const [url, host] of [
       ['/api/cloud/prepare-upgrade', 'relay.example'],
+      ['/api/cloud/shared-sade/finish', 'relay.example'],
+      ['/api/gateway?relay_path=cloud/shared-sade/finish', 'relay.example'],
       ['/api/auth/get-session', 'old-deployment.vercel.app'],
       ['/api/auth/get-session', 'preview.vercel.app'],
     ]) {

@@ -17,7 +17,7 @@ export type SharedSadeReadAssignment = {
 };
 
 const qualifiedRead =
-  /^(?:(?:nhờ|nho)(?: (?:đúng|dung))? )?(?<harness>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:của|cua) (?<owner>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:đọc|doc|xem) (?<file>`?(?:[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\/)*[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\.[\p{L}\p{M}\p{N}_-]+`?)(?<tail>.*)$/iu;
+  /^(?:(?:nhờ|nho)(?: (?:đúng|dung))? )?(?<harness>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:của|cua) (?<owner>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:đọc|doc|xem) (?:(?:đúng|dung) )?(?:(?:tệp|tep|file) )?(?<file>`?(?:[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\/)*[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\.[\p{L}\p{M}\p{N}_-]+`?)(?<tail>.*)$/iu;
 const readEnding =
   /^(?: (?:nha|nhe|voi|giup (?:minh|toi|tui)))?[.!]?(?:[ ,]+(?:chi (?:doc|xem)(?: thoi)?(?:, dung sua(?: gi)?)?|dung sua(?: gi)?)[.!]?)?$/;
 const explainEnding = /^ (?:roi|va) (?:giai thich|tom tat)((?: [\p{L}\p{M}\p{N}]+)*)(.*)$/u;

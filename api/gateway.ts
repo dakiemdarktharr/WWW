@@ -3,6 +3,12 @@ import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { sharedSadeCloudFinishPath, sharedSadeCloudHeader } from '../shared/sade-cloud.ts';
+import {
+  hostedSadeBudgetMs,
+  settleHostedSade,
+  usesHostedSade,
+} from '../cloud/shared-sade-gateway.ts';
 
 export function gatewayTarget(requestUrl: string) {
   const url = new URL(requestUrl, 'https://workspace.invalid');
@@ -18,10 +24,31 @@ export function gatewayTarget(requestUrl: string) {
   return url;
 }
 
+class HostedSadeDeadline extends Error {}
+
+async function beforeSadeDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new HostedSadeDeadline()),
+          Math.max(1, deadline - Date.now()),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default async function handler(
   request: IncomingMessage & { body?: unknown },
   response: ServerResponse,
 ) {
+  const requestStarted = Date.now();
+  let hosted = false;
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   try {
@@ -31,7 +58,10 @@ export default async function handler(
       return;
     }
     const method = request.method || 'GET';
-    if (url.pathname === '/api/cloud/prepare-upgrade') {
+    if (
+      url.pathname === '/api/cloud/prepare-upgrade' ||
+      url.pathname === sharedSadeCloudFinishPath
+    ) {
       response.writeHead(403).end(JSON.stringify({ error: 'This maintenance route is private.' }));
       return;
     }
@@ -114,12 +144,17 @@ export default async function handler(
         return;
       }
     }
-    const runner = await cloudRunner(!machine);
+    const body = Buffer.concat(chunks);
+    hosted = url.pathname === '/api/desktop/groups' && method === 'POST' && usesHostedSade(body);
+    const deadline = requestStarted + hostedSadeBudgetMs;
+    const opening = cloudRunner(!machine);
+    const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
     if (!runner) {
       response.writeHead(204).end();
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
+    if (hosted) headers.set(sharedSadeCloudHeader, '1');
     // Vercel overwrites this header at its edge. Never forward a caller's
     // x-relay-client-ip header or an arbitrary proxy chain into account limits.
     const platformIp = process.env.VERCEL
@@ -138,10 +173,27 @@ export default async function handler(
       method,
       headers,
       redirect: 'manual',
-      ...(!['GET', 'HEAD'].includes(method) ? { body: Buffer.concat(chunks) } : {}),
-      signal: AbortSignal.timeout(url.pathname === '/api/events' ? 240000 : 180000),
+      ...(!['GET', 'HEAD'].includes(method) ? { body } : {}),
+      signal: AbortSignal.timeout(
+        hosted
+          ? Math.max(1, deadline - Date.now())
+          : url.pathname === '/api/events'
+            ? 240000
+            : 180000,
+      ),
     });
     response.statusCode = upstream.status;
+    if (hosted && upstream.ok) {
+      const admitted = Date.now();
+      const decision = await settleHostedSade(upstream, runner.origin, headers, deadline);
+      response.setHeader('Content-Type', 'application/json');
+      response.setHeader(
+        'Server-Timing',
+        `sade_admission;dur=${admitted - requestStarted}, sade_total;dur=${Date.now() - requestStarted}`,
+      );
+      response.end(JSON.stringify(decision));
+      return;
+    }
     for (const key of ['content-type', 'cache-control', 'x-content-type-options']) {
       const value = upstream.headers.get(key);
       if (value) response.setHeader(key, value);
@@ -167,7 +219,22 @@ export default async function handler(
         });
     }
     response.end();
-  } catch {
+  } catch (error) {
+    if (
+      !response.headersSent &&
+      hosted &&
+      (error instanceof HostedSadeDeadline ||
+        (error instanceof DOMException && error.name === 'TimeoutError'))
+    ) {
+      response.writeHead(503, { 'Content-Type': 'application/json' }).end(
+        JSON.stringify({
+          error:
+            'Chưa xác nhận được yêu cầu Sade trong thời gian cho phép. Hãy kiểm tra nhóm trước khi gửi lại.',
+          code: 'SADE_NETWORK_TIMEOUT',
+        }),
+      );
+      return;
+    }
     forgetCloudRunner();
     if (response.headersSent) {
       response.end();

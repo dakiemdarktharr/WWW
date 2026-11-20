@@ -22,6 +22,7 @@ import { providerCapabilities } from './providers.ts';
 import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
+import { sharedSadeCloudFinishPath } from '../shared/sade-cloud.ts';
 import { registerBillingRoutes } from './billing.ts';
 import { registerBankCheckout } from './bank-checkout.ts';
 import { registerBankProof } from './bank-proof.ts';
@@ -189,6 +190,7 @@ export async function buildApp(
           '/api/desktop/revoke',
           '/api/desktop/bridge/poll',
           '/api/desktop/groups',
+          sharedSadeCloudFinishPath,
           '/api/desktop/profiles',
         ].includes(pathname)
       ) {

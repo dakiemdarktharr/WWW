@@ -11,7 +11,9 @@ import {
   sharedSadeUpdates,
   type SharedDelivery,
   type SharedFinish,
+  type SharedSadeCloudOffer,
 } from '../server/group-sade.ts';
+import { planSharedSadeCloud } from '../server/shared-sade-cloud-planner.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
@@ -200,7 +202,33 @@ function fixture(
       sadeRuns: SharedSadeRun[];
       messages: { id: string }[];
     };
-  return { store, call, poll, finish, view, groupId, grant, grants, members, devices };
+  const hosted = (action: object, index = 0) =>
+    groups.execute(people[index], action, devices[index], true) as {
+      sadePlanner?: SharedSadeCloudOffer;
+      sadeGroup: { sadeRuns: SharedSadeRun[] };
+    };
+  const settle = (offer: SharedSadeCloudOffer, result: SharedFinish, index = 0) =>
+    groups.finishCloudPlan(people[index], devices[index], {
+      groupId,
+      runId: offer.runId,
+      jobId: offer.delivery.id,
+      claimId: offer.claimId,
+      result,
+    });
+  return {
+    store,
+    call,
+    poll,
+    finish,
+    view,
+    groupId,
+    grant,
+    grants,
+    members,
+    devices,
+    hosted,
+    settle,
+  };
 }
 
 function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
@@ -217,6 +245,135 @@ function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
     ...patch,
   };
 }
+
+test('hosted Qwen uses one internal receipt, keeps desktop turns, and binds an exact Vietnamese read', async (t) => {
+  const f = fixture(undefined, { turnsA: 1, turnsB: 1 });
+  t.after(() => f.store.close());
+  const input = {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Nhờ Mây của Bình đọc đúng tệp src/app.ts, đừng sửa.',
+    sade: { projectKey: key, readOnly: true },
+  };
+  const admitted = f.hosted(input);
+  const offer = admitted.sadePlanner;
+  assert.ok(offer);
+  assert.equal(admitted.sadeGroup.sadeRuns[0].state, 'planning');
+  assert.doesNotMatch(JSON.stringify(f.view()), /cloudClaim|cloudPlanner/);
+  assert.equal(f.hosted(input).sadePlanner, undefined);
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  const plan = await planSharedSadeCloud(offer.delivery, async () => ({ decision: 'plan' }));
+  assert.equal(plan.kind, 'plan');
+  assert.throws(() => f.finish(0, offer.delivery.id, plan), /receipt is unavailable/);
+  assert.throws(() => f.settle(offer, plan, 1), /receipt is unavailable/);
+  const final = f.settle(offer, plan);
+  assert.throws(() => f.settle(offer, plan), /receipt is unavailable/);
+  assert.equal(final.sadeRuns[0].state, 'running');
+  assert.equal(final.sadeRuns[0].jobs[1].grantId, f.grants[1]);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
+  assert.deepEqual(f.poll(1).delivery?.task?.scope, ['src/app.ts']);
+});
+
+test('hosted Qwen rechecks grants and does not dispatch on a changed or cancelled claim', async (t) => {
+  for (const event of ['sade-revoke', 'sade-cancel']) {
+    const f = fixture();
+    t.after(() => f.store.close());
+    const runId = randomUUID();
+    const offer = f.hosted({
+      action: 'message',
+      groupId: f.groupId,
+      id: runId,
+      content: 'Nhờ Mây của Bình đọc đúng tệp src/app.ts.',
+      sade: { projectKey: key },
+    }).sadePlanner!;
+    const plan = await planSharedSadeCloud(offer.delivery, async () => ({ decision: 'plan' }));
+    assert.equal(plan.kind, 'plan');
+    if (event === 'sade-revoke') {
+      f.call(1, { action: event, groupId: f.groupId, grantId: f.grants[1] });
+      assert.equal(f.settle(offer, plan).sadeRuns[0].state, 'blocked');
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    } else {
+      f.call(0, { action: event, groupId: f.groupId, runId });
+      assert.throws(() => f.settle(offer, plan), /no longer running/);
+      assert.equal(f.view().sadeRuns[0].state, 'cancelled');
+    }
+    assert.equal(f.poll(1).delivery, undefined);
+  }
+});
+
+test('hosted Qwen waits for the requested owner grant and resumes only the authorized task', async (t) => {
+  const f = fixture(undefined, { grantB: false, turnsA: 1 });
+  t.after(() => f.store.close());
+  const waiting = f.hosted({
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Nhờ Mây của Bình đọc đúng tệp src/app.ts, đừng sửa.',
+    sade: { projectKey: key },
+  });
+  assert.equal(waiting.sadePlanner, undefined);
+  assert.equal(waiting.sadeGroup.sadeRuns[0].jobs[0].state, 'waiting');
+  const resumed = f.hosted(
+    {
+      action: 'sade-grant',
+      groupId: f.groupId,
+      id: f.grants[1],
+      teammateId: f.members[1],
+      projectKey: key,
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 1,
+    },
+    1,
+  );
+  const offer = resumed.sadePlanner;
+  assert.ok(offer);
+  const proposal = await planSharedSadeCloud(offer.delivery, async () => ({ decision: 'plan' }));
+  assert.equal(proposal.kind, 'plan');
+  const result = f.settle(offer, proposal, 1);
+  assert.equal(result.sadeRuns[0].jobs[1].grantId, f.grants[1]);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
+});
+
+test('hosted Qwen keeps explicit owner, style, scope and ordering in the five-task workshop handoff', async (t) => {
+  const f = fixture(['gemini', 'codex', 'claude', 'antigravity'], {
+    names: ['Gemini', 'Astra', 'Claude', 'Antigravity'],
+    grantC: true,
+    grantD: true,
+  });
+  t.after(() => f.store.close());
+  const reference = randomUUID();
+  f.call(1, { action: 'message', groupId: f.groupId, id: reference, content: workshopReference });
+  const { sadePlanner: offer } = f.hosted({
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: `${fullWorkshopHandoff} Riêng frontend dùng phong cách tối giản, nền xanh navy.`,
+    sade: { projectKey: key, replyTo: reference },
+  });
+  assert.ok(offer);
+  const proposal = await planSharedSadeCloud(offer.delivery, async () => ({ decision: 'plan' }));
+  assert.equal(proposal.kind, 'plan');
+  const { sadeRuns } = f.settle(offer, proposal);
+  const tasks = sadeRuns[0].jobs.filter((job) => job.task);
+  assert.equal(tasks.length, 5);
+  const frontend = tasks.find((job) => job.task?.key === 'frontend')!;
+  assert.equal(frontend.grantId, f.grants[1]);
+  assert.deepEqual(frontend.task?.dependsOn, ['architecture']);
+  assert.match(frontend.task!.acceptance, /tối giản.*xanh navy/i);
+  const review = tasks.find((job) => job.task?.kind === 'review')!;
+  assert.deepEqual(
+    new Set(review.task?.scope),
+    new Set([workshopFiles.frontend, workshopFiles.backend]),
+  );
+  assert.match(review.task!.acceptance, /email/i);
+  assert.notEqual(review.grantId, frontend.grantId);
+});
 
 test('a lost poll response can retry the original delivery without spending another turn', (t) => {
   const f = fixture(undefined, { turnsA: 1 });

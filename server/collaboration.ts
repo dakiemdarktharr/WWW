@@ -7,12 +7,24 @@ import {
   type SharedGroup,
   type SharedMessage,
 } from '../shared/collaboration.ts';
+import { sharedSadeCloudFinishPath, sharedSadeCloudHeader } from '../shared/sade-cloud.ts';
 import { DomainError, type Store } from './store.ts';
 import { type DesktopOwner, DesktopIdentity } from './desktop-auth.ts';
-import { GroupSade, groupSadeCommands, projectKey } from './group-sade.ts';
+import { GroupSade, groupSadeCommands, projectKey, sharedFinish } from './group-sade.ts';
 import { effectiveTier } from './billing.ts';
 
 const groupId = z.string().uuid();
+const hostedFinish = z
+  .object({
+    groupId,
+    runId: groupId,
+    jobId: groupId,
+    claimId: groupId,
+    result: sharedFinish.refine(
+      ({ kind }) => kind === 'plan' || kind === 'question' || kind === 'blocked' || kind === 'done',
+    ),
+  })
+  .strict();
 const command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z
@@ -72,7 +84,7 @@ export class SharedGroups {
       "CREATE INDEX IF NOT EXISTS shared_message_group_sequence ON records(json_extract(data,'$.groupId'),json_extract(data,'$.sequence')) WHERE kind='sharedMessage'",
     );
   }
-  execute(owner: DesktopOwner, raw: unknown, deviceId?: string): unknown {
+  execute(owner: DesktopOwner, raw: unknown, deviceId?: string, cloudPlanner = false): unknown {
     const input = command.parse(raw);
     if (input.action === 'invite') {
       const group = this.store
@@ -89,13 +101,57 @@ export class SharedGroups {
         return target.then((user) => this.executeResolved(owner, input, deviceId, user));
       return this.executeResolved(owner, input, deviceId, target);
     }
+    if (
+      cloudPlanner &&
+      deviceId &&
+      ((input.action === 'message' && input.sade) ||
+        input.action === 'sade-answer' ||
+        input.action === 'sade-grant')
+    ) {
+      return this.store.transaction(() => {
+        const body = this.executeResolved(owner, input, deviceId, undefined, true);
+        const group = this.assertActiveSeat(owner.id, input.groupId);
+        const runId =
+          input.action === 'message'
+            ? input.id
+            : input.action === 'sade-answer'
+              ? input.runId
+              : undefined;
+        const offer = this.sade.claimCloudPlan(group, { ownerId: owner.id, deviceId }, runId);
+        const sadeGroup = this.groupView(group, owner.id);
+        return { ...(body as object), sadeGroup, ...(offer ? { sadePlanner: offer } : {}) };
+      });
+    }
     return this.executeResolved(owner, input, deviceId);
+  }
+  finishCloudPlan(owner: DesktopOwner, deviceId: string, raw: unknown) {
+    const { groupId, runId, jobId, claimId, result } = hostedFinish.parse(raw);
+    return this.store.transaction(() => {
+      const group = this.assertActiveSeat(owner.id, groupId);
+      this.sade.finish(
+        { ownerId: owner.id, deviceId },
+        { action: 'sade-finish', jobId, result },
+        (actualGroupId) => {
+          if (actualGroupId !== groupId) throw new DomainError('Group unavailable.', 403);
+          return group;
+        },
+        { runId, claimId },
+      );
+      return this.groupView(group, owner.id);
+    });
+  }
+  private groupView(group: SharedGroup, ownerId: string) {
+    return {
+      group: { ...group, seatLimit: this.seatLimit(group.ownerId) },
+      ...this.sade.view(group, ownerId),
+    };
   }
   private executeResolved(
     owner: DesktopOwner,
     input: z.infer<typeof command>,
     deviceId?: string,
     invitee?: DesktopOwner | null,
+    cloudPlanner = false,
   ): unknown {
     return this.store.transaction(() => {
       const actor = { ownerId: owner.id, deviceId: deviceId || '' };
@@ -256,11 +312,10 @@ export class SharedGroups {
           )
           .all(group.id, input.after || 0);
         return {
-          group: { ...group, seatLimit: this.seatLimit(group.ownerId) },
+          ...this.groupView(group, owner.id),
           messages: rows.slice(0, 100).map((row) => JSON.parse(String(row.data)) as SharedMessage),
           hasMore: rows.length > 100,
           sadeSharingId: true as const,
-          ...this.sade.view(group, owner.id),
         };
       }
       if (input.action === 'invite') {
@@ -336,7 +391,7 @@ export class SharedGroups {
           sequence: count + 1,
           ...(input.sade ? { sade: input.sade } : {}),
         } satisfies SharedMessage);
-        this.sade.start(group, message);
+        this.sade.start(group, message, cloudPlanner);
         return message;
       }
       return this.saveGroup(group);
@@ -410,6 +465,19 @@ export function registerCollaboration(
     if (++window.count > 180)
       throw new DomainError('Too many group requests. Retry in a minute.', 429);
     limits.set(owner.id, window);
-    return groups.execute(owner, request.body, deviceId);
+    return groups.execute(
+      owner,
+      request.body,
+      deviceId,
+      request.headers[sharedSadeCloudHeader] === '1',
+    );
+  });
+  app.post(sharedSadeCloudFinishPath, async (request) => {
+    const { owner, deviceId } = identity.publicDevice(
+      identity.authenticate(request.headers.authorization),
+    );
+    if (request.headers[sharedSadeCloudHeader] !== '1')
+      throw new DomainError('Sade planning receipt is unavailable.', 403);
+    return groups.finishCloudPlan(owner, deviceId, request.body);
   });
 }

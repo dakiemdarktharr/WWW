@@ -6,6 +6,9 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run build:release through npm.');
+const buildEnv = { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
+delete buildEnv.SADE_QWEN_API_KEY;
+delete buildEnv.SADE_QWEN_WORKSPACE_HOST;
 const steps = [
   ['build', [npmCli, 'run', 'build']],
   ['desktop:stage', [npmCli, 'run', 'desktop:stage']],
@@ -20,7 +23,7 @@ for (const [script, args] of steps) {
       cwd: root,
       stdio: 'inherit',
       windowsHide: true,
-      env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' },
+      env: buildEnv,
     });
     child.once('error', reject);
     child.once('exit', (code) =>

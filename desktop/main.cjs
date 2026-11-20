@@ -131,7 +131,7 @@ function publishStatus() {
   if (window && !window.isDestroyed()) window.webContents.send('relay:status-changed', status());
 }
 
-async function cloudRequest(route, body, token) {
+async function cloudRequest(route, body, token, timeoutMs = 25000) {
   const response = await fetch(identityOrigin + route, {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
@@ -141,7 +141,7 @@ async function cloudRequest(route, body, token) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: 'error',
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const raw = await response.text();
   if (Buffer.byteLength(raw) > 5 * 1024 * 1024) throw new Error('Identity response is too large.');
@@ -1106,10 +1106,17 @@ function registerIpc() {
       );
     }
     if (!current()) throw new Error('Account changed. Open your current workspace.');
+    const planning =
+      (input.action === 'message' && Boolean(cloudInput.sade)) || input.action === 'sade-answer';
     const { response, body } =
       input.action === 'sade-connect'
         ? await publishSharedSadeGrant(cloudInput, owner, current, localContext)
-        : await cloudRequest('/api/desktop/groups', cloudInput, owner.accessToken);
+        : await cloudRequest(
+            '/api/desktop/groups',
+            cloudInput,
+            owner.accessToken,
+            planning ? 1800 : undefined,
+          );
     if (identity !== owner || generation !== signInGeneration)
       throw new Error('Account changed. Open your current workspace.');
     if (response.ok && input.action === 'sade-revoke' && current())

@@ -222,6 +222,7 @@ export type SharedFinish = z.infer<typeof sharedFinish>;
 export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
+  cloudClaim?: { id: string; actor: SharedPrincipal };
   awaitingReadAssignment?: true;
   awaitingHandoffAssignments?: true;
   fallbackMemberId?: string;
@@ -246,6 +247,7 @@ type Job = SharedSadeJob & {
 type SelectedHandoff = SharedSadeHandoffBinding & { target?: SharedSadeAssignmentCandidate };
 type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
+  cloudPlanner?: true;
   content: string;
   replyTo?: string;
   roster: string[];
@@ -430,6 +432,11 @@ export type SharedDelivery = {
   acceptsUpdates?: true;
   updates?: z.infer<typeof sharedSadeUpdates>;
 };
+export type SharedSadeCloudOffer = {
+  runId: string;
+  claimId: string;
+  delivery: SharedDelivery;
+};
 export const groupReadUpdatesTool = {
   type: 'function',
   name: 'relay_read_shared_updates',
@@ -497,6 +504,11 @@ function reviewedWriters(run: Run, job: Job) {
   );
 }
 const leaseMs = 30_000;
+const cloudPlanLeaseMs = 2_000;
+const cloudPlannerConcurrency = 16;
+const cloudPlannerMinuteLimit = 12;
+const cloudPlannerOwnerDayLimit = 120;
+const cloudPlannerDayLimit = 5_000;
 // Leave time for a timed-out cloud poll and its retry before the desktop acknowledges delivery.
 const deliveryLeaseMs = 60_000;
 const grantMs = 60 * 60_000;
@@ -665,6 +677,10 @@ export class GroupSade {
         WHERE ${unfinishedRuns};
       CREATE INDEX IF NOT EXISTS shared_sade_unfinished_project ON records(json_extract(data,'$.projectKey'))
         WHERE ${unfinishedRuns};
+      CREATE TABLE IF NOT EXISTS shared_sade_cloud_usage (
+        key TEXT PRIMARY KEY, minute INTEGER NOT NULL, minute_calls INTEGER NOT NULL,
+        day INTEGER NOT NULL, day_calls INTEGER NOT NULL
+      );
     `);
   }
   private grants(group: SharedGroup) {
@@ -683,6 +699,172 @@ export class GroupSade {
       .all(group.id)
       .reverse()
       .map((row) => JSON.parse(String(row.data)) as Run);
+  }
+  private planTeam(
+    run: Run,
+    group: SharedGroup,
+    grants: Map<string, Grant>,
+  ): SharedDelivery['team'] {
+    return run.roster.flatMap((grantId) => {
+      const entry = grants.get(grantId);
+      if (!entry || run.unavailableGrants?.includes(entry.id) || !this.usable(entry, group, false))
+        return [];
+      const teammate = group.teammates.find(
+        (member) => member.ownerId === entry.ownerId && member.localId === entry.teammateId,
+      )!;
+      return [
+        {
+          id: entry.id,
+          name: entry.label,
+          provider: teammate.provider,
+          role: entry.role,
+          platform: entry.platform,
+          pairedPlatform: run.readOnly ? undefined : entry.pairedPlatform,
+          allowWrites: !run.readOnly && entry.allowWrites,
+          owner: group.people.find((person) => person.id === entry.ownerId)!.name,
+          ownedByRequester: entry.ownerId === run.authorId,
+        },
+      ];
+    });
+  }
+
+  private reserveCloudPlan(ownerId: string, now: number) {
+    const inFlight = this.store.db
+      .prepare(
+        `SELECT count(*) AS count FROM records INDEXED BY shared_sade_active
+        WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running')
+        AND json_extract(data,'$.state')='planning'
+        AND json_extract(data,'$.jobs[0].cloudClaim.id') IS NOT NULL
+        AND json_extract(data,'$.jobs[0].state')='running'
+        AND CAST(json_extract(data,'$.jobs[0].deadline') AS INTEGER)>?`,
+      )
+      .get(now);
+    if (Number(inFlight?.count) >= cloudPlannerConcurrency) return false;
+    const minute = Math.floor(now / 60_000);
+    const day = Math.floor(now / 86_400_000);
+    const key = `owner:${ownerId}`;
+    const get = this.store.db.prepare('SELECT * FROM shared_sade_cloud_usage WHERE key=?');
+    const owner = get.get(key);
+    const total = get.get('global');
+    if (
+      (owner?.minute === minute && Number(owner.minute_calls) >= cloudPlannerMinuteLimit) ||
+      (owner?.day === day && Number(owner.day_calls) >= cloudPlannerOwnerDayLimit) ||
+      (total?.day === day && Number(total.day_calls) >= cloudPlannerDayLimit)
+    )
+      return false;
+    const increment = this.store.db
+      .prepare(`INSERT INTO shared_sade_cloud_usage VALUES (?, ?, 1, ?, 1)
+      ON CONFLICT(key) DO UPDATE SET
+      minute_calls=CASE WHEN minute=excluded.minute THEN minute_calls+1 ELSE 1 END,
+      day_calls=CASE WHEN day=excluded.day THEN day_calls+1 ELSE 1 END,
+      minute=excluded.minute, day=excluded.day`);
+    increment.run(key, minute, day);
+    increment.run('global', minute, day);
+    return true;
+  }
+
+  /** Internal only. The caller holds a transaction and has authenticated the desktop. */
+  claimCloudPlan(
+    group: SharedGroup,
+    actor: SharedPrincipal,
+    runId?: string,
+  ): SharedSadeCloudOffer | undefined {
+    const run = runId
+      ? this.store.lookup<Run>('sharedSadeRun', runId)
+      : this.runs(group).find(
+          (candidate) => candidate.cloudPlanner && candidate.state === 'planning',
+        );
+    if (
+      !run?.cloudPlanner ||
+      run.groupId !== group.id ||
+      run.state !== 'planning' ||
+      (runId && run.authorId !== actor.ownerId)
+    )
+      return;
+    const job = run.jobs.find((entry) => entry.phase === 'plan' && entry.state === 'queued');
+    if (!job) return;
+    const eligible = this.grants(group).filter(
+      (grant) => grant.projectKey === run.projectKey && this.usableForRun(grant, group, run),
+    );
+    const lead = eligible.find((grant) => grant.id === job.grantId);
+    if (!lead) {
+      this.block(
+        run,
+        job,
+        'Quyền dự án của người gửi đã hết. Hãy cấp lại quyền rồi gửi yêu cầu mới.',
+      );
+      return;
+    }
+    let readAssignment: SharedDelivery['readAssignment'];
+    if (run.readAssignment) {
+      const target = this.readAssignmentGrant(run, group, eligible);
+      if (!target) {
+        this.waitForReadAssignment(run, job, this.readAccessMessage(run));
+        return;
+      }
+      readAssignment = { scope: run.readAssignment.scope, grantId: target.id };
+      if (!run.roster.includes(target.id)) run.roster.push(target.id);
+    }
+    let handoffAssignments: SharedDelivery['handoffAssignments'];
+    if (run.handoffAssignments) {
+      const status = this.handoffReadiness(run, group, eligible);
+      if (status.state === 'blocked') {
+        this.block(run, job, status.reason);
+        return;
+      }
+      if (status.state === 'waiting') {
+        this.waitForHandoffAssignments(run, job, status.reason);
+        return;
+      }
+      handoffAssignments = status.assignments;
+      for (const { grantId } of Object.values(handoffAssignments))
+        if (!run.roster.includes(grantId)) run.roster.push(grantId);
+    }
+    let referencedMessage: SharedDelivery['referencedMessage'];
+    if (run.replyTo) {
+      const reference = this.store.lookup<SharedMessage>('sharedMessage', run.replyTo);
+      if (
+        !reference ||
+        reference.groupId !== group.id ||
+        (reference.sade && reference.sade.projectKey !== run.projectKey)
+      ) {
+        this.block(run, job, 'Tin được tham chiếu không còn khả dụng.');
+        return;
+      }
+      referencedMessage = {
+        author: redact(reference.author).slice(0, referenceAuthorLimit),
+        content: redact(reference.content).slice(0, referenceContentLimit),
+      };
+    }
+    const now = this.now();
+    if (!this.reserveCloudPlan(run.authorId, now)) {
+      this.block(run, job, 'Sade đang bận hoặc đã đạt giới hạn lượt. Hãy gửi lại sau.');
+      return;
+    }
+    const claimId = randomUUID();
+    job.cloudClaim = { id: claimId, actor };
+    job.state = 'running';
+    job.deadline = now + cloudPlanLeaseMs;
+    this.store.put('sharedSadeRun', run);
+    return {
+      runId: run.id,
+      claimId,
+      delivery: {
+        id: job.id,
+        grantId: job.grantId,
+        groupId: group.id,
+        projectKey: run.projectKey,
+        phase: 'plan',
+        request: run.content,
+        referencedMessage,
+        readAssignment,
+        handoffAssignments,
+        handoffDeliverables: run.handoffDeliverables,
+        team: this.planTeam(run, group, new Map(eligible.map((grant) => [grant.id, grant]))),
+        clarification: job.clarification,
+        prerequisites: [],
+      },
+    };
   }
   private usable(grant: Grant, group: SharedGroup, checkBudget = true) {
     let device;
@@ -726,6 +908,7 @@ export class GroupSade {
         this.stopInvalidJob(stored, (id) => grants.get(id));
         const {
           authorId,
+          cloudPlanner,
           content,
           replyTo,
           roster,
@@ -741,6 +924,7 @@ export class GroupSade {
           canAnswer: ownerId === authorId && !final(stored),
           jobs: run.jobs.map(
             ({
+              cloudClaim,
               deadline,
               fallbackMemberId,
               awaitingReceipt,
@@ -835,7 +1019,7 @@ export class GroupSade {
     return eligible.find(
       (grant) =>
         grant.ownerId === run.authorId &&
-        (!pinnedGrants.includes(grant.id) || grant.turns - grant.used >= 2),
+        (run.cloudPlanner || !pinnedGrants.includes(grant.id) || grant.turns - grant.used >= 2),
     );
   }
   private readAccessMessage(run: Run, targetAvailable = false) {
@@ -938,7 +1122,7 @@ export class GroupSade {
     }
     this.requeueAssignmentPlan(run, job, eligible, lead);
   }
-  start(group: SharedGroup, message: SharedMessage) {
+  start(group: SharedGroup, message: SharedMessage, cloudPlanner = false) {
     if (!message.sade) return;
     const { projectKey, readOnly, replyTo } = message.sade;
     const grants = this.grants(group).filter(
@@ -1016,6 +1200,7 @@ export class GroupSade {
       groupId: group.id,
       projectKey,
       authorId: message.ownerId,
+      ...(cloudPlanner ? { cloudPlanner: true as const } : {}),
       ...(replyTo ? { replyTo } : {}),
       content,
       ...(readOnly ? { readOnly: true } : {}),
@@ -1291,7 +1476,11 @@ export class GroupSade {
         }
         const grants = this.grants(group);
         const grant = grants.find((item) => item.id === job.grantId);
-        if (!grant || !this.usable(grant, group) || unreservedTurns(run, grant, job) < 1)
+        if (
+          !grant ||
+          !this.usable(grant, group) ||
+          (!(run.cloudPlanner && job.phase === 'plan') && unreservedTurns(run, grant, job) < 1)
+        )
           throw new DomainError('The harness needs a remaining granted turn to continue.', 409);
         if (job.phase === 'plan')
           run.roster = grants
@@ -1511,6 +1700,10 @@ export class GroupSade {
     run.error = redact(reason);
     job.state = 'blocked';
     job.summary = run.error;
+    if (run.cloudPlanner && job.phase === 'plan') {
+      job.cloudClaim = undefined;
+      job.deadline = undefined;
+    }
     for (const item of run.jobs) {
       item.change = undefined;
       item.publishedFiles = undefined;
@@ -1536,10 +1729,18 @@ export class GroupSade {
         : needsTurn && grant.used >= grant.turns
           ? 'The assigned teammate has no granted turns left.'
           : holdsLease && (job.deadline || 0) <= now
-            ? 'The assigned desktop lost contact before completing its task.'
+            ? run.cloudPlanner && job.phase === 'plan'
+              ? 'Sade không nhận được kế hoạch Qwen trong thời gian cho phép.'
+              : 'The assigned desktop lost contact before completing its task.'
             : undefined;
       if (!reason) continue;
-      this.block(run, job, `${reason} Work stays on its owner’s desktop.`);
+      this.block(
+        run,
+        job,
+        run.cloudPlanner && job.phase === 'plan'
+          ? reason
+          : `${reason} Work stays on its owner’s desktop.`,
+      );
       return true;
     }
     return false;
@@ -1755,6 +1956,7 @@ export class GroupSade {
       let touched = false;
       for (const job of run.jobs) {
         if (!['queued', 'running', 'reviewing'].includes(job.state)) continue;
+        if (run.cloudPlanner && job.phase === 'plan') continue;
         const grant = grants.get(job.grantId)!;
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
         const retry = awaitingDelivery(job);
@@ -1987,35 +2189,7 @@ export class GroupSade {
           }
           job.reviewGrantId = reviewer?.id;
         }
-        const team =
-          job.phase === 'plan'
-            ? run.roster.flatMap((grantId) => {
-                const entry = grants.get(grantId);
-                if (
-                  !entry ||
-                  run.unavailableGrants?.includes(entry.id) ||
-                  !this.usable(entry, group, false)
-                )
-                  return [];
-                const teammate = group.teammates.find(
-                  (member) =>
-                    member.ownerId === entry.ownerId && member.localId === entry.teammateId,
-                )!;
-                return [
-                  {
-                    id: entry.id,
-                    name: entry.label,
-                    provider: teammate.provider,
-                    role: entry.role,
-                    platform: entry.platform,
-                    pairedPlatform: run.readOnly ? undefined : entry.pairedPlatform,
-                    allowWrites: !run.readOnly && entry.allowWrites,
-                    owner: group.people.find((person) => person.id === entry.ownerId)!.name,
-                    ownedByRequester: entry.ownerId === run.authorId,
-                  },
-                ];
-              })
-            : [];
+        const team = job.phase === 'plan' ? this.planTeam(run, group, grants) : [];
         if (team.length > inlineSharedSadeTeamLimit && !command.rosterLookup) {
           const summary =
             'Update this desktop to let Sade use all granted Shared Groups teammates.';
@@ -2143,28 +2317,44 @@ export class GroupSade {
       ...(command.taskUpdates ? { updates } : {}),
     };
   }
+  private findJobRun(jobId: string): Run | undefined {
+    const row = this.store.db
+      .prepare(
+        `SELECT data FROM records WHERE kind='sharedSadeRun'
+       AND EXISTS (
+         SELECT 1 FROM json_each(records.data,'$.jobs') AS job
+         WHERE json_extract(job.value,'$.id')=?
+       )
+       ORDER BY rowid LIMIT 1`,
+      )
+      .get(jobId);
+    return row ? (JSON.parse(String(row.data)) as Run) : undefined;
+  }
+
   finish(
     actor: SharedPrincipal,
     command: Extract<GroupSadeCommand, { action: 'sade-finish' }>,
     activeGroup: (groupId: string) => SharedGroup,
+    cloud?: { runId: string; claimId: string },
   ) {
-    const row = this.store.db
-      .prepare(
-        `SELECT data FROM records WHERE kind='sharedSadeRun'
-         AND EXISTS (
-           SELECT 1 FROM json_each(records.data,'$.jobs') AS job
-           WHERE json_extract(job.value,'$.id')=?
-         )
-         ORDER BY rowid LIMIT 1`,
-      )
-      .get(command.jobId);
-    if (!row) throw new DomainError('Shared job is unavailable.', 404);
-    const run = JSON.parse(String(row.data)) as Run;
+    const run = cloud
+      ? this.store.lookup<Run>('sharedSadeRun', cloud.runId)
+      : this.findJobRun(command.jobId);
+    const job = run?.jobs.find((item) => item.id === command.jobId);
+    if (!run || !job) throw new DomainError('Shared job is unavailable.', 404);
+    const hosted = run.cloudPlanner === true && job.phase === 'plan';
+    if (
+      hosted !== Boolean(cloud) ||
+      (cloud &&
+        (job.cloudClaim?.id !== cloud.claimId ||
+          job.cloudClaim.actor.ownerId !== actor.ownerId ||
+          job.cloudClaim.actor.deviceId !== actor.deviceId))
+    )
+      throw new DomainError('Sade planning receipt is unavailable.', 409);
     const group = activeGroup(run.groupId);
-    const job = run.jobs.find((item) => item.id === command.jobId)!;
     const grants = this.grants(group);
-    const grant = grants.find((item) => item.id === job.grantId)!;
-    if (!grant || !this.actorGrant(grant, actor) || !this.usable(grant, group, false))
+    const grant = grants.find((item) => item.id === job.grantId);
+    if (!grant || (!hosted && !this.actorGrant(grant, actor)) || !this.usable(grant, group, false))
       throw new DomainError('The harness grant is no longer valid.', 403);
     if (job.state === 'done' || (job.state === 'waiting' && command.result.kind === 'question'))
       return { accepted: true };
@@ -2176,6 +2366,10 @@ export class GroupSade {
       throw new DomainError('This job is no longer running. Recover locally.', 409);
     if (this.stopUnsafeChange(run)) return { accepted: true };
     job.awaitingReceipt = undefined;
+    if (hosted) {
+      job.cloudClaim = undefined;
+      job.deadline = undefined;
+    }
     const result = command.result;
     if (result.kind === 'provider-unavailable') {
       this.handleUnavailableProvider(run, job, group, grant, grants);
@@ -2204,7 +2398,7 @@ export class GroupSade {
           job,
           'The read assignment is already resolved. The planner did not submit the scoped plan.',
         );
-      else if (unreservedTurns(run, grant) < 1)
+      else if (!hosted && unreservedTurns(run, grant) < 1)
         this.block(run, job, 'The harness has no spare granted turn for a clarification.');
       else {
         job.state = 'waiting';

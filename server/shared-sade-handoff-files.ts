@@ -1,4 +1,4 @@
-import { foldSharedSadeName } from '../server/shared-sade-assignment.ts';
+import { foldSharedSadeName } from './shared-sade-assignment.ts';
 
 type Role = 'architecture' | 'frontend' | 'backend' | 'codebase';
 

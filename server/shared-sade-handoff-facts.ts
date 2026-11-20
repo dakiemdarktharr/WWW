@@ -1,4 +1,4 @@
-import { foldSharedSadeName } from '../server/shared-sade-assignment.ts';
+import { foldSharedSadeName } from './shared-sade-assignment.ts';
 
 type Style = { kind: 'supplied'; detail: string } | { kind: 'delegated' } | { kind: 'unspecified' };
 

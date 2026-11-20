@@ -13,6 +13,31 @@ import { api } from './api';
 import type { Machine } from './Machines';
 
 const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(input);
+const roomPollInterval = 3000;
+
+type GroupSadeView = {
+  group?: SharedGroup;
+  sadeGrants?: SharedHarnessGrant[];
+  sadeRuns?: SharedSadeRun[];
+  supportsReferencedMessage?: true;
+};
+type GroupRead = GroupSadeView & {
+  group: SharedGroup;
+  messages: SharedMessage[];
+  hasMore: boolean;
+};
+type GroupReader = {
+  groupId: string;
+  pause: () => void;
+  resume: (refresh: boolean) => void;
+};
+
+function mergeMessages(previous: SharedMessage[], incoming: SharedMessage[]) {
+  const byId = new Map(previous.map((message) => [message.id, message]));
+  for (const message of incoming) byId.set(message.id, message);
+  return [...byId.values()].sort((a, b) => a.sequence - b.sequence).slice(-1000);
+}
+
 export default function SharedGroups({
   members,
   projects,
@@ -54,12 +79,19 @@ export default function SharedGroups({
     null,
   );
   const selectedRef = useRef(initialGroupId);
+  const roomReader = useRef<GroupReader | null>(null);
   const messageDraft = useRef<{
     id: string;
     content: string;
     groupId: string;
     sade?: SharedMessage['sade'];
   } | null>(null);
+  const applyGroupView = (next: GroupSadeView) => {
+    if (next.group) setRoom(next.group);
+    setGrants(next.sadeGrants || []);
+    setSadeRuns(next.sadeRuns || []);
+    setSupportsReferencedMessage(next.supportsReferencedMessage === true);
+  };
   const refreshList = async () => {
     const next = await request<GroupListing>({ action: 'list' });
     setListing(next);
@@ -110,7 +142,9 @@ export default function SharedGroups({
   }, []);
   useEffect(() => {
     let active = true,
-      inFlight = false;
+      inFlight = false,
+      paused = false;
+    let readVersion = 0;
     let cursor = 0;
     let timer: ReturnType<typeof setTimeout>;
     setRoom(undefined);
@@ -132,34 +166,27 @@ export default function SharedGroups({
     setTaskUpdate(null);
     messageDraft.current = null;
     if (!selected) return;
+    const canRead = () => active && !paused && selectedRef.current === selected;
     const read = async () => {
-      if (!active || inFlight) return;
+      if (!canRead() || inFlight) return;
       clearTimeout(timer);
       inFlight = true;
-      let delay = 3000;
+      const version = ++readVersion;
+      const isCurrent = () => canRead() && version === readVersion;
+      let delay = roomPollInterval;
       try {
-        const next = await request<{
-          group: SharedGroup;
-          messages: SharedMessage[];
-          hasMore: boolean;
-          sadeGrants?: SharedHarnessGrant[];
-          sadeRuns?: SharedSadeRun[];
-          supportsReferencedMessage?: true;
-        }>({ action: 'read', groupId: selected, after: cursor });
-        if (active) {
-          setRoom(next.group);
-          setGrants(next.sadeGrants || []);
-          setSadeRuns(next.sadeRuns || []);
-          setSupportsReferencedMessage(next.supportsReferencedMessage === true);
+        const next = await request<GroupRead>({ action: 'read', groupId: selected, after: cursor });
+        if (isCurrent()) {
+          applyGroupView(next);
           setError('');
           if (next.messages.length) {
             cursor = next.messages[next.messages.length - 1].sequence;
-            setMessages((previous) => [...previous, ...next.messages].slice(-1000));
+            setMessages((previous) => mergeMessages(previous, next.messages));
           }
           if (next.hasMore) delay = 200;
         }
       } catch (cause) {
-        if (active) {
+        if (isCurrent()) {
           setRoom(undefined);
           setMessages([]);
           setGrants([]);
@@ -169,18 +196,57 @@ export default function SharedGroups({
         }
         delay = 10000;
       } finally {
-        inFlight = false;
-        if (active) timer = setTimeout(read, delay);
+        if (isCurrent()) {
+          inFlight = false;
+          timer = setTimeout(read, delay);
+        }
       }
+    };
+    roomReader.current = {
+      groupId: selected,
+      pause: () => {
+        // A read started before a mutation cannot replace its decision when it returns late.
+        paused = true;
+        readVersion++;
+        inFlight = false;
+        clearTimeout(timer);
+      },
+      resume: (refresh) => {
+        paused = false;
+        if (!canRead()) return;
+        if (refresh) void read();
+        else timer = setTimeout(read, roomPollInterval);
+      },
     };
     void read();
     window.addEventListener('focus', read);
     return () => {
       active = false;
+      roomReader.current = null;
       clearTimeout(timer);
       window.removeEventListener('focus', read);
     };
   }, [selected]);
+  const submitRoom = async <T,>(
+    input: GroupCommand & { groupId: string },
+    apply: (result: T) => boolean,
+  ) => {
+    const reader = roomReader.current;
+    if (!reader || reader.groupId !== input.groupId || selectedRef.current !== input.groupId)
+      return;
+    reader.pause();
+    let refresh = false;
+    try {
+      const result = await request<T>(input);
+      if (roomReader.current === reader && selectedRef.current === input.groupId)
+        refresh = !apply(result);
+    } catch (error) {
+      refresh = true;
+      throw error;
+    } finally {
+      reader.resume(refresh);
+    }
+  };
   const run = async (operation: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -791,16 +857,25 @@ export default function SharedGroups({
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
-                      void run(async () => {
-                        await request({
-                          action: 'sade-answer',
-                          groupId: room.id,
-                          runId: latestSade.id,
-                          jobId: waiting.id,
-                          answer: answer.trim(),
-                        });
-                        setAnswer('');
-                      });
+                      void run(() =>
+                        submitRoom<GroupSadeView & { sadeGroup?: GroupSadeView }>(
+                          {
+                            action: 'sade-answer',
+                            groupId: room.id,
+                            runId: latestSade.id,
+                            jobId: waiting.id,
+                            answer: answer.trim(),
+                          },
+                          (result) => {
+                            setAnswer('');
+                            const view = result?.sadeGroup ?? result;
+                            if (!view?.sadeRuns || (view.group && view.group.id !== room.id))
+                              return false;
+                            applyGroupView(view);
+                            return true;
+                          },
+                        ),
+                      );
                     }}
                   >
                     <label>
@@ -926,13 +1001,23 @@ export default function SharedGroups({
                             : {}),
                         };
                   messageDraft.current = next;
-                  await request({ action: 'message', ...next });
-                  if (selectedRef.current !== room.id) return;
-                  messageDraft.current = null;
-                  setContent('');
-                  setProjectKey('');
-                  setReadOnlyRequest(false);
-                  setReference(undefined);
+                  await submitRoom<SharedMessage & { sadeGroup?: GroupSadeView }>(
+                    { action: 'message', ...next },
+                    (saved) => {
+                      messageDraft.current = null;
+                      setContent('');
+                      setProjectKey('');
+                      setReadOnlyRequest(false);
+                      setReference(undefined);
+                      if (saved?.id !== next.id || saved.groupId !== room.id) return false;
+                      const { sadeGroup, ...message } = saved;
+                      if (Number.isSafeInteger(message.sequence))
+                        setMessages((previous) => mergeMessages(previous, [message]));
+                      if (sadeGroup?.group?.id !== room.id) return false;
+                      applyGroupView(sadeGroup);
+                      return true;
+                    },
+                  );
                 });
               }}
             >
