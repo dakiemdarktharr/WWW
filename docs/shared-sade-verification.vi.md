@@ -273,9 +273,33 @@ Trên sáu ca độc lập còn chuyển đến Qwen, prompt hiện tại đạt
 
 `npm run check` trên đúng `d6ab76d` qua 475 ca Windows, 471 Ubuntu và 470 macOS arm64, với 0 lỗi. Số ca bỏ qua theo nền tảng lần lượt là một, năm và sáu. Cả ba qua corpus 1.000 tin với kế hoạch mô phỏng và ca desktop sửa kế hoạch sai trong cùng lượt. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44700561777) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44700561375)
 
+Phép đo `handoff-planning` trên `780f775aa87069ee666765c6e229d4cc187cacaf` dùng lại bốn ca A và thêm sáu tin giữ riêng, gồm bốn ca cần lập kế hoạch và hai ca cần hỏi chủ hoặc quyền. Bộ chấm mới đòi ứng viên giữ đúng chủ được chỉ định, không thêm phương án dự phòng hoặc hệ điều hành, giữ bốn phạm vi file, và giao review phòng thủ cho người khác hai tác giả. Ca kế hoạch hợp lệ được đưa qua điều phối mô phỏng để xác nhận frontend chờ kiến trúc qua review và nhận đúng revision khi kiến trúc đã được tích hợp.
+
+Hai lựa chọn dùng cùng Qwen3 4B, digest, tin nhắn, roster, seed, mức sinh tối đa 1.600 token và hạn 180 giây. Mỗi lựa chọn gọi model một lần trong mỗi ca. Baseline dùng các tool hiện có. Biến thể thử nghiệm giảm kích thước đầu ra bằng JSON theo schema của Ollama, thêm gợi ý chủ harness nếu câu có cấu trúc bàn giao rõ, rồi đưa kết quả qua cùng bộ phân tích và bộ điều phối. Các runner chạy theo cặp và đảo thứ tự ở các shard lẻ. Đây là phép so cả cách biểu diễn đầu vào và cách nhận đầu ra, nên kết quả không quy riêng cho prompt hoặc schema. [Tài liệu JSON theo schema của Ollama](https://docs.ollama.com/capabilities/structured-outputs)
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=handoff-planning
+```
+
+Hai nhánh đều đạt **0/4** ở A. Trên sáu ca giữ riêng, bộ chấm tự động ghi baseline 1/6 và JSON gọn 0/6. Đọc lại đầu ra duy nhất đạt điểm cho thấy baseline hỏi đúng nên dùng Astra của Bình hay Chi, nhưng hỏi thêm người làm backend và test dù Sade đã được giao quyền chọn. Biến thể JSON gửi chín kế hoạch và một câu hỏi sai trọng tâm. Các kế hoạch gộp API với bộ test, mở rộng phạm vi file, đặt hệ điều hành chưa được yêu cầu hoặc chọn sai người. Trong ca chỉ định Astra của Chi mà thiếu grant, biến thể giao việc cho Astra của Bình. Khi có hai Astra và người gửi chưa phân biệt, biến thể cũng tự chọn Bình. Các gợi ý nhận diện chủ xuất hiện ở bốn ca A, còn sáu ca giữ riêng dùng phần hướng dẫn JSON chung. [CI và 20 đầu ra gốc](https://github.com/dakiemdarktharr/WWW/actions/runs/44702757247)
+
+Baseline có bảy phản hồi trong 51,6–136,6 giây và ba timeout. Biến thể có mười phản hồi trong 41,1–115,6 giây. Số token đầu vào ghi nhận lần lượt là 2.044–2.284 và 680–855. Thời gian gồm nạp model, có thể khác nhau giữa lượt đầu và lượt sau trên cùng runner. Mẫu bộ nhớ cấp cho model bằng nhau ở cả mười cặp. Runner ghi 3,19 GB RAM và 0 VRAM, hoặc 1,01 GB RAM và 2,54 GB VRAM. Phép đo chạy trên runner chuẩn miễn phí của repo công khai. Kivuno giữ cấu hình hiện tại vì biến thể chưa cho kế hoạch đúng. Bản tải và bảng đối chiếu lưu trong `.local/sade-handoff-compact/44702757247/complete` của worktree.
+
+Các đầu ra kiểm soát xác nhận bộ chấm loại kế hoạch sai chủ, dự phòng ngoài yêu cầu, thiếu phụ thuộc và review sai phạm vi. Các ca kiểm tra diễn đạt cũng cho thấy bộ chấm từ khóa có thể bỏ lọt câu phủ định hoặc hỏi thêm quyền không phù hợp. Kết luận về điểm đạt đã đối chiếu với nội dung phản hồi gốc.
+
+`npm run check` trên `780f775` qua 475 ca Windows, 471 Ubuntu và 470 macOS arm64, với 0 lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. Cả ba chạy corpus 1.000 tin với kế hoạch mô phỏng. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44702834110) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44702834453)
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
+
+Ca C trên `4bff7a426f0ffe44c6da5748c0f441b4bf20eff4` gửi nguyên văn “Đây là code Gemini tạo, lấy Claude và ChatGPT check thử.” Kế hoạch mô phỏng gắn hai lượt review chỉ đọc vào cùng bản vá Gemini, với hai grant thuộc hai chủ khác nhau. Bản vá đầu dùng điều kiện `total > 50`, sai tại 50. Claude duyệt trong fixture và ChatGPT yêu cầu sửa. Bộ điều phối chặn tích hợp sau verdict đầu, cấp hai mã review mới sau khi Gemini sửa thành `total >= 50`, và từ chối kết quả đến từ cả hai mã cũ. Chỉ khi cả hai reviewer duyệt bản mới thì digest mới được chuyển cho tác vụ tích hợp. Các tác vụ, verdict và tích hợp đều dùng fixture. Bài thử đo việc điều phối hai reviewer và hiệu lực digest, còn năng lực phát hiện lỗi của model đã đăng nhập được đo riêng.
+
+```powershell
+node --import tsx --test --test-name-pattern 'Claude and ChatGPT must both review|planned patch reviews use their allocated' tests/shared-sade.test.ts
+```
+
+Windows cục bộ trên `4bff7a4` qua cả hai ca tập trung, 103/103 ca Shared Sade và 190/190 ca Sade. `npm run check` trên cùng SHA qua 476 ca Windows, 472 Ubuntu và 471 macOS arm64, với 0 lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. Cả ba chạy ca hai reviewer và corpus 1.000 tin với kế hoạch mô phỏng. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44703420431) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44703420500)
 
 Windows cục bộ qua 82/82 bài `npm run test:shared-sade` và 169/169 bài `npm run test:sade` với Node 24.22.1. Trên cùng SHA, `npm run check` qua 455 bài trên Windows, 451 trên Ubuntu và 450 trên macOS arm64. Ba nền tảng lần lượt bỏ qua một, năm và sáu bài theo hệ điều hành, với 0 lỗi. Tổng số mỗi nền tảng gồm cả hai chiều bàn giao qua adapter Claude và Antigravity với tiến trình provider mô phỏng. Ubuntu qua cloud và portal, macOS qua Electron và Shared Groups. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44685817040) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44685816520)
 
