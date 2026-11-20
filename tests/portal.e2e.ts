@@ -22,11 +22,15 @@ const password = randomBytes(24).toString('hex');
 const memberPassword = randomBytes(24).toString('hex');
 const memberEmail = `ari-${randomBytes(5).toString('hex')}@example.com`;
 const gatewaySecret = randomBytes(32).toString('hex');
+const recoveryInbox: { to: string; html: string; text: string; subject: string }[] = [];
 const auth = await createCloudIdentity({
   directory: data,
   origin,
   secret: randomBytes(32).toString('hex'),
   bootstrapPassword: password,
+  sendMail: async (message) => {
+    recoveryInbox.push(message);
+  },
 });
 const app = await buildApp(workspace, { cloud: { origin, gatewaySecret, auth } });
 const errors: string[] = [];
@@ -63,7 +67,9 @@ for (let row = 1; row <= 4; row++) {
   assert.equal(letters.length, 6, 'Each Blender row has six real letter meshes.');
   assert.equal(letters.map((node) => node.name!.slice(-1)).join(''), 'KIVUNO');
 }
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  ...(process.platform === 'win32' ? { channel: 'chromium', args: ['--use-angle=d3d11'] } : {}),
+});
 const verifier = randomBytes(32).toString('base64url');
 const start = await app.inject({
   method: 'POST',
@@ -142,7 +148,12 @@ async function routePortal(context: BrowserContext, available = false) {
     }
     await route.fulfill({
       body: await readFile(
-        path.join('dist', ['/', '/billing'].includes(url.pathname) ? 'index.html' : url.pathname),
+        path.join(
+          'dist',
+          ['/', '/billing', '/forgot-password', '/reset-password'].includes(url.pathname)
+            ? 'index.html'
+            : url.pathname,
+        ),
       ),
       contentType: mime[path.extname(url.pathname)] || 'text/html',
       headers: Object.fromEntries(
@@ -202,6 +213,23 @@ try {
   await expect(titleStage).toHaveAttribute('data-rotation', '0.0000,0.0000');
   const titleBox = await titleStage.boundingBox();
   assert.ok(titleBox);
+  await titleStage.focus();
+  await expect(titleStage).toHaveCSS('outline-style', 'none');
+  await expect(
+    page.locator(
+      '.kp-puffy-reset, .kp-puffy-hint, .kp-hero-meta, .kp-hero-caption, .kp-feature-copy > p',
+    ),
+  ).toHaveCount(0);
+  await page.mouse.move(titleBox.x + titleBox.width * 0.29, titleBox.y + titleBox.height * 0.22);
+  await page.mouse.down();
+  await expect
+    .poll(async () => Number(await titleStage.getAttribute('data-dent')))
+    .toBeGreaterThan(0.01);
+  await expect(titleStage).toHaveAttribute('data-pressed-letter', /SM_Row_01_Letter_/);
+  await expect(titleStage).toHaveAttribute('data-dent-meshes', '1');
+  await page.screenshot({ path: '.local/kivuno-title-local-dent.png' });
+  await page.mouse.up();
+  await expect.poll(async () => Number(await titleStage.getAttribute('data-dent'))).toBe(0);
   await page.mouse.move(titleBox.x + titleBox.width / 2, titleBox.y + titleBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(
@@ -261,7 +289,6 @@ try {
   await cdp.detach();
   await mkdir('.local', { recursive: true });
   await page.screenshot({ path: '.local/kivuno-hero-desktop.png' });
-  await page.screenshot({ path: '.local/kivuno-portal-desktop.png', fullPage: true });
   const menu = page.getByRole('navigation', { name: 'Menu Kivuno' });
   const stories = page.locator('[data-story]');
   await expect(stories).toHaveCount(3);
@@ -396,10 +423,18 @@ try {
   await page.goto(origin + '/art/photo-credits.html');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('A forest of real photographs.');
-  await page.goto(origin + '/billing');
+  await page.goto(origin);
+  await page.getByRole('link', { name: 'Kivuno plans', exact: true }).click();
+  await expect(page.locator('.kp-route-blinds')).toHaveCount(1);
+  await expect(page).toHaveURL(origin + '/billing');
+  await expect(page.locator('.kp-route-blinds')).toHaveCount(0);
+  await expect(page.locator('.plan-banner')).toHaveCount(3);
+  await expect(page.locator('.billing-auth')).toHaveCount(0);
   await expect(page.locator('[data-theme-toggle]')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
-  await page.goto(origin);
+  await page.goBack();
+  await expect(page).toHaveURL(origin);
+  await expect(page.locator('.kp-route-blinds')).toHaveCount(0);
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await menu.getByRole('button', { name: 'Dark appearance' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'light');
@@ -412,14 +447,14 @@ try {
   await expect(guide.getByRole('heading', { name: 'Từ ý tưởng đến cùng làm.' })).toBeVisible();
   await expect(guide.getByRole('tab')).toHaveCount(0);
   const demoMessages = guide.locator('[data-demo-message]');
-  const demoReplay = guide.getByRole('button', { name: 'Phát lại mô phỏng' });
+  await expect(guide.getByRole('button', { name: 'Phát lại mô phỏng' })).toHaveCount(0);
   const demoSend = guide.getByRole('button', { name: 'Gửi tin nhắn mô phỏng' });
   const demoInput = guide.getByRole('textbox', { name: 'Tin nhắn mô phỏng' });
   const demoApiCalls = apiCalls.length;
-  await demoReplay.click();
-  await expect(demoMessages).toHaveCount(1);
   await expect(demoSend).toBeDisabled();
-  await expect(demoMessages).toHaveCount(2, { timeout: 5000 });
+  await expect(guide.locator('[data-demo-message="goal-1"]')).toBeVisible({ timeout: 30000 });
+  await expect(guide.locator('[data-demo-message="plan-1"]')).toBeVisible({ timeout: 5000 });
+  await expect(guide.locator('[data-demo-message="plan-1"]')).toHaveCSS('opacity', '1');
   await guide.getByRole('button', { name: 'Tạm dừng mô phỏng' }).click();
   const pausedCount = await demoMessages.count();
   await page.waitForTimeout(3300);
@@ -445,9 +480,8 @@ try {
   await menu.getByRole('button', { name: 'Chuyển sang Tiếng Việt' }).click();
   await expect(demoMessages.last()).toHaveCSS('opacity', '1');
   await page.screenshot({ path: '.local/kivuno-group-chat-interaction.png' });
-  await demoReplay.click();
-  await expect(demoMessages).toHaveCount(1);
-  await expect(guide.locator('[data-demo-message="local-1"]')).toHaveCount(0);
+  await guide.getByRole('button', { name: 'Tiếp tục mô phỏng' }).click();
+  await expect(guide.getByRole('button', { name: 'Tạm dừng mô phỏng' })).toBeVisible();
   assert.equal(apiCalls.length, demoApiCalls, 'The scripted group chat never calls real services.');
   const downloadOpener = menu.getByRole('button', { name: 'Tải app', exact: true });
   await downloadOpener.click();
@@ -724,16 +758,14 @@ try {
   const beforeDemoApproval = apiCalls.length;
   await demoApprove.focus();
   await accountPage.keyboard.press('Enter');
-  await expect(reducedDemo.locator('[data-demo-message="approved"]')).toContainText(
+  await expect(reducedDemo.locator('[data-demo-message="approved-0"]')).toContainText(
     'Mình đã duyệt bản thay đổi trong mô phỏng.',
   );
   await expect(reducedDemo.getByRole('button', { name: 'Đã duyệt bản demo' })).toBeDisabled();
   assert.equal(apiCalls.length, beforeDemoApproval, 'Demo approval never approves real work.');
   await accountPage.screenshot({ path: '.local/kivuno-group-chat-mobile-approved.png' });
-  await reducedDemo.getByRole('button', { name: 'Phát lại mô phỏng' }).click();
-  await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(8);
-  await expect(reducedDemo.locator('[data-demo-message="approved"]')).toHaveCount(0);
-  await expect(demoApprove).toBeEnabled();
+  await expect(reducedDemo.getByRole('button', { name: 'Phát lại mô phỏng' })).toHaveCount(0);
+  await expect(reducedDemo.locator('[data-demo-message]')).toHaveCount(9);
   for (const message of await reducedDemo.locator('[data-demo-message]').all())
     await expect(message).toHaveCSS('opacity', '1');
   await accountPage.getByRole('button', { name: 'Kivuno — về màn hình đầu' }).click();
@@ -774,6 +806,48 @@ try {
   await expect(accountPage.locator('.kp-scroll-story.show-all')).toHaveCount(3);
   for (const message of await accountPage.locator('[data-scroll-message]').all())
     await expect(message).toHaveCSS('opacity', '1');
+  // Real recovery UI against the same identity service; mail stays in a local fixture inbox.
+  await accountPage.goto(`${origin}/?login`);
+  const recoveryDialog = accountPage.getByRole('dialog');
+  await recoveryDialog.getByRole('button', { name: 'Quên mật khẩu?', exact: true }).click();
+  await expect(recoveryDialog).toHaveAccessibleName('Quên mật khẩu?');
+  await expect(recoveryDialog.getByLabel('Email', { exact: true })).toBeFocused();
+  await recoveryDialog.getByRole('button', { name: 'Quay lại đăng nhập' }).click();
+  await expect(
+    recoveryDialog.getByRole('button', { name: 'Quên mật khẩu?', exact: true }),
+  ).toBeFocused();
+  await accountPage.goto(`${origin}/forgot-password`);
+  await accountPage.getByLabel('Email', { exact: true }).fill(memberEmail);
+  await accountPage.getByRole('button', { name: 'Gửi liên kết khôi phục' }).click();
+  await expect(accountPage.getByRole('heading', { name: 'Đã nhận yêu cầu.' })).toBeVisible();
+  await expect.poll(() => recoveryInbox.length).toBe(1);
+  const resetUrl = recoveryInbox[0].text.match(
+    /https:\/\/relay\.example\/reset-password#token=[A-Za-z0-9_-]+/,
+  )?.[0];
+  assert.ok(resetUrl, 'Recovery email contains the fixed-origin fragment URL.');
+  await accountPage.goto(resetUrl);
+  await expect(accountPage).toHaveURL(`${origin}/reset-password`);
+  const newPassword = randomBytes(24).toString('hex');
+  await accountPage.getByLabel('Mật khẩu mới', { exact: true }).fill(newPassword);
+  await accountPage.getByLabel('Nhập lại mật khẩu', { exact: true }).fill(`${newPassword}wrong`);
+  await accountPage.getByRole('button', { name: 'Lưu mật khẩu' }).click();
+  await expect(accountPage.getByRole('alert')).toContainText('Hai mật khẩu chưa khớp.');
+  await accountPage.getByLabel('Nhập lại mật khẩu', { exact: true }).fill(newPassword);
+  await accountPage.getByRole('button', { name: 'Lưu mật khẩu' }).click();
+  await expect(accountPage.getByRole('heading', { name: 'Đã đổi mật khẩu.' })).toBeVisible();
+  await accountPage.screenshot({ path: '.local/kivuno-password-reset-mobile.png' });
+  await accountPage.goto(resetUrl);
+  await accountPage.getByLabel('Mật khẩu mới', { exact: true }).fill(newPassword);
+  await accountPage.getByLabel('Nhập lại mật khẩu', { exact: true }).fill(newPassword);
+  await accountPage.getByRole('button', { name: 'Lưu mật khẩu' }).click();
+  await expect(accountPage.getByRole('alert')).toContainText('Liên kết không hợp lệ');
+  await accountPage.goto(`${origin}/?login`);
+  const recoveredLogin = accountPage.getByRole('dialog');
+  await recoveredLogin.getByLabel('Email', { exact: true }).fill(memberEmail);
+  await recoveredLogin.getByRole('button', { name: 'Tiếp tục', exact: true }).click();
+  await recoveredLogin.getByLabel('Mật khẩu', { exact: true }).fill(newPassword);
+  await recoveredLogin.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
+  await expect(recoveredLogin.getByText('Ari Test', { exact: true })).toBeVisible();
   // A device without WebGL retains real artwork and usable download/credits controls.
   await page.close();
   await accountPage.close();
@@ -820,13 +894,14 @@ try {
       noTabbedGuide: true,
       fourBlenderTitleRows: true,
       dragRotationSpringReturn: true,
+      localLetterDentAndRecovery: true,
       keyboardRotationAndTouchScrolling: true,
       persistedLightDarkAcrossBilling: true,
       photoCollageWithCredits: true,
       opticalFooterAndWorkingDownload: true,
       usableWebGLFallbacks: true,
       shortViewportFooterReachable: true,
-      timedGroupChatPauseReplay: true,
+      timedGroupChatContinuousLoopAndPause: true,
       localDemoComposerAndApproval: true,
       separateScrollStories: true,
       reversibleScrollBubbles: true,
@@ -840,6 +915,7 @@ try {
       keyboardFocus: true,
       reducedMotion: true,
       realSignupAndLogin: true,
+      realPasswordRecoveryAndOneUseLink: true,
       realOwnerLogin: true,
       separateDesktopOwners: true,
       explicitDesktopConsent: true,

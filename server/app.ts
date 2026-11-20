@@ -97,6 +97,10 @@ export async function buildApp(
   const desktopIdentity = options.cloud
     ? new DesktopIdentity(workspace.store, options.cloud.origin)
     : undefined;
+  options.cloud?.auth.onPasswordReset?.((ownerId) => {
+    desktopIdentity?.revokeOwner(ownerId);
+    for (const [key, session] of sessions) if (session.ownerId === ownerId) sessions.delete(key);
+  });
   let bridgeConnection: { origin: string; exchangeUrl: string; bridgeKey: string } | undefined;
   const port = options.port || 4317;
   const external = new ExternalProviders(workspace);
@@ -200,6 +204,7 @@ export async function buildApp(
         '/api/desktop/request',
         '/api/desktop/approve',
         '/api/billing/summary',
+        '/api/billing/trial',
         '/api/billing/bank/config',
         '/api/billing/bank/order',
         '/api/billing/bank/status',
@@ -288,8 +293,8 @@ export async function buildApp(
       return owner;
     });
   if (desktopIdentity && options.cloud)
-    registerCollaboration(app, workspace.store, desktopIdentity, (account) => {
-      const user = options.cloud!.auth.findUser(account);
+    registerCollaboration(app, workspace.store, desktopIdentity, async (account) => {
+      const user = await options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
   if (options.cloud) {

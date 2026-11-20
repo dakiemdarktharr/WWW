@@ -4,7 +4,7 @@ import { resetEmail } from '../server/reset-email.ts';
 
 await mkdir('.local', { recursive: true });
 const email = resetEmail(
-  'https://kivuno.vercel.app/reset-password?token=DEMO-NOT-A-REAL-TOKEN',
+  'https://kivuno.vercel.app/reset-password#token=DEMO-NOT-A-REAL-TOKEN',
   'https://kivuno.vercel.app',
 );
 await writeFile('.local/reset-email-preview.html', email.html);

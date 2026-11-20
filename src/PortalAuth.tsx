@@ -14,6 +14,7 @@ import {
 import { api, resetApiSession } from './api';
 import './portal-auth.css';
 import { PortalLanguage, usePortalLocale } from './PortalLocale';
+import PasswordRecovery from './PasswordRecovery';
 
 interface PortalAuthProps {
   mode: 'login' | 'signup';
@@ -64,6 +65,8 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
   const [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [recovering, setRecovering] = useState(false);
+  const recoveryButton = useRef<HTMLButtonElement>(null);
   const [now, setNow] = useState(Date.now());
   const panel = useRef<HTMLElement>(null);
   const overlay = useRef<HTMLDivElement>(null);
@@ -169,6 +172,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
 
   useEffect(() => {
     setFlow(mode);
+    setRecovering(false);
     setLegacy(false);
     setDetails(false);
     setPassword('');
@@ -207,6 +211,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
   }, [device]);
 
   function switchFlow(next: 'login' | 'signup') {
+    setRecovering(false);
     setFlow(next);
     setDetails(false);
     setPassword('');
@@ -344,7 +349,8 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
           ref={panel}
           role="dialog"
           aria-modal="true"
-          aria-labelledby={titleId}
+          aria-labelledby={recovering ? undefined : titleId}
+          aria-label={recovering ? t('Quên mật khẩu?') : undefined}
           tabIndex={-1}
           layout
           initial={{ opacity: 0, y: reducedMotion ? 0 : 22, scale: reducedMotion ? 1 : 0.97 }}
@@ -377,7 +383,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                 <PortalLanguage />
               </div>
             </header>
-            <motion.h2 id={titleId} layout>
+            <motion.h2 id={titleId} layout hidden={recovering}>
               {title}
             </motion.h2>
             <AnimatePresence mode="wait" initial={false}>
@@ -389,7 +395,15 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                 exit={{ opacity: 0, y: reducedMotion ? 0 : -10 }}
                 transition={{ duration: reducedMotion ? 0 : 0.18 }}
               >
-                {loading ? (
+                {recovering ? (
+                  <PasswordRecovery
+                    initialEmail={email}
+                    onBack={() => {
+                      setRecovering(false);
+                      requestAnimationFrame(() => recoveryButton.current?.focus());
+                    }}
+                  />
+                ) : loading ? (
                   <div className="ka-loading" role="status">
                     <Loader2 className="spin" size={22} />
                     {t('Đang kết nối')}
@@ -580,12 +594,12 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                 )}
               </motion.div>
             </AnimatePresence>
-            {error && (
+            {error && !recovering && (
               <p className="ka-error" role="alert">
                 {t(error)}
               </p>
             )}
-            {!loading && (
+            {!loading && !recovering && (
               <footer className="ka-footer">
                 {user ? (
                   <button
@@ -599,6 +613,19 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
                   </button>
                 ) : (
                   <>
+                    <button
+                      ref={recoveryButton}
+                      className="ka-text"
+                      disabled={busy}
+                      type="button"
+                      onClick={() => {
+                        setPassword('');
+                        setError('');
+                        setRecovering(true);
+                      }}
+                    >
+                      {t('Quên mật khẩu?')}
+                    </button>
                     <button
                       className="ka-text"
                       disabled={busy}

@@ -56,7 +56,7 @@ export class SharedGroups {
   private sade: GroupSade;
   constructor(
     private store: Store,
-    private findUser: (account: string) => DesktopOwner | null,
+    private findUser: (account: string) => DesktopOwner | null | Promise<DesktopOwner | null>,
   ) {
     this.sade = new GroupSade(store);
     store.db.exec(
@@ -65,6 +65,29 @@ export class SharedGroups {
   }
   execute(owner: DesktopOwner, raw: unknown, deviceId?: string): unknown {
     const input = command.parse(raw);
+    if (input.action === 'invite') {
+      const group = this.store
+        .all<SharedGroup>('sharedGroup')
+        .find((item) => item.id === input.groupId);
+      if (!group || !group.people.some((person) => person.id === owner.id))
+        throw new DomainError('Group unavailable.', 403);
+      if (group.ownerId !== owner.id)
+        throw new DomainError('Only the group owner can invite accounts.', 403);
+      const target = this.findUser(input.account);
+      // Resolve remote identity before entering the synchronous workspace transaction;
+      // permissions and capacity are checked again inside it, after the lookup.
+      if (target instanceof Promise)
+        return target.then((user) => this.executeResolved(owner, input, deviceId, user));
+      return this.executeResolved(owner, input, deviceId, target);
+    }
+    return this.executeResolved(owner, input, deviceId);
+  }
+  private executeResolved(
+    owner: DesktopOwner,
+    input: z.infer<typeof command>,
+    deviceId?: string,
+    invitee?: DesktopOwner | null,
+  ): unknown {
     return this.store.transaction(() => {
       const actor = { ownerId: owner.id, deviceId: deviceId || '' };
       if (input.action === 'sade-poll' || input.action === 'sade-finish') {
@@ -226,7 +249,7 @@ export class SharedGroups {
       }
       if (input.action === 'invite') {
         if (!isOwner) throw new DomainError('Only the group owner can invite accounts.', 403);
-        const target = this.findUser(input.account);
+        const target = invitee;
         if (!target) throw new DomainError('No Kivuno account matches that ID or email.', 404);
         if (group.people.some((person) => person.id === target.id))
           return { ...group, seatLimit: this.seatLimit(group.ownerId) };
@@ -331,7 +354,7 @@ export function registerCollaboration(
   app: FastifyInstance,
   store: Store,
   identity: DesktopIdentity,
-  findUser: (account: string) => DesktopOwner | null,
+  findUser: (account: string) => DesktopOwner | null | Promise<DesktopOwner | null>,
 ) {
   const groups = new SharedGroups(store, findUser);
   const limits = new Map<string, { count: number; at: number }>();

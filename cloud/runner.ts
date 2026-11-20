@@ -1,17 +1,70 @@
 import { Sandbox } from '@vercel/sandbox';
 import { readFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import path from 'node:path';
 
 const name = 'relay-cloud-workspace';
 const cwd = '/vercel/sandbox/relay';
 let boot: Promise<{ origin: string; secret: string }> | null = null;
-let cached: { origin: string; secret: string; checked: number } | null = null;
-let expectedRevision: Promise<string> | null = null;
-const revisionForBuild = () =>
-  (expectedRevision ||= readFile(path.join(process.cwd(), '.cloud', 'revision'), 'utf8').then(
-    (value) => value.trim(),
-  ));
+let cached: { origin: string; secret: string; checked: number; revision: string } | null = null;
+let payloadRevision: Promise<string> | null = null;
+const revisionForBuild = async () => {
+  const payload = await (payloadRevision ||= readFile(
+    path.join(process.cwd(), '.cloud', 'revision'),
+    'utf8',
+  ).then((value) => value.trim()));
+  return cloudRuntimeRevision(payload);
+};
+
+// One normalized source drives both the fingerprint and the actual child process.
+// Explicit empty values clear optional settings inherited from a sandbox environment.
+export function cloudRuntimeEnvironment(env: NodeJS.ProcessEnv = process.env) {
+  const fuji = !!env.KIVUNO_FUJI_PAYMENT_CONTRACT;
+  const mongo = !!env.RELAY_MONGODB_URI;
+  const mail = !!(env.RELAY_RESEND_API_KEY || env.RELAY_MAIL_FROM);
+  return {
+    RELAY_PUBLIC_ORIGIN: env.RELAY_PUBLIC_ORIGIN || '',
+    RELAY_GATEWAY_SECRET: env.RELAY_GATEWAY_SECRET || '',
+    RELAY_AUTH_SECRET: env.RELAY_AUTH_SECRET || '',
+    RELAY_OWNER_PASSWORD: env.RELAY_OWNER_PASSWORD || '',
+    RELAY_MONGODB_URI: env.RELAY_MONGODB_URI || '',
+    RELAY_MONGODB_DATABASE: mongo ? env.RELAY_MONGODB_DATABASE || 'kivuno_identity' : '',
+    RELAY_RESEND_API_KEY: mail ? env.RELAY_RESEND_API_KEY || '' : '',
+    RELAY_MAIL_FROM: mail ? env.RELAY_MAIL_FROM || '' : '',
+    RELAY_MAIL_REPLY_TO: mail ? env.RELAY_MAIL_REPLY_TO || '' : '',
+    KIVUNO_FUJI_PAYMENT_CONTRACT: env.KIVUNO_FUJI_PAYMENT_CONTRACT || '',
+    KIVUNO_FUJI_USDC_ADDRESS: fuji ? env.KIVUNO_FUJI_USDC_ADDRESS || '' : '',
+    KIVUNO_FUJI_TREASURY_ADDRESS: fuji ? env.KIVUNO_FUJI_TREASURY_ADDRESS || '' : '',
+    KIVUNO_FUJI_RPC_URL: fuji ? env.KIVUNO_FUJI_RPC_URL || '' : '',
+  };
+}
+
+export function cloudRuntimeRevision(payload: string, env: NodeJS.ProcessEnv = process.env) {
+  if (!/^[a-f0-9]{64}$/.test(payload) || (env.RELAY_AUTH_SECRET || '').length < 32)
+    throw new Error('Cloud revision requires a verified payload and authentication secret.');
+  const config = cloudRuntimeEnvironment(env);
+  const digest = createHmac('sha256', config.RELAY_AUTH_SECRET)
+    .update('kivuno-runtime-v1\0')
+    .update(JSON.stringify(config))
+    .digest('hex');
+  return `${payload}.${digest}`;
+}
+
+// Serialized into the upgrade lock script. Never read a process environment
+// before the existing PID/command/cwd validation has accepted its coordinator.
+export function coordinatorSetting(
+  key: string,
+  fallback: string,
+  coordinator: () => number | null,
+  readEnvironment: (pid: number) => string,
+) {
+  const pid = coordinator();
+  if (!pid) return fallback;
+  const entry = readEnvironment(pid)
+    .split('\0')
+    .find((value) => value.startsWith(key + '='));
+  return entry ? entry.slice(key.length + 1) : fallback;
+}
 
 function configuration() {
   const gatewaySecret = process.env.RELAY_GATEWAY_SECRET || '';
@@ -28,7 +81,7 @@ function configuration() {
   return { gatewaySecret, authSecret, password, publicOrigin };
 }
 
-async function healthy(origin: string, secret: string) {
+async function healthy(origin: string, secret: string, revision: string) {
   try {
     const response = await fetch(`${origin}/api/cloud/health`, {
       headers: { 'X-Relay-Gateway': secret },
@@ -36,7 +89,7 @@ async function healthy(origin: string, secret: string) {
     });
     if (!response.ok) return false;
     const state = await response.json();
-    return state.revision === (await revisionForBuild());
+    return state.revision === revision;
   } catch {
     return false;
   }
@@ -73,14 +126,15 @@ export async function prepareCloudUpgrade(revision: string, hooks: UpgradeHooks)
 }
 
 export async function cloudRunner(wake = true) {
-  if (cached && Date.now() - cached.checked < 5000) return cached;
+  const revision = await revisionForBuild();
+  if (cached && cached.revision === revision && Date.now() - cached.checked < 5000) return cached;
   if (!wake) {
     const config = configuration();
     const sandbox = await Sandbox.get({ name, resume: false });
     if (sandbox.status !== 'running') return null;
     const origin = sandbox.domain(4317);
-    if (!(await healthy(origin, config.gatewaySecret))) return null;
-    cached = { origin, secret: config.gatewaySecret, checked: Date.now() };
+    if (!(await healthy(origin, config.gatewaySecret, revision))) return null;
+    cached = { origin, secret: config.gatewaySecret, checked: Date.now(), revision };
     return cached;
   }
   if (!boot)
@@ -94,17 +148,20 @@ async function start() {
   if (process.env.VERCEL_ENV && process.env.VERCEL_ENV !== 'production')
     throw new Error('Preview deployments cannot change the shared RELAY identity service.');
   const config = configuration();
+  const revision = await revisionForBuild();
   // Never auto-create a replacement when the persistent workspace/snapshot is
   // missing: that could silently replace the user's history and account homes.
   const sandbox = await Sandbox.get({ name, resume: true });
   const origin = sandbox.domain(4317);
-  if (await healthy(origin, config.gatewaySecret)) {
-    cached = { origin, secret: config.gatewaySecret, checked: Date.now() };
+  if (await healthy(origin, config.gatewaySecret, revision)) {
+    cached = { origin, secret: config.gatewaySecret, checked: Date.now(), revision };
     return cached;
   }
   const payload = await readFile(path.join(process.cwd(), '.cloud', 'runner.tar.gz'));
-  const revision = createHash('sha256').update(payload).digest('hex');
-  const archive = `/vercel/sandbox/relay-${revision}.tar.gz`;
+  const archiveHash = createHash('sha256').update(payload).digest('hex');
+  if (cloudRuntimeRevision(archiveHash) !== revision)
+    throw new Error('Cloud payload does not match its expected build revision.');
+  const archive = `/vercel/sandbox/relay-${archiveHash}.tar.gz`;
   await sandbox.writeFiles([{ path: archive, content: payload }]);
   // One lock covers the decision, drain, extraction, installation and health
   // check. The server closes FD9, keeping only its separate lifetime lock.
@@ -117,7 +174,7 @@ import { DatabaseSync } from 'node:sqlite';
 const lock='/vercel/sandbox/state/coordinator.lock';
 async function health() {
  try {
-  const response=await fetch('http://127.0.0.1:4317/api/cloud/health',{headers:{'X-Relay-Gateway':process.env.RELAY_GATEWAY_SECRET},signal:AbortSignal.timeout(4000)});
+  const response=await fetch('http://127.0.0.1:4317/api/cloud/health',{headers:{'X-Relay-Gateway':runningValue('RELAY_GATEWAY_SECRET',process.env.RELAY_GATEWAY_SECRET)},signal:AbortSignal.timeout(4000)});
   return response.ok?await response.json():null;
  } catch { return null; }
 }
@@ -131,15 +188,17 @@ function coordinator() {
  }
  return null;
 }
+function runningValue(key,fallback) {
+ return (${coordinatorSetting.toString()})(key,fallback,coordinator,(pid)=>fs.readFileSync('/proc/'+pid+'/environ','utf8'));
+}
 const start=await (${prepareCloudUpgrade.toString()})(process.env.RELAY_REVISION,{
  health,
  coordinator,
  async drain() {
   try {
-   const runningPid=coordinator();
-   const originEntry=runningPid?fs.readFileSync('/proc/'+runningPid+'/environ','utf8').split('\\0').find(value=>value.startsWith('RELAY_PUBLIC_ORIGIN=')):null;
-   const runningOrigin=originEntry?originEntry.slice('RELAY_PUBLIC_ORIGIN='.length):process.env.RELAY_PUBLIC_ORIGIN;
-   const response=await fetch('http://127.0.0.1:4317/api/cloud/prepare-upgrade',{method:'POST',headers:{'X-Relay-Gateway':process.env.RELAY_GATEWAY_SECRET,'Origin':runningOrigin,'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(60000)});
+   const runningOrigin=runningValue('RELAY_PUBLIC_ORIGIN',process.env.RELAY_PUBLIC_ORIGIN);
+   const runningGateway=runningValue('RELAY_GATEWAY_SECRET',process.env.RELAY_GATEWAY_SECRET);
+   const response=await fetch('http://127.0.0.1:4317/api/cloud/prepare-upgrade',{method:'POST',headers:{'X-Relay-Gateway':runningGateway,'Origin':runningOrigin,'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(60000)});
    return response.ok&&(await response.json()).ready===true;
   } catch { return false; }
  },
@@ -197,18 +256,7 @@ RELAY_HEALTH
     env: {
       NODE_ENV: 'production',
       RELAY_DEPLOYMENT: 'cloud',
-      RELAY_PUBLIC_ORIGIN: config.publicOrigin,
-      RELAY_GATEWAY_SECRET: config.gatewaySecret,
-      ...(process.env.KIVUNO_FUJI_PAYMENT_CONTRACT
-        ? {
-            KIVUNO_FUJI_PAYMENT_CONTRACT: process.env.KIVUNO_FUJI_PAYMENT_CONTRACT,
-            KIVUNO_FUJI_USDC_ADDRESS: process.env.KIVUNO_FUJI_USDC_ADDRESS || '',
-            KIVUNO_FUJI_TREASURY_ADDRESS: process.env.KIVUNO_FUJI_TREASURY_ADDRESS || '',
-            KIVUNO_FUJI_RPC_URL: process.env.KIVUNO_FUJI_RPC_URL || '',
-          }
-        : {}),
-      RELAY_AUTH_SECRET: config.authSecret,
-      RELAY_OWNER_PASSWORD: config.password,
+      ...cloudRuntimeEnvironment(),
       RELAY_DATA_DIR: '/vercel/sandbox/state',
       RELAY_PROJECTS_DIR: '/vercel/sandbox/projects',
       RELAY_CODEX_COMMAND: `${cwd}/node_modules/@openai/codex/bin/codex.js`,
@@ -220,8 +268,8 @@ RELAY_HEALTH
     },
   });
   for (let attempt = 0; attempt < 60; attempt++) {
-    if (await healthy(origin, config.gatewaySecret)) {
-      cached = { origin, secret: config.gatewaySecret, checked: Date.now() };
+    if (await healthy(origin, config.gatewaySecret, revision)) {
+      cached = { origin, secret: config.gatewaySecret, checked: Date.now(), revision };
       return cached;
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));

@@ -7,7 +7,7 @@
   max-height: none;
 }
 .kp-portal .kp-hero-core {
-  padding: 190px 5.5% 82px;
+  padding: 130px 5.5% 82px;
 }
 .kp-portal .kp-hero-prism {
   width: min(44vw, 660px);
@@ -28,6 +28,49 @@
 }
 .kp-portal .kp-scroll-cue {
   bottom: 17px;
+}
+.kp-plans-section {
+  margin: 48px 0 100px;
+}
+.kp-plans-section > h2 {
+  margin: 0 0 38px;
+  font-size: clamp(30px, 4vw, 56px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.055em;
+}
+html[data-portal-theme='light'] .kp-hero-prism {
+  filter: brightness(0.58) saturate(1.35) contrast(1.15);
+}
+html[data-portal-theme='light'] .kp-portal .kp-machine-map.glass {
+  background-color: #c4a2f0;
+  border-color: #78519e;
+}
+html[data-portal-theme='light'] .kp-portal .kp-machine-node {
+  background: linear-gradient(145deg, #ae85e1, #d1b7ef);
+  border-color: #76509a;
+  color: #241335;
+}
+html[data-portal-theme='light'] .kp-portal .kp-machine-node.lead {
+  background: linear-gradient(140deg, #a8d632, #c4eb66);
+  border-color: #67851d;
+}
+html[data-portal-theme='light'] .kp-portal .kp-machine-links {
+  stroke: #5a357d;
+}
+html[data-portal-theme='light'] .kp-portal .kp-sade-visual.glass,
+html[data-portal-theme='light'] .kp-portal .kp-aegis-proof.glass {
+  background: linear-gradient(135deg, #b894eb, #d4baf3 78%);
+  border-color: #775099;
+}
+html[data-portal-theme='light'] .kp-portal .kp-handoff-visual.glass {
+  background: linear-gradient(130deg, #afd83f, #d0e99a 83%);
+  border-color: #738e31;
+}
+html[data-portal-theme='light'] .kp-portal :is(.kp-sade-icon, .kp-aegis-emblem) {
+  background: linear-gradient(145deg, #9f73d3, #c5a4e9);
+  border-color: #795197;
+  color: #32184d;
 }
 .kp-portal .kp-feature-heading {
   border-color: #9471c657;

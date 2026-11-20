@@ -43,56 +43,20 @@
 .kp-puffy-stage.is-dragging {
   cursor: grabbing !important;
 }
-.kp-puffy-stage:focus-visible {
-  outline: 2px solid #7651c8;
-  outline-offset: 4px;
+.kp-portal .kp-puffy-stage:focus,
+.kp-portal .kp-puffy-stage:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
-.kp-puffy-controls {
-  position: absolute;
-  bottom: -20px;
-  left: 6%;
-  right: 6%;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  color: #67478c;
-  font-size: 10px;
-  line-height: 1.5;
-  font-weight: 500;
+/* Keyboard focus follows the artwork's silhouette instead of drawing a frame. */
+.kp-puffy-stage:focus-visible canvas {
+  filter: drop-shadow(0 0 4px #6843b6);
 }
-.kp-puffy-controls button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid #7952d54d;
-  border-radius: 50%;
-  background: #e3d7fa80;
-  color: inherit;
-  cursor: pointer;
+html[data-portal-theme='dark'] .kp-puffy-stage:focus-visible canvas {
+  filter: drop-shadow(0 0 4px #d5ff5f);
 }
-.kp-puffy-controls button:hover {
-  background: #d5ff5f;
-  color: #293118;
-}
-.kp-puffy-controls button:focus-visible {
-  outline: 2px solid #7651c8;
-  outline-offset: 3px;
-}
-html[data-portal-theme='dark'] .kp-puffy-controls {
-  color: #d6c1f5;
-}
-html[data-portal-theme='dark'] .kp-puffy-controls button {
-  background: #3f295c80;
-  border-color: #bda1f680;
-}
-html[data-portal-theme='dark'] .kp-puffy-controls button:hover {
-  background: #d5ff5f;
-  color: #293118;
-}
-html[data-portal-theme='dark'] :is(.kp-puffy-stage, .kp-puffy-controls button):focus-visible {
-  outline-color: #d5ff5f;
+html[data-portal-theme='light'] .kp-puffy-poster {
+  filter: saturate(1.42) brightness(0.74) contrast(1.12);
 }
 @media (min-width: 1700px) {
   .kp-portal .kp-puffy-title {
@@ -108,9 +72,5 @@ html[data-portal-theme='dark'] :is(.kp-puffy-stage, .kp-puffy-controls button):f
   .kp-portal .kp-puffy-title {
     width: 100%;
     margin: 4px 0 32px;
-  }
-  .kp-puffy-controls {
-    bottom: -32px;
-    right: 0;
   }
 }

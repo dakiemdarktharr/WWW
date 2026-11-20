@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { chromium, expect } from '@playwright/test';
@@ -94,11 +94,13 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
     },
     bundle: true,
     write: false,
-    loader: { '.css': 'empty' },
+    outfile: 'checkout.js',
     jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' },
   });
   const context = await browser.newContext({ serviceWorkers: 'block' });
+  const browserErrors: string[] = [];
+  context.on('page', (page) => page.on('pageerror', (error) => browserErrors.push(error.message)));
   const writes: string[] = [];
   await context.route('**/*', async (route) => {
     const req = route.request();
@@ -132,7 +134,7 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
     if (endpoint.pathname.startsWith('/api/')) {
       const response = await app.inject({
         method: req.method() as 'GET' | 'POST',
-        url: endpoint.pathname,
+        url: endpoint.pathname + endpoint.search,
         headers: { ...(await req.allHeaders()), 'x-relay-gateway': gateway },
         ...(req.postData() ? { payload: req.postData()! } : {}),
       });
@@ -146,20 +148,42 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
     if (endpoint.pathname === '/billing')
       return route.fulfill({
         contentType: 'text/html',
-        body: '<div id="root"></div><script src="/checkout.js"></script>',
+        body: '<meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/checkout.css"><div id="root"></div><script src="/checkout.js"></script>',
       });
     if (endpoint.pathname === '/checkout.js')
-      return route.fulfill({ contentType: 'application/javascript', body: outputFiles[0].text });
+      return route.fulfill({
+        contentType: 'application/javascript',
+        body: outputFiles.find((file) => file.path.endsWith('.js'))!.text,
+      });
+    if (endpoint.pathname === '/checkout.css')
+      return route.fulfill({
+        contentType: 'text/css',
+        body: outputFiles.find((file) => file.path.endsWith('.css'))!.text,
+      });
     return route.fulfill({ status: 404 });
   });
   const page = await context.newPage();
   page.setDefaultTimeout(12_000);
   await page.goto(origin + '/billing');
+  await expect(page.locator('.plan-banner')).toHaveCount(3);
+  await expect(page.locator('.billing-auth')).toHaveCount(0);
+  await page.locator('.plan-banner--plus').hover();
+  await expect(page.locator('.plan-banner--plus .plan-banner-bottom')).toHaveCSS('opacity', '1');
+  await page.locator('.plan-banner--plus').click();
+  await expect(page.getByRole('link', { name: 'Quên mật khẩu?' })).toHaveAttribute(
+    'href',
+    '/forgot-password',
+  );
   await page.getByRole('button', { name: /Chưa có tài khoản/ }).click();
   await page.getByLabel('Tên của bạn').fill('Test Buyer');
   await page.getByLabel('Email', { exact: true }).fill('buyer@example.test');
   await page.getByLabel(/^Mật khẩu/).fill(randomBytes(24).toString('hex'));
   await page.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '30 days trial · Plus', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.billing-wallet-address')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Thanh toán · 2 test USDC / tháng', exact: true }).click();
   const addressEl = page.locator('.billing-wallet-address code');
   await expect(addressEl)
     .toHaveText(/^0x[\da-f]{40}$/i, { timeout: 15_000 })
@@ -191,4 +215,46 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
   assert.equal(await fixtureToken.balanceOf(treasury.address), 2_000_000n);
   assert.equal(await fixtureToken.balanceOf(buyer), 0n);
   assert.equal(store.all('billingPayment').length, 1);
+  await expect(page.locator('.plan-banner--plus .plan-banner-bottom')).toHaveText('Chọn gói');
+  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await expect(page.locator('.billing-auth')).toHaveCount(0);
+  await page.locator('.plan-banner--max').focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: /Chưa có tài khoản/ }).click();
+  await page.getByLabel('Tên của bạn').fill('Trial Buyer');
+  await page.getByLabel('Email', { exact: true }).fill('trial-buyer@example.test');
+  await page.getByLabel(/^Mật khẩu/).fill(randomBytes(24).toString('hex'));
+  await page.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
+  await page.getByRole('button', { name: '30 days trial · Max', exact: true }).click();
+  await expect(page.locator('.billing-current strong')).toHaveText('Max · Trial');
+  await expect(page.locator('.plan-banner--max .plan-banner-bottom')).toHaveText('Chọn gói');
+  await expect(page.getByRole('button', { name: '30 days trial · Max', exact: true })).toHaveCount(
+    0,
+  );
+  assert.equal(store.all('billingTrial').length, 1);
+  assert.equal(store.all('billingWallet').length, 1, 'The trial must not create a wallet');
+  assert.equal(writes.length, 1, 'The trial must not broadcast or charge');
+  const screenshots = path.join(process.cwd(), '.local', 'billing-review');
+  await mkdir(screenshots, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page
+    .locator('.plan-banners')
+    .screenshot({ path: path.join(screenshots, 'plans-light.png') });
+  await page.getByRole('button', { name: 'Giao diện tối', exact: true }).click();
+  await page
+    .locator('.plan-banners')
+    .screenshot({ path: path.join(screenshots, 'plans-dark.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const tier of ['free', 'plus', 'max'])
+    await expect(page.locator(`.plan-banner--${tier} .plan-banner-bottom`)).toHaveCSS(
+      'opacity',
+      '1',
+    );
+  await page
+    .locator('.plan-banners')
+    .screenshot({ path: path.join(screenshots, 'plans-mobile.png') });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.reload();
+  await expect(page.locator('.billing-current strong')).toHaveText('Max · Trial');
+  assert.deepEqual(browserErrors, []);
 });

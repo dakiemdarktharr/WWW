@@ -314,6 +314,7 @@
   display: flex;
   gap: 12px;
   margin-bottom: 25px;
+  transform-origin: 35px 20px;
 }
 .kg-message-body {
   flex: 1;
@@ -495,7 +496,7 @@
   align-items: center;
   gap: 10px;
   padding: 7px 8px 7px 14px;
-  margin: 0 24px;
+  margin: 0 24px 22px;
   border: 1px solid #dcd4e5;
   border-radius: 12px;
   background: #ffffffc9;

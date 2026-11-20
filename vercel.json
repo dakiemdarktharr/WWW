@@ -41,7 +41,9 @@
   },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/gateway?relay_path=:path*" },
-    { "source": "/billing", "destination": "/index.html" }
+    { "source": "/billing", "destination": "/index.html" },
+    { "source": "/forgot-password", "destination": "/index.html" },
+    { "source": "/reset-password", "destination": "/index.html" }
   ],
   "headers": [
     {
