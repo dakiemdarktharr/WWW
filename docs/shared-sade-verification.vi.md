@@ -259,6 +259,18 @@ Commit `95f5899` qua 392 bài trên Windows và 387 bài trên macOS arm64, bỏ
 node --import tsx --test --test-name-pattern 'one group message (hands off|lets Antigravity)' tests/shared-sade.test.ts
 ```
 
+### Kiểm tra thông tin xác thực trong bản vá
+
+Máy tác giả kiểm tra nội dung diff, danh sách tên tệp và phần thống kê trước khi chuyển bản vá. Nếu phát hiện mẫu thông tin xác thực, Sade báo cần kiểm tra trên máy tác giả. Desktop kiểm tra lại bản vá còn trong hàng đợi khi đồng bộ sau khi nâng cấp hoặc khi lần gửi trước mất xác nhận. Bộ điều phối kiểm tra bản vá đã lưu trước khi giao review, bàn giao cho tác vụ phụ thuộc hoặc ghi nhận kết quả review. Khi chặn, Sade giữ file nguồn trong worktree của tác giả và bỏ bản vá khỏi dữ liệu điều phối.
+
+Các ca hồi quy dùng token và khối khóa riêng tổng hợp. Chúng kiểm tra bản vá mới, hàng đợi desktop và các workflow còn dang dở. Ca hàng đợi cũng xác nhận bản vá sạch vẫn đi tiếp và xác nhận của bản vá cũ không xóa trạng thái mới.
+
+Commit `18c22ff605aff53207cd68cbc9bca0e05a19b9d2` qua 10/10 ca trong lệnh bên dưới trên Windows cục bộ với Node 24.22.1. `npm run check` trên cùng SHA đạt 455 bài trên Windows, 451 trên Ubuntu và 450 trên macOS arm64. Ba nền tảng lần lượt bỏ qua một, năm và sáu bài theo hệ điều hành, với 0 lỗi. Cả ba qua các ca tổng hợp về thông tin xác thực và bộ 1.000 tin dùng kế hoạch mô phỏng. Ubuntu qua thêm cloud và portal, còn macOS qua Electron và Shared Groups. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44683793164) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44683793172)
+
+```powershell
+node --import tsx --test --test-name-pattern 'private review data|desktop replaces an unsafe queued|desktop keeps staged patches' tests/shared-sade.test.ts
+```
+
 ### Chạy lại tình huống D qua mạng
 
 Chế độ `paired-files` của **Verify RELAY** dùng hai runner Windows và một runner macOS arm64 để thử riêng việc trao đổi snapshot và biên nhận có chữ ký. Windows chạy baseline rồi xuất đúng hai file tổng hợp. macOS tái hiện lỗi đường dẫn bằng lệnh chẩn đoán, sửa `path-label.cjs` và ký kết quả xác minh bằng lệnh khác. Windows đối chiếu chữ ký và trạng thái file, kiểm tra biên nhận của bản sửa còn ở trạng thái cũ trước khi áp dụng patch, rồi chỉ nhận `path-label.cjs`. File cấu hình tổng hợp `.env.local` ở lại Windows. GitHub Actions chuyển các file thử giữa các job. Phép thử này đo luồng file và bằng chứng của tính năng ghép máy. [GitHub Actions artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts)
