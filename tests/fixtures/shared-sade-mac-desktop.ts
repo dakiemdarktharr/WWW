@@ -169,6 +169,10 @@ export async function joinCrossHostMacDesktop(config: Config) {
       .poll(() => page.evaluate(async () => (await window.relayDesktop!.getStatus()).owner?.id))
       .toBe(ownerId);
     await page
+      .getByRole('dialog', { name: 'Bắt đầu với Kivuno' })
+      .getByRole('button', { name: 'Đóng hướng dẫn' })
+      .click();
+    await page
       .getByRole('navigation', { name: 'Main navigation' })
       .getByRole('button', { name: 'Team', exact: true })
       .click();
