@@ -6,6 +6,7 @@ import {
   resolveSharedSadePublishedCandidates,
   type SharedSadeAssignmentCandidate,
 } from './shared-sade-assignment.ts';
+import { groundedHandoffStyle } from './shared-sade-handoff-facts.ts';
 
 export type SharedSadeHandoffBinding = {
   harnessName: string;
@@ -22,15 +23,29 @@ export type SharedSadeHandoffAssignment = {
 
 export type SharedSadeHandoffDeliverables = {
   backend: { scope?: string };
-  codebase: { scope?: string };
+  codebase: { scope?: string; afterBackend?: true };
   defensiveReview: true;
 };
 
+type HandoffReviewScopes = {
+  producer: { scope?: string };
+  receiver: { scope?: string };
+  backend?: { scope?: string };
+  codebase?: { scope?: string };
+};
+
+const sadeAddress = /^(?:[eê] +)?sade(?: +(?:ơi|oi))? *[,:\u2014] */iu;
 const name = String.raw`[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]{0,99}?`;
 const viActor = String.raw`(?<harness>${name}) (?:của|cua) (?<owner>${name})`;
 const enActor = String.raw`(?:(?<relative>my|your) |(?<owner>${name})['’]s )(?<harness>${name})`;
 const viProducer = new RegExp(
   String.raw`^(?:[eê] )?(?<command>(?:(?:tôi|toi|tui|mình|minh|xin) )?(?:nhờ|nho|giao|cho) )?${viActor} (?:làm|lam|viết|viet|ghi|chốt|chot|dựng|dung|tạo|tao|soạn|soan|chuẩn bị|chuan bi) (?<work>.+)$`,
+  'iu',
+);
+const viSplitWork =
+  /^(?:tách|tach|chia) (?:việc|viec|công việc|cong viec) (?:cho|phần|phan) [\p{L}\p{M}\p{N} _-]{1,125}[.!?;] +/iu;
+const viUnqualifiedProducer = new RegExp(
+  String.raw`^(?<command>(?:(?:tôi|toi|tui|mình|minh|xin) )?(?:nhờ|nho|giao|cho) )?(?<harness>${name}) (?:làm|lam|viết|viet|ghi|chốt|chot|dựng|dung|tạo|tao|soạn|soan|chuẩn bị|chuan bi) (?<work>.+)$`,
   'iu',
 );
 const viReceiver = new RegExp(
@@ -46,12 +61,13 @@ const enReceiver = new RegExp(
   'iu',
 );
 const viTransfer =
-  /(?:[.!?;] +(?:có|co) (?:quy ước|quy uoc|hợp đồng|hop dong|cấu trúc|cau truc|bản đó|ban do) (?:rồi|roi) |,? +(rồi|roi|sau đó|sau do) )/giu;
+  /(?:[.!?;] +(?:khi )?(?:có|co) (?:quy ước|quy uoc|hợp đồng|hop dong|cấu trúc|cau truc|bản đó|ban do|contract) (?:rồi|roi),? +(?:(?:mới|moi) +)?|,? +(rồi|roi|sau đó|sau do) )/giu;
 const enTransfer = /(?:,? +then |[.!?;] +after (?:it|the contract) is ready,? +)/giu;
 const sentenceEnd = /[.!?;](?:\s|$)/u;
 const noTransfer =
   /\b(?:chi bao tin|chi thong bao|chi la (?:vi du|trich dan)|khong (?:can |duoc )?(?:giao|nho|chuyen|lam)|dung (?:giao|nho|chuyen|lam)|neu|tru khi|du phong|thay vi|if|unless|instead of|in case|fallback|backup|do not (?:assign|start|send)|status only|nothing to do|for information only)\b/;
 const conflictingClause = /\b(?:khong|hoac|hay la|not|never|or)\b/;
+const noAutomaticStyleChoice = /\bkhong (?:duoc )?tu (?:chon|quyet)(?: dinh)?\b/gu;
 const architecture =
   /\b(?:cau truc|kien truc|hop dong|quy uoc|contract|architecture|structure|schema)\b/;
 const frontend = /\b(?:frontend|front[ -]end|giao dien|man|ui|interface|screen|view)\b/;
@@ -89,14 +105,29 @@ const testFile = /(?:^|\/)(?:tests?|__tests__|specs?)\/|\.(?:test|spec)\.[^/]+$/
 const implementationFile = /\.(?:[cm]?[jt]s|py|go|rs|rb|php|java|kt|cs)$/i;
 const delegatedWork =
   /\bsade (?:(?:tu|hay|co the) )?(?:chia|giao|tim nguoi|can assign|should assign|assigns?)\b|^(?:hay |please )?(?:lam|viet|them|build|implement|write|add)\b/;
+const delegatedPathWork =
+  /^(?:hay |please )?(?:giao|assign)(?: (?:phan |the )?(?:backend|back[ -]end|api|codebase|bo test|tests?|kiem thu)(?: o| tai| in)?)?$/u;
+const supportSequence =
+  /,? +(?:(?:rồi|roi|sau đó|sau do|and then|then) )(?=(?:(?:hãy|hay|please) )?(?:giao|viết|viet|thêm|them|assign|write|add) +)/iu;
+const backendCompletion =
+  /\b(?:sau khi (?:phan )?(?:backend|back[ -]end|api) (?:xong|hoan tat|hoan thanh)|after (?:the )?(?:backend|back[ -]end|api) (?:is (?:ready|done|complete)|lands|finishes))\b/u;
+const backendAfterContract =
+  /^(?:cung )?(?:doi|cho) (?:ban )?(?:contract|hop dong|quy uoc|cau truc) (?:xong|hoan tat|hoan thanh) (?:roi|moi) (?:sua|lam|viet|them|trien khai|cap nhat) (?<work>[\p{L}\p{N} _-]{1,80}?) (?:o|tai|trong)$/u;
+const testsAfterWork =
+  /^(?:doi|cho) (?<work>[\p{L}\p{N} _-]{1,80}?) (?:xong|hoan tat|hoan thanh) (?:moi|roi) (?:viet|lam|them|cap nhat)(?: (?:test|tests|kiem thu))?$/u;
+const reviewFile = String.raw`[\p{L}\p{M}\p{N}_.\/-]+`;
+const independentNamedReview = new RegExp(
+  String.raw`^(?:(?:cuoi cung|sau do|finally|then),? )?(?:cho|nho|giao cho|giao|ask|have) (?:(?:mot|an?|the) )?(?:nguoi khac|another (?:person|teammate|reviewer)|independent reviewer) (?:to )?(?:(?:doc|read) (?:va|and) )?(?:review|ra soat|kiem tra|check) (?:(?:dung|exactly) )?(?:hai (?:file|tep)|(?:the )?two files) \x60?(?<left>${reviewFile})\x60? (?:va|and) \x60?(?<right>${reviewFile})\x60? (?:sau khi ca hai (?:xong|hoan tat|hoan thanh)|after both (?:are (?:done|ready|complete)|finish|land))[,;]?(?: (?:de )?(?:xem|coi|kiem tra|doi chieu|check|compare|verify) (?<focus>.+))?$`,
+  'du',
+);
 const pastWork =
   /\b(?:tin (?:nhan )?truoc|ke hoach cu|hom qua|da lam|already (?:done|assigned)|previous (?:message|plan)|was (?:assigned|done))\b/;
 const defensiveRead = /\b(?:chi doc|doc|read[ -]only|read)\b/;
-const defensiveAction = /\b(?:ra soat|kiem tra|xem|check|inspect|review|report whether)\b/;
+const defensiveAction = /\b(?:ra soat|kiem tra|xem|coi|check|inspect|review|report whether)\b/;
 const defensiveConcern =
   /\b(?:phong thu|defensive|lo|lot|hien|expos(?:e[ds]?|ure)|leak(?:s|age)?|disclos(?:e[ds]?|ure))\b/;
 const negatedDefensiveAction =
-  /\b(?:khong (?:can|nen|phai)|dung|bo qua|do not|no need to|skip|omit) (?:doc|read|ra soat|kiem tra|xem|check|inspect|review|report)\b/;
+  /\b(?:khong (?:can|nen|phai)|dung|bo qua|do not|no need to|skip|omit) (?:doc|read|ra soat|kiem tra|xem|coi|check|inspect|review|report)\b/;
 const bothReviewedFiles =
   /\b(?:hai (?:file|tep)|ca hai|chung|(?:both|those two|the two) (?:source )?files)\b/;
 const reviewReadVerb = /\b(?:doc|read(?!-only\b))\b/;
@@ -250,19 +281,56 @@ function onlyFrontendAndBackend(brief: string, text: string) {
   return roles.length === 2 && roles.every((role) => exactReviewRole.test(role));
 }
 
+function matchesNamedReview(brief: string, scopes: HandoffReviewScopes) {
+  const { producer, receiver, backend, codebase } = scopes;
+  if (!receiver.scope || !backend?.scope) return false;
+  const files = [producer.scope, receiver.scope, backend.scope, codebase?.scope].filter(
+    (file): file is string => file !== undefined,
+  );
+  const original = brief.normalize('NFC').replace(/[.!?;]+$/u, '');
+  const request = foldSharedSadeName(original);
+  const match = independentNamedReview.exec(request);
+  const names = match?.indices?.groups;
+  if (
+    !names ||
+    request.length !== original.length ||
+    additionalReviewScope.test(request) ||
+    match?.groups?.focus?.match(fileToken)?.length
+  )
+    return false;
+  const matches = [names.left, names.right].map(([start, end]) => {
+    const alias = original.slice(start, end).toLowerCase();
+    return files.filter((file) => {
+      const full = file.normalize('NFC').toLowerCase();
+      const filename = full.split('/').at(-1)!;
+      return [full, filename, filename.replace(/\.[^.]+$/u, '')].includes(alias);
+    });
+  });
+  return (
+    matches.every((files) => files.length === 1) &&
+    matches.some(([file]) => file === receiver.scope) &&
+    matches.some(([file]) => file === backend.scope)
+  );
+}
+
 /** Extract an explicit review brief from the current message of a recognized handoff. */
 export function sharedSadeExplicitHandoffReview(
   message: string,
+  scopes?: HandoffReviewScopes,
 ): { brief: string; exactFrontendAndBackend: boolean } | undefined {
   const input = boundedHandoffMessage(message);
   if (!input || tentativeReview.test(foldSharedSadeName(input))) return;
   const sentences = input.split(/(?<=[.!?;])\s+/u).map((sentence) => {
     const brief = sentence.trim();
-    return { brief, text: reviewText(brief) };
+    return {
+      brief,
+      text: reviewText(brief),
+      named: Boolean(scopes && matchesNamedReview(brief, scopes)),
+    };
   });
-  const matches = sentences.filter(({ text }) => requestsDefensiveReview(text));
+  const matches = sentences.filter(({ named, text }) => named || requestsDefensiveReview(text));
   if (matches.length !== 1) return;
-  const [{ brief, text }] = matches;
+  const [{ brief, named, text }] = matches;
   if (
     mixedReviewWrites.test(text) ||
     sentences.some(
@@ -270,20 +338,68 @@ export function sharedSadeExplicitHandoffReview(
         cancelReview.test(sentence.text) ||
         reviewAuthorWrites.test(sentence.text) ||
         negatedDefensiveAction.test(sentence.text) ||
-        restrictsDefensiveReview(sentence.brief, sentence.text) ||
+        (!sentence.named && restrictsDefensiveReview(sentence.brief, sentence.text)) ||
         (correction.test(sentence.text) &&
           (reviewDesignation.test(sentence.text) || defensiveAction.test(sentence.text))),
     )
   )
     return;
 
-  return { brief, exactFrontendAndBackend: onlyFrontendAndBackend(brief, text) };
+  return { brief, exactFrontendAndBackend: named || onlyFrontendAndBackend(brief, text) };
+}
+
+function sequentialDeliverables(
+  tail: string[],
+  [producer, receiver]: [string | undefined, string | undefined],
+): SharedSadeHandoffDeliverables | undefined {
+  if (!producer || !receiver || tail.length !== 3) return;
+  const [backendWork, testWork, review] = tail;
+  const backend = exactScope(backendWork);
+  const codebase = exactScope(testWork);
+  if (
+    !backend ||
+    !codebase ||
+    !implementationFile.test(backend) ||
+    testFile.test(backend) ||
+    !testFile.test(codebase) ||
+    new Set([producer, receiver, backend, codebase].map((file) => file.toLowerCase())).size !== 4
+  )
+    return;
+  const backendMention = [...backendWork.matchAll(fileToken)][0];
+  const testMention = [...testWork.matchAll(fileToken)][0];
+  const write = backendAfterContract.exec(
+    foldSharedSadeName(backendWork.slice(0, backendMention.index)).replace(/[\s`]+$/u, ''),
+  )?.groups?.work;
+  const testPrefix = foldSharedSadeName(testWork.slice(0, testMention.index)).replace(
+    /[\s`]+$/u,
+    '',
+  );
+  const testPrerequisite = testsAfterWork.exec(
+    foldSharedSadeName(testWork.slice(testMention.index + codebase.length)).replace(/^`? */u, ''),
+  )?.groups?.work;
+  if (
+    !write ||
+    !/^(?:phan|bo test|tests?)?$/u.test(testPrefix) ||
+    !/^\s*`?\s*$/u.test(backendWork.slice(backendMention.index + backend.length)) ||
+    !testPrerequisite ||
+    (testPrerequisite !== write &&
+      !/^(?:phan )?(?:backend|back[ -]end|api)$/.test(testPrerequisite))
+  )
+    return;
+  const deliverables: SharedSadeHandoffDeliverables = {
+    backend: { scope: backend },
+    codebase: { scope: codebase, afterBackend: true },
+    defensiveReview: true,
+  };
+  const scopes = { producer: { scope: producer }, receiver: { scope: receiver }, ...deliverables };
+  if (!sharedSadeExplicitHandoffReview(review, scopes)?.exactFrontendAndBackend) return;
+  return deliverables;
 }
 
 function supportingDeliverables(
   receiverWork: string,
   tail: string[],
-  primaryScopes: (string | undefined)[],
+  primaryScopes: [string | undefined, string | undefined],
 ): SharedSadeHandoffDeliverables | undefined {
   if (
     [receiverWork, ...tail].some(
@@ -293,6 +409,11 @@ function supportingDeliverables(
   )
     return;
 
+  const sequential = sequentialDeliverables(
+    tail.map((part) => part.trim()).filter(Boolean),
+    primaryScopes,
+  );
+  if (sequential) return sequential;
   const tailText = tail.map(reviewText);
   if (tail.some((sentence, index) => restrictsDefensiveReview(sentence, tailText[index]))) return;
   if (inlineDeliverables(receiverWork)) return { backend: {}, codebase: {}, defensiveReview: true };
@@ -301,28 +422,38 @@ function supportingDeliverables(
   const codebaseScopes = new Set<string>();
   let backend = false;
   let codebase = false;
-  for (const sentence of tail) {
+  let codebaseAfterBackend = false;
+  for (const sentence of tail.flatMap((part) => part.split(supportSequence))) {
     const text = reviewText(sentence);
-    if (pastWork.test(text) || !delegatedWork.test(text) || defensiveRead.test(text)) continue;
+    if (pastWork.test(text) || defensiveRead.test(text)) continue;
+    const scopesAreDelegated = delegatedWork.test(text);
     const scopes = [...sentence.matchAll(fileToken)].flatMap((mention) => {
       const [file] = mention;
       if (primaryScopes.includes(file) || exactScope(file) !== file) return [];
-      const before = foldSharedSadeName(sentence.slice(0, mention.index));
+      const before = foldSharedSadeName(sentence.slice(0, mention.index)).replace(
+        /[\s\x60]+$/u,
+        '',
+      );
       const after = foldSharedSadeName(sentence.slice(mention.index + file.length)).replace(
         /^[\s`)]+/u,
         '',
       );
+      if (!scopesAreDelegated && (!delegatedPathWork.test(before) || /^(?:cho|to)\b/.test(after)))
+        return [];
       return referenceBefore.test(before) || referenceAfter.test(after) ? [] : [file];
     });
+    if (!scopesAreDelegated && !scopes.length) continue;
     const tests = scopes.filter((file) => testFile.test(file));
     const source = scopes.filter((file) => !testFile.test(file) && implementationFile.test(file));
+    const dependency = backendCompletion.exec(text);
     if (codebaseRole.test(text) || tests.length) {
       codebase = true;
       tests.forEach((file) => codebaseScopes.add(file));
+      if (dependency) codebaseAfterBackend = true;
     }
     // A named backend review can disambiguate a single assigned source paired with tests.
     if (
-      backendRole.test(text) ||
+      backendRole.test(text.slice(0, dependency?.index)) ||
       (!frontend.test(text) && source.length === 1 && tests.length > 0)
     ) {
       backend = true;
@@ -334,7 +465,10 @@ function supportingDeliverables(
   if (tail.some((sentence) => keepsScope(sentence, scopes))) return;
   return {
     backend: backendScopes.size === 1 ? { scope: [...backendScopes][0] } : {},
-    codebase: codebaseScopes.size === 1 ? { scope: [...codebaseScopes][0] } : {},
+    codebase: {
+      ...(codebaseScopes.size === 1 ? { scope: [...codebaseScopes][0] } : {}),
+      ...(codebaseAfterBackend ? { afterBackend: true } : {}),
+    },
     defensiveReview: true,
   };
 }
@@ -372,7 +506,7 @@ function binding(
   language: 'vi' | 'en',
 ): SharedSadeHandoffBinding | undefined {
   const harnessName = match.harness;
-  const ownerQualifier = match.relative || match.owner;
+  const ownerQualifier = match.relative || match.owner || '';
   const qualifier = foldSharedSadeName(ownerQualifier);
   const requester =
     language === 'vi'
@@ -382,11 +516,13 @@ function binding(
     language === 'vi'
       ? ['ban', 'ong'].includes(qualifier)
       : qualifier === 'your' && Boolean(match.relative);
-  const owner = requester
-    ? { relative: 'requester' as const }
-    : other
-      ? { relative: 'other' as const }
-      : ownerQualifier;
+  const owner = !ownerQualifier
+    ? { relative: 'any' as const }
+    : requester
+      ? { relative: 'requester' as const }
+      : other
+        ? { relative: 'other' as const }
+        : ownerQualifier;
   const candidates = resolveSharedSadePublishedCandidates(harnessName, owner, requesterId, group);
   return candidates && { harnessName, ownerQualifier, candidates, ...(scope ? { scope } : {}) };
 }
@@ -397,15 +533,22 @@ export function resolveSharedSadeHandoffAssignment(
   requesterId: string,
   group: Pick<SharedGroup, 'people' | 'teammates'>,
 ): SharedSadeHandoffAssignment | undefined {
-  const input = boundedHandoffMessage(message);
-  if (!input) return;
+  const addressed = boundedHandoffMessage(message)?.replace(sadeAddress, '');
+  if (!addressed) return;
+  const input = addressed.replace(viSplitWork, '');
+  const splitWork = input !== addressed;
 
   for (const [transfer, firstClause, secondClause, language] of [
     [viTransfer, viProducer, viReceiver, 'vi'],
     [enTransfer, enProducer, enReceiver, 'en'],
   ] as const) {
     for (const separator of input.matchAll(transfer)) {
-      const first = firstClause.exec(input.slice(0, separator.index).trim())?.groups;
+      const producerClause = input.slice(0, separator.index).trim();
+      const unqualified =
+        language === 'vi' ? viUnqualifiedProducer.exec(producerClause)?.groups : undefined;
+      const first =
+        firstClause.exec(producerClause)?.groups ??
+        (splitWork || unqualified?.command ? unqualified : undefined);
       const [receiverClause, ...tail] = input
         .slice(separator.index + separator[0].length)
         .split(sentenceEnd);
@@ -413,11 +556,16 @@ export function resolveSharedSadeHandoffAssignment(
       if (!first || !second) continue;
       const firstWork = foldSharedSadeName(first.work);
       const secondWork = foldSharedSadeName(second.work);
+      const secondActions =
+        conflictingClause.test(secondWork) &&
+        groundedHandoffStyle(second.work)?.kind === 'requester'
+          ? secondWork.replace(noAutomaticStyleChoice, '')
+          : secondWork;
       if (
         !architecture.test(firstWork) ||
         (language === 'vi' && !first.command && !/\btruoc\b/.test(firstWork)) ||
         conflictingClause.test(firstWork) ||
-        conflictingClause.test(secondWork)
+        conflictingClause.test(secondActions)
       )
         continue;
       const firstScope = exactScope(first.work);

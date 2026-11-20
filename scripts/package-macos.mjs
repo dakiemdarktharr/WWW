@@ -13,6 +13,7 @@ import {
 import { createReadStream, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { desktopPackageFiles } from './desktop-package-files.mjs';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -290,19 +291,7 @@ await build({
     electronVersion: packageJson.devDependencies.electron,
     directories: { output },
     extraMetadata: { version: version },
-    files: [
-      'main.cjs',
-      'preload.cjs',
-      'provider-tools.cjs',
-      'security.cjs',
-      'release-download.cjs',
-      'browser.cjs',
-      'workspaces.cjs',
-      'package.json',
-      'icon.png',
-      'icon.ico',
-      '!node_modules/**/*',
-    ],
+    files: desktopPackageFiles,
     asar: true,
     forceCodeSigning: true,
     npmRebuild: false,

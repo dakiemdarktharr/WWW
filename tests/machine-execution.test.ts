@@ -9,13 +9,15 @@ import { MachineAgent, runMachine } from '../server/runner-agent.ts';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
-import { verifyMachineSignature } from '../server/machine-signature.ts';
+import { signerFingerprint, verifyMachineSignature } from '../server/machine-signature.ts';
 import { machineTool } from '../server/machine-tools.ts';
 import { checkRecoveryProtocol, MachineCheckOutbox } from '../server/machine-check-outbox.ts';
 import { beginMachineCheck } from '../server/machine-checks.ts';
+import { pairedTestRecipe } from '../server/paired-test-recipe.ts';
 import { MachineDeliveryInterrupted, type RunnerEvent } from '../server/runners.ts';
 import { createWorktree, git } from '../server/git.ts';
 import type { CodexSession, Project } from '../shared/types.ts';
+import type { SharedDelivery, SharedFinish } from '../server/group-sade.ts';
 import {
   machineChunkBytes,
   machineSnapshotProtocol,
@@ -158,6 +160,59 @@ test(
     assert.equal(
       await readFile(path.join(f.root, 'remote-workspaces', f.taskId, 'sample.txt'), 'utf8'),
       'base once',
+    );
+  },
+);
+
+test(
+  'a paired test runs only the owner-approved file and signs an unchanged source snapshot',
+  { timeout: 20_000 },
+  async (t) => {
+    const approved = 'tests/one.test.cjs';
+    const other = 'tests/two.test.cjs';
+    const f = await fixture(t, grant({ testFile: approved }));
+    const testBody = `const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+test('approved read-only check', () => {
+  assert.equal(fs.readFileSync('source.txt', 'utf8'), 'original');
+  assert.throws(() => fs.writeFileSync('source.txt', 'changed'), { code: 'ERR_ACCESS_DENIED' });
+});`;
+    await f.run('sync', {
+      files: [
+        file('source.txt', 'original'),
+        file(approved, testBody),
+        file(other, 'process.exit(77)'),
+      ],
+    });
+    const checkId = randomUUID();
+    const baseCommit = 'a'.repeat(40);
+    const command = (args: object) => ({ ...f.params('test', args), checkId, baseCommit });
+    await assert.rejects(
+      f.executor.perform(randomUUID(), command({ file: other })),
+      /exact test file/,
+    );
+    await assert.rejects(
+      f.executor.perform(randomUUID(), command({ file: approved, command: 'sh' })),
+      /Unrecognized key/,
+    );
+    await assert.rejects(f.run('test', { file: approved }), /exact source revision and check/);
+    const result = await f.executor.perform(checkId, command({ file: approved }));
+    assert.ok('evidence' in result);
+    assert.equal(result.code, 0);
+    assert.equal(result.evidence.checkId, checkId);
+    assert.equal(result.evidence.baseCommit, baseCommit);
+    assert.equal(result.evidence.input, result.evidence.after);
+    assert.match(result.stdout, /approved read-only check/);
+    assert.deepEqual(pairedTestRecipe(approved).args.slice(-2), ['--', approved]);
+    verifyMachineSignature(
+      result.evidence,
+      result.proof,
+      signerFingerprint(result.proof.publicKey),
+    );
+    assert.equal(
+      await readFile(path.join(f.root, 'remote-workspaces', f.taskId, 'source.txt'), 'utf8'),
+      'original',
     );
   },
 );
@@ -439,8 +494,8 @@ test(
   },
 );
 
-async function reviewFixture(t: TestContext, ignoredCounter?: string) {
-  const f = await fixture(t);
+async function reviewFixture(t: TestContext, ignoredCounter?: string, permission = grant()) {
+  const f = await fixture(t, permission);
   const store = new Store(path.join(f.root, 'check.db'));
   const host = new Workspace(store, f.root, f.root);
   f.cleanups.push(async () => {
@@ -463,7 +518,6 @@ async function reviewFixture(t: TestContext, ignoredCounter?: string) {
     '-m',
     'base',
   ]);
-  const permission = f.executor.grant!;
   const project = store.put('project', {
     id: permission.projectId,
     name: 'Check fixture',
@@ -497,6 +551,107 @@ async function reviewFixture(t: TestContext, ignoredCounter?: string) {
   const node = host.runners.add('Fixture machine', 'computer', project.id);
   return { f, store, host, repo, project, owner, task, checkout, session, node };
 }
+
+test(
+  'the paired test worker produces a signed result without opening a model session',
+  { timeout: 20_000 },
+  async (t) => {
+    const file = 'tests/node-smoke.test.cjs';
+    const { f, store, host, repo, project, owner, node } = await reviewFixture(
+      t,
+      undefined,
+      grant({ testFile: file }),
+    );
+    await mkdir(path.join(repo, 'tests'));
+    await writeFile(
+      path.join(repo, file),
+      "require('node:test')('smoke', () => require('node:assert/strict').equal(require('node:fs').readFileSync('value.txt', 'utf8'), 'base'));\n",
+    );
+    await git(repo, ['add', file]);
+    await git(repo, [
+      '-c',
+      'user.name=Test',
+      '-c',
+      'user.email=t@example.org',
+      'commit',
+      '-m',
+      'approved scoped smoke test',
+    ]);
+    await git(repo, ['remote', 'add', 'origin', 'https://example.test/paired-tests.git']);
+    await host.runners.exchange(node.id, {
+      epoch: host.runners.epoch,
+      ready: true,
+      busy: false,
+      version: 'fixture',
+      events: [],
+      execution: f.executor.metadata(),
+    });
+    const operations: string[] = [];
+    t.mock.method(
+      host.runners,
+      'call',
+      async (_peer: unknown, command: { params: { operation: string } }) => {
+        operations.push(command.params.operation);
+        return f.executor.perform(randomUUID(), command.params);
+      },
+    );
+    const sessions = t.mock.method(host.sessions, 'create', async () => {
+      throw new Error('The test must not start a model session.');
+    });
+    const groupId = randomUUID();
+    const grantId = randomUUID();
+    const assignment = (await host.sharedSade.execute({
+      action: 'grant',
+      id: grantId,
+      groupId,
+      projectId: project.id,
+      teammateId: owner.id,
+      allowWrites: true,
+      turns: 1,
+      machineId: node.id,
+    })) as { projectKey: string };
+    const jobId = randomUUID();
+    await host.sharedSade.execute({
+      action: 'exchange',
+      active: [],
+      acknowledged: [],
+      delivery: {
+        id: jobId,
+        grantId,
+        groupId,
+        projectKey: assignment.projectKey,
+        phase: 'task',
+        request: 'Run the approved test file on this paired machine.',
+        team: [],
+        prerequisites: [],
+        task: {
+          key: 'node-smoke',
+          title: 'Run the smoke test',
+          description: 'Run one named test file on the paired machine.',
+          acceptance: 'Report the signed result without making any changes.',
+          kind: 'code',
+          scope: [file],
+          effort: 1,
+          stage: 'Verify',
+          dependsOn: [],
+          preferredMemberId: grantId,
+          requiredPairedMachineName: 'Fixture machine',
+          requiredPlatform: f.executor.metadata()!.platform as 'win32' | 'darwin' | 'linux',
+          testOnly: true,
+        },
+      } satisfies SharedDelivery,
+    });
+    const receipt = () =>
+      store.get<{ result?: SharedFinish }>('sharedSadeLocalReceipt', jobId).result;
+    const deadline = Date.now() + 12_000;
+    while (!receipt() && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(receipt()?.kind, 'test-result', JSON.stringify(receipt()));
+    assert.equal(sessions.mock.callCount(), 0);
+    assert.deepEqual(operations, ['sync', 'test']);
+    assert.equal(await git(repo, ['status', '--porcelain']), '');
+  },
+);
 
 if (process.env.KIVUNO_PAIRED_RECOVERY === '1')
   test(

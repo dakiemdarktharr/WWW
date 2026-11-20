@@ -149,7 +149,9 @@ try {
     timeout: 30000,
     waitUntil: 'domcontentloaded',
   });
-  await page.waitForFunction(() => Boolean((window as any).relayDesktop), { timeout: 30000 });
+  await page.waitForFunction(() => Boolean((window as any).relayDesktop), undefined, {
+    timeout: 30000,
+  });
   const status = await page.evaluate(() => (window as any).relayDesktop.getStatus());
   assert.equal(await page.evaluate(() => (window as any).relayDesktop.version), metadata.version);
   assert.equal(status.runtime, 'ready');
@@ -232,7 +234,7 @@ try {
   throw error;
 } finally {
   if (desktop) await desktop.close();
-  assert.equal(path.dirname(isolatedProfile), os.tmpdir());
+  assert.equal(path.dirname(path.resolve(isolatedProfile)), path.resolve(os.tmpdir()));
   assert.ok(path.basename(isolatedProfile).startsWith('kivuno-packaged-profile-'));
   await rm(isolatedProfile, { recursive: true, force: true });
 }

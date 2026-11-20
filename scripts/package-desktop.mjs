@@ -9,6 +9,7 @@ import { build, Platform, Arch } from 'electron-builder';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 import { configureDestinationStaging } from './nsis-destination-staging.mjs';
+import { desktopPackageFiles } from './desktop-package-files.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -176,18 +177,7 @@ await build({
     electronVersion: rootPackage.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
     extraMetadata: { version: manifest.version },
-    files: [
-      'main.cjs',
-      'preload.cjs',
-      'provider-tools.cjs',
-      'security.cjs',
-      'browser.cjs',
-      'workspaces.cjs',
-      'package.json',
-      'icon.png',
-      'icon.ico',
-      '!node_modules/**/*',
-    ],
+    files: desktopPackageFiles,
     asar: true,
     npmRebuild: false,
     extraResources: [

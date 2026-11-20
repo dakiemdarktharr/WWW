@@ -16,6 +16,7 @@ import {
 import { planSharedSadeCloud } from '../server/shared-sade-cloud-planner.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
+import { parsePlanTask, parseTeamPlan } from '../server/workflow-plan.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
 import {
   handoffPlanningCases,
@@ -63,6 +64,7 @@ function fixture(
     turnsA?: number;
     turnsB?: number;
     mac?: boolean;
+    pairedMachine?: string;
     key?: string;
     members?: string[];
     names?: [string, string, string?, string?];
@@ -71,6 +73,7 @@ function fixture(
     readAssignment?: true;
     handoffAssignments?: true;
     handoffDeliverables?: true;
+    structuredVerification?: true;
     taskUpdates?: boolean;
     roleA?: 'researcher';
     allowWritesB?: boolean;
@@ -130,6 +133,9 @@ function fixture(
       role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
       platform: index && options.mac ? 'darwin' : 'win32',
       allowWrites: !index || options.allowWritesB !== false,
+      ...(index === 1 && options.pairedMachine
+        ? { pairedPlatform: 'darwin', pairedMachineName: options.pairedMachine }
+        : {}),
       ...(options.patchHandoff ? { patchHandoff: true } : {}),
       turns: (index ? options.turnsB : options.turnsA) ?? 8,
       ...overrides,
@@ -169,6 +175,7 @@ function fixture(
         ...(options.readAssignment ? { readAssignment: true } : {}),
         ...(options.handoffAssignments ? { handoffAssignments: true } : {}),
         ...(options.handoffDeliverables ? { handoffDeliverables: true } : {}),
+        ...(options.structuredVerification ? { structuredVerification: true } : {}),
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(rosterLookup ? { rosterLookup } : {}),
@@ -202,8 +209,8 @@ function fixture(
       sadeRuns: SharedSadeRun[];
       messages: { id: string }[];
     };
-  const hosted = (action: object, index = 0) =>
-    groups.execute(people[index], action, devices[index], true) as {
+  const hosted = (action: object, index = 0, extended = false) =>
+    groups.execute(people[index], action, devices[index], extended ? 'extended' : true) as {
       sadePlanner?: SharedSadeCloudOffer;
       sadeGroup: { sadeRuns: SharedSadeRun[] };
     };
@@ -246,7 +253,69 @@ function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
   };
 }
 
-test('hosted Qwen uses one internal receipt, keeps desktop turns, and binds an exact Vietnamese read', async (t) => {
+test('Shared Sade paired test only awaits a capable desktop and accepts a matching test receipt', (t) => {
+  const f = fixture(undefined, { pairedMachine: 'Build Mac' });
+  t.after(() => f.store.close());
+  const task = work('check-mode', {
+    kind: 'code',
+    testOnly: true,
+    preferredMemberId: f.grants[1],
+    requiredPairedMachineName: 'Build Mac',
+    requiredPlatform: 'darwin',
+    scope: ['tests/runner-mode.test.mjs'],
+  });
+  for (const invalid of [
+    { preferredMemberId: 'auto' },
+    { fallbackMemberId: f.grants[0] },
+    { askBeforeEditing: 'What should I edit?' },
+    { requiredPairedMachineName: undefined },
+    { scope: ['.'] },
+    { scope: ['tests\\runner-mode.test.mjs'] },
+  ])
+    assert.throws(() => parsePlanTask({ ...task, ...invalid }));
+  const { sadePlanner } = f.hosted({
+    action: 'message',
+    id: randomUUID(),
+    groupId: f.groupId,
+    content: 'Run the runner-mode test with the selected teammate on Build Mac.',
+    sade: { projectKey: key },
+  });
+  assert.ok(sadePlanner);
+  f.settle(sadePlanner, {
+    kind: 'plan',
+    plan: { summary: 'Run the exact test on the paired Mac.', tasks: [task] },
+  });
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.match(f.view().sadeRuns[0].jobs[1].summary || '', /Update this desktop/);
+  const current = f.call(1, {
+    action: 'sade-poll',
+    grants: [f.grants[1]],
+    active: [],
+    pairedTestOnly: true,
+  }).delivery as SharedDelivery;
+  assert.equal(current.task?.testOnly, true);
+  assert.equal(current.grantId, f.grants[1]);
+  assert.equal(current.requiresPublication, false);
+  assert.throws(
+    () => f.finish(1, current.id, { kind: 'done', summary: 'Plain completion is not sufficient.' }),
+    /verified paired test/,
+  );
+  const result = {
+    kind: 'test-result',
+    scope: task.scope[0],
+    platform: 'darwin',
+    checkId: randomUUID(),
+    summary: 'The approved test passed on Build Mac.',
+  } as const;
+  assert.throws(
+    () => f.finish(1, current.id, { ...result, scope: 'tests/different.test.mjs' }),
+    /granted scope and OS/,
+  );
+  f.finish(1, current.id, result);
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+});
+
+test('hosted Decisions uses one internal receipt, keeps desktop turns, and binds an exact Vietnamese read', async (t) => {
   const f = fixture(undefined, { turnsA: 1, turnsB: 1 });
   t.after(() => f.store.close());
   const input = {
@@ -277,7 +346,45 @@ test('hosted Qwen uses one internal receipt, keeps desktop turns, and binds an e
   assert.deepEqual(f.poll(1).delivery?.task?.scope, ['src/app.ts']);
 });
 
-test('hosted Qwen rechecks grants and does not dispatch on a changed or cancelled claim', async (t) => {
+test('an extended hosted claim accepts a receipt after two seconds and fences it at expiry', (t) => {
+  t.mock.timers.enable({ apis: ['Date'] });
+  const f = fixture();
+  t.after(() => f.store.close());
+  const send = (content: string) =>
+    f.hosted(
+      {
+        action: 'message',
+        id: randomUUID(),
+        groupId: f.groupId,
+        content,
+        sade: { projectKey: key },
+      },
+      0,
+      true,
+    ).sadePlanner;
+  const result = {
+    kind: 'plan' as const,
+    plan: { summary: 'Verify the requested record.', tasks: [work('report')] },
+  };
+  const current = send('Read src/report.ts and verify the current room schedule.');
+  assert.ok(current);
+  t.mock.timers.tick(2_400);
+  f.settle(current, result);
+  assert.equal(
+    f.view().sadeRuns.at(-1)?.state,
+    'running',
+    f.view().sadeRuns.at(-1)?.jobs[0]?.summary ?? '',
+  );
+
+  f.call(0, { action: 'sade-cancel', groupId: f.groupId, runId: current.runId });
+  const expired = send('Read src/report.ts to verify the weekend room schedule.');
+  assert.ok(expired);
+  t.mock.timers.tick(4_800);
+  assert.throws(() => f.settle(expired, result));
+  assert.equal(f.view().sadeRuns.at(-1)?.state, 'blocked');
+});
+
+test('hosted Decisions rechecks grants and does not dispatch on a changed or cancelled claim', async (t) => {
   for (const event of ['sade-revoke', 'sade-cancel']) {
     const f = fixture();
     t.after(() => f.store.close());
@@ -304,7 +411,7 @@ test('hosted Qwen rechecks grants and does not dispatch on a changed or cancelle
   }
 });
 
-test('hosted Qwen waits for the requested owner grant and resumes only the authorized task', async (t) => {
+test('hosted Decisions waits for the requested owner grant and resumes only the authorized task', async (t) => {
   const f = fixture(undefined, { grantB: false, turnsA: 1 });
   t.after(() => f.store.close());
   const waiting = f.hosted({
@@ -340,7 +447,7 @@ test('hosted Qwen waits for the requested owner grant and resumes only the autho
   assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
 });
 
-test('hosted Qwen keeps explicit owner, style, scope and ordering in the five-task workshop handoff', async (t) => {
+test('hosted Decisions keeps explicit owner, style, scope and ordering in the five-task workshop handoff', async (t) => {
   const f = fixture(['gemini', 'codex', 'claude', 'antigravity'], {
     names: ['Gemini', 'Astra', 'Claude', 'Antigravity'],
     grantC: true,
@@ -1150,6 +1257,179 @@ test('Shared Sade reads scoped Git evidence in the same turn before planning exi
   assert.equal(await git(repo, ['rev-parse', 'HEAD']), head);
   assert.equal(await git(remote, ['rev-parse', 'HEAD']), initial);
   assert.equal(await git(repo, ['status', '--porcelain']), statusBefore);
+});
+
+test('the desktop reports typed Git evidence and blocks a write without matching proof', async (t) => {
+  const prefix = 'shared-sade-verify-feature-';
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), prefix)));
+  const repo = path.join(root, 'project');
+  const data = path.join(root, 'desktop');
+  const scope = 'README.md';
+  const origin = 'https://example.test/shared/verify-feature.git';
+  const projectKey = canonicalSharedRepository(origin, 'main');
+  const tag = 'handbook-0.3.0';
+  const laterWording = 'Keep the receipt for 90 days.';
+  const commit = (message: string) =>
+    git(repo, [
+      '-c',
+      'user.name=Shared fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-m',
+      message,
+    ]);
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, data, repo);
+  const member = store.addMember({ name: 'Gemini', role: 'engineer', provider: 'gemini' });
+  const cloud = fixture(undefined, {
+    key: projectKey,
+    members: [member.id, randomUUID()],
+    structuredVerification: true,
+  });
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+    cloud.store.close();
+    assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith(prefix));
+    await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  await mkdir(repo);
+  await mkdir(data);
+  await git(repo, ['init', '-b', 'main']);
+  await git(repo, ['remote', 'add', 'origin', origin]);
+  const original = 'Approved project description.\n';
+  await writeFile(path.join(repo, scope), original);
+  await git(repo, ['add', '--', scope]);
+  await commit('Set the project description');
+  const revision = await git(repo, ['rev-parse', 'HEAD']);
+  await git(repo, ['tag', tag]);
+  const headContents = `${original}${laterWording}\n`;
+  await writeFile(path.join(repo, scope), headContents);
+  await git(repo, ['add', '--', scope]);
+  await commit('Later change to the receipt policy');
+  const peer = new DesktopPeer(repo, 'gemini');
+  store.updateMember(member.id, { status: 'ready', account: { type: 'gemini-google' } });
+  workspace.client = async () => new DesktopPeer(repo, 'gemini');
+  workspace.refresh = async () => store.get('member', member.id);
+  workspace.sessions.createClient = () => peer;
+  const project = store.put('project', {
+    id: randomUUID(),
+    path: repo,
+    name: 'Conditional edit fixture',
+    goal: 'Check an edit against the named Git verifier',
+    memberIds: [member.id],
+    createdAt: new Date().toISOString(),
+  });
+  const worker = workspace.sharedSade;
+  const [grantId] = cloud.grants;
+  await worker.execute({
+    action: 'grant',
+    groupId: cloud.groupId,
+    id: grantId,
+    projectId: project.id,
+    teammateId: member.id,
+    turns: 8,
+    allowWrites: true,
+  });
+  const { sadePlanner } = cloud.hosted({
+    action: 'message',
+    id: randomUUID(),
+    groupId: cloud.groupId,
+    content: `Check ${scope} at Git tag ${tag}. Only schedule the edit if the text “${laterWording}” is absent there.`,
+    sade: { projectKey },
+  });
+  assert.ok(sadePlanner);
+  const check = work('read-description', {
+    scope: [scope],
+    preferredMemberId: grantId,
+    description: `Read the exact assigned file at Git tag ${tag}, checking for the wording “${laterWording}” without changes.`,
+  });
+  const write = work('change-description', {
+    kind: 'code',
+    scope: [scope],
+    preferredMemberId: grantId,
+    dependsOn: [check.key],
+    editIfMissingAfter: check.key,
+  });
+  cloud.settle(sadePlanner, {
+    kind: 'plan',
+    plan: { summary: 'Edit only after the scoped Git finding.', tasks: [check, write] },
+  });
+  const verification = cloud.poll(0).delivery!;
+  assert.deepEqual(verification.verification, { scope });
+  await worker.execute({
+    action: 'exchange',
+    active: [],
+    acknowledged: [],
+    delivery: verification,
+  });
+  const task = () => store.tasks().find((item) => item.sharedSadeJobId === verification.id);
+  for (let attempt = 0; attempt < 200 && !task()?.turnId; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(task()?.turnId, 'The named Git verifier did not start');
+  const session = store.get<CodexSession>('session', task()!.sessionId!);
+  assert.equal(session.readOnly, true);
+  const tools = peer.calls.find(({ method }) => method === 'thread/start')?.params.dynamicTools;
+  const names = tools.map(({ name }: { name: string }) => name);
+  assert.ok(names.includes('relay_submit_shared_verification'));
+  assert.ok(names.includes('relay_read_shared_verification_file'));
+  const turn = { threadId: session.threadId, turnId: session.turnId };
+  const finding = { outcome: 'missing' as const, summary: `The wording is absent in ${revision}.` };
+  const tool = async (name: string, args: object) => {
+    peer.responded = undefined;
+    await workspace.sessions.request(session.id, peer, {
+      id: randomUUID(),
+      method: 'item/tool/call',
+      params: { ...turn, tool: name, arguments: args },
+    });
+    return peer.responded as DesktopPeer['responded'];
+  };
+  assert.equal((await tool('relay_submit_shared_verification', finding))?.success, false);
+  const historical = await tool('relay_read_shared_verification_file', {});
+  assert.equal(historical?.success, true, JSON.stringify(historical));
+  const loaded = JSON.parse(historical?.contentItems?.[0]?.text || '{}');
+  assert.deepEqual(loaded, { scope, revision, content: original, truncated: false });
+  const submitted = await tool('relay_submit_shared_verification', finding);
+  assert.equal(submitted?.success, true, JSON.stringify(submitted));
+  await workspace.sessions.notification(session.id, peer, 'turn/completed', {
+    ...turn,
+    turn: { id: session.turnId, status: 'completed' },
+  });
+  const results = async () =>
+    (
+      (await worker.execute({ action: 'snapshot' })) as {
+        results: { jobId: string; version: number; result: SharedFinish }[];
+      }
+    ).results;
+  const [reported] = await results();
+  assert.equal(reported.jobId, verification.id);
+  assert.deepEqual(reported.result, { kind: 'verification', ...finding });
+  cloud.finish(0, reported.jobId, reported.result);
+  const edit = cloud.poll(0).delivery!;
+  assert.deepEqual(edit.verificationProof, { taskKey: check.key, scope, outcome: 'missing' });
+  const { verificationProof, ...unproven } = edit;
+  await worker.execute({
+    action: 'exchange',
+    active: [],
+    acknowledged: [{ jobId: reported.jobId, version: reported.version }],
+    delivery: unproven,
+  });
+  const blocked = async () => (await results()).find(({ jobId }) => jobId === edit.id);
+  for (let attempt = 0; attempt < 200 && !(await blocked()); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  const refused = await blocked();
+  assert.equal(refused?.result.kind, 'blocked');
+  assert.match(JSON.stringify(refused?.result), /matching missing-feature finding/);
+  assert.equal(
+    store.tasks().some((item) => item.sharedSadeJobId === edit.id),
+    false,
+  );
+  assert.equal(peer.calls.filter(({ method }) => method === 'turn/start').length, 1);
+  assert.equal(await readFile(path.join(repo, scope), 'utf8'), headContents);
+  assert.equal(await git(repo, ['status', '--porcelain']), '');
 });
 
 async function checkSharedPlanCorrection(t: TestContext, handoff = false) {
@@ -2233,7 +2513,8 @@ test(
 
     const { workspace, projectId, memberId } = setups[0];
     const pairedPlatform = process.platform === 'darwin' ? 'win32' : 'darwin';
-    const node = workspace.runners.add('Paired verification fixture', 'computer', projectId);
+    const pairedMachineName = 'Paired verification fixture';
+    const node = workspace.runners.add(pairedMachineName, 'computer', projectId);
     const live = crossHostOrigin
       ? await startCrossHostBridge(workspace, projectId, node, {
           origin: crossHostOrigin,
@@ -2326,6 +2607,7 @@ test(
     })) as any;
     assert.equal(pairedMachine.grantId, permission.id);
     assert.equal(publicGrant.pairedPlatform, pairedPlatform);
+    assert.equal(publicGrant.pairedMachineName, pairedMachineName);
     cloud.call(0, { action: 'sade-grant', ...publicGrant });
     cloud.grants[0] = nextGrant.id;
     const debug = {
@@ -2339,6 +2621,10 @@ test(
     cloud.call(0, debug);
     const debugPlan = (await pump(0))!;
     assert.match(JSON.stringify(debugPlan.team), /pairedPlatform/);
+    assert.equal(
+      debugPlan.team.find(({ id }) => id === nextGrant.id)?.pairedMachineName,
+      pairedMachineName,
+    );
     assert.doesNotMatch(JSON.stringify(debugPlan), new RegExp(node.id + '|' + permission.id));
     const debugPlanner = await sessionFor(0, debugPlan);
     const platformPlan = {
@@ -2349,6 +2635,7 @@ test(
           ...(live ? { scope: ['path-label.cjs'] } : {}),
           preferredMemberId: nextGrant.id,
           requiredPlatform: pairedPlatform,
+          requiredPairedMachineName: pairedMachineName,
         }),
       ],
     };
@@ -2377,6 +2664,7 @@ test(
     await complete(0, debugPlanner.session, debugPlanner.peer, 'Paired check planned.');
     const debugJob = (await pump(0))!;
     assert.equal(debugJob.task?.requiredPlatform, pairedPlatform);
+    assert.equal(debugJob.task?.requiredPairedMachineName, pairedMachineName);
     const debuggerSession = await sessionFor(0, debugJob);
     const use = (operation: string, args = {}, runnerId = node.id) =>
       workspace.sharedSade.usePairedMachine(
@@ -3082,6 +3370,168 @@ for (const unavailable of ['before allocation', 'before starting', 'both exhaust
   });
 }
 
+test('quota-only fallbacks need a named primary and a distinct backup', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const [preferredMemberId, fallbackMemberId] = f.grants;
+  const task = work('quota-guard', {
+    preferredMemberId,
+    fallbackMemberId,
+    fallbackOnProviderQuota: true,
+  });
+  assert.equal(parsePlanTask(task).fallbackOnProviderQuota, true);
+  assert.equal(parsePlanTask({ ...task, fallbackMemberId: 'auto' }).fallbackOnProviderQuota, true);
+  for (const variant of [
+    { preferredMemberId: undefined },
+    { preferredMemberId: 'auto' },
+    { fallbackMemberId: undefined },
+    { fallbackMemberId: 'none' },
+    { fallbackMemberId: preferredMemberId },
+  ])
+    assert.throws(() => parsePlanTask({ ...task, ...variant }), /different authorized backup/);
+  assert.throws(() => parsePlanTask({ ...task, waitForProviderQuota: true }), /without a fallback/);
+});
+
+for (const cause of [
+  'before allocation',
+  'shared turns after allocation',
+  'revoked after allocation',
+  'unsupported platform',
+] as const) {
+  test(`quota-only authorization does not replace the primary for ${cause}`, (t) => {
+    const f = fixture(['gemini', 'claude'], {
+      turnsA: cause === 'before allocation' ? 1 : 3,
+      mac: cause === 'unsupported platform',
+    });
+    t.after(() => f.store.close());
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Inspect the assigned file. Provider quota is the only condition for a backup.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    const [primary, backup] = f.grants;
+    const task = work('quota-guard', {
+      preferredMemberId: primary,
+      fallbackMemberId: backup,
+      fallbackOnProviderQuota: true,
+      ...(cause === 'unsupported platform' ? { requiredPlatform: 'darwin' } : {}),
+    });
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: { summary: 'Check the original owner before any quota fallback.', tasks: [task] },
+    });
+    if (cause === 'shared turns after allocation') {
+      const grant = f.store.get<{ id: string; used: number; turns: number }>(
+        'sharedSadeGrant',
+        primary,
+      );
+      f.store.put('sharedSadeGrant', { ...grant, used: grant.turns });
+    } else if (cause === 'revoked after allocation') {
+      f.call(0, { action: 'sade-revoke', groupId: f.groupId, grantId: primary });
+    }
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(f.poll(0).delivery, undefined);
+    assert.equal(f.view().sadeRuns[0].state, 'blocked');
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', backup).used, 0);
+  });
+}
+
+test('a quota-only fallback cannot use a revoked backup or choose an unauthorized substitute', (t) => {
+  const f = fixture(['gemini', 'claude', 'codex'], { grantC: true });
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Inspect the assigned file with the original provider and one named backup.',
+    sade: { projectKey: key },
+  });
+  const planner = f.poll(0).delivery!;
+  const [primary, backup, substitute] = f.grants;
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Check the scoped file with the named account.',
+      tasks: [
+        work('quota-guard', {
+          preferredMemberId: primary,
+          fallbackMemberId: backup,
+          fallbackOnProviderQuota: true,
+        }),
+      ],
+    },
+  });
+  f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId: backup });
+  const original = f.poll(0).delivery!;
+  assert.equal(original.grantId, primary);
+  f.finish(0, original.id, { kind: 'provider-unavailable' });
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.poll(2).delivery, undefined);
+  assert.equal(f.view().sadeRuns[0].state, 'blocked');
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', substitute).used, 0);
+});
+
+test('only that task’s provider quota receipt unlocks its backup across coordinator instances', (t) => {
+  const f = fixture(['gemini', 'claude'], { turnsA: 3 });
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content:
+      'Inspect src/first.ts then src/second.ts. Switch only if the active provider reports quota exhaustion.',
+    sade: { projectKey: key, readOnly: true },
+  });
+  const planner = f.poll(0).delivery!;
+  const [primary, backup] = f.grants;
+  const quota = {
+    preferredMemberId: primary,
+    fallbackMemberId: backup,
+    fallbackOnProviderQuota: true,
+  } as const;
+  const first = work('first', quota);
+  const second = work('second', { ...quota, dependsOn: [first.key] });
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Keep both inspections bound until an actual provider receipt.',
+      tasks: [first, second],
+    },
+  });
+  const restarted = new SharedGroups(f.store, () => null);
+  const backupPoll = () =>
+    restarted.execute(
+      { id: 'owner-B', name: 'Bình' },
+      { action: 'sade-poll', grants: [backup], active: [], unchangedRevisionScopes: true },
+      f.devices[1],
+    ) as { delivery?: SharedDelivery };
+  const firstDelivery = f.poll(0).delivery!;
+  assert.equal(firstDelivery.task?.key, first.key);
+  assert.equal(firstDelivery.grantId, primary);
+  assert.equal(backupPoll().delivery, undefined);
+  assert.throws(() => f.finish(1, firstDelivery.id, { kind: 'provider-unavailable' }), /grant/);
+  f.finish(0, firstDelivery.id, { kind: 'provider-unavailable' });
+  const firstBackup = backupPoll().delivery!;
+  assert.equal(firstBackup.grantId, backup);
+  assert.notEqual(firstBackup.id, firstDelivery.id);
+  assert.deepEqual(firstBackup.task?.scope, ['src/first.ts']);
+  assert.doesNotMatch(JSON.stringify(firstBackup.task), /fallbackMemberId|fallbackOnProviderQuota/);
+  f.finish(1, firstBackup.id, { kind: 'done', summary: 'The first inspection finished.' });
+  assert.equal(backupPoll().delivery, undefined);
+  const secondDelivery = f.poll(0).delivery!;
+  assert.equal(secondDelivery.task?.key, second.key);
+  assert.equal(secondDelivery.grantId, primary);
+  f.finish(0, secondDelivery.id, { kind: 'provider-unavailable' });
+  const secondBackup = backupPoll().delivery!;
+  assert.equal(secondBackup.grantId, backup);
+  assert.deepEqual(secondBackup.task?.scope, ['src/second.ts']);
+  f.finish(1, secondBackup.id, { kind: 'done', summary: 'The dependent inspection finished.' });
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+});
+
 test('a known provider limit moves later work to its own named backup without polling the primary', (t) => {
   const f = fixture(['gemini', 'claude'], { turnsA: 3, turnsB: 1 });
   t.after(() => f.store.close());
@@ -3231,6 +3681,140 @@ for (const pinned of ['named harness', 'required OS'] as const) {
     }
   });
 }
+
+test('waiting for provider quota requires a pinned teammate without a fallback', () => {
+  const preferredMemberId = randomUUID();
+  const pinned = work('pinned', { preferredMemberId, waitForProviderQuota: true });
+  assert.equal(parsePlanTask(pinned).waitForProviderQuota, true);
+  assert.throws(
+    () => parsePlanTask({ ...pinned, preferredMemberId: undefined }),
+    /requires a pinned teammate/,
+  );
+  assert.throws(() => parsePlanTask({ ...pinned, preferredMemberId: 'auto' }), /pinned teammate/);
+  assert.throws(() => parsePlanTask({ ...pinned, fallbackMemberId: 'auto' }), /without a fallback/);
+  assert.throws(() => parsePlanTask({ ...pinned, waitForProviderQuota: false }));
+});
+
+for (const ending of ['recover', 'revoke', 'expire'] as const) {
+  test(`the same quota-pinned teammate waits through backoff until ${ending}`, (t) => {
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const f = fixture(['gemini', 'codex'], { turnsB: 1 });
+    t.after(() => f.store.close());
+    const grantId = f.grants[1];
+    f.call(0, {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content: 'Use the assigned harness for the scoped read. Wait for its quota if needed.',
+      sade: { projectKey: key },
+    });
+    const planner = f.poll(0).delivery!;
+    const pinned = work('quota-pinned', { preferredMemberId: grantId, waitForProviderQuota: true });
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: { summary: 'Check the project with the pinned harness.', tasks: [pinned] },
+    });
+    const task = () => f.view().sadeRuns[0].jobs.find(({ phase }) => phase === 'task')!;
+    const used = () => f.store.get<{ used: number }>('sharedSadeGrant', grantId).used;
+    let current = f.poll(1).delivery!;
+    assert.equal(current.grantId, grantId);
+    assert.equal(used(), 1);
+    const waitSteps = ending === 'recover' ? [1, 2, 4, 8, 15, 15] : [1];
+    for (const minutes of waitSteps) {
+      f.finish(1, current.id, { kind: 'provider-unavailable' });
+      assert.equal(used(), 0);
+      const waiting = task();
+      assert.equal(waiting.state, 'queued');
+      assert.equal(waiting.id, current.id);
+      assert.equal(waiting.grantId, grantId);
+      assert.match(waiting.summary || '', new RegExp(`provider quota.*in ${minutes} minute`, 'i'));
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(f.poll(0).delivery, undefined);
+      assert.throws(
+        () => f.finish(1, current.id, { kind: 'provider-unavailable' }),
+        /no longer running/,
+      );
+      now += minutes * 60_000 - 1;
+      assert.equal(f.poll(1).delivery, undefined);
+      now++;
+      if (ending !== 'recover') break;
+      const next = f.poll(1).delivery!;
+      assert.ok(next);
+      assert.notEqual(next.id, current.id);
+      assert.equal(next.grantId, grantId);
+      assert.deepEqual(next.task, current.task);
+      assert.equal(used(), 1);
+      assert.throws(() => f.finish(1, current.id, { kind: 'provider-unavailable' }), /unavailable/);
+      current = next;
+    }
+    if (ending === 'recover') {
+      f.finish(1, current.id, { kind: 'done', summary: 'The pinned inspection is complete.' });
+      assert.equal(f.view().sadeRuns[0].state, 'done');
+      assert.equal(used(), 1);
+    } else {
+      if (ending === 'revoke') {
+        f.call(1, { action: 'sade-revoke', groupId: f.groupId, grantId });
+        const newGrant = randomUUID();
+        f.grant(1, { id: newGrant });
+        assert.equal(f.poll(1, [], [grantId, newGrant]).delivery, undefined);
+      } else {
+        now += 60 * 60_000;
+        assert.equal(f.poll(1).delivery, undefined);
+      }
+      assert.equal(f.poll(0).delivery, undefined);
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      assert.match(task().summary || '', /grant ended/);
+      assert.equal(task().grantId, grantId);
+      assert.equal(used(), 0);
+    }
+  });
+}
+
+test('a quota-pinned wait preserves explicit failover and lets dependencies use the recovered grant', (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const f = fixture();
+  t.after(() => f.store.close());
+  const [backup, primary] = f.grants;
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Run these scoped checks with each task’s own quota policy.',
+    sade: { projectKey: key },
+  });
+  const planner = f.poll(0).delivery!;
+  const pinned = work('pinned', { preferredMemberId: primary, waitForProviderQuota: true });
+  const transferable = work('transferable', {
+    preferredMemberId: primary,
+    fallbackMemberId: backup,
+  });
+  const dependent = work('dependent', { preferredMemberId: primary, dependsOn: [pinned.key] });
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Check quota handling independently for each task.',
+      tasks: [pinned, transferable, dependent],
+    },
+  });
+  const first = f.poll(1).delivery!;
+  assert.equal(first.task?.key, pinned.key);
+  f.finish(1, first.id, { kind: 'provider-unavailable' });
+  const moved = f.poll(0).delivery!;
+  assert.equal(moved.task?.key, transferable.key);
+  assert.equal(moved.grantId, backup);
+  f.finish(0, moved.id, { kind: 'done', summary: 'The explicitly transferable work is complete.' });
+  now += 60_000;
+  const retry = f.poll(1).delivery!;
+  assert.notEqual(retry.id, first.id);
+  assert.equal(retry.task?.key, pinned.key);
+  assert.equal(retry.grantId, primary);
+  f.finish(1, retry.id, { kind: 'done', summary: 'The pinned work ran after quota recovered.' });
+  const next = f.poll(1).delivery!;
+  assert.equal(next.task?.key, dependent.key);
+  assert.equal(next.grantId, primary);
+});
 
 test('an independent patch review can change providers before its first turn', () => {
   const f = fixture();
@@ -4525,6 +5109,190 @@ test('Shared Sade balances open implementation work without consuming the only i
       f.store.close();
     }
   }
+});
+
+test('a conditional Git write requires a leaf task and an exact pinned read-only prerequisite', () => {
+  const scope = ['src/archive/keepPinnedEntries.ts'];
+  const verifier = work('git-check', { scope, preferredMemberId: randomUUID() });
+  const writer = work('conditional-write', {
+    kind: 'code',
+    scope,
+    dependsOn: [verifier.key],
+    editIfMissingAfter: verifier.key,
+  });
+  const parse = (tasks: PlanTask[]) =>
+    parseTeamPlan({ summary: 'Check the exact file before allowing a conditional edit.', tasks });
+  assert.equal(parse([verifier, writer]).tasks[1].editIfMissingAfter, verifier.key);
+  for (const untrusted of [
+    { ...verifier, scope: ['src/archive'] },
+    { ...verifier, preferredMemberId: undefined },
+    { ...verifier, fallbackMemberId: 'auto' },
+    { ...verifier, kind: 'review' as const },
+  ]) {
+    assert.throws(() => parse([untrusted, writer]), /pinned read-only verifier/);
+  }
+  assert.throws(() => parse([verifier, { ...writer, dependsOn: [] }]), /verification dependency/);
+  assert.throws(
+    () => parse([verifier, writer, work('later', { dependsOn: [writer.key] })]),
+    /terminal task/,
+  );
+});
+
+for (const outcome of ['missing', 'present', 'inconclusive', 'plain done'] as const) {
+  test(`a conditional Git write requires the named verifier’s outcome: ${outcome}`, (t) => {
+    const f = fixture(['gemini', 'codex'], { structuredVerification: true, turnsB: 1 });
+    t.after(() => f.store.close());
+    const scope = 'src/archive/keepPinnedEntries.ts';
+    const verifier = work('inspect-git', { preferredMemberId: f.grants[0], scope: [scope] });
+    const writer = work('add-guard', {
+      kind: 'code',
+      preferredMemberId: f.grants[1],
+      scope: [scope],
+      dependsOn: [verifier.key],
+      editIfMissingAfter: verifier.key,
+    });
+    const { sadePlanner } = f.hosted({
+      action: 'message',
+      id: randomUUID(),
+      groupId: f.groupId,
+      content:
+        'Inspect Git first. Proceed with the scoped edit only if the named verifier confirms it is missing.',
+      sade: { projectKey: key },
+    });
+    assert.ok(sadePlanner);
+    f.settle(sadePlanner, {
+      kind: 'plan',
+      plan: {
+        summary: 'Check the existing guard before scheduling a scoped edit.',
+        tasks: [verifier, writer],
+      },
+    });
+    const initial = f.view().sadeRuns[0];
+    assert.equal(initial.state, 'running');
+    const legacyPoll = (index: number) =>
+      f.call(index, { action: 'sade-poll', grants: [f.grants[index]], active: [] });
+    const used = (index: number) =>
+      f.store.get<{ used: number }>('sharedSadeGrant', f.grants[index]).used;
+    assert.equal(legacyPoll(0).delivery, undefined);
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(used(0), 0);
+    assert.equal(used(1), 0);
+
+    const check = f.poll(0).delivery!;
+    assert.equal(check.grantId, f.grants[0]);
+    assert.equal(check.task?.key, verifier.key);
+    assert.deepEqual(check.task?.scope, [scope]);
+    assert.deepEqual(check.verification, { scope });
+    const missing: SharedFinish = {
+      kind: 'verification',
+      outcome: 'missing',
+      summary: 'The Git revision does not contain the guard.',
+    };
+    assert.throws(() => f.finish(1, check.id, missing), /grant/);
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(used(1), 0);
+    f.finish(
+      0,
+      check.id,
+      outcome === 'plain done'
+        ? { kind: 'done', summary: 'I finished the Git check.' }
+        : outcome === 'missing'
+          ? missing
+          : { kind: 'verification', outcome, summary: `The scoped Git check is ${outcome}.` },
+    );
+
+    assert.equal(legacyPoll(1).delivery, undefined);
+    assert.equal(used(1), 0);
+    const run = f.view().sadeRuns[0];
+    if (outcome === 'missing') {
+      assert.equal(run.state, 'running');
+      const edit = f.poll(1).delivery!;
+      assert.equal(edit.grantId, f.grants[1]);
+      assert.equal(edit.task?.key, writer.key);
+      assert.deepEqual(edit.task?.scope, [scope]);
+      assert.deepEqual(edit.verificationProof, {
+        taskKey: verifier.key,
+        outcome: 'missing',
+        scope,
+      });
+      assert.equal(used(1), 1);
+    } else {
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(used(1), 0);
+      if (outcome === 'present') {
+        assert.equal(run.state, 'done');
+        const skipped = run.jobs.find((job) => job.task?.key === writer.key)!;
+        assert.equal(skipped.state, 'done');
+        assert.match(skipped.summary || '', /skip|already present/i);
+      } else {
+        assert.equal(run.state, 'blocked');
+        assert.match(run.error || '', /verif|inconclusive/i);
+      }
+    }
+  });
+}
+
+test('Shared Sade waits for a frontend style answer before reserving a writing turn', (t) => {
+  const f = fixture(['gemini', 'codex'], { names: ['Gemini', 'Astra'], turnsB: 1 });
+  t.after(() => f.store.close());
+  const [gemini, astra] = f.grants;
+  const runId = randomUUID();
+  const { sadePlanner } = f.hosted({
+    action: 'message',
+    groupId: f.groupId,
+    id: runId,
+    content: 'Read the exhibit brief first, then prepare the exhibit display.',
+    sade: { projectKey: key },
+  });
+  assert.ok(sadePlanner);
+  const question = 'Bạn muốn dùng phong cách giao diện nào cho màn hình triển lãm?';
+  const read = work('brief', { preferredMemberId: gemini, scope: ['docs/exhibit.md'] });
+  const frontend = work('exhibit-display', {
+    kind: 'design',
+    preferredMemberId: astra,
+    scope: ['src/exhibit/Display.tsx'],
+    dependsOn: [read.key],
+    askBeforeEditing: question,
+  });
+  f.settle(sadePlanner, {
+    kind: 'plan',
+    plan: {
+      summary: 'Read the source brief, then build the display in the chosen style.',
+      tasks: [read, frontend],
+    },
+  });
+  const frontendJob = () =>
+    f.view().sadeRuns[0].jobs.find((job) => job.task?.key === frontend.key)!;
+  const used = () => f.store.get<{ used: number }>('sharedSadeGrant', astra).used;
+  assert.equal(frontendJob().state, 'queued');
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(frontendJob().state, 'queued');
+  const brief = f.poll(0).delivery!;
+  assert.equal(brief.task?.key, read.key);
+  f.finish(0, brief.id, { kind: 'done', summary: 'The exhibit brief and scope are ready.' });
+  assert.equal(f.poll(1).delivery, undefined, 'No writing worker is started to ask the question');
+  const waiting = frontendJob();
+  assert.equal(waiting.state, 'waiting');
+  assert.equal(waiting.summary, question);
+  assert.equal(used(), 0, 'The question does not spend the only remaining writing turn');
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.throws(
+    () => f.finish(1, waiting.id, { kind: 'done', summary: 'Attempted work before answering.' }),
+    /no longer running/,
+  );
+
+  const answer = 'Tối giản, chữ đậm và nền sáng nhé.';
+  const reply = { action: 'sade-answer', groupId: f.groupId, runId, jobId: waiting.id, answer };
+  assert.throws(() => f.call(1, reply), /request author/);
+  f.call(0, reply);
+  assert.throws(() => f.call(0, reply), /no longer waiting/);
+  const delivery = f.poll(1).delivery!;
+  assert.notEqual(delivery.id, waiting.id);
+  assert.equal(delivery.grantId, astra);
+  assert.deepEqual(delivery.task, frontend);
+  assert.deepEqual(delivery.clarification, { question, answer });
+  assert.equal(delivery.prerequisites[0]?.summary, 'The exhibit brief and scope are ready.');
+  assert.equal(used(), 1);
 });
 
 test('Shared Sade hands Gemini architecture to Astra before asking about frontend style', (t) => {

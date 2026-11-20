@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { Member, PlanTask, Proposal, TeamPlan } from '../shared/types.ts';
 import { DomainError } from './store.ts';
-import { normalizeScope, scopesOverlap } from './security.ts';
+import { normalizeScope, redact, scopesOverlap } from './security.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 
 const kinds = ['code', 'research', 'design', 'review'] as const;
@@ -29,16 +29,85 @@ const planTaskSchema = suggestion
     stage: z.string().trim().min(1).max(60),
     preferredMemberId: z.string().min(1).max(100).optional(),
     fallbackMemberId: z.string().min(1).max(100).optional(),
+    fallbackOnProviderQuota: z.literal(true).optional(),
+    waitForProviderQuota: z.literal(true).optional(),
+    testOnly: z.literal(true).optional(),
+    askBeforeEditing: z.string().trim().min(1).max(500).optional(),
+    editIfMissingAfter: z.string().regex(keyPattern).optional(),
     requiredPlatform: z.enum(['win32', 'darwin', 'linux']).optional(),
+    requiredPairedMachineName: z.string().trim().min(1).max(100).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (task) =>
+      !task.testOnly ||
+      (task.kind === 'code' &&
+        !!task.preferredMemberId &&
+        task.preferredMemberId !== 'auto' &&
+        !!task.requiredPlatform &&
+        !!task.requiredPairedMachineName &&
+        task.scope.length === 1 &&
+        task.scope[0] !== '.' &&
+        !task.fallbackMemberId &&
+        !task.waitForProviderQuota &&
+        !task.askBeforeEditing &&
+        !task.editIfMissingAfter),
+    'A test-only task needs one file, its original teammate and a named paired machine without write or fallback instructions.',
+  )
+  .refine(
+    ({ waitForProviderQuota, preferredMemberId, fallbackMemberId }) =>
+      !waitForProviderQuota ||
+      (Boolean(preferredMemberId) && preferredMemberId !== 'auto' && !fallbackMemberId),
+    'Waiting for provider quota requires a pinned teammate without a fallback.',
+  )
+  .refine(
+    ({ fallbackOnProviderQuota, preferredMemberId, fallbackMemberId }) =>
+      !fallbackOnProviderQuota ||
+      (!!preferredMemberId &&
+        preferredMemberId !== 'auto' &&
+        preferredMemberId !== 'none' &&
+        !!fallbackMemberId &&
+        fallbackMemberId !== 'none' &&
+        fallbackMemberId !== preferredMemberId),
+    'A fallback on provider quota requires a named primary and a different authorized backup.',
+  )
+  .refine(
+    ({ askBeforeEditing, kind }) =>
+      !askBeforeEditing ||
+      ((kind === 'code' || kind === 'design') && redact(askBeforeEditing) === askBeforeEditing),
+    'A before-edit question needs a writing task and must not contain private data.',
+  )
+  .refine(
+    ({ editIfMissingAfter, kind, scope, dependsOn }) =>
+      !editIfMissingAfter ||
+      ((kind === 'code' || kind === 'design') &&
+        scope.length === 1 &&
+        scope[0] !== '.' &&
+        dependsOn.includes(editIfMissingAfter)),
+    'A conditional edit needs one exact file and a direct verification dependency.',
+  )
+  .refine(
+    ({ requiredPairedMachineName, requiredPlatform, kind }) =>
+      !requiredPairedMachineName ||
+      (requiredPlatform &&
+        (kind === 'code' || kind === 'design') &&
+        redact(requiredPairedMachineName) === requiredPairedMachineName),
+    'A named paired machine needs a platform and a machine execution grant.',
+  );
 const planTasks = z.array(planTaskSchema).max(32);
 const optionalPlanSchema = z.object({ summary, tasks: planTasks }).strict();
 const planSchema = optionalPlanSchema.extend({ tasks: planTasks.min(1) });
 export const parsePlanTask = (value: unknown) => {
   const task = planTaskSchema.parse(value);
-  return { ...task, scope: normalizePlanScopes(task.scope) };
+  return normalizeTask(task);
 };
+
+function normalizeTask<T extends { scope: string[]; testOnly?: true }>(task: T) {
+  const scope = normalizePlanScopes(task.scope);
+  if (task.testOnly && scope[0] !== task.scope[0])
+    throw new DomainError('Name one canonical project-relative test file.', 400);
+  return { ...task, scope };
+}
 
 function normalizePlanScopes(values: string[]): string[] {
   const normalized = new Map<string, string>();
@@ -75,7 +144,7 @@ export function parseProposal(input: unknown): Proposal {
 /** Validate the entire DAG before the coordinator persists any execution tasks. */
 export function parseTeamPlan(input: unknown, options: { allowEmpty?: boolean } = {}): TeamPlan {
   const parsed = (options.allowEmpty ? optionalPlanSchema : planSchema).parse(input);
-  const tasks = parsed.tasks.map((task) => ({ ...task, scope: normalizePlanScopes(task.scope) }));
+  const tasks = parsed.tasks.map(normalizeTask);
   const byKey = new Map<string, PlanTask>();
   const titles = new Set<string>();
   for (const task of tasks) {
@@ -97,6 +166,25 @@ export function parseTeamPlan(input: unknown, options: { allowEmpty?: boolean } 
         );
       if (dependency === task.key)
         throw new DomainError(`Task “${task.key}” cannot depend on itself.`, 400);
+    }
+    if (task.editIfMissingAfter) {
+      const verifier = byKey.get(task.editIfMissingAfter);
+      if (
+        verifier?.kind !== 'research' ||
+        !verifier.preferredMemberId ||
+        verifier.preferredMemberId === 'auto' ||
+        verifier.fallbackMemberId ||
+        verifier.scope.length !== 1 ||
+        verifier.scope[0] !== task.scope[0] ||
+        tasks.some((other) => other.dependsOn.includes(task.key)) ||
+        tasks.some(
+          (other) => other !== task && other.editIfMissingAfter === task.editIfMissingAfter,
+        )
+      )
+        throw new DomainError(
+          'A conditional edit must be a terminal task with one pinned read-only verifier for the same exact scope.',
+          400,
+        );
     }
   }
   const ordered: PlanTask[] = [];
@@ -147,17 +235,18 @@ export function collectPrerequisites<T>(
 const maxSharedAllocationRetries = 1024;
 
 const fixedAssignee = (task: PlanTask) =>
-  task.fallbackMemberId ? undefined : task.preferredMemberId;
+  task.fallbackMemberId && !task.fallbackOnProviderQuota ? undefined : task.preferredMemberId;
 
 export function permitsPlanAssignee(
-  task: Pick<PlanTask, 'preferredMemberId' | 'fallbackMemberId'>,
+  task: Pick<PlanTask, 'preferredMemberId' | 'fallbackMemberId' | 'fallbackOnProviderQuota'>,
   memberId: string,
+  trigger?: 'provider-quota',
 ) {
   return (
     !task.preferredMemberId ||
     task.preferredMemberId === memberId ||
-    task.fallbackMemberId === memberId ||
-    task.fallbackMemberId === 'auto'
+    ((!task.fallbackOnProviderQuota || trigger === 'provider-quota') &&
+      (task.fallbackMemberId === memberId || task.fallbackMemberId === 'auto'))
   );
 }
 

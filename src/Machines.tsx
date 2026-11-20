@@ -186,6 +186,9 @@ export default function Machines({
             const data = new FormData(event.currentTarget);
             try {
               const kind = String(data.get('kind'));
+              const testFile = String(data.get('testFile') || '').trim();
+              if (testFile && !data.get('executionProjectId'))
+                throw new Error('Choose the project that owns this Node test file.');
               const result = await api<{
                 id: string;
                 token: string;
@@ -208,7 +211,14 @@ export default function Machines({
                   : {}),
                 id: result.id,
                 name: String(data.get('name')),
-                ...(result.executionRequest ? { executionRequest: result.executionRequest } : {}),
+                ...(result.executionRequest
+                  ? {
+                      executionRequest: {
+                        ...result.executionRequest,
+                        ...(testFile ? { testFile } : {}),
+                      },
+                    }
+                  : {}),
                 token: result.token,
                 dataDir: String(data.get('dataDir')),
                 slots: kind === 'ssh' ? 1 : 2,
@@ -270,6 +280,10 @@ export default function Machines({
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Node test file for Shared Sade (optional)
+            <input name="testFile" placeholder="tests/example.test.ts" maxLength={300} />
           </label>
           <p>
             For project testing, the other person approves access on their computer for 30 minutes.

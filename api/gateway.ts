@@ -3,8 +3,13 @@ import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isIP } from 'node:net';
-import { sharedSadeCloudFinishPath, sharedSadeCloudHeader } from '../shared/sade-cloud.ts';
 import {
+  sharedSadeCloudExtended,
+  sharedSadeCloudFinishPath,
+  sharedSadeCloudHeader,
+} from '../shared/sade-cloud.ts';
+import {
+  type HostedSadeTiming,
   hostedSadeBudgetMs,
   settleHostedSade,
   usesHostedSade,
@@ -67,8 +72,8 @@ export default async function handler(
     }
     if (url.pathname === '/api/desktop/release' && method === 'GET') {
       let release = {
-        version: '0.8.5',
-        releases: ['0.8.5'],
+        version: '0.9.0',
+        releases: ['0.9.0'],
         available: false,
         platform: 'win32-x64',
         signed: false,
@@ -146,7 +151,8 @@ export default async function handler(
     }
     const body = Buffer.concat(chunks);
     hosted = url.pathname === '/api/desktop/groups' && method === 'POST' && usesHostedSade(body);
-    const deadline = requestStarted + hostedSadeBudgetMs;
+    const planningBudget = hostedSadeBudgetMs();
+    const deadline = requestStarted + planningBudget;
     const opening = cloudRunner(!machine);
     const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
     if (!runner) {
@@ -154,7 +160,8 @@ export default async function handler(
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
-    if (hosted) headers.set(sharedSadeCloudHeader, '1');
+    if (hosted)
+      headers.set(sharedSadeCloudHeader, planningBudget > 2_100 ? sharedSadeCloudExtended : '1');
     // Vercel overwrites this header at its edge. Never forward a caller's
     // x-relay-client-ip header or an arbitrary proxy chain into account limits.
     const platformIp = process.env.VERCEL
@@ -185,11 +192,18 @@ export default async function handler(
     response.statusCode = upstream.status;
     if (hosted && upstream.ok) {
       const admitted = Date.now();
-      const decision = await settleHostedSade(upstream, runner.origin, headers, deadline);
+      const timing: HostedSadeTiming = {};
+      const decision = await settleHostedSade(upstream, runner.origin, headers, deadline, timing);
       response.setHeader('Content-Type', 'application/json');
       response.setHeader(
         'Server-Timing',
-        `sade_admission;dur=${admitted - requestStarted}, sade_total;dur=${Date.now() - requestStarted}`,
+        [
+          `sade_admission;dur=${admitted - requestStarted}`,
+          ...(timing.groundingMs === undefined ? [] : [`sade_grounding;dur=${timing.groundingMs}`]),
+          ...(timing.providerMs === undefined ? [] : [`sade_provider;dur=${timing.providerMs}`]),
+          ...(timing.receiptMs === undefined ? [] : [`sade_receipt;dur=${timing.receiptMs}`]),
+          `sade_total;dur=${Date.now() - requestStarted}`,
+        ].join(', '),
       );
       response.end(JSON.stringify(decision));
       return;

@@ -10,7 +10,11 @@ import { normalizeScope, scopesOverlap } from './security.ts';
 import { foldSharedSadeName } from './shared-sade-assignment.ts';
 import { sharedSadeExplicitHandoffReview } from './shared-sade-handoff-assignment.ts';
 import { groundedHandoffFiles } from './shared-sade-handoff-files.ts';
-import { groundedHandoffReviewFocus, groundedHandoffStyle } from './shared-sade-handoff-facts.ts';
+import {
+  frontendStyleQuestion,
+  groundedHandoffReviewFocus,
+  groundedHandoffStyle,
+} from './shared-sade-handoff-facts.ts';
 
 const roles = ['architecture', 'frontend', 'backend', 'codebase'] as const;
 type Role = (typeof roles)[number];
@@ -80,15 +84,21 @@ export function sharedSadeCompiledHandoff(delivery: SharedDelivery, { grounded =
   const words = foldedText(request.replace(fileToken, ' '));
   if (platformDirective.test(words) || extraConstraint.test(words)) return;
   const { producer, receiver } = handoffAssignments;
+  const codebasePrerequisite = handoffDeliverables.codebase.afterBackend
+    ? 'backend'
+    : 'architecture';
   const indices = [producer.grantId, receiver.grantId].map((grantId) =>
     team.findIndex(({ id, allowWrites }) => allowWrites && id === grantId),
   );
   const [producerIndex, receiverIndex] = indices;
   if (indices.includes(-1) || producerIndex === receiverIndex) return;
 
-  const sourceReview = sharedSadeExplicitHandoffReview(request);
+  const sourceReview = sharedSadeExplicitHandoffReview(request, {
+    ...handoffAssignments,
+    ...handoffDeliverables,
+  });
   if (sourceReview && !sourceReview.exactFrontendAndBackend) return;
-  const requestFiles = safeFiles(request);
+  const requestFiles = safeFiles(sourceReview ? request.replace(sourceReview.brief, '') : request);
   const pinned: Scopes = {
     architecture: producer.scope,
     frontend: receiver.scope,
@@ -194,7 +204,9 @@ ${JSON.stringify({
         ? `Use the requested frontend style: ${styleDetail}`
         : styleMode === 'delegated'
           ? `Let ${team[receiverIndex].name} choose the frontend style.`
-          : 'Before editing, ask the requester to choose a preferred frontend style or offer to let the frontend harness choose.';
+          : styleMode === 'requester'
+            ? 'Before editing, ask the requester which frontend style to use and wait for their choice.'
+            : 'Before editing, ask the requester to choose a preferred frontend style or offer to let the frontend harness choose.';
     const reviewFocus = reviewFocusEvidence ?? draft.reviewFocus;
     if (reviewFocus && !containsQuote(request, reviewFocus) && !containsQuote(earlier, reviewFocus))
       throw new Error('Copy the defensive review focus from the request or its earlier reference.');
@@ -240,14 +252,17 @@ ${JSON.stringify({
             ),
             description: `Write the shared architecture contract within the assigned file. Use the current request as project context for this task.\n\n${request.slice(0, 700)}`,
           },
-          task(
-            'frontend',
-            'Implement the frontend from the shared contract.',
-            [paths.frontend],
-            style,
-            ['architecture'],
-            sharedPlanMemberRef(receiverIndex),
-          ),
+          {
+            ...task(
+              'frontend',
+              'Implement the frontend from the shared contract.',
+              [paths.frontend],
+              style,
+              ['architecture'],
+              sharedPlanMemberRef(receiverIndex),
+            ),
+            ...(styleMode === 'requester' ? { askBeforeEditing: frontendStyleQuestion } : {}),
+          },
           task(
             'backend',
             'Implement the backend from the shared contract.',
@@ -260,7 +275,7 @@ ${JSON.stringify({
             'Cover the shared contract in the codebase tests.',
             [paths.codebase],
             'Verify the requested behavior and relevant boundary cases.',
-            ['architecture'],
+            [codebasePrerequisite],
           ),
           task(
             'defensive-review',

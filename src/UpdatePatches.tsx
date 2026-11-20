@@ -6,6 +6,20 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.0',
+    date: '2026-11-20',
+    fixes: [
+      {
+        vi: 'Shared Sade dùng GPT-6 Luna Decisions để phân loại yêu cầu bằng tiếng Việt. Kivuno kiểm tra người nhận, phạm vi và quyền trước khi giao việc.',
+        en: 'Shared Sade uses GPT-6 Luna Decisions to classify Vietnamese requests. Kivuno verifies assignees, scope, and permissions before dispatch.',
+      },
+      {
+        vi: 'Shared Groups hiển thị kết quả lập kế hoạch ngay khi máy chủ xác nhận. Sade hỏi lại khi thiếu dữ kiện để giao việc.',
+        en: 'Shared Groups displays planning decisions as soon as the server confirms them. Sade asks for missing details before dispatch.',
+      },
+    ],
+  },
+  {
     version: '0.8.5',
     date: '2026-11-17',
     fixes: [

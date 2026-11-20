@@ -146,6 +146,23 @@ function runtimeEnvironment(source, additions) {
   return { ...environment, ...additions };
 }
 
+function exactMachineTestFile(value) {
+  return (
+    typeof value === 'string' &&
+    value.length <= 300 &&
+    /^[\p{L}\p{M}\p{N}_. -]+(?:\/[\p{L}\p{M}\p{N}_. -]+)*\.(?:[cm]?[jt]s)$/u.test(value) &&
+    value.split('/').every((segment) => {
+      return (
+        segment.trim() === segment &&
+        !segment.startsWith('-') &&
+        !/^(?:\.|\.\.|\.git|\.relay|\.env(?:\..*)?|\.ssh|\.aws|\.npmrc|\.pypirc|auth\.json|credentials.*|.*\.pem|.*\.key)$/i.test(
+          segment,
+        )
+      );
+    })
+  );
+}
+
 function machineConfiguration(value, identityOrigin, privateRoot) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Choose a Kivuno private machine configuration.');
@@ -214,16 +231,21 @@ function machineConfiguration(value, identityOrigin, privateRoot) {
       !request ||
       typeof request !== 'object' ||
       Array.isArray(request) ||
-      Object.keys(request).some((key) => !['projectId', 'projectName'].includes(key)) ||
+      Object.keys(request).some((key) => !['projectId', 'projectName', 'testFile'].includes(key)) ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         request.projectId || '',
       ) ||
       typeof request.projectName !== 'string' ||
       !request.projectName.trim() ||
-      request.projectName.length > 200
+      request.projectName.length > 200 ||
+      (request.testFile !== undefined && !exactMachineTestFile(request.testFile))
     )
       throw new Error('The project execution request is invalid.');
-    executionRequest = { projectId: request.projectId, projectName: request.projectName };
+    executionRequest = {
+      projectId: request.projectId,
+      projectName: request.projectName,
+      ...(request.testFile ? { testFile: request.testFile } : {}),
+    };
   }
   return {
     id: value.id.toLowerCase(),

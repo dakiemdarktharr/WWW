@@ -3,7 +3,7 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.8.5** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Khi thêm account, desktop tự quét và cài CLI chính thức còn thiếu, hoặc khôi phục Codex/Gemini runtime đóng gói. Antigravity có thể đăng nhập Google bằng luồng chính thức của CLI. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Chat là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno **0.9.0** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Khi thêm account, desktop tự quét và cài CLI chính thức còn thiếu, hoặc khôi phục Codex/Gemini runtime đóng gói. Antigravity có thể đăng nhập Google bằng luồng chính thức của CLI. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Chat là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
 Bản **0.8** thêm hồ sơ Research từ link cuộc thi, ghi chứng cứ và các mục chưa xác minh, Portfolio cho workload nhiều dự án, lựa chọn model theo usage chung và hàng đợi luân phiên giữa các cuộc thi. Kế hoạch cuộc thi cần Approve plan trước khi triển khai. Xem [tính năng, giới hạn và các kịch bản stress 0.8](docs/RELEASE-0.8.md).
 

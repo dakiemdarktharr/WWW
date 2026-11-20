@@ -1,5 +1,6 @@
 import { git } from './git.ts';
-import { normalizeScope } from './security.ts';
+import { isPrivateCredentialPath } from './checkpoint.ts';
+import { normalizeScope, redact } from './security.ts';
 import { DomainError } from './store.ts';
 
 const fullObjectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -16,13 +17,7 @@ const gitReadArgs = [
   'protocol.allow=never',
 ];
 
-/** Read only Git metadata for a path already authorized by the caller. */
-export async function inspectSharedGit(repo: string, relative: string, revision?: string) {
-  if (relative === '.' || normalizeScope(relative) !== relative)
-    throw new DomainError('Choose one relative project file or directory.', 400);
-  if (revision !== undefined && !/^[a-f0-9]{7,64}$/i.test(revision))
-    throw new DomainError('Use a Git commit ID of 7 to 64 hexadecimal characters.', 400);
-
+function sharedGitReader(repo: string) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !/^git_/i.test(key) || key.toUpperCase() === 'GIT_EXEC_PATH',
@@ -30,8 +25,22 @@ export async function inspectSharedGit(repo: string, relative: string, revision?
   );
   env.GIT_NO_LAZY_FETCH = '1';
   env.GIT_ALLOW_PROTOCOL = '';
-  const read = (args: string[], allowNoMatch = false) =>
-    git(repo, [...gitReadArgs, ...args], 512 * 1024, { timeout: 5000, allowNoMatch, env });
+  return (args: string[], allowNoMatch = false, preserveOutput = false) =>
+    git(repo, [...gitReadArgs, ...args], 512 * 1024, {
+      timeout: 5000,
+      allowNoMatch,
+      preserveOutput,
+      env,
+    });
+}
+
+/** Read only Git metadata for a path already authorized by the caller. */
+export async function inspectSharedGit(repo: string, relative: string, revision?: string) {
+  if (relative === '.' || normalizeScope(relative) !== relative)
+    throw new DomainError('Choose one relative project file or directory.', 400);
+  if (revision !== undefined && !/^[a-f0-9]{7,64}$/i.test(revision))
+    throw new DomainError('Use a Git commit ID of 7 to 64 hexadecimal characters.', 400);
+  const read = sharedGitReader(repo);
   const readHead = async () => {
     const [prefix, head, ...rest] = (
       await read(['rev-parse', '--show-prefix', '--verify', 'HEAD^{commit}'])
@@ -163,5 +172,124 @@ export async function inspectSharedGit(repo: string, relative: string, revision?
     };
   } catch {
     throw new DomainError('Git metadata for this scope is unavailable.');
+  }
+}
+
+export type SharedVerificationRevision =
+  { kind: 'head' } | { kind: 'commit' | 'tag'; value: string };
+
+const commitId = /^[a-f0-9]{7,64}$/i;
+const tagName = (value: string) =>
+  /^[a-z0-9_][a-z0-9_./-]{0,127}$/i.test(value) &&
+  !value.includes('..') &&
+  value
+    .split('/')
+    .every(
+      (part) =>
+        part.length > 0 && !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'),
+    );
+const explicitRevision =
+  /\b(?<kind>tag|revision|commit|sha)(?<label> (?:id|hash))? +(?<value>\x60[^\x60\r\n]+\x60|[^\s,;()\x60]+)/giu;
+
+/** Limit historical verification to one reference named in the active task. */
+export function requestedSharedVerificationRevision(
+  task: string,
+  scope: string,
+): SharedVerificationRevision | undefined {
+  const text = task.replaceAll(scope, ' ');
+  const matches = new Map<string, SharedVerificationRevision>();
+  const pointers = new Set<string>();
+  for (const match of text.matchAll(explicitRevision)) {
+    const { kind, label, value: raw } = match.groups!;
+    const quoted = raw.startsWith('\x60');
+    const value = quoted ? raw.slice(1, -1) : raw.replace(/[.!?]+$/u, '');
+    if (!quoted && !label && /^(?:đó|này|ấy|trên)$/iu.test(value)) {
+      pointers.add(kind.toLowerCase());
+      continue;
+    }
+    if (kind.toLowerCase() === 'tag') {
+      if (!tagName(value)) return;
+      matches.set(`tag:${value}`, { kind: 'tag', value });
+    } else if (commitId.test(value)) {
+      matches.set(`commit:${value.toLowerCase()}`, { kind: 'commit', value: value.toLowerCase() });
+    } else if (value === 'HEAD') {
+      matches.set('head', { kind: 'head' });
+    } else if (
+      quoted ||
+      label ||
+      /^(?:revision|sha)$/i.test(kind) ||
+      /(?:^|\s)(?:at|on|from|theo|ở|tại) +$/iu.test(text.slice(0, match.index))
+    ) {
+      return;
+    }
+  }
+  if (matches.size === 1) {
+    const [revision] = matches.values();
+    if (pointers.has('tag') && revision.kind !== 'tag') return;
+    if ((pointers.has('commit') || pointers.has('sha')) && revision.kind !== 'commit') return;
+    return revision;
+  }
+  if (
+    matches.size ||
+    pointers.size ||
+    /\b(?:tags|tag\s*$|v\d+\.\d+(?:\.\d+)?|[a-f0-9]{7,64})\b/iu.test(text) ||
+    /\b(?:at|on|from|theo|ở|tại) +(?:branch|release)\b/iu.test(text)
+  )
+    return;
+  return { kind: 'head' };
+}
+
+const maxVerificationBlobBytes = 128 * 1024;
+const maxVerificationExcerpt = 12_000;
+const regularFileEntry = /^100(?:644|755) blob ([a-f0-9]{40}|[a-f0-9]{64})\t([^\0]+)\0$/u;
+
+/** Read a single regular blob from a locally available revision. No filters or network. */
+export async function readSharedVerificationFile(
+  repo: string,
+  scope: string,
+  requested: SharedVerificationRevision,
+) {
+  if (scope === '.' || normalizeScope(scope) !== scope || isPrivateCredentialPath(scope))
+    throw new DomainError('Choose the exact regular project file from the verification task.', 400);
+  const selector =
+    requested.kind === 'head'
+      ? 'HEAD'
+      : requested.kind === 'commit' && commitId.test(requested.value)
+        ? requested.value.toLowerCase()
+        : requested.kind === 'tag' && tagName(requested.value)
+          ? `refs/tags/${requested.value}`
+          : undefined;
+  if (!selector) throw new DomainError('Use the exact requested Git commit or tag.', 400);
+  const read = sharedGitReader(repo);
+  const resolve = () =>
+    read(['rev-parse', '--verify', '--quiet', '--end-of-options', `${selector}^{commit}`], true);
+  try {
+    const revision = await resolve();
+    if (
+      !fullObjectId.test(revision) ||
+      (requested.kind === 'commit' && !revision.startsWith(requested.value.toLowerCase()))
+    )
+      throw new Error('Unexpected revision.');
+    const entry = await read(['ls-tree', '-z', revision, '--', scope], false, true);
+    const [, blob, file] = regularFileEntry.exec(entry) ?? [];
+    if (!blob || file !== scope) throw new Error('Expected a single exact regular file.');
+    const sizeText = await read(['cat-file', '-s', blob]);
+    const size = Number(sizeText);
+    if (!/^\d+$/u.test(sizeText) || !Number.isSafeInteger(size))
+      throw new Error('Invalid file size.');
+    if (size > maxVerificationBlobBytes) return { scope, revision, content: '', truncated: true };
+    const full = await read(['cat-file', 'blob', blob], false, true);
+    const safetyWindow = full.slice(0, maxVerificationExcerpt + 2048);
+    if (
+      Buffer.byteLength(full, 'utf8') !== size ||
+      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\uFFFD]/u.test(full) ||
+      redact(safetyWindow) !== safetyWindow ||
+      (await resolve()) !== revision
+    )
+      throw new Error('Unsafe or changed snapshot.');
+    const content = full.slice(0, maxVerificationExcerpt).replace(/[\uD800-\uDBFF]$/u, '');
+    return { scope, revision, content, truncated: content.length !== full.length };
+  } catch {
+    throw new DomainError('The requested regular Git file and revision could not be read safely.');
   }
 }

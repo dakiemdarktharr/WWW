@@ -702,6 +702,8 @@ async function sharedSadeLoop(generation, owner) {
   let supportsHandoffDeliverables = false;
   let supportsCapacityWait = false;
   let supportsMachineCheckWait = false;
+  let supportsStructuredVerification = false;
+  let supportsPairedTestOnly = false;
   const readCapabilities = ({ response, body }) => {
     supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
     supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
@@ -713,6 +715,8 @@ async function sharedSadeLoop(generation, owner) {
     supportsHandoffDeliverables = response.ok && body.supportsHandoffDeliverables === true;
     supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
     supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
+    supportsStructuredVerification = response.ok && body.supportsStructuredVerification === true;
+    supportsPairedTestOnly = response.ok && body.supportsPairedTestOnly === true;
     capabilitiesKnown = response.ok;
   };
   let grantCursor;
@@ -799,6 +803,8 @@ async function sharedSadeLoop(generation, owner) {
           ...(supportsMachineCheckWait
             ? { waitingForMachineChecks: snapshot.waitingForMachineChecks }
             : {}),
+          ...(supportsStructuredVerification ? { structuredVerification: true } : {}),
+          ...(supportsPairedTestOnly ? { pairedTestOnly: true } : {}),
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -1079,7 +1085,7 @@ function registerIpc() {
         type: 'question',
         title: 'Allow Sade to use your teammate?',
         message: `${preview.teammateName} · ${preview.projectName}`,
-        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes, sharing the diff with an independent reviewer, and passing approved patches to assigned teammates after you integrate locally. You control Git publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching OS request while that owner’s permission is active.` : ''} Your provider sign-in stays on this computer.`,
+        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes, sharing the diff with an independent reviewer, and passing approved patches to assigned teammates after you integrate locally. You control Git publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching request while that owner’s permission is active.${preview.pairedMachineName ? ' Kivuno shares this device name with the group and its planner to route requests.' : ''}` : ''} Your provider sign-in stays on this computer.`,
         buttons: ['Cancel', 'Allow'],
         defaultId: 0,
         cancelId: 0,
@@ -1093,6 +1099,7 @@ function registerIpc() {
         approved.projectKey !== preview.projectKey ||
         pairedMachine?.grantId !== preview.pairedMachine?.grantId ||
         pairedMachine?.platform !== preview.pairedMachine?.platform ||
+        approved.pairedMachineName !== preview.pairedMachineName ||
         !current()
       ) {
         if (current()) await localSharedSade({ action: 'revoke', grantId: grant.id }, localContext);
@@ -1115,7 +1122,7 @@ function registerIpc() {
             '/api/desktop/groups',
             cloudInput,
             owner.accessToken,
-            planning ? 1800 : undefined,
+            planning ? 4750 : undefined,
           );
     if (identity !== owner || generation !== signInGeneration)
       throw new Error('Account changed. Open your current workspace.');
@@ -1298,6 +1305,7 @@ function registerIpc() {
       throw new Error('Choose a regular private configuration file smaller than 32 KB.');
     const input = JSON.parse(await readFile(filename, 'utf8'));
     const config = machineConfiguration(input, identityOrigin, machinesDirectory);
+    const testFile = config.executionRequest?.testFile;
     if (machines.has(config.id) && machines.get(config.id).child)
       throw new Error('This computer is already connected to that machine slot.');
     if (machines.size >= 8 && !machines.has(config.id))
@@ -1309,7 +1317,10 @@ function registerIpc() {
         ? `Project: ${config.executionRequest.projectName}`
         : 'Connect this computer as an AI execution machine',
       detail: config.executionRequest
-        ? 'Allow this project to copy source files into a separate workspace and read them for 30 minutes. AI sign-in stays on the other computer. Full access additionally permits programs to run with your OS user permissions, including access outside the workspace. Only allow full access for a project and people you trust. Stop connection revokes access.'
+        ? 'Allow this project to copy source files into a separate workspace and read them for 30 minutes. AI sign-in stays on the other computer. Full access additionally permits programs to run with your OS user permissions, including access outside the workspace. Only allow full access for a project and people you trust. Stop connection revokes access.' +
+          (testFile
+            ? `\n\nFull access also approves this exact file for Shared Sade’s test-only mode:\n${testFile}`
+            : '')
         : 'This connection can run Codex profiles and project tasks on this computer. Sign-in stays in a separate profile. You can stop the connection at any time.',
       buttons: ['Cancel', 'Allow connection'],
       defaultId: 0,
@@ -1331,6 +1342,7 @@ function registerIpc() {
           projectId: config.executionRequest.projectId,
           expiresAt: new Date(Date.now() + 30 * 60000).toISOString(),
           fullAccess: consent.checkboxChecked === true,
+          ...(consent.checkboxChecked && testFile ? { testFile } : {}),
         }),
         { mode: 0o600 },
       );
@@ -1459,6 +1471,8 @@ async function startMachine(entry) {
     );
     if (
       grant.projectId !== config.executionRequest.projectId ||
+      (grant.testFile !== undefined &&
+        (!grant.fullAccess || grant.testFile !== config.executionRequest.testFile)) ||
       typeof grant.fullAccess !== 'boolean' ||
       !/^[a-f0-9-]{36}$/i.test(grant.id || '') ||
       !Number.isFinite(Date.parse(grant.expiresAt)) ||

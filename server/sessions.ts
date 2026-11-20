@@ -1064,6 +1064,15 @@ export class SessionManager {
           );
         } else if (sharedJob && params.tool === 'relay_submit_shared_review') {
           result = this.host.sharedSade.submitReview(sharedJob, args);
+        } else if (sharedJob && params.tool === 'relay_submit_shared_verification') {
+          assertActiveSession();
+          result = this.host.sharedSade.submitVerification(sharedJob, session, args);
+        } else if (sharedJob && params.tool === 'relay_read_shared_verification_file') {
+          result = await this.host.sharedSade.readVerificationFile(sharedJob, session, args, () => {
+            assertActiveSession();
+            if (client.provider !== 'codex')
+              this.host.quota.assertCanRun(session.memberId, session.projectId, id);
+          });
         } else if (sharedJob && params.tool === 'relay_ask_shared_requester') {
           result = this.host.sharedSade.ask(sharedJob, args);
         } else if (sharedJob && params.tool?.startsWith('machine_')) {

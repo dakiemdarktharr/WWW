@@ -135,7 +135,7 @@ export class MachineAgent {
     if (command.action === 'execute') {
       if (command.method === checkRecoveryProtocol) {
         if (
-          command.params?.operation !== 'run' ||
+          !['run', 'test'].includes(command.params?.operation) ||
           !this.config.executionGrant ||
           command.params.checkId !== command.id
         )

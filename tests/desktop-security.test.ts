@@ -333,7 +333,7 @@ test('desktop runtime strips inherited provider and cloud secrets', () => {
       PATH: 'safe',
       SYSTEMROOT: 'C:/Windows',
       OPENAI_API_KEY: 'never-copy',
-      SADE_QWEN_API_KEY: 'never-copy',
+      SADE_OPENAI_API_KEY: 'never-copy',
       DASHSCOPE_API_KEY: 'never-copy',
       RELAY_OWNER_PASSWORD: 'never-copy',
       GITHUB_TOKEN: 'never-copy',

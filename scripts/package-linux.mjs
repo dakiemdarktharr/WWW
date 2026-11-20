@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, writeFile, rm, lstat, chmod, stat, copyFile } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
+import { desktopPackageFiles } from './desktop-package-files.mjs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -191,18 +192,7 @@ await build({
     electronVersion: packageJson.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
     extraMetadata: { version: packageJson.version },
-    files: [
-      'main.cjs',
-      'preload.cjs',
-      'provider-tools.cjs',
-      'security.cjs',
-      'browser.cjs',
-      'workspaces.cjs',
-      'package.json',
-      'icon.png',
-      'icon.ico',
-      '!node_modules/**/*',
-    ],
+    files: desktopPackageFiles,
     asar: true,
     npmRebuild: false,
     extraResources: [

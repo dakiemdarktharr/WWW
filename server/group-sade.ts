@@ -52,11 +52,16 @@ export const groupSadeGrant = z
     role: z.enum(['engineer', 'designer', 'researcher', 'reviewer']),
     platform,
     pairedPlatform: platform.optional(),
+    pairedMachineName: short.refine((name) => redact(name) === name).optional(),
     patchHandoff: z.literal(true).optional(),
     allowWrites: z.boolean(),
     turns: z.number().int().min(1).max(10),
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ pairedMachineName, pairedPlatform, allowWrites }) =>
+      !pairedMachineName || (pairedPlatform && allowWrites),
+  );
 export const sharedDiffInput = z
   .object({
     files: z.array(z.string().max(500)).max(100),
@@ -127,6 +132,28 @@ const syncPrerequisiteSummary =
 const capacityWaitSummary = 'Waiting for the teammate’s desktop to finish other work.';
 const machineCheckWaitSummary = 'Waiting for a passing check on the paired machine.';
 const reviewRevisionSummary = 'Revising after independent review.';
+const verificationUpdateSummary = 'Update this desktop to verify conditional edits in Shared Sade.';
+const verificationRequiredSummary =
+  'The named verifier did not confirm that the requested feature is missing.';
+const verificationScope = z
+  .string()
+  .min(1)
+  .max(300)
+  .refine((value) => value !== '.' && isCanonicalProjectPath(value));
+export const sharedVerification = z.object({ scope: verificationScope }).strict();
+export const sharedVerificationProof = z
+  .object({
+    taskKey: z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/),
+    scope: verificationScope,
+    outcome: z.literal('missing'),
+  })
+  .strict();
+export const sharedVerificationFinding = z
+  .object({
+    outcome: z.enum(['missing', 'present', 'inconclusive']),
+    summary: z.string().trim().min(1).max(4000),
+  })
+  .strict();
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
   z
@@ -140,6 +167,16 @@ export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('blocked'), summary: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ kind: z.literal('provider-unavailable') }).strict(),
   z.object({ kind: z.literal('question'), summary: z.string().trim().min(1).max(500) }).strict(),
+  sharedVerificationFinding.extend({ kind: z.literal('verification') }),
+  z
+    .object({
+      kind: z.literal('test-result'),
+      scope: verificationScope,
+      platform: z.enum(['win32', 'darwin', 'linux']),
+      checkId: id,
+      summary: z.string().trim().min(1).max(4000),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal('unchanged'),
@@ -202,6 +239,8 @@ export const groupSadeCommands = [
       readAssignment: z.literal(true).optional(),
       handoffAssignments: z.literal(true).optional(),
       handoffDeliverables: z.literal(true).optional(),
+      structuredVerification: z.literal(true).optional(),
+      pairedTestOnly: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
@@ -226,9 +265,12 @@ type Job = SharedSadeJob & {
   awaitingReadAssignment?: true;
   awaitingHandoffAssignments?: true;
   fallbackMemberId?: string;
+  fallbackOnProviderQuota?: true;
+  providerQuotaRetry?: { delayMs: number; after?: number };
   deadline?: number;
   awaitingReceipt?: true;
   revision?: string;
+  verificationOutcome?: z.infer<typeof sharedVerificationFinding>['outcome'];
   change?: TaskDiff;
   reviewOf?: string;
   reviewGrantId?: string;
@@ -361,6 +403,8 @@ export function assertSharedHandoffPlan(
     throw new DomainError('Use distinct tasks for architecture, frontend, backend, and codebase.');
   if (![backend, codebase].every((task) => prerequisites(task).includes(producer)))
     throw new DomainError('The backend and codebase must depend on the architecture handoff.');
+  if (deliverables.codebase.afterBackend && !prerequisites(codebase).includes(backend))
+    throw new DomainError('The tests must wait for the requested backend changes.');
 
   const contains = (scope: string, target: string) =>
     scope === target || target.startsWith(`${scope}/`);
@@ -418,12 +462,15 @@ export type SharedDelivery = {
     role: string;
     platform: string;
     pairedPlatform?: string;
+    pairedMachineName?: string;
     allowWrites: boolean;
     owner: string;
     ownedByRequester: boolean;
   }[];
   task?: PlanTask;
   prerequisites: z.infer<typeof sharedPrerequisite>[];
+  verification?: z.infer<typeof sharedVerification>;
+  verificationProof?: z.infer<typeof sharedVerificationProof>;
   review?: TaskDiff;
   reviewRevision?: Job['reviewRevision'];
   clarification?: Job['clarification'];
@@ -482,11 +529,49 @@ function prerequisitesOf(run: Run, target: Job) {
   const byKey = new Map(run.jobs.filter((job) => job.task).map((job) => [job.task!.key, job]));
   return collectPrerequisites(source?.task?.dependsOn || [], byKey, (job) => job.task!.dependsOn);
 }
+function verificationTargets(run: Run, source: Job) {
+  const key = source.task?.key;
+  return key ? run.jobs.filter((job) => job.task?.editIfMissingAfter === key) : [];
+}
+function declaredVerification(run: Run, source: Job) {
+  const task = source.task;
+  if (
+    source.phase !== 'task' ||
+    task?.kind !== 'research' ||
+    source.grantId !== task.preferredMemberId ||
+    source.fallbackMemberId ||
+    task.scope.length !== 1 ||
+    !verificationScope.safeParse(task.scope[0]).success
+  )
+    return;
+  const scope = task.scope[0];
+  const targets = verificationTargets(run, source);
+  if (
+    targets.length &&
+    targets.every(({ task: target }) => target?.scope.length === 1 && target.scope[0] === scope)
+  )
+    return { scope };
+}
+function missingFeatureProof(run: Run, writer: Job) {
+  const taskKey = writer.task?.editIfMissingAfter;
+  if (!taskKey) return;
+  const verifier = run.jobs.find((job) => job.task?.key === taskKey);
+  if (verifier?.state === 'done' && verifier.verificationOutcome === 'missing') {
+    const verification = declaredVerification(run, verifier);
+    if (verification) return { taskKey, ...verification, outcome: 'missing' as const };
+  }
+}
 function writesTask(task?: PlanTask) {
-  return task?.kind === 'code' || task?.kind === 'design';
+  return !task?.testOnly && (task?.kind === 'code' || task?.kind === 'design');
 }
 const writes = writesTask;
 function supportsTask(grant: Grant, task?: PlanTask) {
+  if (task?.requiredPairedMachineName)
+    return (
+      grant.allowWrites &&
+      grant.pairedPlatform === task.requiredPlatform &&
+      grant.pairedMachineName === task.requiredPairedMachineName
+    );
   return (
     (!writes(task) || grant.allowWrites) &&
     (!task?.requiredPlatform ||
@@ -505,12 +590,15 @@ function reviewedWriters(run: Run, job: Job) {
 }
 const leaseMs = 30_000;
 const cloudPlanLeaseMs = 2_000;
+const extendedCloudPlanLeaseMs = 4_700;
 const cloudPlannerConcurrency = 16;
 const cloudPlannerMinuteLimit = 12;
 const cloudPlannerOwnerDayLimit = 120;
 const cloudPlannerDayLimit = 5_000;
 // Leave time for a timed-out cloud poll and its retry before the desktop acknowledges delivery.
 const deliveryLeaseMs = 60_000;
+const providerQuotaCooldownMs = 60_000;
+const providerQuotaMaxCooldownMs = 15 * 60_000;
 const grantMs = 60 * 60_000;
 
 const sharedPlanKinds = {
@@ -553,6 +641,11 @@ export const groupPlanTool = {
               maxLength: 36,
               description:
                 'Use none unless the requester explicitly authorized a backup. Copy the exact ref of the named backup, or use auto only if the requester lets Sade choose a backup. A backup requires a different named primary.',
+            },
+            editIfMissingAfter: {
+              type: 'string',
+              description:
+                'Only when explicitly requested: key of the directly preceding named one-file read-only task that must confirm the feature is missing before this terminal edit.',
             },
             requiredPlatform: {
               type: 'string',
@@ -648,6 +741,13 @@ export const groupReviewTool = {
     additionalProperties: false,
   },
 } as const;
+export const groupVerificationTool = {
+  type: 'function',
+  name: 'relay_submit_shared_verification',
+  description:
+    'Report a read-only preflight finding for the assigned scope. Confirm missing only when the requested feature is absent in the exact file and requested revision. Use inconclusive if evidence is unavailable or ambiguous.',
+  inputSchema: z.toJSONSchema(sharedVerificationFinding),
+} as const;
 
 export const groupQuestionTool = {
   type: 'function',
@@ -720,6 +820,7 @@ export class GroupSade {
           role: entry.role,
           platform: entry.platform,
           pairedPlatform: run.readOnly ? undefined : entry.pairedPlatform,
+          pairedMachineName: run.readOnly ? undefined : entry.pairedMachineName,
           allowWrites: !run.readOnly && entry.allowWrites,
           owner: group.people.find((person) => person.id === entry.ownerId)!.name,
           ownedByRequester: entry.ownerId === run.authorId,
@@ -768,6 +869,7 @@ export class GroupSade {
     group: SharedGroup,
     actor: SharedPrincipal,
     runId?: string,
+    extended = false,
   ): SharedSadeCloudOffer | undefined {
     const run = runId
       ? this.store.lookup<Run>('sharedSadeRun', runId)
@@ -844,7 +946,7 @@ export class GroupSade {
     const claimId = randomUUID();
     job.cloudClaim = { id: claimId, actor };
     job.state = 'running';
-    job.deadline = now + cloudPlanLeaseMs;
+    job.deadline = now + (extended ? extendedCloudPlanLeaseMs : cloudPlanLeaseMs);
     this.store.put('sharedSadeRun', run);
     return {
       runId: run.id,
@@ -927,6 +1029,8 @@ export class GroupSade {
               cloudClaim,
               deadline,
               fallbackMemberId,
+              fallbackOnProviderQuota,
+              providerQuotaRetry,
               awaitingReceipt,
               revision,
               change,
@@ -1284,6 +1388,7 @@ export class GroupSade {
           existing.role !== command.role ||
           existing.platform !== command.platform ||
           existing.pairedPlatform !== command.pairedPlatform ||
+          existing.pairedMachineName !== command.pairedMachineName ||
           existing.patchHandoff !== command.patchHandoff ||
           existing.allowWrites !== command.allowWrites ||
           existing.turns !== command.turns
@@ -1593,7 +1698,7 @@ export class GroupSade {
 
     this.store.put('sharedSadeGrant', { ...grant, used: grant.used - 1 });
     run.unavailableGrants = [...new Set([...(run.unavailableGrants || []), grant.id])];
-    this.reassignAfterQuota(run, job, group, grant, grants);
+    this.reassignAfterQuota(run, job, group, grant, grants, 'job-receipt');
   }
   private reassignAfterQuota(
     run: Run,
@@ -1601,13 +1706,33 @@ export class GroupSade {
     group: SharedGroup,
     grant: Grant,
     grants: Grant[],
+    evidence: 'job-receipt' | 'earlier-job-receipt',
   ) {
+    // A provider receipt on another task can grow stale before this one starts.
+    // Only the assigned worker's receipt for this task unlocks a quota-only backup.
+    if (job.fallbackOnProviderQuota && evidence !== 'job-receipt') return;
     if (job.reviewRevision) {
       this.block(
         run,
         job,
         'The original author reached their provider quota. The revision stays on their desktop.',
       );
+      return;
+    }
+    if (job.task?.waitForProviderQuota) {
+      const delayMs = job.providerQuotaRetry
+        ? Math.min(job.providerQuotaRetry.delayMs * 2, providerQuotaMaxCooldownMs)
+        : providerQuotaCooldownMs;
+      job.providerQuotaRetry = { delayMs, after: this.now() + delayMs };
+      job.state = 'queued';
+      job.deadline = undefined;
+      job.awaitingReceipt = undefined;
+      job.reviewGrantId = undefined;
+      job.acceptsUpdates = undefined;
+      job.updatesRead = undefined;
+      const minutes = delayMs / 60_000;
+      job.summary = `Waiting for provider quota. The same harness can retry in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
+      this.store.put('sharedSadeRun', run);
       return;
     }
     if (job.phase === 'plan') {
@@ -1657,7 +1782,15 @@ export class GroupSade {
       .filter(
         (entry) =>
           run.roster.includes(entry.id) &&
-          permitsPlanAssignee({ preferredMemberId, fallbackMemberId }, entry.id) &&
+          permitsPlanAssignee(
+            {
+              preferredMemberId,
+              fallbackMemberId,
+              fallbackOnProviderQuota: job.fallbackOnProviderQuota,
+            },
+            entry.id,
+            'provider-quota',
+          ) &&
           this.usableForRun(entry, group, run) &&
           unreservedTurns(run, entry, job) > 0 &&
           supportsTask(entry, job.task) &&
@@ -1713,6 +1846,15 @@ export class GroupSade {
     }
     this.store.put('sharedSadeRun', run);
   }
+  private finishCompletedRun(run: Run) {
+    if (!run.jobs.every((item) => item.state === 'done')) return;
+    run.state = 'done';
+    for (const item of run.jobs) {
+      item.change = undefined;
+      item.publishedFiles = undefined;
+      item.unchangedCheckout = undefined;
+    }
+  }
   private stopInvalidJob(run: Run, authorizedGrant: (id: string) => Grant | undefined) {
     if (final(run)) return false;
     if (this.stopUnsafeChange(run)) return true;
@@ -1730,7 +1872,7 @@ export class GroupSade {
           ? 'The assigned teammate has no granted turns left.'
           : holdsLease && (job.deadline || 0) <= now
             ? run.cloudPlanner && job.phase === 'plan'
-              ? 'Sade không nhận được kế hoạch Qwen trong thời gian cho phép.'
+              ? 'Sade không nhận được quyết định từ Luna trong thời gian cho phép.'
               : 'The assigned desktop lost contact before completing its task.'
             : undefined;
       if (!reason) continue;
@@ -1810,7 +1952,9 @@ export class GroupSade {
             tasks: planned.map((job) => ({
               ...job.task!,
               dependsOn: [],
-              fallbackMemberId: job.fallbackMemberId,
+              ...(job.fallbackOnProviderQuota
+                ? { preferredMemberId: job.grantId }
+                : { fallbackMemberId: job.fallbackMemberId }),
             })),
           },
           eligible.map(({ id, role }) => ({ id, role })),
@@ -1923,12 +2067,21 @@ export class GroupSade {
           if (
             job.state !== 'queued' ||
             !quotaLimited.has(job.grantId) ||
+            job.providerQuotaRetry?.after !== undefined ||
             (job.phase === 'review' && !job.reviewOf) ||
+            (job.task?.editIfMissingAfter && !missingFeatureProof(run, job)) ||
             prerequisitesOf(run, job).some((prior) => prior.state !== 'done')
           )
             continue;
           // No delivery has reserved a shared turn for this task.
-          this.reassignAfterQuota(run, job, group, grants.get(job.grantId)!, rosterGrants);
+          this.reassignAfterQuota(
+            run,
+            job,
+            group,
+            grants.get(job.grantId)!,
+            rosterGrants,
+            'earlier-job-receipt',
+          );
           if (final(run)) break;
         }
         if (final(run)) continue;
@@ -1959,6 +2112,8 @@ export class GroupSade {
         if (run.cloudPlanner && job.phase === 'plan') continue;
         const grant = grants.get(job.grantId)!;
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
+        const quotaRetry = job.providerQuotaRetry;
+        if (quotaRetry?.after !== undefined && this.now() < quotaRetry.after) continue;
         const retry = awaitingDelivery(job);
         let assignmentGrant: Grant | undefined;
         let handoffAssignments: HandoffAssignments | undefined;
@@ -2045,7 +2200,7 @@ export class GroupSade {
                 writes(job.task) &&
                 grant.pairedPlatform &&
                 job.task?.requiredPlatform === grant.pairedPlatform &&
-                grant.platform !== grant.pairedPlatform
+                (grant.platform !== grant.pairedPlatform || job.task.requiredPairedMachineName)
               )
                 job.summary = machineCheckWaitSummary;
               else if (
@@ -2078,6 +2233,46 @@ export class GroupSade {
           }
           continue;
         }
+        const predecessors = dependencies.get(job) || [];
+        const predecessorsDone = predecessors.every((other) => other.state === 'done');
+        const verification = declaredVerification(run, job);
+        const verificationProof = missingFeatureProof(run, job);
+        if (predecessorsDone && job.task?.editIfMissingAfter && !verificationProof) {
+          this.block(run, job, verificationRequiredSummary);
+          break;
+        }
+        if (
+          predecessorsDone &&
+          (verification || job.task?.editIfMissingAfter) &&
+          !command.structuredVerification
+        ) {
+          if (job.summary !== verificationUpdateSummary) {
+            job.summary = verificationUpdateSummary;
+            touched = true;
+          }
+          continue;
+        }
+        if (predecessorsDone && job.task?.testOnly && !command.pairedTestOnly) {
+          const summary =
+            'Update this desktop to execute only the approved test on the paired machine.';
+          if (job.summary !== summary) {
+            job.summary = summary;
+            touched = true;
+          }
+          continue;
+        }
+        if (
+          job.state === 'queued' &&
+          job.task?.askBeforeEditing &&
+          !job.clarification &&
+          predecessorsDone
+        ) {
+          job.state = 'waiting';
+          job.deadline = undefined;
+          job.summary = job.task.askBeforeEditing;
+          touched = true;
+          continue;
+        }
         if (job.reviewRevision) {
           const previous = job.reviewRevision.previousJobId;
           if (!command.reviewRevision || !held.has(previous)) {
@@ -2102,8 +2297,7 @@ export class GroupSade {
         )
           continue;
         if (job.phase === 'review' && !job.reviewOf) continue;
-        const predecessors = dependencies.get(job) || [];
-        if (predecessors.some((other) => other.state !== 'done')) continue;
+        if (!predecessorsDone) continue;
         if (
           job.phase === 'task' &&
           job.task?.kind === 'review' &&
@@ -2224,10 +2418,15 @@ export class GroupSade {
           };
         }
         if (!retry) {
+          if (quotaRetry?.after !== undefined) {
+            job.id = randomUUID();
+            job.providerQuotaRetry = { delayMs: quotaRetry.delayMs };
+          }
           job.state = 'running';
           job.awaitingReceipt = true;
           job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
-          job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
+          job.acceptsUpdates =
+            job.phase === 'task' && !job.task?.testOnly && Boolean(command.taskUpdates);
           job.summary = job.reviewRevision ? reviewRevisionSummary : undefined;
           job.deadline = this.now() + deliveryLeaseMs;
           this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
@@ -2271,6 +2470,8 @@ export class GroupSade {
             : {}),
           team,
           task: job.task,
+          ...(verification ? { verification } : {}),
+          ...(verificationProof ? { verificationProof } : {}),
           ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
           prerequisites: predecessors.map((other) => ({
             title: other.task!.title,
@@ -2308,6 +2509,8 @@ export class GroupSade {
       supportsHandoffDeliverables: true as const,
       supportsCapacityWait: true as const,
       supportsMachineCheckWait: true as const,
+      supportsStructuredVerification: true as const,
+      supportsPairedTestOnly: true as const,
       active,
       delivery,
       reviews,
@@ -2371,6 +2574,8 @@ export class GroupSade {
       job.deadline = undefined;
     }
     const result = command.result;
+    if (job.task?.testOnly && result.kind !== 'test-result' && result.kind !== 'blocked')
+      throw new DomainError('Only a verified paired test result can complete this task.', 409);
     if (result.kind === 'provider-unavailable') {
       this.handleUnavailableProvider(run, job, group, grant, grants);
       return { accepted: true };
@@ -2387,9 +2592,52 @@ export class GroupSade {
       return { accepted: true };
     }
     if (read) job.updatesRead = read;
+    if (job.providerQuotaRetry && result.kind !== 'blocked' && result.kind !== 'plan') {
+      run.unavailableGrants = run.unavailableGrants?.filter((id) => id !== grant.id);
+      job.providerQuotaRetry = undefined;
+    }
     if (result.kind !== 'question') job.updates = undefined;
+    const verification = declaredVerification(run, job);
     if (result.kind === 'blocked') this.block(run, job, result.summary);
-    else if (result.kind === 'question') {
+    else if (result.kind === 'test-result') {
+      if (
+        job.phase !== 'task' ||
+        !job.task?.testOnly ||
+        job.grantId !== job.task.preferredMemberId ||
+        !supportsTask(grant, job.task) ||
+        result.scope !== job.task.scope[0] ||
+        result.platform !== job.task.requiredPlatform
+      )
+        throw new DomainError(
+          'The paired test result does not match its granted scope and OS.',
+          403,
+        );
+      job.state = 'done';
+      job.summary = redact(result.summary);
+      this.finishCompletedRun(run);
+      this.store.put('sharedSadeRun', run);
+    } else if (result.kind === 'verification') {
+      if (!verification)
+        throw new DomainError('Only the named read-only verifier can submit this finding.', 403);
+      job.verificationOutcome = result.outcome;
+      if (result.outcome === 'inconclusive') {
+        this.block(run, job, `${verificationRequiredSummary} ${result.summary}`);
+      } else {
+        job.state = 'done';
+        job.summary = redact(result.summary);
+        if (result.outcome === 'present') {
+          for (const writer of verificationTargets(run, job)) {
+            writer.state = 'done';
+            writer.summary =
+              'Skipped edit: the named verifier confirmed the feature is already present.';
+          }
+        }
+        this.finishCompletedRun(run);
+        this.store.put('sharedSadeRun', run);
+      }
+    } else if (verification && result.kind === 'done') {
+      this.block(run, job, verificationRequiredSummary);
+    } else if (result.kind === 'question') {
       if (job.phase === 'review' || job.state !== 'running' || job.clarification)
         throw new DomainError('This job cannot ask another question.', 409);
       if (job.phase === 'plan' && run.readAssignment)
@@ -2425,7 +2673,12 @@ export class GroupSade {
         if (run.handoffAssignments) {
           const status = this.handoffReadiness(run, group, eligible);
           if (status.state !== 'ready') throw new DomainError(status.reason);
-          const directive = run.handoffDeliverables && sharedSadeExplicitHandoffReview(run.content);
+          const directive =
+            run.handoffDeliverables &&
+            sharedSadeExplicitHandoffReview(run.content, {
+              ...status.assignments,
+              ...run.handoffDeliverables,
+            });
           const review = assertSharedHandoffPlan(
             plan,
             status.assignments,
@@ -2434,9 +2687,9 @@ export class GroupSade {
           );
           if (review && directive) reviewRequirement = { key: review.key, brief: directive.brief };
         }
-        if (run.readOnly && plan.tasks.some(writes))
+        if (run.readOnly && plan.tasks.some((task) => writes(task) || task.testOnly))
           throw new DomainError(
-            'This is a read-only request. The plan cannot write project files.',
+            'This is a read-only request. The plan cannot write or execute project files.',
           );
         if (plan.tasks.length === 0) {
           job.state = 'done';
@@ -2459,24 +2712,27 @@ export class GroupSade {
         );
         job.state = 'done';
         job.summary = redact(plan.summary);
-        const planned = plan.tasks.map(({ fallbackMemberId, ...task }, index): Job => ({
-          id: randomUUID(),
-          runId: run.id,
-          grantId: allocations[index].memberId,
-          phase: 'task',
-          fallbackMemberId,
-          task: {
-            ...task,
-            description: redact(task.description),
-            acceptance:
-              task.key === reviewRequirement?.key
-                ? redact(
-                    `Requester’s read-only review requirement: ${reviewRequirement.brief}\n\n${task.acceptance}`,
-                  ).slice(0, 3000)
-                : redact(task.acceptance),
-          },
-          state: 'queued',
-        }));
+        const planned = plan.tasks.map(
+          ({ fallbackMemberId, fallbackOnProviderQuota, ...task }, index): Job => ({
+            id: randomUUID(),
+            runId: run.id,
+            grantId: allocations[index].memberId,
+            phase: 'task',
+            fallbackMemberId,
+            fallbackOnProviderQuota,
+            task: {
+              ...task,
+              description: redact(task.description),
+              acceptance:
+                task.key === reviewRequirement?.key
+                  ? redact(
+                      `Requester’s read-only review requirement: ${reviewRequirement.brief}\n\n${task.acceptance}`,
+                    ).slice(0, 3000)
+                  : redact(task.acceptance),
+            },
+            state: 'queued',
+          }),
+        );
         const byKey = new Map(planned.map((item) => [item.task!.key, item]));
         for (const item of planned) {
           const task = item.task!;
@@ -2651,14 +2907,7 @@ export class GroupSade {
       job.state = 'done';
       job.reviewGrantId = undefined;
       job.summary = redact(result.summary);
-      if (run.jobs.every((item) => item.state === 'done')) {
-        run.state = 'done';
-        for (const item of run.jobs) {
-          item.change = undefined;
-          item.publishedFiles = undefined;
-          item.unchangedCheckout = undefined;
-        }
-      }
+      this.finishCompletedRun(run);
       this.store.put('sharedSadeRun', run);
     } else {
       const dependent = hasDependents(run, job);
@@ -2685,14 +2934,7 @@ export class GroupSade {
       job.published = result.published;
       job.revision = result.published || job.portable ? result.revision : undefined;
       if (!job.portable || job.published || !dependent) job.change = undefined;
-      if (run.jobs.every((item) => item.state === 'done')) {
-        run.state = 'done';
-        for (const item of run.jobs) {
-          item.change = undefined;
-          item.publishedFiles = undefined;
-          item.unchangedCheckout = undefined;
-        }
-      }
+      this.finishCompletedRun(run);
       this.store.put('sharedSadeRun', run);
     }
     return { accepted: true };

@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run build:release through npm.');
 const buildEnv = { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
+delete buildEnv.SADE_OPENAI_API_KEY;
+delete buildEnv.OPENAI_API_KEY;
 delete buildEnv.SADE_QWEN_API_KEY;
 delete buildEnv.SADE_QWEN_WORKSPACE_HOST;
 const steps = [

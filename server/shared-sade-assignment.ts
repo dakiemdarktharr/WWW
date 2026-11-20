@@ -39,7 +39,7 @@ function matchesName(input: string, published: string) {
   );
 }
 
-type PublicationOwner = string | { relative: 'requester' | 'other' };
+type PublicationOwner = string | { relative: 'requester' | 'other' | 'any' };
 
 /** Match active group publications without assuming anything about grants. */
 export function resolveSharedSadePublishedCandidates(
@@ -58,7 +58,8 @@ export function resolveSharedSadePublishedCandidates(
   const owners = people.filter((person) =>
     typeof owner === 'string'
       ? matchesName(owner, person.name)
-      : (person.id === requesterId) === (owner.relative === 'requester'),
+      : owner.relative === 'any' ||
+        (person.id === requesterId) === (owner.relative === 'requester'),
   );
   if (!owners.length) return;
   return published.flatMap((member) => {

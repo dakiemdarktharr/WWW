@@ -143,9 +143,15 @@ export interface Task {
   sessionId?: string;
 }
 export interface PlanTask {
+  testOnly?: true;
+  askBeforeEditing?: string;
+  editIfMissingAfter?: string;
   requiredPlatform?: 'win32' | 'darwin' | 'linux';
+  requiredPairedMachineName?: string;
   preferredMemberId?: string;
   fallbackMemberId?: string;
+  fallbackOnProviderQuota?: true;
+  waitForProviderQuota?: true;
   key: string;
   title: string;
   description: string;

@@ -1,6 +1,12 @@
 import { foldSharedSadeName } from './shared-sade-assignment.ts';
 
-type Style = { kind: 'supplied'; detail: string } | { kind: 'delegated' } | { kind: 'unspecified' };
+export const frontendStyleQuestion = 'Bạn muốn dùng phong cách nào cho giao diện này?';
+
+type Style =
+  | { kind: 'supplied'; detail: string }
+  | { kind: 'delegated' }
+  | { kind: 'requester' }
+  | { kind: 'unspecified' };
 
 const frontend = /\b(?:front[ -]?end|ui|giao dien|man hinh)\b|\.(?:tsx|jsx|vue|svelte)\b/i;
 const visual =
@@ -16,6 +22,11 @@ const standaloneVisualDirective =
 const inlineVisualDirective = /(?:,\s*|\s+)(?:with|voi|using|dung|theo)\s+(?=\S)/g;
 const tentativeStyle =
   /\b(?:neu|hoac|tuy|co the|hay la|chua chot|chua quyet|hoi (?:lai|tui|toi|minh)|quyet sau|if|or|unless|maybe|tentatively|depending on|ask (?:me|the user|first)|otherwise|don't|do not|khong (?:nen|duoc|can)|dung (?:chon|dung))\b/;
+const askRequesterStyle =
+  /\b(?:hoi (?:lai )?(?:toi|tui|minh|nguoi yeu cau)|ask (?:me|the requester|the user)) [^.!?;,]{0,50}\b(?:style|phong cach|visual design)\b/u;
+const requesterChoosesStyle =
+  /\b(?:truoc khi (?:lam|dung|sua|viet|trien khai)|before (?:building|editing|writing|implementing)|(?:dung|khong(?: duoc)?) tu (?:chon|quyet)|(?:don't|do not) (?:choose|decide) (?:on your own|for me))\b/u;
+const alternativeStyleChoice = /\b(?:neu|hoac|tru khi|if|or|unless|otherwise)\b/u;
 
 function unquoted(text: string) {
   const withoutPathsOrPossessives = text
@@ -53,7 +64,16 @@ export function groundedHandoffStyle(request: string): Style | undefined {
     const relevant = frontend.test(folded) || followsFrontend;
     followsFrontend = frontend.test(folded);
     if (!styleCue.test(folded)) continue;
-    if (!relevant || tentativeStyle.test(folded) || folded.length !== part.length) return;
+    if (!relevant || folded.length !== part.length) return;
+    if (
+      askRequesterStyle.test(folded) &&
+      requesterChoosesStyle.test(folded) &&
+      !alternativeStyleChoice.test(folded)
+    ) {
+      evidence.push({ kind: 'requester' });
+      continue;
+    }
+    if (tentativeStyle.test(folded)) return;
     if (delegation.test(folded)) {
       // A clause with both an assigned chooser and concrete style cues remains ambiguous.
       if (styleCue.test(folded.replace(/\b(?:style|phong cach|visual|aesthetic)\b/g, ''))) return;

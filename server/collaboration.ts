@@ -7,7 +7,11 @@ import {
   type SharedGroup,
   type SharedMessage,
 } from '../shared/collaboration.ts';
-import { sharedSadeCloudFinishPath, sharedSadeCloudHeader } from '../shared/sade-cloud.ts';
+import {
+  sharedSadeCloudExtended,
+  sharedSadeCloudFinishPath,
+  sharedSadeCloudHeader,
+} from '../shared/sade-cloud.ts';
 import { DomainError, type Store } from './store.ts';
 import { type DesktopOwner, DesktopIdentity } from './desktop-auth.ts';
 import { GroupSade, groupSadeCommands, projectKey, sharedFinish } from './group-sade.ts';
@@ -84,7 +88,12 @@ export class SharedGroups {
       "CREATE INDEX IF NOT EXISTS shared_message_group_sequence ON records(json_extract(data,'$.groupId'),json_extract(data,'$.sequence')) WHERE kind='sharedMessage'",
     );
   }
-  execute(owner: DesktopOwner, raw: unknown, deviceId?: string, cloudPlanner = false): unknown {
+  execute(
+    owner: DesktopOwner,
+    raw: unknown,
+    deviceId?: string,
+    cloudPlanner: boolean | 'extended' = false,
+  ): unknown {
     const input = command.parse(raw);
     if (input.action === 'invite') {
       const group = this.store
@@ -117,7 +126,12 @@ export class SharedGroups {
             : input.action === 'sade-answer'
               ? input.runId
               : undefined;
-        const offer = this.sade.claimCloudPlan(group, { ownerId: owner.id, deviceId }, runId);
+        const offer = this.sade.claimCloudPlan(
+          group,
+          { ownerId: owner.id, deviceId },
+          runId,
+          cloudPlanner === 'extended',
+        );
         const sadeGroup = this.groupView(group, owner.id);
         return { ...(body as object), sadeGroup, ...(offer ? { sadePlanner: offer } : {}) };
       });
@@ -465,11 +479,12 @@ export function registerCollaboration(
     if (++window.count > 180)
       throw new DomainError('Too many group requests. Retry in a minute.', 429);
     limits.set(owner.id, window);
+    const mode = request.headers[sharedSadeCloudHeader];
     return groups.execute(
       owner,
       request.body,
       deviceId,
-      request.headers[sharedSadeCloudHeader] === '1',
+      mode === sharedSadeCloudExtended ? 'extended' : mode === '1',
     );
   });
   app.post(sharedSadeCloudFinishPath, async (request) => {

@@ -20,6 +20,8 @@ import { createHash } from 'node:crypto';
 import { git } from './git.ts';
 import { machineSigningKey, signMachineResult } from './machine-signature.ts';
 import { machineCommand, evidenceHash, type MachineCommand } from './machine-checks.ts';
+import { pairedTestFile, pairedTestRecipe } from './paired-test-recipe.ts';
+import { resolveProviderPath } from './provider-files.ts';
 import { redact } from './security.ts';
 
 export const executionGrantSchema = z
@@ -28,6 +30,7 @@ export const executionGrantSchema = z
     projectId: z.string().uuid(),
     expiresAt: z.iso.datetime({ offset: true }),
     fullAccess: z.boolean(),
+    testFile: pairedTestFile.optional(),
   })
   .strict();
 export type ExecutionGrant = z.infer<typeof executionGrantSchema>;
@@ -51,6 +54,7 @@ const commandSchema = z
       'read',
       'write',
       'run',
+      'test',
       'export',
       'info',
       'cancel',
@@ -121,7 +125,7 @@ export class MachineExecutor {
     z.string().uuid().parse(commandId);
     const values = commandSchema.parse(input);
     const { grantId, projectId, taskId, operation, args } = values;
-    this.assert(grantId, projectId, ['write', 'run'].includes(operation));
+    this.assert(grantId, projectId, ['write', 'run', 'test'].includes(operation));
     if (operation === 'cancel') {
       this.snapshots.delete(taskId);
       this.busy.get(taskId)?.abort(new Error('Machine operation was cancelled.'));
@@ -206,7 +210,14 @@ export class MachineExecutor {
           { cwd: root, readOnly: operation === 'read', scopes: ['.'] },
           () => current(operation === 'write'),
         );
-      const run = machineCommand.parse(args);
+      const run =
+        operation === 'test'
+          ? await this.approvedTestRecipe(root, args).then((recipe) => {
+              if (!values.checkId || !values.baseCommit)
+                throw new Error('A paired test requires its exact source revision and check.');
+              return recipe;
+            })
+          : machineCommand.parse(args);
       return await this.run(
         commandId,
         values.checkId ?? commandId,
@@ -218,6 +229,15 @@ export class MachineExecutor {
     } finally {
       this.busy.delete(taskId);
     }
+  }
+  private async approvedTestRecipe(root: string, args: unknown) {
+    const { file } = z.object({ file: pairedTestFile }).strict().parse(args);
+    if (this.grant?.testFile !== file)
+      throw new Error('The machine owner has not approved this exact test file.');
+    const { target } = await resolveProviderPath(root, file);
+    if (!(await lstat(target)).isFile())
+      throw new Error('The approved test file is unavailable in this snapshot.');
+    return pairedTestRecipe(file);
   }
   private async transfer(
     root: string,

@@ -7,6 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { Workspace } from '../server/service.ts';
 import type { SharedDelivery, SharedFinish } from '../server/group-sade.ts';
 import { reviewDigest } from '../server/sade.ts';
+import {
+  readSharedVerificationFile,
+  requestedSharedVerificationRevision,
+} from '../server/shared-sade-git.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
 import type { Task, TaskDiff } from '../shared/types.ts';
@@ -49,6 +53,110 @@ test('repository validation accepts a root with spaces and rejects a subdirector
   await mkdir(subdirectory);
   await assert.rejects(validateRepo(subdirectory), /repository root/);
   await assert.rejects(validateRepo('relative/repo'), /absolute path/);
+});
+
+test('the named verification reads its exact tagged or cited blob despite a newer HEAD and Git replacements', async (t) => {
+  const { repo } = await fixture(t);
+  const original = await git(repo, ['rev-parse', 'HEAD']);
+  await git(repo, ['tag', '-a', 'review/v1.4.0', '-m', 'Pinned release']);
+  await writeFile(path.join(repo, 'shared.txt'), 'newer source\n');
+  await git(repo, ['commit', '-am', 'Change current source']);
+  const newer = await git(repo, ['rev-parse', 'HEAD']);
+  await git(repo, ['replace', original, newer]);
+
+  const tag = requestedSharedVerificationRevision(
+    'Read shared.txt at tag `review/v1.4.0` before deciding.',
+    'shared.txt',
+  );
+  assert.deepEqual(tag, { kind: 'tag', value: 'review/v1.4.0' });
+  const found = {
+    scope: 'shared.txt',
+    revision: original,
+    content: 'original\n',
+    truncated: false,
+  };
+  assert.deepEqual(await readSharedVerificationFile(repo, 'shared.txt', tag!), found);
+  const withPointer = requestedSharedVerificationRevision(
+    'Kiểm tra shared.txt ở Git tag `review/v1.4.0`. Nếu chưa có thay đổi ở tag đó thì báo lại.',
+    'shared.txt',
+  );
+  assert.deepEqual(withPointer, tag);
+  assert.equal(
+    requestedSharedVerificationRevision('Xem shared.txt ở tag đó.', 'shared.txt'),
+    undefined,
+  );
+  assert.equal(
+    requestedSharedVerificationRevision(
+      `Xem shared.txt ở commit ${newer} rồi kiểm tra tag đó.`,
+      'shared.txt',
+    ),
+    undefined,
+  );
+  assert.deepEqual(
+    await readSharedVerificationFile(repo, 'shared.txt', {
+      kind: 'commit',
+      value: original.slice(0, 9),
+    }),
+    found,
+  );
+  assert.equal(
+    (await readSharedVerificationFile(repo, 'shared.txt', { kind: 'head' })).content,
+    'newer source\n',
+  );
+  assert.equal(
+    requestedSharedVerificationRevision('Check tags v1.2.0 and v1.3.0.', 'shared.txt'),
+    undefined,
+  );
+  assert.equal(
+    requestedSharedVerificationRevision('Read at tag release^1.', 'shared.txt'),
+    undefined,
+  );
+  assert.equal(
+    requestedSharedVerificationRevision(
+      `Read at tag review/v1.4.0 and commit ${newer}.`,
+      'shared.txt',
+    ),
+    undefined,
+  );
+  assert.equal(
+    requestedSharedVerificationRevision('Read at branch test-docs.', 'shared.txt'),
+    undefined,
+  );
+});
+
+test('conditional verification rejects links, nontext and unavailable revisions and marks oversized blobs incomplete', async (t) => {
+  const { repo } = await fixture(t);
+  await writeFile(path.join(repo, 'excerpt.txt'), 'a'.repeat(13_000));
+  await writeFile(path.join(repo, 'oversize.txt'), 'b'.repeat(129 * 1024));
+  await writeFile(path.join(repo, 'binary.txt'), Buffer.from([0, 33, 251, 255]));
+  await git(repo, ['add', '--', 'excerpt.txt', 'oversize.txt', 'binary.txt']);
+  const blob = await git(repo, ['rev-parse', 'HEAD:shared.txt']);
+  await git(repo, ['update-index', '--add', '--cacheinfo', `120000,${blob},link.txt`]);
+  await git(repo, ['commit', '-m', 'Test Git blob types and sizes']);
+  const head = { kind: 'head' } as const;
+  await assert.rejects(
+    readSharedVerificationFile(repo, 'link.txt', head),
+    /could not be read safely/,
+  );
+  await assert.rejects(
+    readSharedVerificationFile(repo, 'binary.txt', head),
+    /could not be read safely/,
+  );
+  await assert.rejects(readSharedVerificationFile(repo, '../shared.txt', head));
+  await assert.rejects(
+    readSharedVerificationFile(repo, '.env', head),
+    /exact regular project file/,
+  );
+  await assert.rejects(
+    readSharedVerificationFile(repo, 'shared.txt', { kind: 'tag', value: 'missing-local-tag' }),
+    /could not be read safely/,
+  );
+  const excerpt = await readSharedVerificationFile(repo, 'excerpt.txt', head);
+  assert.equal(excerpt.truncated, true);
+  assert.equal(excerpt.content, 'a'.repeat(12_000));
+  const oversized = await readSharedVerificationFile(repo, 'oversize.txt', head);
+  assert.equal(oversized.truncated, true);
+  assert.equal(oversized.content, '');
 });
 
 test('a preview with omitted untracked files is marked incomplete', async (t) => {

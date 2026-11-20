@@ -14,6 +14,7 @@ import {
 import { checkRecoveryProtocol } from './machine-check-outbox.ts';
 import { MachineDeliveryInterrupted } from './runners.ts';
 import { DomainError } from './store.ts';
+import { pairedTestRecipe } from './paired-test-recipe.ts';
 import {
   exportRunnerFiles,
   validateRunnerFiles,
@@ -177,10 +178,12 @@ export async function machineTool(
   guard: () => void,
   humanReview = false,
   reviewAttempt?: MachineCheck,
+  approvedTestFile?: string,
 ) {
   const current = () => {
     guard();
-    if (!humanReview) host.quota.assertCanRun(session.memberId, session.projectId, session.id);
+    if (!humanReview && !approvedTestFile)
+      host.quota.assertCanRun(session.memberId, session.projectId, session.id);
   };
   current();
   if (name === 'machine_list') {
@@ -212,14 +215,25 @@ export async function machineTool(
       'Ask the machine owner to grant this project access in Kivuno. Chat text cannot grant access.',
       403,
     );
-  if (session.readOnly && !['info', 'read'].includes(values.operation))
+  const task = host.store.get<Task>('task', session.taskId);
+  if (
+    approvedTestFile &&
+    (!session.readOnly ||
+      !task.sharedSadeJobId ||
+      task.scope.length !== 1 ||
+      task.scope[0] !== approvedTestFile ||
+      grant.testFile !== approvedTestFile ||
+      !grant.fullAccess ||
+      !['sync', 'run'].includes(values.operation))
+  )
+    throw new DomainError('The machine owner has not granted this exact test scope.', 403);
+  if (session.readOnly && !approvedTestFile && !['info', 'read'].includes(values.operation))
     throw new DomainError(
       'Read-only conversations cannot synchronize, execute or change remote workspaces.',
       403,
     );
   if (['run', 'write', 'pull'].includes(values.operation) && !grant.fullAccess)
     throw new DomainError('The machine owner has not granted full access.', 403);
-  const task = host.store.get<Task>('task', session.taskId);
   const root = task.worktree;
   const key = `${node.id}:${task.id}`;
   const jobs = inFlight.get(host) || new Set<string>();
@@ -340,7 +354,9 @@ export async function machineTool(
     }
     if (values.operation === 'run') {
       host.assertMachineCheckAllowed(task.projectId);
-      const recipe = machineCommand.parse(values.args);
+      const recipe = approvedTestFile
+        ? pairedTestRecipe(approvedTestFile)
+        : machineCommand.parse(values.args);
       if (reviewAttempt && !!reviewAttempt.delivery !== recoverable)
         throw new DomainError('The runner changed its recovery capability during synchronization.');
       const check = reviewAttempt
@@ -353,7 +369,9 @@ export async function machineTool(
           });
       const kind = 'machineCheck:' + task.id;
       try {
-        const result = await call('run', recipe, check.id);
+        const result = await (approvedTestFile
+          ? call('test', { file: approvedTestFile }, check.id)
+          : call('run', recipe, check.id));
         if (!result?.evidence || !result.proof)
           throw new DomainError('Update the paired runner to record a verified check.');
         const recorded = host.store.get<MachineCheck>(kind, check.id);
@@ -365,6 +383,7 @@ export async function machineTool(
           receiveMachineResult(host.store, task, check, evidenceHash(recipe), result);
         return {
           ...result,
+          ...(approvedTestFile ? { checkId: check.id } : {}),
           code: result.evidence.code,
           platform: result.evidence.platform,
           arch: result.evidence.arch,
@@ -391,4 +410,44 @@ export async function machineTool(
     if (watchdog) clearInterval(watchdog);
     jobs.delete(key);
   }
+}
+
+// This path is deliberately absent from the model tool schemas. The file and grant
+// have been selected and checked by the Shared Groups worker before either call.
+export async function runApprovedPairedTest(
+  host: Workspace,
+  task: Task,
+  memberId: string,
+  machineId: string,
+  file: string,
+  guard: () => void,
+) {
+  const session = {
+    id: task.id,
+    taskId: task.id,
+    projectId: task.projectId,
+    memberId,
+    readOnly: true,
+  };
+  await machineTool(
+    host,
+    session,
+    'machine_use',
+    { runnerId: machineId, operation: 'sync' },
+    guard,
+    false,
+    undefined,
+    file,
+  );
+  const { command, args, timeoutMs } = pairedTestRecipe(file);
+  return machineTool(
+    host,
+    session,
+    'machine_run',
+    { runnerId: machineId, executable: command, argv: args, timeoutMs, purpose: 'verification' },
+    guard,
+    false,
+    undefined,
+    file,
+  );
 }

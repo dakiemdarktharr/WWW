@@ -941,6 +941,9 @@ try {
       cspViolations: 0,
     }),
   );
+} catch (error) {
+  if (errors.length) console.error('Portal page errors:', errors);
+  throw error;
 } finally {
   await browser.close();
   await app.close();
