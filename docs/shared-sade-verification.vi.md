@@ -142,6 +142,26 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner
 node --import tsx scripts/eval-shared-sade-planner.ts .local/shared-sade-planner-quota-fallback-1.7b.json --quota-fallback --model qwen3:1.7b-q4_K_M
 ```
 
+Bộ `quota-followup` đo ba câu viết riêng gồm tiếng Việt casual, tiếng Việt không dấu và tiếng Anh kỹ thuật. Hai câu đầu giao hai việc chỉ đọc theo thứ tự, mỗi việc có một người dự phòng khác nhau. Câu cuối chỉ cho phép Claude thay Gemini ở việc đầu. Qwen tạo kế hoạch thật. Shared Groups đối chiếu phạm vi, phụ thuộc, harness chính và dự phòng, rồi mô phỏng Gemini hết quota. Bài chấm kiểm tra việc đầu tới đúng Claude, việc sau chỉ chạy sau khi có kết quả tiên quyết và quyền dự phòng đúng cho việc đó. Ba kế hoạch đối chứng đạt. Đối chứng tự thêm dự phòng ở việc chỉ giao cho Gemini bị loại.
+
+Ở hạn 120 giây mỗi lần gọi, Qwen3 4B Instruct chạy trên CPU runner đạt ca tiếng Anh sau 99,9 giây. Hai ca tiếng Việt hết thời gian trước khi trả kế hoạch. Lượt kế tiếp so sánh prompt hiện tại với prompt yêu cầu đầu ra gọn và ghi phương án dự phòng theo từng tác vụ. Cả hai dùng cùng model và hạn 180 giây. [Lượt đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44673893064) · [Lượt đối chiếu](https://github.com/dakiemdarktharr/WWW/actions/runs/44674808405)
+
+| Tin nhắn                               | Prompt hiện tại    | Prompt gọn                 | Prompt có ví dụ             |
+| -------------------------------------- | ------------------ | -------------------------- | --------------------------- |
+| Casual                                 | Hết hạn 180 giây   | 134,1 giây, sinh ba tác vụ | Hết hạn 180 giây            |
+| Không dấu                              | Hết hạn 180 giây   | 88,0 giây, sinh ba tác vụ  | 157,7 giây, sinh bốn tác vụ |
+| Kỹ thuật, giới hạn dự phòng ở việc đầu | Đạt sau 115,3 giây | Đạt sau 58,4 giây          | Đạt sau 123,9 giây          |
+
+Trong hai câu tiếng Việt, đầu ra của prompt gọn thêm một tác vụ dành cho người dự phòng. Prompt có ví dụ còn gán Antigravity dự phòng cho sai file trong câu không dấu. Ca tiếng Anh chấm đạt vì Claude làm việc đầu, sau đó Shared Groups báo dừng đúng ở việc chỉ dành cho Gemini. Mỗi prompt đạt 1/3. Các cấu hình chạy trên runner CPU riêng. Kết quả thời gian mô tả từng lượt. [Lượt prompt có ví dụ](https://github.com/dakiemdarktharr/WWW/actions/runs/44675714506)
+
+Cấu hình pilot dùng một lượt lập kế hoạch trên harness đã được người gửi cấp quyền, ưu tiên reasoning cao. Sade kiểm tra quyền theo tác vụ và áp dụng phương án dự phòng lúc điều phối. Qwen 4B dùng để chấm offline. Tài khoản Codex thử nghiệm vẫn ở ngưỡng dự trữ khi đo lại nên phép đo này chỉ có lượt lập kế hoạch thật từ Qwen. Việc nhận tác vụ và quota của các desktop dùng fixture.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/quota-baseline.json --quota-followup --planning-prompt baseline --timeout-ms 180000
+node --import tsx scripts/eval-shared-sade-planner.ts .local/quota-compact.json --quota-followup --planning-prompt quota-compact --timeout-ms 180000
+node --import tsx scripts/eval-shared-sade-planner.ts .local/quota-example.json --quota-followup --planning-prompt quota-example --timeout-ms 180000
+```
+
 Commit `12c2ac8` đã ghép `main` tại `8372bdf`. Windows qua 383 bài, bỏ qua một bài theo nền tảng, và qua format cùng build. macOS arm64 qua 378 bài, bỏ qua sáu bài theo nền tảng, và qua build, Electron cùng giao diện Shared Groups. Bộ 1.000 tin với planner mô phỏng đạt trên cả hai. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44537970731)
 
 Lượt macOS đầu sau khi ghép `main` có bốn ca checkout ngân hàng demo lỗi vì SQLite chuẩn hóa đường dẫn qua alias của hệ điều hành. Bản sửa đối chiếu thư mục cha theo đường dẫn thực rồi giữ yêu cầu đúng thư mục `.relay-fuji-demo` và đúng file `workspace.db`. Bài hồi quy đi qua API với alias thư mục cha trên Windows và macOS. Fixture cũng dùng đường dẫn thực để dọn dữ liệu thử trên Windows.
