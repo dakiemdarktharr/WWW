@@ -12,6 +12,8 @@ const sha512 =
   '6b80a17a2bc34a969ed9ba31500a8201b0b4aad3e7fe061374022d161fec8bd7de49b6dc069a6ac67a90632e8671bbe860a7e94309bc5adbc536d27a75a86b58';
 const prefix = 'kivuno-antigravity-preflight-';
 let phase = 'runner';
+let credentialStore:
+  'query-failed' | 'contains-entries' | 'unrecognized-output' | 'empty' | undefined;
 
 async function preflight() {
   if (
@@ -56,12 +58,25 @@ async function preflight() {
 
   phase = 'credential-store';
   // Capture the Windows utility privately and accept only its explicit empty-store result.
-  const { stdout: credentials } = await run(path.join(system32, 'cmdkey.exe'), ['/list'], {
+  const result = await run(path.join(system32, 'cmdkey.exe'), ['/list'], {
     timeout: 5_000,
+    maxBuffer: 64 * 1024,
     windowsHide: true,
-  });
-  if (!/^Currently stored credentials:\s*\*\s*NONE\s*\*$/i.test(credentials.trim()))
+    encoding: 'buffer',
+  }).catch(() => undefined);
+  if (!result) {
+    credentialStore = 'query-failed';
+    throw new Error('Credential Manager could not be checked.');
+  }
+  const utf16 = result.stdout[1] === 0 || (result.stdout[0] === 0xff && result.stdout[1] === 0xfe);
+  const credentials = result.stdout.toString(utf16 ? 'utf16le' : 'utf8').trim();
+  if (!/^Currently stored credentials:\s*\*\s*NONE\s*\*$/i.test(credentials)) {
+    credentialStore = /^\s*Target\s*:/im.test(credentials)
+      ? 'contains-entries'
+      : 'unrecognized-output';
     throw new Error('Credential Manager must be empty.');
+  }
+  credentialStore = 'empty';
 
   phase = 'profile';
   if (!process.env.RUNNER_TEMP) throw new Error('The runner temporary directory is required.');
@@ -211,6 +226,8 @@ async function preflight() {
 try {
   console.log(JSON.stringify(await preflight()));
 } catch {
-  console.log(JSON.stringify({ provider: 'antigravity', version, passed: false, phase }));
+  console.log(
+    JSON.stringify({ provider: 'antigravity', version, passed: false, phase, credentialStore }),
+  );
   process.exitCode = 1;
 }
