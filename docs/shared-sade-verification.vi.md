@@ -229,6 +229,12 @@ Windows cục bộ qua 82/82 bài `npm run test:shared-sade` và 169/169 bài `n
 node --import tsx --test --test-name-pattern 'two desktop workspaces hand off reviewed code' tests/shared-sade.test.ts
 ```
 
+Ca `disjoint writers hold concurrent leases` xác nhận hai grant riêng có thể cùng giữ lease ghi cho `src/menu.ts` và `src/search.ts` khi có đủ lượt review độc lập. Mất xác nhận của desktop thứ hai trả lại cùng mã tác vụ và không dùng thêm lượt. Cả hai tác vụ ở trạng thái đang chạy trước khi có bên nào hoàn tất. Chạy bằng `node --import tsx --test --test-name-pattern 'disjoint writers hold concurrent leases' tests/shared-sade.test.ts`.
+
+Trên `8315a466b2cd7e0c8ab4f790aac734dd1c1e3ac0`, Windows cục bộ qua 83/83 ca `npm run test:shared-sade` và 170/170 ca `npm run test:sade`. `npm run check` trên CI qua 456 ca Windows, 452 Ubuntu và 451 macOS arm64. Ba nền tảng lần lượt bỏ qua một, năm và sáu ca theo hệ điều hành, với 0 lỗi. Cả ba qua ca lease song song mới và corpus fixture 1.000 tin. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44688365308) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44688365328)
+
+Kiểm tra Git trước khi giao việc cho Claude, Gemini và Antigravity managed còn thiếu. Planner hiện đưa bước kiểm tra commit vào tiêu chí tác vụ. Các công cụ đọc file có scope chặn `.git` và chưa cung cấp trạng thái hoặc lịch sử Git cho planner. Ca tái dùng commit đã kiểm tra ở bước tích hợp.
+
 CI macOS tái hiện lỗi khi hai phiên ghi tạo worktree đồng thời và Git đọc `commondir` của một worktree còn đang được tạo. Kivuno sắp thứ tự thao tác tạo worktree theo thư mục Git chung trong cùng tiến trình. Bài hồi quy tạo hai worktree đồng thời từ repo chính và từ một worktree đã liên kết, rồi kiểm tra nội dung và nhánh riêng của từng phiên. [Lượt tái hiện trên macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44645092465)
 
 Commit `05fb000` qua bốn bài Windows về worktree, phiên ghi đồng thời và bàn giao Claude ↔ Antigravity. macOS arm64 qua 389 bài, bỏ qua sáu bài theo nền tảng, rồi qua build, Electron và Shared Groups. Bộ 1.000 tin với kế hoạch mô phỏng đạt trong CI macOS. Cùng commit, bài bàn giao Windows–Mac dùng runner macOS arm64 thật, tái hiện lỗi đường dẫn rồi chạy lại thành công và trả đúng file về Windows. Planner và reviewer dùng fixture. [CI macOS sau khi sửa](https://github.com/dakiemdarktharr/WWW/actions/runs/44645920186) · [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44646383664)
@@ -269,6 +275,16 @@ Commit `95f5899` qua 392 bài trên Windows và 387 bài trên macOS arm64, bỏ
 node --import tsx --test --test-name-pattern 'one group message (hands off|lets Antigravity)' tests/shared-sade.test.ts
 ```
 
+Kiểm tra trước đăng nhập trên Windows dùng Claude Code 2.1.281 có chữ ký Anthropic hợp lệ, Node 24.22.1 và một thư mục cấu hình tạm. Adapter managed trả `account: null`, khởi tạo stream-json và đọc được năm mục trong catalog, gồm bốn mục hỗ trợ reasoning `high`. Kết quả có 0 lượt model và 0 yêu cầu đăng nhập. Thư mục hồ sơ tạm và tiến trình do bài thử tạo đã được dọn. Phép thử dùng cả thư mục Windows Roaming và Local tạm vì CLI có thể tìm hồ sơ ở Roaming. [Quản lý credential của Claude Code](https://code.claude.com/docs/en/authentication#credential-management)
+
+Bản ghi `claude-managed-preflight.json` và mã thử nằm trong `.local/sade-native-preflight` của worktree. Chạy lại bằng lệnh sau trên máy có Claude Code chính thức.
+
+```powershell
+& .\.local\sade-native-preflight\claude-managed-preflight.ps1 -NodeExecutable 'D:\multiplayer agent\.desktop-build\runtime\node.exe'
+```
+
+Đã kiểm tra chữ ký Google LLC và phiên bản 1.5.0 của `agy.exe` có sẵn ngoài đường dẫn mặc định của Kivuno. Antigravity có thể tự chọn phiên từ Windows Credential Manager dù dùng thư mục cấu hình trống. Phiên kiểm tra managed cho Antigravity cần tài khoản hệ điều hành tách biệt với kho đăng nhập trống. Hai chủ provider vẫn cần tự đăng nhập và cấp quyền cho cùng Git origin và nhánh trước khi chạy thử. [Đăng nhập Antigravity CLI](https://antigravity.google/docs/install)
+
 ### Kiểm tra thông tin xác thực trong bản vá
 
 Máy tác giả kiểm tra nội dung diff, danh sách tên tệp và phần thống kê trước khi chuyển bản vá. Nếu phát hiện mẫu thông tin xác thực, Sade báo cần kiểm tra trên máy tác giả. Desktop kiểm tra lại bản vá còn trong hàng đợi khi đồng bộ sau khi nâng cấp hoặc khi lần gửi trước mất xác nhận. Bộ điều phối kiểm tra bản vá đã lưu trước khi giao review, bàn giao cho tác vụ phụ thuộc hoặc ghi nhận kết quả review. Khi chặn, Sade giữ file nguồn trong worktree của tác giả và bỏ bản vá khỏi dữ liệu điều phối.
@@ -303,6 +319,10 @@ Trên `eb9f686770bc5a13c5f77273c1854f3126c818fa`, chạy lại `paired-macos` v�
 
 Lượt mô phỏng dùng runner GitHub chuẩn và Quick Tunnel miễn phí. Các hồi quy `test:sade` kiểm tra hết hạn quyền khi đang chạy lệnh, thu hồi quyền và biên nhận đến sau khi tác vụ đã kết thúc. Hai ca thực địa còn mở gồm Claude và Antigravity với hai chủ tài khoản tự cấp quyền, và một chủ máy Mac xác nhận quyền qua **Join as machine** trên desktop Kivuno. [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) · [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
 
+Chế độ `paired-macos-desktop` chạy trên `1ea993d9aff645ae932224fcd75331dab58246a5`. Runner mở Electron Kivuno thật trên macOS arm64, dùng danh tính Kivuno Mac mô phỏng, khác danh tính Windows. Bài thử thao tác qua nút **Join as machine** và **Stop connection**. Fixture chỉ cung cấp đường dẫn tệp và phản hồi cho hộp thoại native. Mặc định là **Cancel** và ô cho phép chạy lệnh chưa chọn. Chọn hủy không tạo grant. Chọn cho phép đầy đủ tạo grant 30 phút cho đúng project trong dữ liệu riêng của desktop. Windows đọc được grant đó, tái hiện lỗi với mã 1, xác minh bản sửa với mã 0 và chỉ kéo `path-label.cjs`. Biên nhận xác minh có chữ ký chuyển từ `stale` sang `passed` sau khi Windows nhận đúng file.
+
+Sau khi Windows hoàn tất, bài thử nhấn **Stop connection**, thấy trạng thái **Stopped**, kiểm tra grant đã bị xóa và kết nối lưu trên Mac đã bị tắt. Mac báo `round-trip-verified` và `desktopGrant: removed`. Bài Windows đạt 1/1 sau 207,7 giây và tunnel đã được dừng. Lần đầu ở `8315a46` bị hộp hướng dẫn lần đầu chặn nút **Team**. Lần chạy lại đóng hộp hướng dẫn bằng nút thật. Phép thử xác nhận thời hạn được cấp và thu hồi qua desktop. Việc dừng lệnh khi quyền hết hạn chạy trong nhóm hồi quy riêng. Quyền do một chủ máy Mac thật xác nhận vẫn cần lượt thực địa. [CI ghép qua desktop macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44688823268) · [Lần đầu bị hộp hướng dẫn chặn](https://github.com/dakiemdarktharr/WWW/actions/runs/44688379502)
+
 Biên nhận chạy từ máy ghép cặp gắn với mã tác vụ Shared Groups tại lúc gửi. Khi kết quả đến sau gián đoạn, bộ điều phối kiểm tra quyền của cả máy ghép cặp lẫn đúng tác vụ Shared Groups trước khi ghi nhận kết quả đạt. Bài hồi quy chạy Node thật trên máy thử, nhận kết quả có chữ ký qua giao thức runner và mô phỏng lần gửi lại đến sau khi phiên không còn hoặc tác vụ đã được thay. Hai ca đó giữ trạng thái chưa xác nhận. Ca đối chứng mô phỏng quyền của tác vụ còn hiệu lực và xác nhận lưu đúng biên nhận. Chạy riêng bằng `node --import tsx --test --test-name-pattern "delayed signed machine result" tests/runners.test.ts`.
 
 Commit `2907206` qua 79 bài runner và Shared Sade trên Windows cục bộ. CI đạt 445 bài trên Windows, 441 trên Ubuntu và 440 trên macOS arm64, bỏ qua lần lượt một, năm và sáu bài theo hệ điều hành. Cả ba qua bài khôi phục kiểm tra thông thường sau khi hai đầu khởi động lại, ba ca biên nhận Shared Groups và bộ 1.000 tin với planner mô phỏng. macOS qua thêm Electron và Shared Groups. [Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44677367018) · [macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44677367225)
@@ -322,13 +342,16 @@ Trên Windows, checkout nhánh cần thử và cài dependency bằng `npm ci`. 
 ```powershell
 $env:KIVUNO_CROSS_HOST_ORIGIN = '<HTTPS origin từ cloudflared>'
 $env:KIVUNO_CROSS_HOST_PORT = '58173'
+# Đặt biến thành '1' để chạy thêm desktop Mac hoặc '0' để dùng runner headless.
+$env:KIVUNO_MAC_OWNER_DESKTOP = '1'
+$platform = if ($env:KIVUNO_MAC_OWNER_DESKTOP -eq '1') { 'paired-macos-desktop' } else { 'paired-macos' }
 $branch = (git branch --show-current).Trim()
 $env:KIVUNO_CROSS_HOST_WORKFLOW = "dakiemdarktharr/WWW/.github/workflows/ci.yml@refs/heads/$branch"
 $env:KIVUNO_CROSS_HOST_SHA = (git rev-parse HEAD).Trim()
 $remote = (git ls-remote --heads origin "refs/heads/$branch").Split()[0]
 if ($remote -ne $env:KIVUNO_CROSS_HOST_SHA) { throw 'Windows và GitHub phải dùng cùng commit.' }
 $run = gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref $branch `
-  -f platform=paired-macos -f "paired_origin=$env:KIVUNO_CROSS_HOST_ORIGIN"
+  -f "platform=$platform" -f "paired_origin=$env:KIVUNO_CROSS_HOST_ORIGIN"
 if ($LASTEXITCODE -ne 0 -or $run -notmatch '/actions/runs/(\d+)') { throw 'Không tìm thấy lượt chạy Mac.' }
 $env:KIVUNO_MAC_RUN_ID = $Matches[1]
 node --import tsx --test --test-name-pattern 'two desktop workspaces' tests/shared-sade.test.ts
