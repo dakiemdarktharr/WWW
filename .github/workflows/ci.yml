@@ -8,7 +8,7 @@ on:
         description: Verification platform
         type: choice
         default: desktop
-        options: [desktop, macos, paired-macos, paired-files, sade-eval]
+        options: [desktop, macos, paired-macos, paired-macos-desktop, paired-files, sade-eval]
       sade_suite:
         description: Sade model benchmark suite
         type: choice
@@ -29,7 +29,7 @@ on:
         default: baseline
         options: [baseline, ordered]
       paired_origin:
-        description: Temporary cross-host test origin for paired-macos
+        description: Temporary cross-host origin for direct macOS pairing tests
         type: string
         required: false
 permissions:
@@ -69,7 +69,7 @@ jobs:
         run: npm run test:collaboration
       - run: npm audit --omit=dev --audit-level=high
   paired-macos:
-    if: inputs.platform == 'paired-macos'
+    if: inputs.platform == 'paired-macos' || inputs.platform == 'paired-macos-desktop'
     runs-on: macos-latest
     timeout-minutes: 8
     permissions:
@@ -84,14 +84,18 @@ jobs:
           node-version-file: .node-version
           cache: npm
       - run: npm ci
+      - if: inputs.platform == 'paired-macos-desktop'
+        run: npm run build
       - name: Run tool-only Sade pairing fixture
         env:
           KIVUNO_CROSS_HOST_ORIGIN: ${{ inputs.paired_origin }}
+          KIVUNO_MAC_OWNER_DESKTOP: ${{ inputs.platform == 'paired-macos-desktop' && '1' || '0' }}
           OPENAI_API_KEY: test-sentinel-not-a-credential
         run: >-
           node --import tsx --input-type=module -e
           "import { runCrossHostMac } from './tests/fixtures/shared-sade-cross-host.ts';
-          await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN)"
+          await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN,
+          process.env.KIVUNO_MAC_OWNER_DESKTOP === '1')"
   paired_source:
     if: inputs.platform == 'paired-files'
     runs-on: windows-latest

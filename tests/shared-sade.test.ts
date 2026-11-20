@@ -1630,6 +1630,7 @@ test(
           workflowRef: process.env.KIVUNO_CROSS_HOST_WORKFLOW!,
           sha: process.env.KIVUNO_CROSS_HOST_SHA!,
           runId: process.env.KIVUNO_MAC_RUN_ID,
+          ownerDesktop: process.env.KIVUNO_MAC_OWNER_DESKTOP === '1',
         })
       : undefined;
     if (live) assert.equal(process.platform, 'win32');
@@ -1637,6 +1638,11 @@ test(
     const remotePermission = await live?.ready();
     if (remotePermission) {
       assert.equal(remotePermission.platform, 'darwin');
+      if (process.env.KIVUNO_MAC_OWNER_DESKTOP === '1') {
+        assert.equal(remotePermission.fullAccess, true);
+        const leaseMinutes = (Date.parse(remotePermission.expiresAt) - Date.now()) / 60_000;
+        assert.ok(leaseMinutes > 25 && leaseMinutes <= 31, 'expected a 30-minute desktop grant');
+      }
       console.log(
         `Tool-only paired runner ready on ${remotePermission.platform} ${remotePermission.arch}`,
       );
@@ -4220,6 +4226,52 @@ test('a revoked assignment blocks pending deliveries and a clean writing result 
   } finally {
     f.store.close();
   }
+});
+
+test('disjoint writers hold concurrent leases when both grants have spare review turns', (t) => {
+  const f = fixture(undefined, { turnsA: 3, turnsB: 2 });
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Bếp sửa src/menu.ts, Mây sửa src/search.ts. Hai bên làm song song nhé.',
+    sade: { projectKey: key },
+  });
+  const plan = f.poll(0).delivery!;
+  f.finish(0, plan.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Edit menu and search independently.',
+      tasks: [
+        work('menu', { kind: 'code', preferredMemberId: f.grants[0] }),
+        work('search', { kind: 'code', preferredMemberId: f.grants[1] }),
+      ],
+    },
+  });
+
+  const menu = f.poll(0).delivery!;
+  const search = f.poll(1).delivery!;
+  assert.notEqual(menu.id, search.id);
+  assert.deepEqual([menu.grantId, search.grantId], f.grants);
+  assert.deepEqual([menu.task?.scope, search.task?.scope], [['src/menu.ts'], ['src/search.ts']]);
+
+  assert.deepEqual(f.poll(1).delivery, search, 'Retry the unacknowledged search delivery');
+  assert.deepEqual(
+    f.grants.map((id) => f.store.get<{ used: number }>('sharedSadeGrant', id).used),
+    [2, 1],
+    'The planner and each writer used one turn',
+  );
+  for (const [owner, job] of [menu, search].entries()) {
+    const acknowledged = f.poll(owner, [job.id]);
+    assert.deepEqual(acknowledged.active, [job.id]);
+    assert.equal(acknowledged.delivery, undefined);
+  }
+  const jobs = f.view().sadeRuns[0].jobs;
+  assert.deepEqual(
+    [menu, search].map(({ id }) => jobs.find((job) => job.id === id)?.state),
+    ['running', 'running'],
+  );
 });
 
 for (const firstChanges of [false, true]) {

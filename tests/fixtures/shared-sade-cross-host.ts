@@ -41,6 +41,7 @@ export async function startCrossHostBridge(
     workflowRef: string;
     sha: string;
     runId?: string;
+    ownerDesktop?: boolean;
     dropExchange?: (body: { epoch: string; events: RunnerEvent[] }) => boolean;
   },
 ) {
@@ -103,8 +104,8 @@ export async function startCrossHostBridge(
     if (!safeEqual(request.headers.authorization || '', runnerAuthorization))
       return reply.code(403).send({ error: 'Fixture machine authorization required.' });
   });
-  edge.post(statusPath, { bodyLimit: 256 }, async () => {
-    if (verified) acknowledged = true;
+  edge.post<{ Body: { stopped?: boolean } }>(statusPath, { bodyLimit: 256 }, async (request) => {
+    if (verified && (!options.ownerDesktop || request.body?.stopped === true)) acknowledged = true;
     return { verified };
   });
   if (options.dropExchange) {
@@ -177,7 +178,8 @@ export async function startCrossHostBridge(
     close,
     async finish() {
       verified = true;
-      for (let attempt = 0; attempt < 20 && !acknowledged; attempt++) await wait(500);
+      const deadline = Date.now() + (options.ownerDesktop ? 60_000 : 10_000);
+      while (Date.now() < deadline && !acknowledged) await wait(500);
       assert.ok(acknowledged, 'macOS fixture must acknowledge the completed round trip');
     },
     async ready() {
@@ -194,7 +196,7 @@ export async function startCrossHostBridge(
   };
 }
 
-export async function runCrossHostMac(url: string) {
+export async function runCrossHostMac(url: string, ownerDesktop = false) {
   assert.equal(process.platform, 'darwin');
   const origin = tunnelOrigin(url);
   const deadline = Date.now() + 90_000;
@@ -236,6 +238,55 @@ export async function runCrossHostMac(url: string) {
   });
   if (!response.ok) throw new Error(`Fixture enrollment was rejected (${response.status}).`);
   const { projectId, id, token: runnerToken, bridgeKey, exchangeUrl } = await response.json();
+  async function status(stopped = false) {
+    const result = await fetch(`${origin}${statusPath}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${runnerToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stopped }),
+      signal: AbortSignal.timeout(5000),
+      redirect: 'error',
+    });
+    if (!result.ok) throw new Error(`Fixture status was rejected (${result.status}).`);
+    return (await result.json()).verified === true;
+  }
+
+  async function waitForVerification() {
+    const deadline = Date.now() + 165_000;
+    while (Date.now() < deadline) {
+      if (await status()) return;
+      await wait(1500);
+    }
+    throw new Error('Windows did not verify the paired transfer before the deadline.');
+  }
+
+  if (ownerDesktop) {
+    const { joinCrossHostMacDesktop } = await import('./shared-sade-mac-desktop.ts');
+    const mac = await joinCrossHostMacDesktop({
+      origin,
+      id,
+      token: runnerToken,
+      bridgeKey,
+      exchangeUrl,
+      projectId,
+    });
+    try {
+      await waitForVerification();
+      await mac.stop();
+      assert.equal(await status(true), true);
+    } finally {
+      await mac.close();
+    }
+    console.log(
+      JSON.stringify({
+        platform: process.platform,
+        arch: process.arch,
+        result: 'round-trip-verified',
+        desktopGrant: 'removed',
+      }),
+    );
+    return;
+  }
+
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'Kivuno Mac fixture-'));
   const config: RunnerConfig = {
     origin,
@@ -257,29 +308,14 @@ export async function runCrossHostMac(url: string) {
   const running = runMachine(config);
   const watchdog = setTimeout(() => process.emit('SIGTERM'), 180_000);
   try {
-    const deadline = Date.now() + 165_000;
-    while (Date.now() < deadline) {
-      const complete = await fetch(`${origin}${statusPath}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${runnerToken}`, 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(5000),
-        redirect: 'error',
-      });
-      if (!complete.ok) throw new Error(`Fixture status was rejected (${complete.status}).`);
-      if ((await complete.json()).verified) {
-        console.log(
-          JSON.stringify({
-            platform: process.platform,
-            arch: process.arch,
-            result: 'round-trip-verified',
-          }),
-        );
-        return;
-      }
-      await wait(1500);
-    }
-    throw new Error('Windows did not verify the paired transfer before the deadline.');
+    await waitForVerification();
+    console.log(
+      JSON.stringify({
+        platform: process.platform,
+        arch: process.arch,
+        result: 'round-trip-verified',
+      }),
+    );
   } finally {
     clearTimeout(watchdog);
     process.emit('SIGTERM');
