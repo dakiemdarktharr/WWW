@@ -570,17 +570,25 @@ export class GroupSade {
     const similar = this.store
       .all<Run>('sharedSadeRun')
       .filter((run) => run.projectKey === message.sade?.projectKey || run.groupId === group.id);
-    if (similar.some((run) => !final(run)))
-      throw new DomainError(
-        'Finish or cancel the active Sade request for this group or project first.',
+    const now = this.now();
+    const hasLiveLease = (run: Run) =>
+      run.jobs.some((job) => job.state !== 'done' && (job.deadline || 0) > now);
+    for (const run of similar) {
+      if (final(run)) continue;
+      const expired = run.jobs.find(
+        (job) => ['running', 'reviewing'].includes(job.state) && (job.deadline || 0) <= now,
       );
-    if (
-      similar.some(
-        (run) =>
-          run.state !== 'done' &&
-          run.jobs.some((job) => job.state !== 'done' && (job.deadline || 0) > this.now()),
-      )
-    )
+      if (!expired || hasLiveLease(run))
+        throw new DomainError(
+          'Finish or cancel the active Sade request for this group or project first.',
+        );
+      this.block(
+        run,
+        expired,
+        'A desktop lease expired before the workflow completed. Work stays on its owner’s desktop.',
+      );
+    }
+    if (similar.some((run) => run.state !== 'done' && hasLiveLease(run)))
       throw new DomainError(
         'The previous Sade request is stopping. Wait for its desktop lease to expire before starting again.',
         409,

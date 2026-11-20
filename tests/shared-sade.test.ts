@@ -242,6 +242,61 @@ for (const kind of ['research', 'code'] as const) {
   });
 }
 
+test('a new Shared Sade request recovers an offline run once all prior leases expire', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const message = {
+    action: 'message',
+    groupId: f.groupId,
+    content: 'Mỗi người xem một file trong project giúp mình.',
+    sade: { projectKey: key },
+  };
+  const original = randomUUID();
+  f.call(0, { ...message, id: original });
+  const plan = f.poll(0).delivery!;
+  f.finish(0, plan.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Two authorized teammates inspect separate files.',
+      tasks: [
+        work('first', { preferredMemberId: f.grants[0] }),
+        work('second', { preferredMemberId: f.grants[1] }),
+      ],
+    },
+  });
+  const tasks = [f.poll(0).delivery!, f.poll(1).delivery!];
+  const expire = (jobId: string) => {
+    const record = f.store.get<{ id: string; jobs: { id: string; deadline?: number }[] }>(
+      'sharedSadeRun',
+      original,
+    );
+    record.jobs.find((job) => job.id === jobId)!.deadline = Date.now() - 1;
+    f.store.put('sharedSadeRun', record);
+  };
+  const retry = { ...message, id: randomUUID(), content: 'Thử xem lại hai file giúp mình.' };
+  expire(tasks[0].id);
+  assert.throws(() => f.call(0, retry), /active Sade request/);
+  assert.equal(f.view().messages.length, 1);
+  assert.equal(f.view().sadeRuns[0].state, 'running');
+
+  expire(tasks[1].id);
+  f.call(0, retry);
+  f.call(0, retry);
+  assert.equal(f.view().messages.length, 2);
+  assert.deepEqual(
+    f.view().sadeRuns.map(({ state }) => state),
+    ['blocked', 'planning'],
+  );
+  assert.throws(
+    () => f.finish(1, tasks[1].id, { kind: 'done', summary: 'Late result from the old run.' }),
+    /no longer running/,
+  );
+  const next = f.poll(0).delivery!;
+  assert.equal(next.phase, 'plan');
+  assert.equal(next.request, retry.content);
+  assert.notEqual(next.id, plan.id);
+});
+
 test('1,000 distinct Shared Groups messages pass the admission and routing contract with controlled planner outputs', () => {
   const cases = sharedSadeCorpus();
   assert.equal(new Set(cases.map((item) => item.message)).size, 1000);
