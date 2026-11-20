@@ -555,6 +555,7 @@ $adapter = "$qwen/action-intent-0.6b-context-pairs-v2-full/epoch-2"
 python scripts/train-sade-qwen.py --root $qwen --data-dir $dataset --adapter $adapter `
   --action-intent --size 0.6b --batch 1 --acceptance "$dataset/final.jsonl" `
   --output "$dataset/qwen-replay"
+node --import tsx scripts/eval-shared-sade-intent.ts $dataset "$dataset/qwen-replay/acceptance.json"
 ```
 
 ### Phân loại sáu ý định với Qwen 1,7B

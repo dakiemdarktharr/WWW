@@ -227,6 +227,43 @@ const results = Object.fromEntries(
   }),
 );
 
+const qwenResults = process.argv[3];
+let comparison;
+if (qwenResults) {
+  const final = evaluations.find(([name]) => name === 'final')?.[1];
+  assert.ok(final, 'A Qwen comparison needs the independent final split.');
+  const qwen: {
+    total: number;
+    correct: number;
+    errors: { id: string; expected: string; predicted: string }[];
+  } = JSON.parse(readFileSync(qwenResults, 'utf8'));
+  const finalLabels = new Map(final.map((row) => [row.id, work(row) ? 'work' : 'chat']));
+  const errors = new Set(qwen.errors.map(({ id }) => id));
+  assert.equal(qwen.total, final.length);
+  assert.equal(qwen.correct + errors.size, final.length);
+  assert.equal(qwen.errors.length, errors.size);
+  for (const error of qwen.errors) {
+    assert.equal(finalLabels.get(error.id), error.expected);
+    assert.ok(['work', 'chat'].includes(error.predicted) && error.predicted !== error.expected);
+  }
+  const flags = final.map((row) => ({
+    row,
+    cpu: best.model.score(row.message) > suggestionThreshold,
+    qwen: Boolean(work(row)) !== errors.has(row.id),
+  }));
+  comparison = {
+    qwen: metrics(
+      flags.map(({ row, qwen }) => ({ row, score: Number(qwen) })),
+      classify,
+    ),
+    simulatedQwenCalls: flags.filter(({ cpu }) => cpu).length,
+    combinedConfirmation: metrics(
+      flags.map(({ row, cpu, qwen }) => ({ row, score: Number(cpu && qwen) })),
+      classify,
+    ),
+  };
+}
+
 console.log(
   JSON.stringify(
     {
@@ -246,6 +283,7 @@ console.log(
       suggestionThreshold,
       calibration: best.result,
       results,
+      comparison,
       processPeakRssMiB: process.resourceUsage().maxRSS / 1024,
     },
     null,
