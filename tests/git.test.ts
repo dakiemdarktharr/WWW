@@ -394,28 +394,63 @@ for (const [handoff, reverted] of [
   ['published revision', true],
   ['patch followed by a published revision', false],
   ['patch followed by a published revision', true],
+  ['unchanged directory', false],
+  ['unchanged directory', true],
+  ['unchanged directory followed by a published revision', false],
+  ['unchanged checkout after an imported patch', false],
 ] as const) {
-  test(`Shared Sade ${reverted ? 'blocks a reverted reviewed prerequisite' : 'keeps a newer reviewed prerequisite for the same file'} from a ${handoff}`, async (t) => {
+  test(`Shared Sade ${reverted ? 'blocks a reverted prerequisite' : 'uses the verified prerequisite'} from ${handoff}`, async (t) => {
     const f = await fixture(t);
     const origin = 'https://example.test/shared/prerequisite.git';
     await git(f.repo, ['remote', 'add', 'origin', origin]);
-    const file = path.join(f.repo, 'shared.txt');
+    const directoryScope = handoff.startsWith('unchanged directory');
+    if (directoryScope) await mkdir(path.join(f.repo, 'contracts'));
+    const relativeFile = directoryScope ? 'contracts/shared.txt' : 'shared.txt';
+    const file = path.join(f.repo, relativeFile);
     const prerequisites: SharedDelivery['prerequisites'] = [];
-    for (const content of ['First approved contract\n', 'Second approved contract\n']) {
+    const imported = handoff === 'unchanged checkout after an imported patch';
+    if (imported) {
+      const source = await createWorktree(f.repo, f.storage, 'scope-proof-source');
+      const content = 'Second approved contract\n';
+      await writeFile(path.join(source.worktree, relativeFile), content);
+      const change = await taskDiff(source.worktree, source.baseCommit);
+      await git(source.worktree, ['add', relativeFile]);
+      await git(source.worktree, ['commit', '-m', 'Author approved the contract']);
+      const revision = await git(source.worktree, ['rev-parse', 'HEAD']);
+      const digest = reviewDigest(change);
+      prerequisites.push(
+        { title: 'Reviewed portable contract', revision, patch: { change, digest } },
+        {
+          title: 'Confirmed existing contract after import',
+          revision: source.baseCommit,
+          unchangedCheckout: { scopes: [relativeFile], importedPatchDigests: [digest] },
+        },
+      );
+      await writeFile(file, content);
+      await git(f.repo, ['add', relativeFile]);
+      await git(f.repo, ['commit', '-m', 'Independently bring in the approved contract']);
+      await assert.rejects(git(f.repo, ['merge-base', '--is-ancestor', revision, 'HEAD']));
+    }
+    const contents = imported ? [] : ['First approved contract\n', 'Second approved contract\n'];
+    for (const [index, content] of contents.entries()) {
       await writeFile(file, content);
       const change = await taskDiff(f.repo);
       const title = content.trim();
-      await git(f.repo, ['add', 'shared.txt']);
+      await git(f.repo, ['add', relativeFile]);
       await git(f.repo, ['commit', '-m', title]);
       const portable =
         handoff === 'portable patch' ||
         (handoff === 'patch followed by a published revision' && !prerequisites.length);
+      if (handoff === 'unchanged directory' && index === 0) continue;
+      const unchanged = directoryScope && (handoff === 'unchanged directory' || index === 0);
       prerequisites.push({
         title,
         revision: await git(f.repo, ['rev-parse', 'HEAD']),
-        ...(portable
-          ? { patch: { change, digest: reviewDigest(change) } }
-          : { publishedFiles: change.files }),
+        ...(unchanged
+          ? { unchangedCheckout: { scopes: ['contracts'], importedPatchDigests: [] } }
+          : portable
+            ? { patch: { change, digest: reviewDigest(change) } }
+            : { publishedFiles: change.files }),
       });
     }
     const lastReviewed = prerequisites.at(-1)!.revision!;
@@ -456,7 +491,7 @@ for (const [handoff, reverted] of [
       workspace.sessions,
       'send',
       async (_sessionId: string, prompt: string) => {
-        assert.doesNotMatch(prompt, /publishedFiles/);
+        assert.doesNotMatch(prompt, /publishedFiles|unchangedCheckout/);
       },
     );
     await workspace.sharedSade.execute({
@@ -484,15 +519,20 @@ for (const [handoff, reverted] of [
       assert.deepEqual(sent.mock.callCount(), 0);
       const result = receipt().result;
       assert.equal(result?.kind, 'blocked');
-      assert.match(result.summary, /changed after it was reviewed/);
+      assert.match(
+        result.summary,
+        handoff === 'unchanged directory'
+          ? /differs from the checkout/
+          : /changed after it was reviewed/,
+      );
       assert.equal(
-        await readFile(path.join(task.worktree, 'shared.txt'), 'utf8'),
+        await readFile(path.join(task.worktree, relativeFile), 'utf8'),
         'First approved contract\n',
       );
     } else {
       assert.equal(sent.mock.callCount(), 1, JSON.stringify(receipt().result));
       assert.equal(
-        await readFile(path.join(task.worktree, 'shared.txt'), 'utf8'),
+        await readFile(path.join(task.worktree, relativeFile), 'utf8'),
         'Second approved contract\n',
       );
     }

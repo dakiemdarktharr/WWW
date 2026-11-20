@@ -694,6 +694,7 @@ async function sharedSadeLoop(generation, owner) {
   let supportsReviewRevision = false;
   let supportsRosterLookup = false;
   let supportsReviewedRevisionFiles = false;
+  let supportsUnchangedRevisionScopes = false;
   let supportsCapacityWait = false;
   let grantCursor;
   let revocationSync;
@@ -754,6 +755,7 @@ async function sharedSadeLoop(generation, owner) {
           ...(supportsReviewRevision ? { reviewRevision: true } : {}),
           ...(supportsRosterLookup ? { rosterLookup: true } : {}),
           ...(supportsReviewedRevisionFiles ? { reviewedRevisionFiles: true } : {}),
+          ...(supportsUnchangedRevisionScopes ? { unchangedRevisionScopes: true } : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -767,6 +769,8 @@ async function sharedSadeLoop(generation, owner) {
       supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
       supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
       supportsReviewedRevisionFiles = response.ok && body.supportsReviewedRevisionFiles === true;
+      supportsUnchangedRevisionScopes =
+        response.ok && body.supportsUnchangedRevisionScopes === true;
       supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
       if (response.ok) {
         await localSharedSade({
@@ -776,6 +780,9 @@ async function sharedSadeLoop(generation, owner) {
           reviews: body.reviews,
           updates: body.updates,
           revisionHandoff: body.revisionHandoff,
+          ...(body.supportsUnchangedRevisionScopes === true
+            ? { unchangedRevisionScopes: true }
+            : {}),
           quotaFailover: body.quotaFailover,
           planQuotaFailover: body.planQuotaFailover,
           acknowledged,

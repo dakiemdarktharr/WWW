@@ -101,10 +101,12 @@ function sharedGroupContext(delivery: SharedDelivery) {
         : delivery.team.map((member, index) => plannerMember(member, index, 60)),
     task: delivery.task,
     clarification: delivery.clarification,
-    prerequisites: delivery.prerequisites.map(({ patch, publishedFiles, ...item }) => ({
-      ...item,
-      summary: item.summary?.slice(0, 120),
-    })),
+    prerequisites: delivery.prerequisites.map(
+      ({ patch, publishedFiles, unchangedCheckout, ...item }) => ({
+        ...item,
+        summary: item.summary?.slice(0, 120),
+      }),
+    ),
   })}`;
 }
 
@@ -173,6 +175,7 @@ type Receipt = {
   revisingReview?: true;
   revision?: string;
   revisionHandoff?: true;
+  unchangedRevisionScopes?: true;
   quotaFailover?: true;
   planQuotaFailover?: true;
   checkoutRevision?: string;
@@ -181,6 +184,7 @@ type Receipt = {
   providerTurnConsumed?: boolean;
   portableReview?: true;
   inheritedFiles?: string[];
+  importedPatchDigests?: string[];
   machine?: PairedMachine;
   machineVerified?: boolean;
   machineRun?: { platform: string; code: number | null; timedOut: boolean };
@@ -247,6 +251,7 @@ export const sharedWorkerCommand = z.discriminatedUnion('action', [
       active: z.array(id).max(4),
       delivery: deliveryInput.optional(),
       revisionHandoff: z.literal(true).optional(),
+      unchangedRevisionScopes: z.literal(true).optional(),
       quotaFailover: z.literal(true).optional(),
       planQuotaFailover: z.literal(true).optional(),
       acknowledged: z
@@ -611,6 +616,12 @@ export class SharedSadeWorker {
     );
     this.host.store.updateTask(taskId, worktree);
     const inherited = new Set<string>();
+    const importedPatchDigests = new Set<string>();
+    const patchesByDigest = new Map(
+      delivery.prerequisites.flatMap(({ patch }) =>
+        patch ? [[patch.digest, patch.change.files] as const] : [],
+      ),
+    );
     let baseCommit = worktree.baseCommit;
     const verified = new Set<SharedDelivery['prerequisites'][number]>();
     const checkedFiles = new Set<string>();
@@ -618,6 +629,29 @@ export class SharedSadeWorker {
     for (const item of [...delivery.prerequisites].reverse()) {
       this.assertCurrent(delivery.id);
       const { patch, revision } = item;
+      if (item.unchangedCheckout && revision) {
+        const { scopes, importedPatchDigests } = item.unchangedCheckout;
+        const importedFiles = new Set<string>();
+        for (const digest of importedPatchDigests) {
+          const files = patchesByDigest.get(digest);
+          if (!files)
+            throw new DomainError(
+              'An unchanged checkout references an unavailable prerequisite patch.',
+            );
+          files.forEach((file) => importedFiles.add(file));
+        }
+        const changed = await changedTreeFiles(
+          worktree.worktree,
+          revision,
+          worktree.baseCommit,
+          scopes.includes('.') ? [] : scopes,
+        );
+        if (changed.some((file) => !checkedFiles.has(file) && !importedFiles.has(file)))
+          throw new DomainError(
+            `“${item.title}” differs from the checkout where it was confirmed. Check the current project files before retrying.`,
+          );
+        continue;
+      }
       if (patch) {
         const { change, digest } = patch;
         if (
@@ -732,6 +766,7 @@ export class SharedSadeWorker {
         ]);
         this.assertCurrent(delivery.id);
         await git(worktree.worktree, ['reset', '--soft', baseCommit]);
+        importedPatchDigests.add(item.patch.digest);
         for (const file of paths) inherited.add(file);
       } finally {
         await unlink(patch).catch(() => {});
@@ -743,6 +778,7 @@ export class SharedSadeWorker {
     this.host.store.put('sharedSadeLocalReceipt', {
       ...this.receipt(delivery.id),
       inheritedFiles: [...inherited],
+      importedPatchDigests: [...importedPatchDigests],
       checkoutRevision: worktree.baseCommit,
     });
   }
@@ -972,6 +1008,7 @@ export class SharedSadeWorker {
             delivery.phase === 'plan' ? delivery.team.map((member) => member.id) : undefined,
           clarified: Boolean(delivery.clarification),
           revisionHandoff: command.revisionHandoff,
+          unchangedRevisionScopes: command.unchangedRevisionScopes,
           quotaFailover: command.quotaFailover,
           planQuotaFailover: command.planQuotaFailover,
           acceptsUpdates: delivery.acceptsUpdates,
@@ -1032,6 +1069,7 @@ export class SharedSadeWorker {
         sessionId: session.id,
         revisingReview: true,
         inheritedFiles: previous.inheritedFiles,
+        importedPatchDigests: previous.importedPatchDigests,
         checkoutRevision: previous.checkoutRevision,
         updatesRead: previous.updatesRead,
       });
@@ -1311,6 +1349,9 @@ export class SharedSadeWorker {
                         4000,
                       ),
                       ...(receipt.revisionHandoff && revision ? { revision } : {}),
+                      ...(receipt.unchangedRevisionScopes
+                        ? { importedPatchDigests: receipt.importedPatchDigests || [] }
+                        : {}),
                     },
               );
               return;

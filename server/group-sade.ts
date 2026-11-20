@@ -55,22 +55,30 @@ export const sharedDiffInput = z
   .strict();
 export const maxPortableDiff = 64 * 1024;
 const revisionInput = z.string().regex(/^[a-f0-9]{40,64}$/);
+function isCanonicalProjectPath(file: string) {
+  try {
+    return normalizeScope(file) === file && !isPrivateCredentialPath(file);
+  } catch {
+    return false;
+  }
+}
 const reviewedFilePaths = z
   .array(
     z
       .string()
       .min(1)
       .max(500)
-      .refine((file) => {
-        try {
-          return file !== '.' && normalizeScope(file) === file && !isPrivateCredentialPath(file);
-        } catch {
-          return false;
-        }
-      }),
+      .refine((file) => file !== '.' && isCanonicalProjectPath(file)),
   )
   .min(1)
   .max(100);
+const importedPatchDigests = z.array(projectKey).max(32);
+const unchangedCheckout = z
+  .object({
+    scopes: z.array(z.string().min(1).max(300).refine(isCanonicalProjectPath)).min(1).max(12),
+    importedPatchDigests,
+  })
+  .strict();
 export const sharedPrerequisite = z
   .object({
     title: z.string().max(140),
@@ -78,9 +86,14 @@ export const sharedPrerequisite = z
     revision: revisionInput.optional(),
     patch: z.object({ change: sharedDiffInput, digest: projectKey }).strict().optional(),
     publishedFiles: reviewedFilePaths.optional(),
+    unchangedCheckout: unchangedCheckout.optional(),
   })
   .strict()
-  .refine((entry) => !entry.publishedFiles || (!!entry.revision && !entry.patch));
+  .refine(
+    (entry) =>
+      !(entry.publishedFiles || entry.unchangedCheckout) ||
+      (!!entry.revision && !entry.patch && !(entry.publishedFiles && entry.unchangedCheckout)),
+  );
 export const maxTaskUpdates = 8;
 const maxTaskUpdateLength = 1000;
 export const taskUpdateSequence = z.number().int().min(0).max(maxTaskUpdates);
@@ -119,6 +132,7 @@ export const sharedFinish = z.discriminatedUnion('kind', [
       kind: z.literal('unchanged'),
       summary: z.string().trim().min(1).max(4000),
       revision: revisionInput.optional(),
+      importedPatchDigests: importedPatchDigests.optional(),
     })
     .strict(),
   z
@@ -167,6 +181,7 @@ export const groupSadeCommands = [
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
       reviewedRevisionFiles: z.literal(true).optional(),
+      unchangedRevisionScopes: z.literal(true).optional(),
       reviewRevision: z.literal(true).optional(),
       rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
@@ -203,6 +218,7 @@ type Job = SharedSadeJob & {
   portable?: boolean;
   published?: boolean;
   publishedFiles?: string[];
+  unchangedCheckout?: z.infer<typeof unchangedCheckout>;
   clarification?: { question: string; answer: string };
   acceptsUpdates?: boolean;
   updates?: (z.infer<typeof sharedSadeUpdate> & { ownerId: string })[];
@@ -553,6 +569,7 @@ export class GroupSade {
               portable,
               published,
               publishedFiles,
+              unchangedCheckout,
               acceptsUpdates,
               updates,
               ...job
@@ -804,6 +821,7 @@ export class GroupSade {
               ...job,
               change: undefined,
               publishedFiles: undefined,
+              unchangedCheckout: undefined,
               updates: undefined,
               reviewGrantId: undefined,
               state: job.state === 'done' ? 'done' : 'cancelled',
@@ -977,6 +995,7 @@ export class GroupSade {
     for (const item of run.jobs) {
       item.change = undefined;
       item.publishedFiles = undefined;
+      item.unchangedCheckout = undefined;
       item.updates = undefined;
       item.reviewGrantId = undefined;
     }
@@ -1266,8 +1285,13 @@ export class GroupSade {
           }
           continue;
         }
-        if (!command.reviewedRevisionFiles && predecessors.some((other) => other.publishedFiles)) {
-          const summary = 'Update this desktop to verify the files from a reviewed Git revision.';
+        if (
+          (!command.reviewedRevisionFiles && predecessors.some((other) => other.publishedFiles)) ||
+          (!command.unchangedRevisionScopes &&
+            predecessors.some((other) => other.unchangedCheckout))
+        ) {
+          const summary =
+            'Update this desktop to verify the files from a prerequisite Git revision.';
           if (job.summary !== summary) {
             job.summary = summary;
             touched = true;
@@ -1394,6 +1418,7 @@ export class GroupSade {
             summary: other.summary?.slice(0, 500),
             revision: other.revision,
             publishedFiles: other.publishedFiles,
+            unchangedCheckout: other.unchangedCheckout,
             ...(other.portable && !other.published && other.change && other.reviewedDigest
               ? { patch: { change: other.change, digest: other.reviewedDigest } }
               : {}),
@@ -1417,6 +1442,7 @@ export class GroupSade {
       supportsReviewRevision: true as const,
       supportsRosterLookup: true as const,
       supportsReviewedRevisionFiles: true as const,
+      supportsUnchangedRevisionScopes: true as const,
       supportsCapacityWait: true as const,
       active,
       delivery,
@@ -1684,16 +1710,40 @@ export class GroupSade {
         );
         return { accepted: true };
       }
+      if (hasNextTask) {
+        const available = new Set(
+          prerequisitesOf(run, job).flatMap((prior) =>
+            prior.portable && !prior.published && prior.change && prior.reviewedDigest
+              ? [prior.reviewedDigest]
+              : [],
+          ),
+        );
+        if (available.size && !result.importedPatchDigests) {
+          this.block(
+            run,
+            job,
+            'Update the author’s desktop to verify an unchanged checkout with imported patches.',
+          );
+          return { accepted: true };
+        }
+        const imported = result.importedPatchDigests || [];
+        if (imported.some((digest) => !available.has(digest))) {
+          this.block(run, job, 'An unchanged checkout reported a patch outside its prerequisites.');
+          return { accepted: true };
+        }
+        job.revision = result.revision;
+        job.unchangedCheckout = { scopes: job.task!.scope, importedPatchDigests: imported };
+      }
       for (const review of plannedReviews(run, job)) review.phase = 'task';
       job.state = 'done';
       job.reviewGrantId = undefined;
       job.summary = redact(result.summary);
-      if (hasNextTask) job.revision = result.revision;
       if (run.jobs.every((item) => item.state === 'done')) {
         run.state = 'done';
         for (const item of run.jobs) {
           item.change = undefined;
           item.publishedFiles = undefined;
+          item.unchangedCheckout = undefined;
         }
       }
       this.store.put('sharedSadeRun', run);
@@ -1727,6 +1777,7 @@ export class GroupSade {
         for (const item of run.jobs) {
           item.change = undefined;
           item.publishedFiles = undefined;
+          item.unchangedCheckout = undefined;
         }
       }
       this.store.put('sharedSadeRun', run);

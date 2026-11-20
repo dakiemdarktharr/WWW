@@ -126,6 +126,7 @@ function fixture(
         action: 'sade-poll',
         grants: grantIds,
         active,
+        unchangedRevisionScopes: true,
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(rosterLookup ? { rosterLookup } : {}),
@@ -137,6 +138,7 @@ function fixture(
       supportsReviewRevision?: true;
       supportsRosterLookup?: true;
       supportsReviewedRevisionFiles?: true;
+      supportsUnchangedRevisionScopes?: true;
       supportsCapacityWait?: true;
       delivery?: SharedDelivery;
       active: string[];
@@ -732,6 +734,7 @@ test(
         reviews: packet.reviews,
         updates: packet.updates,
         revisionHandoff: packet.revisionHandoff,
+        unchangedRevisionScopes: packet.supportsUnchangedRevisionScopes,
         quotaFailover: packet.quotaFailover,
         planQuotaFailover: packet.planQuotaFailover,
         acknowledged: hello.results.map(
@@ -1250,9 +1253,17 @@ test(
     const frontend = (await pump(1))!;
     assert.equal(frontend.task?.key, 'frontend');
     assert.equal(frontend.task?.kind, 'design');
-    assert.ok(frontend.prerequisites[0]?.patch);
+    const contractPatch = frontend.prerequisites[0]?.patch;
+    assert.ok(contractPatch);
     const reader = await sessionFor(1, frontend);
     assert.equal(reader.session.model, 'fixture');
+    assert.deepEqual(
+      receivingDesktop.store.get<{ importedPatchDigests?: string[] }>(
+        'sharedSadeLocalReceipt',
+        frontend.id,
+      ).importedPatchDigests,
+      [contractPatch.digest],
+    );
     assert.equal(reader.session.reasoningEffort, 'medium');
     assert.match(
       await readFile(path.join(reader.task.worktree!, 'architecture.txt'), 'utf8'),
@@ -1841,6 +1852,10 @@ test(
     assert.ok(checkDelivery);
     assert.equal(checkDelivery.phase, 'task');
     assert.equal(checkDelivery.prerequisites[0]?.revision, required);
+    assert.deepEqual(checkDelivery.prerequisites[0]?.unchangedCheckout, {
+      scopes: [sharedFile],
+      importedPatchDigests: [],
+    });
     assert.equal(checkDelivery.prerequisites[0]?.patch, undefined);
     assert.equal(recipientTurns(), reservedBefore + 1);
     assert.doesNotMatch(JSON.stringify(cloud.view()), new RegExp(required));
@@ -3338,6 +3353,7 @@ test('Shared Sade balances open implementation work without consuming the only i
         grants: [f.grants[0]],
         active: [],
         reviewedRevisionFiles: true,
+        unchangedRevisionScopes: true,
       }) as ReturnType<typeof f.poll>;
       assert.equal(packet.supportsReviewedRevisionFiles, true);
       const review = packet.delivery!;
@@ -4335,51 +4351,74 @@ test('a planned review checks existing files when the author has no diff', () =>
       summary: 'The fix is already present.',
       revision: sha,
     });
+    const oldDesktop = f.call(1, {
+      action: 'sade-poll',
+      grants: [f.grants[1]],
+      active: [],
+    }) as ReturnType<typeof f.poll>;
+    assert.equal(oldDesktop.delivery, undefined);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
     const check = f.poll(1).delivery!;
     assert.equal(check.phase, 'task');
     assert.equal(check.task?.kind, 'review');
     assert.equal(check.review, undefined);
     assert.equal(check.prerequisites[0]?.revision, sha);
+    assert.deepEqual(check.prerequisites[0]?.unchangedCheckout, {
+      scopes: scope,
+      importedPatchDigests: [],
+    });
+    assert.doesNotMatch(JSON.stringify(f.view()), /unchangedCheckout/);
     f.finish(1, check.id, { kind: 'done', summary: 'Verified the existing file.' });
     assert.equal(f.view().sadeRuns[0].state, 'done');
+    assert.doesNotMatch(JSON.stringify(f.store.all('sharedSadeRun')), /unchangedCheckout/);
   } finally {
     f.store.close();
   }
 });
 
-test('an unchanged result without a Git revision cannot release dependent work', () => {
-  const f = fixture();
-  try {
-    f.call(0, {
-      action: 'message',
-      groupId: f.groupId,
-      id: randomUUID(),
-      content: 'Use the existing implementation for the follow-up if present.',
-      sade: { projectKey: key },
-    });
-    const plan = f.poll(0).delivery!;
-    f.finish(0, plan.id, {
-      kind: 'plan',
-      plan: {
-        summary: 'Use the author’s existing work before the dependent check.',
-        tasks: [
-          work('write', { kind: 'code', preferredMemberId: f.grants[0] }),
-          work('check', { preferredMemberId: f.grants[1], dependsOn: ['write'] }),
-        ],
-      },
-    });
-    const writer = f.poll(0).delivery!;
-    f.finish(0, writer.id, {
-      kind: 'unchanged',
-      summary: 'The existing implementation is enough.',
-    });
-    assert.equal(f.poll(1).delivery, undefined);
-    assert.equal(f.view().sadeRuns[0].state, 'blocked');
-    assert.match(f.view().sadeRuns[0].error || '', /share the Git revision with dependent tasks/);
-  } finally {
-    f.store.close();
-  }
-});
+for (const missing of ['Git revision', 'matching prerequisite patch'] as const) {
+  test(`an unchanged result without a ${missing} cannot release dependent work`, () => {
+    const f = fixture();
+    try {
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content: 'Use the existing implementation for the follow-up if present.',
+        sade: { projectKey: key },
+      });
+      const plan = f.poll(0).delivery!;
+      f.finish(0, plan.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Use the author’s existing work before the dependent check.',
+          tasks: [
+            work('write', { kind: 'code', preferredMemberId: f.grants[0] }),
+            work('check', { preferredMemberId: f.grants[1], dependsOn: ['write'] }),
+          ],
+        },
+      });
+      const writer = f.poll(0).delivery!;
+      f.finish(0, writer.id, {
+        kind: 'unchanged',
+        summary: 'The existing implementation is enough.',
+        ...(missing === 'matching prerequisite patch'
+          ? { revision: sha, importedPatchDigests: [key] }
+          : {}),
+      });
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(f.view().sadeRuns[0].state, 'blocked');
+      assert.match(
+        f.view().sadeRuns[0].error || '',
+        missing === 'Git revision'
+          ? /share the Git revision with dependent tasks/
+          : /patch outside its prerequisites/,
+      );
+    } finally {
+      f.store.close();
+    }
+  });
+}
 
 for (const responseLost of [false, true]) {
   test(`a completed author can revoke permission ${responseLost ? 'before retrying delivery of a reviewed prerequisite' : 'before a reviewed prerequisite reaches a dependent harness'}`, () => {
