@@ -424,12 +424,13 @@ const externalReply: unknown = externalPath
   ? JSON.parse(await readFile(externalPath, 'utf8'))
   : undefined;
 type SavedRun = {
-  model: string;
-  digest: string;
+  model?: string;
+  digest?: string;
   toolsSha256: string;
   rows: {
     id: string;
-    promptSha256: string;
+    promptSha256?: string;
+    execution?: 'coordinator-preflight';
     plan?: unknown;
     question?: string;
     error?: string;
@@ -460,16 +461,23 @@ const people = [
 
 async function withGroup<T>(
   { scenario, message, reference, ownerRouting }: PlannerCase,
-  run: (context: {
-    delivery: SharedDelivery;
-    finish: (plan: unknown) => void;
-    ask: (summary: string) => void;
-    jobs: () => SharedSadeRun;
-    verifyReview: (job: SharedSadeJob) => void;
-    verifyFrontendOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
-    verifyQuotaFollowup: (plan: ReturnType<typeof parseTeamPlan>, expected: QuotaFollowup) => void;
-    verifyOwnerQuota: (key: string, primary: number, fallback?: number) => void;
-  }) => Promise<T>,
+  run: (
+    context:
+      | { waiting: SharedSadeRun }
+      | {
+          delivery: SharedDelivery;
+          finish: (plan: unknown) => void;
+          ask: (summary: string) => void;
+          jobs: () => SharedSadeRun;
+          verifyReview: (job: SharedSadeJob) => void;
+          verifyFrontendOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
+          verifyQuotaFollowup: (
+            plan: ReturnType<typeof parseTeamPlan>,
+            expected: QuotaFollowup,
+          ) => void;
+          verifyOwnerQuota: (key: string, primary: number, fallback?: number) => void;
+        },
+  ) => Promise<T>,
 ) {
   const store = new Store(':memory:');
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -571,6 +579,7 @@ async function withGroup<T>(
           grants: [grants[index]],
           active,
           referencedMessage: true,
+          ...(ownerRouting ? { readAssignment: true } : {}),
         }) as { delivery?: SharedDelivery }
       ).delivery;
     const replyTo = uuid(9);
@@ -587,6 +596,13 @@ async function withGroup<T>(
       },
     });
     const delivery = poll(0);
+    const jobs = () =>
+      (call(0, { action: 'read', groupId }) as { sadeRuns: SharedSadeRun[] }).sadeRuns[0];
+    if (!delivery && ownerRouting) {
+      for (let index = 1; index < names.length; index++)
+        assert.equal(poll(index), undefined, 'preflight must offer no harness work');
+      return await run({ waiting: jobs() });
+    }
     assert.ok(delivery?.phase === 'plan');
     if (ownerRouting) {
       const expectedTeam = ownerRouting.roster.flatMap(({ name, provider, granted }, index) =>
@@ -601,8 +617,6 @@ async function withGroup<T>(
     // Keep this fixture's delivery current while the live model is generating the plan.
     poll(0, [delivery.id]);
     heartbeat = setInterval(() => poll(0, [delivery.id]), 10_000);
-    const jobs = () =>
-      (call(0, { action: 'read', groupId }) as { sadeRuns: SharedSadeRun[] }).sadeRuns[0];
     const finishJob = (index: number, jobId: string, result: SharedFinish) =>
       call(index, { action: 'sade-finish', jobId, result });
     return await run({
@@ -988,18 +1002,18 @@ async function sampleModelMemory(digest: string) {
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const toolsSha256 = sha256(JSON.stringify(tools));
 if (saved) {
-  assert.equal(saved.model, model);
+  if (saved.rows.some((row) => row.execution !== 'coordinator-preflight'))
+    assert.equal(saved.model, model);
   assert.equal(saved.toolsSha256, toolsSha256);
 }
-const selected =
-  !externalPath && !exportPrompt
-    ? saved ||
-      (await (await local('/api/tags', { signal: AbortSignal.timeout(5000) })).json()).models.find(
-        (entry: { name: string }) => entry.name === model,
-      )
-    : undefined;
-if (!externalPath && !exportPrompt)
-  assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
+let modelDigest = saved?.digest;
+async function selectLiveModel() {
+  if (modelDigest) return;
+  const response = await local('/api/tags', { signal: AbortSignal.timeout(5000) });
+  const { models } = (await response.json()) as { models: { name: string; digest: string }[] };
+  modelDigest = models.find((entry) => entry.name === model)?.digest;
+  assert.ok(modelDigest, 'Install the specified Qwen in the local Ollama directory.');
+}
 type PlannerCase = {
   scenario: Case;
   id: string;
@@ -1193,9 +1207,49 @@ function assessOwnerRoutingQuestion({ expected }: OwnerRoutingCase, question: st
   );
 }
 
+function ownerRoutingPreflight({ id, scenario, ownerRouting }: PlannerCase, run: SharedSadeRun) {
+  assert.ok(ownerRouting, 'only owner-routing cases can be gated before model inference');
+  if (saved)
+    assert.equal(
+      savedRows.get(id)?.execution,
+      'coordinator-preflight',
+      'This case no longer reaches a planner. Replay the saved model result at its original commit.',
+    );
+  const job = run.jobs[0];
+  let error: string | undefined;
+  try {
+    assert.equal(run.state, 'planning');
+    assert.equal(run.jobs.length, 1);
+    assert.equal(job.phase, 'plan');
+    assert.equal(job.state, 'waiting');
+    assert.ok(job.summary);
+    assessOwnerRoutingQuestion(ownerRouting, job.summary);
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause);
+  }
+  return {
+    id,
+    scenario,
+    execution: 'coordinator-preflight' as const,
+    preflightPassed: !error,
+    question: job?.summary,
+    state: run.state,
+    error,
+    ...ownerRoutingEvidence(ownerRouting),
+  };
+}
+
 if (exportPrompt) {
-  const { id, message, reference, frontendStyle, ownerRouting } = selectedCases[0];
-  await withGroup(selectedCases[0], async ({ delivery }) => {
+  const plannerCase = selectedCases[0];
+  const { id, message, reference, frontendStyle, ownerRouting } = plannerCase;
+  const execution = await withGroup(plannerCase, async (group) => {
+    if ('waiting' in group) {
+      const row = ownerRoutingPreflight(plannerCase, group.waiting);
+      await writeFile(output, JSON.stringify(row, null, 2), 'utf8');
+      if (!row.preflightPassed) process.exitCode = 1;
+      return row.execution;
+    }
+    const { delivery } = group;
     const prompt = planningPrompt(delivery);
     const decisionSchema = {
       type: 'object',
@@ -1236,8 +1290,8 @@ if (exportPrompt) {
       'utf8',
     );
   });
-  console.log(JSON.stringify({ exported: id }));
-  process.exit(0);
+  console.log(JSON.stringify({ exported: id, execution }));
+  process.exit(process.exitCode ?? 0);
 }
 
 for (const plannerCase of selectedCases) {
@@ -1254,11 +1308,13 @@ for (const plannerCase of selectedCases) {
   } = plannerCase;
   const detailed = Boolean(frontendStyle || ownerRouting);
   const row = await withGroup(plannerCase, async (group) => {
+    if ('waiting' in group) return ownerRoutingPreflight(plannerCase, group.waiting);
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
     if (saved) assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
+    if (!saved && !externalPath) await selectLiveModel();
     const started = performance.now();
     let parsed = false;
     let plan;
@@ -1393,9 +1449,7 @@ for (const plannerCase of selectedCases) {
         ? {
             prompt,
             modelReplies,
-            ...(selected && !saved
-              ? { modelMemory: await sampleModelMemory(selected.digest) }
-              : {}),
+            ...(modelDigest && !saved ? { modelMemory: await sampleModelMemory(modelDigest) } : {}),
           }
         : {}),
     };
@@ -1404,11 +1458,15 @@ for (const plannerCase of selectedCases) {
   console.log(
     JSON.stringify({
       id,
-      pass: row.pass,
-      parsed: row.parsed,
-      milliseconds: row.milliseconds,
+      ...('execution' in row
+        ? { execution: row.execution, preflightPassed: row.preflightPassed, state: row.state }
+        : {
+            pass: row.pass,
+            parsed: row.parsed,
+            milliseconds: row.milliseconds,
+            correction: row.correction,
+          }),
       error: row.error,
-      correction: row.correction,
     }),
   );
   await writeFile(
@@ -1417,7 +1475,9 @@ for (const plannerCase of selectedCases) {
       {
         ...(externalPath
           ? { source: values['external-decision'] ? 'external-decision' : 'external-plan' }
-          : { model, digest: selected.digest }),
+          : modelDigest
+            ? { model, digest: modelDigest }
+            : {}),
         toolsSha256,
         ...(values['frontend-style'] || values['owner-routing']
           ? {
@@ -1440,11 +1500,25 @@ for (const plannerCase of selectedCases) {
     'utf8',
   );
 }
+const plannerRows = rows.filter((row) => 'pass' in row);
+const preflightRows = rows.filter((row) => 'preflightPassed' in row);
 console.log(
   JSON.stringify({
-    tested: rows.length,
-    parsed: rows.filter((row) => row.parsed).length,
-    passed: rows.filter((row) => row.pass).length,
+    tested: plannerRows.length,
+    parsed: plannerRows.filter((row) => row.parsed).length,
+    passed: plannerRows.filter((row) => row.pass).length,
+    ...(preflightRows.length
+      ? {
+          preflight: {
+            tested: preflightRows.length,
+            passed: preflightRows.filter((row) => row.preflightPassed).length,
+          },
+        }
+      : {}),
   }),
 );
-if (externalPath && rows.some((row) => !row.pass)) process.exitCode = 1;
+if (
+  preflightRows.some((row) => !row.preflightPassed) ||
+  (externalPath && plannerRows.some((row) => !row.pass))
+)
+  process.exitCode = 1;

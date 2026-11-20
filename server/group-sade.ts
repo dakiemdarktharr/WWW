@@ -8,7 +8,7 @@ import {
   type SharedSadeJob,
   type SharedSadeRun,
 } from '../shared/collaboration.ts';
-import type { PlanTask, TaskDiff } from '../shared/types.ts';
+import type { PlanTask, TaskDiff, TeamPlan } from '../shared/types.ts';
 import {
   allocatePlan,
   collectPrerequisites,
@@ -20,6 +20,12 @@ import { normalizeScope, redact, scopesOverlap } from './security.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 import { DomainError, type Store } from './store.ts';
 import { reviewDigest } from './sade.ts';
+import {
+  foldSharedSadeName,
+  resolveSharedSadeReadAssignment,
+  type SharedSadeAssignmentCandidate,
+  type SharedSadeReadAssignment,
+} from './shared-sade-assignment.ts';
 
 const id = z.string().uuid();
 export const projectKey = z.string().regex(/^[a-f0-9]{64}$/);
@@ -187,6 +193,7 @@ export const groupSadeCommands = [
       reviewRevision: z.literal(true).optional(),
       rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
+      readAssignment: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
@@ -207,6 +214,7 @@ export type SharedFinish = z.infer<typeof sharedFinish>;
 export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
+  awaitingReadAssignment?: true;
   fallbackMemberId?: string;
   deadline?: number;
   awaitingReceipt?: true;
@@ -233,6 +241,7 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   roster: string[];
   readOnly?: true;
   unavailableGrants?: string[];
+  readAssignment?: SharedSadeReadAssignment & { target?: SharedSadeAssignmentCandidate };
   jobs: Job[];
 };
 const referenceAuthorLimit = 100;
@@ -243,6 +252,29 @@ export const sharedMessageReference = z
     content: z.string().max(referenceContentLimit),
   })
   .strict();
+export const sharedReadAssignment = z
+  .object({ scope: z.string().min(1).max(500), grantId: id })
+  .strict();
+export function assertSharedReadPlan(
+  plan: TeamPlan,
+  assignment: z.infer<typeof sharedReadAssignment>,
+) {
+  const [task] = plan.tasks;
+  if (
+    plan.tasks.length !== 1 ||
+    task.kind !== 'research' ||
+    task.scope.length !== 1 ||
+    task.scope[0] !== assignment.scope ||
+    task.preferredMemberId !== assignment.grantId ||
+    task.fallbackMemberId ||
+    task.requiredPlatform ||
+    task.dependsOn.length
+  ) {
+    throw new DomainError(
+      `Use one read-only research task for ${assignment.scope} with the requested harness and no fallback.`,
+    );
+  }
+}
 export type SharedDelivery = {
   id: string;
   grantId: string;
@@ -251,6 +283,7 @@ export type SharedDelivery = {
   phase: SharedSadeJob['phase'];
   request: string;
   referencedMessage?: z.infer<typeof sharedMessageReference>;
+  readAssignment?: z.infer<typeof sharedReadAssignment>;
   team: {
     id: string;
     name: string;
@@ -566,7 +599,16 @@ export class GroupSade {
       sadeRuns: this.runs(group).map((stored) => {
         // Chat may stay open when all desktops stop polling.
         this.stopInvalidJob(stored, (id) => grants.get(id));
-        const { authorId, content, replyTo, roster, readOnly, unavailableGrants, ...run } = stored;
+        const {
+          authorId,
+          content,
+          replyTo,
+          roster,
+          readOnly,
+          unavailableGrants,
+          readAssignment,
+          ...run
+        } = stored;
         return {
           ...run,
           canAnswer: ownerId === authorId && !final(stored),
@@ -590,6 +632,7 @@ export class GroupSade {
               unchangedCheckout,
               acceptsUpdates,
               updates,
+              awaitingReadAssignment,
               ...job
             }) => ({
               ...job,
@@ -619,6 +662,63 @@ export class GroupSade {
       this.usable(grant, group, false) &&
       (owner === requester || owner === grant.ownerId || owner === group.ownerId),
     );
+  }
+  private readAssignmentPublished(group: SharedGroup, target: SharedSadeAssignmentCandidate) {
+    return (
+      group.people.some(({ id, state }) => id === target.ownerId && state === 'active') &&
+      group.teammates.some(
+        (member) =>
+          member.ownerId === target.ownerId &&
+          member.localId === target.teammateId &&
+          (member.sharingId ?? member.localId) === target.sharingId,
+      )
+    );
+  }
+  private readAssignmentGrant(run: Run, group: SharedGroup, eligible: readonly Grant[]) {
+    const target = run.readAssignment?.target;
+    if (!target || !this.readAssignmentPublished(group, target)) return undefined;
+    return eligible.find(
+      (grant) =>
+        grant.ownerId === target.ownerId &&
+        grant.teammateId === target.teammateId &&
+        grant.projectKey === run.projectKey,
+    );
+  }
+  private waitForReadAssignment(run: Run, job: Job, reason: string) {
+    job.state = 'waiting';
+    job.awaitingReadAssignment = true;
+    job.summary = redact(reason);
+    this.store.put('sharedSadeRun', run);
+  }
+  private readPlannerGrant(run: Run, eligible: readonly Grant[], target: Grant) {
+    return eligible.find(
+      (grant) =>
+        grant.ownerId === run.authorId && (grant.id !== target.id || grant.turns - grant.used >= 2),
+    );
+  }
+  private readAccessMessage(run: Run, targetAvailable = false) {
+    if (targetAvailable)
+      return 'This request needs one granted planner turn and one granted read turn.';
+    const { harnessName, target } = run.readAssignment!;
+    return `Waiting for ${target!.ownerName} to grant ${harnessName} access and an available turn for this project.`;
+  }
+  private resumeReadAssignment(run: Run, job: Job, group: SharedGroup) {
+    const eligible = this.grants(group).filter(
+      (grant) => grant.projectKey === run.projectKey && this.usableForRun(grant, group, run),
+    );
+    const target = this.readAssignmentGrant(run, group, eligible);
+    if (!target) return this.readAccessMessage(run);
+    const lead = this.readPlannerGrant(run, eligible, target);
+    if (!lead) return this.readAccessMessage(run, true);
+    run.roster = eligible.map((grant) => grant.id);
+    run.jobs[run.jobs.indexOf(job)] = {
+      id: randomUUID(),
+      runId: run.id,
+      grantId: lead.id,
+      phase: 'plan',
+      state: 'queued',
+    };
+    this.store.put('sharedSadeRun', run);
   }
   start(group: SharedGroup, message: SharedMessage) {
     if (!message.sade) return;
@@ -684,20 +784,59 @@ export class GroupSade {
         409,
       );
     const lead = grants.find((grant) => grant.ownerId === message.ownerId)!;
-    this.store.put('sharedSadeRun', {
+    const content = redact(message.content);
+    const assignment = resolveSharedSadeReadAssignment(content, message.ownerId, group);
+    const job: Job = {
+      id: randomUUID(),
+      runId: message.id,
+      grantId: lead.id,
+      phase: 'plan',
+      state: 'queued',
+    };
+    const run: Run = {
       id: message.id,
       groupId: group.id,
       projectKey,
       authorId: message.ownerId,
       ...(replyTo ? { replyTo } : {}),
-      content: redact(message.content),
+      content,
       ...(readOnly ? { readOnly: true } : {}),
       roster: grants.map((grant) => grant.id),
       state: 'planning',
-      jobs: [
-        { id: randomUUID(), runId: message.id, grantId: lead.id, phase: 'plan', state: 'queued' },
-      ],
-    } satisfies Run);
+      jobs: [job],
+    };
+    if (assignment) {
+      run.readAssignment = assignment;
+      const { candidates, harnessName, ownerQualifier } = assignment;
+      if (!candidates.length) {
+        this.block(
+          run,
+          job,
+          `No published ${harnessName} matches ${ownerQualifier} in this group.`,
+        );
+        return;
+      }
+      if (candidates.length > 1) {
+        const choices = candidates
+          .map(({ ownerName }, index) => `${index + 1}. ${ownerName}`)
+          .join(', ');
+        this.waitForReadAssignment(
+          run,
+          job,
+          `Which ${harnessName} should read the file? Reply with the option number or an unambiguous owner name. ${choices}`,
+        );
+        return;
+      }
+      run.readAssignment.target = candidates[0];
+      const target = this.readAssignmentGrant(run, group, grants);
+      const planner = target && this.readPlannerGrant(run, grants, target);
+      if (!planner) {
+        this.waitForReadAssignment(run, job, this.readAccessMessage(run, Boolean(target)));
+        return;
+      }
+      job.grantId = planner.id;
+    }
+    this.store.put('sharedSadeRun', run);
   }
   groupCommand(
     group: SharedGroup,
@@ -759,6 +898,20 @@ export class GroupSade {
         expiresAt: this.now() + grantMs,
         used: 0,
       } satisfies Grant);
+      for (const run of this.runs(group)) {
+        const job = run.jobs.find(
+          ({ awaitingReadAssignment, state }) => awaitingReadAssignment && state === 'waiting',
+        );
+        if (
+          job &&
+          run.projectKey === command.projectKey &&
+          run.readAssignment?.target &&
+          !final(run)
+        ) {
+          const reason = this.resumeReadAssignment(run, job, group);
+          if (reason && job.summary !== reason) this.waitForReadAssignment(run, job, reason);
+        }
+      }
       return this.view(group, actor.ownerId);
     }
     if (command.action === 'sade-revoke') {
@@ -812,6 +965,45 @@ export class GroupSade {
         const job = run.jobs.find((item) => item.id === command.jobId);
         if (!job || job.state !== 'waiting' || !job.summary || final(run))
           throw new DomainError('This question is no longer waiting.', 409);
+        if (job.awaitingReadAssignment && run.readAssignment) {
+          const assignment = run.readAssignment;
+          const answer = foldSharedSadeName(command.answer);
+          if (!assignment.target) {
+            const choices = assignment.candidates.filter(
+              ({ ownerName }, index) =>
+                answer === String(index + 1) || answer === foldSharedSadeName(ownerName),
+            );
+            if (choices.length !== 1)
+              throw new DomainError('Reply with a single listed owner or option number.', 409);
+            const [target] = choices;
+            if (!this.readAssignmentPublished(group, target))
+              throw new DomainError(
+                'That harness publication ended. Choose another listed owner or start a new request.',
+                409,
+              );
+            assignment.target = target;
+            const reason = this.resumeReadAssignment(run, job, group);
+            if (reason) this.waitForReadAssignment(run, job, reason);
+          } else {
+            if (
+              !['continue', 'tiep tuc', foldSharedSadeName(assignment.target.ownerName)].includes(
+                answer,
+              )
+            )
+              throw new DomainError('The selected harness owner is fixed for this request.', 409);
+            if (!this.readAssignmentPublished(group, assignment.target)) {
+              this.block(
+                run,
+                job,
+                'The requested harness publication ended. Start a new request for its current publication.',
+              );
+              return this.view(group, actor.ownerId);
+            }
+            const reason = this.resumeReadAssignment(run, job, group);
+            if (reason) throw new DomainError(reason, 409);
+          }
+          return this.view(group, actor.ownerId);
+        }
         const grants = this.grants(group);
         const grant = grants.find((item) => item.id === job.grantId);
         if (!grant || !this.usable(grant, group) || unreservedTurns(run, grant, job) < 1)
@@ -1048,6 +1240,7 @@ export class GroupSade {
     if (this.stopUnsafeChange(run)) return true;
     const now = this.now();
     for (const job of run.jobs) {
+      if (job.state === 'waiting' && job.awaitingReadAssignment) continue;
       const needsTurn = job.state === 'queued' || job.state === 'waiting';
       const holdsLease = job.state === 'running' || job.state === 'reviewing';
       if (!needsTurn && !holdsLease) continue;
@@ -1279,6 +1472,42 @@ export class GroupSade {
         const grant = grants.get(job.grantId)!;
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
         const retry = awaitingDelivery(job);
+        let assignmentGrant: Grant | undefined;
+        if (job.phase === 'plan' && run.readAssignment && (job.state === 'queued' || retry)) {
+          const eligible = [...grants.values()].filter(
+            (entry) =>
+              entry.projectKey === run.projectKey &&
+              (!retry || run.roster.includes(entry.id)) &&
+              this.usableForRun(entry, group, run),
+          );
+          assignmentGrant = this.readAssignmentGrant(run, group, eligible);
+          if (!assignmentGrant) {
+            if (job.state === 'queued') {
+              this.waitForReadAssignment(run, job, this.readAccessMessage(run));
+              continue;
+            }
+            this.block(run, job, 'The requested harness no longer has an available project grant.');
+            break;
+          }
+          if (
+            job.state === 'queued' &&
+            assignmentGrant.id === grant.id &&
+            grant.turns - grant.used < 2
+          ) {
+            const other = this.readPlannerGrant(run, eligible, assignmentGrant);
+            if (other) {
+              job.grantId = other.id;
+              touched = true;
+            } else {
+              this.waitForReadAssignment(run, job, this.readAccessMessage(run, true));
+            }
+            continue;
+          }
+          if (!run.roster.includes(assignmentGrant.id)) {
+            run.roster.push(assignmentGrant.id);
+            touched = true;
+          }
+        }
         if (job.state !== 'queued' && !retry) {
           if (held.has(job.id)) {
             job.awaitingReceipt = undefined;
@@ -1534,6 +1763,9 @@ export class GroupSade {
           phase: job.phase,
           request: reviewRequirements ?? run.content,
           ...(referencedMessage ? { referencedMessage } : {}),
+          ...(command.readAssignment && assignmentGrant && run.readAssignment
+            ? { readAssignment: { scope: run.readAssignment.scope, grantId: assignmentGrant.id } }
+            : {}),
           team,
           task: job.task,
           ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
@@ -1568,6 +1800,7 @@ export class GroupSade {
       supportsReviewedRevisionFiles: true as const,
       supportsUnchangedRevisionScopes: true as const,
       supportsReferencedMessage: true as const,
+      supportsReadAssignment: true as const,
       supportsCapacityWait: true as const,
       supportsMachineCheckWait: true as const,
       active,
@@ -1634,7 +1867,13 @@ export class GroupSade {
     else if (result.kind === 'question') {
       if (job.phase === 'review' || job.state !== 'running' || job.clarification)
         throw new DomainError('This job cannot ask another question.', 409);
-      if (unreservedTurns(run, grant) < 1)
+      if (job.phase === 'plan' && run.readAssignment)
+        this.block(
+          run,
+          job,
+          'The read assignment is already resolved. The planner did not submit the scoped plan.',
+        );
+      else if (unreservedTurns(run, grant) < 1)
         this.block(run, job, 'The harness has no spare granted turn for a clarification.');
       else {
         job.state = 'waiting';
@@ -1646,6 +1885,17 @@ export class GroupSade {
       if (job.phase !== 'plan') throw new DomainError('Only the planner can submit a plan.');
       try {
         const plan = parseTeamPlan(result.plan, { allowEmpty: true });
+        const eligible = grants.filter(
+          (entry) => run.roster.includes(entry.id) && this.usableForRun(entry, group, run),
+        );
+        if (run.readAssignment) {
+          const target = this.readAssignmentGrant(run, group, eligible);
+          if (!target)
+            throw new DomainError(
+              'The requested harness no longer has an available project grant.',
+            );
+          assertSharedReadPlan(plan, { scope: run.readAssignment.scope, grantId: target.id });
+        }
         if (run.readOnly && plan.tasks.some(writes))
           throw new DomainError(
             'This is a read-only request. The plan cannot write project files.',
@@ -1657,9 +1907,6 @@ export class GroupSade {
           this.store.put('sharedSadeRun', run);
           return { accepted: true };
         }
-        const eligible = grants.filter(
-          (entry) => run.roster.includes(entry.id) && this.usableForRun(entry, group, run),
-        );
         const ownerByGrant = new Map(eligible.map((entry) => [entry.id, entry.ownerId]));
         const allocations = allocatePlan(
           plan,

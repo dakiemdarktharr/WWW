@@ -15,6 +15,7 @@ import {
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
+import { ownerRoutingCases } from './fixtures/shared-sade-owner-routing.ts';
 import { mkdir, mkdtemp, writeFile, readFile, rm, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,6 +51,7 @@ function fixture(
   providers: readonly [ProviderId, ProviderId] = ['gemini', 'codex'],
   options: {
     grantB?: boolean;
+    grantC?: boolean;
     turnsA?: number;
     turnsB?: number;
     mac?: boolean;
@@ -58,6 +60,7 @@ function fixture(
     names?: [string, string];
     patchHandoff?: boolean;
     reviewRevision?: boolean;
+    readAssignment?: true;
     taskUpdates?: boolean;
     roleA?: 'researcher';
     allowWritesB?: boolean;
@@ -69,9 +72,10 @@ function fixture(
     { id: 'owner-A', name: 'An' },
     { id: 'owner-B', name: 'Bình' },
   ];
-  const devices = [randomUUID(), randomUUID()];
-  const members = options.members || [randomUUID(), randomUUID()];
-  const grants = [randomUUID(), randomUUID()];
+  if (options.grantC !== undefined) people.push({ id: 'owner-C', name: 'Chi' });
+  const devices = people.map(() => randomUUID());
+  const members = people.map((_, index) => options.members?.[index] ?? randomUUID());
+  const grants = people.map(() => randomUUID());
   const groupId = randomUUID();
   for (const [index, device] of devices.entries())
     store.put('desktopDevice', {
@@ -88,8 +92,28 @@ function fixture(
   const call = (index: number, action: object, deviceId = devices[index]) =>
     groups.execute(people[index], action, deviceId) as any;
   call(0, { action: 'create', id: groupId, name: 'Shared Sade fixture' });
-  call(0, { action: 'invite', groupId, account: people[1].id });
-  call(1, { action: 'accept', groupId });
+  for (let index = 1; index < people.length; index++) {
+    call(0, { action: 'invite', groupId, account: people[index].id });
+    call(index, { action: 'accept', groupId });
+  }
+  const grant = (
+    index: number,
+    overrides: { id?: string; projectKey?: string; sharingId?: string } = {},
+  ) =>
+    call(index, {
+      action: 'sade-grant',
+      groupId,
+      id: grants[index],
+      teammateId: members[index],
+      projectKey: options.key || key,
+      projectName: 'Fixture project',
+      role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
+      platform: index && options.mac ? 'darwin' : 'win32',
+      allowWrites: !index || options.allowWritesB !== false,
+      ...(options.patchHandoff ? { patchHandoff: true } : {}),
+      turns: (index ? options.turnsB : options.turnsA) ?? 8,
+      ...overrides,
+    });
   for (const [index, member] of members.entries()) {
     call(index, {
       action: 'teammates',
@@ -97,25 +121,12 @@ function fixture(
       teammates: [
         {
           localId: member,
-          provider: providers[index],
-          name: options.names?.[index] || (index ? 'Mây' : 'Bếp'),
+          provider: providers[index] ?? 'codex',
+          name: index === 2 ? 'Astra' : options.names?.[index] || (index ? 'Mây' : 'Bếp'),
         },
       ],
     });
-    if (!index || options.grantB !== false)
-      call(index, {
-        action: 'sade-grant',
-        groupId,
-        id: grants[index],
-        teammateId: member,
-        projectKey: options.key || key,
-        projectName: 'Fixture project',
-        role: index ? options.roleB || 'reviewer' : options.roleA || 'engineer',
-        platform: index && options.mac ? 'darwin' : 'win32',
-        allowWrites: !index || options.allowWritesB !== false,
-        ...(options.patchHandoff ? { patchHandoff: true } : {}),
-        turns: (index ? options.turnsB : options.turnsA) ?? 8,
-      });
+    if (!index || (index === 1 ? options.grantB !== false : options.grantC)) grant(index);
   }
   const poll = (
     index: number,
@@ -135,6 +146,7 @@ function fixture(
         active,
         unchangedRevisionScopes: true,
         referencedMessage: true,
+        ...(options.readAssignment ? { readAssignment: true } : {}),
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(rosterLookup ? { rosterLookup } : {}),
@@ -148,6 +160,7 @@ function fixture(
       supportsRosterLookup?: true;
       supportsReviewedRevisionFiles?: true;
       supportsUnchangedRevisionScopes?: true;
+      supportsReadAssignment?: true;
       supportsCapacityWait?: true;
       supportsMachineCheckWait?: true;
       delivery?: SharedDelivery;
@@ -165,7 +178,7 @@ function fixture(
       sadeRuns: SharedSadeRun[];
       messages: { id: string }[];
     };
-  return { store, call, poll, finish, view, groupId, grants, members, devices };
+  return { store, call, poll, finish, view, groupId, grant, grants, members, devices };
 }
 
 function work(key: string, patch: Partial<PlanTask> = {}): PlanTask {
@@ -958,6 +971,149 @@ test('Shared Sade reads scoped Git evidence in the same turn before planning exi
   assert.equal(await git(repo, ['rev-parse', 'HEAD']), head);
   assert.equal(await git(remote, ['rev-parse', 'HEAD']), initial);
   assert.equal(await git(repo, ['status', '--porcelain']), statusBefore);
+});
+
+test('Shared Sade corrects a pinned read draft in the same provider turn', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-read-pin-')));
+  const repo = path.join(root, 'project');
+  const data = path.join(root, 'desktop');
+  const origin = 'https://example.test/shared/read-pin.git';
+  const projectKey = canonicalSharedRepository(origin, 'main');
+  const scope = 'docs/returns.md';
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, data, repo);
+  const member = store.addMember({ name: 'Gemini', role: 'engineer', provider: 'gemini' });
+  const cloud = fixture(undefined, {
+    key: projectKey,
+    names: ['Gemini', 'Astra'],
+    members: [member.id, randomUUID()],
+    turnsA: 1,
+    readAssignment: true,
+  });
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+    cloud.store.close();
+    assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith('shared-sade-read-pin-'));
+    await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  });
+  await mkdir(path.join(repo, 'docs'), { recursive: true });
+  await mkdir(data);
+  await git(repo, ['init', '-b', 'main']);
+  await writeFile(path.join(repo, scope), 'Returns policy fixture\n');
+  await git(repo, ['add', '--', scope]);
+  await git(repo, [
+    '-c',
+    'user.name=Shared fixture',
+    '-c',
+    'user.email=fixture@example.test',
+    'commit',
+    '-m',
+    'Add returns policy',
+  ]);
+  await git(repo, ['remote', 'add', 'origin', origin]);
+  const peer = new DesktopPeer(repo, 'gemini');
+  store.updateMember(member.id, { status: 'ready', account: { type: 'gemini-google' } });
+  workspace.client = async () => new DesktopPeer(repo, 'gemini');
+  workspace.refresh = async () => store.get('member', member.id);
+  workspace.sessions.createClient = () => peer;
+  const project = store.put('project', {
+    id: randomUUID(),
+    path: repo,
+    name: 'Pinned read fixture',
+    goal: 'Read the returns policy',
+    memberIds: [member.id],
+    createdAt: new Date().toISOString(),
+  });
+  const worker = workspace.sharedSade;
+  await worker.execute({
+    action: 'grant',
+    groupId: cloud.groupId,
+    id: cloud.grants[0],
+    projectId: project.id,
+    teammateId: member.id,
+    turns: 1,
+    allowWrites: false,
+  });
+  cloud.call(0, {
+    action: 'message',
+    groupId: cloud.groupId,
+    id: randomUUID(),
+    content: `Nhờ Astra của Bình đọc ${scope} và tóm tắt điều kiện trả hàng giúp mình.`,
+    sade: { projectKey },
+  });
+  const packet = cloud.poll(0);
+  assert.equal(packet.supportsReadAssignment, true);
+  const offer = packet.delivery!;
+  assert.deepEqual(offer.readAssignment, { scope, grantId: cloud.grants[1] });
+  const selectedRef = sharedPlanMemberRef(offer.team.findIndex(({ id }) => id === cloud.grants[1]));
+  const exchange = { action: 'exchange', active: [], delivery: offer, acknowledged: [] };
+  await worker.execute(exchange);
+  const started = () =>
+    store.tasks().find((task) => task.sharedSadeJobId === offer.id && task.turnId);
+  for (let attempt = 0; attempt < 200 && !started(); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(started(), 'the shared planner did not start');
+  const session = store.get<CodexSession>('session', started()!.sessionId!);
+  const turn = { threadId: session.threadId, turnId: session.turnId };
+  assert.equal(cloud.poll(0, [offer.id]).delivery, undefined);
+  const prompt = peer.calls.find(({ method }) => method === 'turn/start')?.params.input[0].text;
+  assert.ok(prompt.includes(JSON.stringify({ scope, ref: selectedRef })));
+  const submit = async (tool: string, args: object) => {
+    peer.responded = undefined;
+    await workspace.sessions.request(session.id, peer, {
+      id: randomUUID(),
+      method: 'item/tool/call',
+      params: { ...turn, tool, arguments: args },
+    });
+    return peer.responded as DesktopPeer['responded'];
+  };
+  const draft = {
+    ...work('returns', { scope: [scope] }),
+    kind: 'research-read-only',
+    preferredMemberId: selectedRef,
+    requiredPlatform: 'any',
+  };
+  assert.equal(
+    (
+      await submit('relay_submit_plan', {
+        summary: 'Read returns policy.',
+        tasks: [{ ...draft, preferredMemberId: 'auto' }],
+      })
+    )?.success,
+    false,
+  );
+  assert.equal(
+    (await submit('relay_finish_shared_without_work', { summary: 'No work.' }))?.success,
+    false,
+  );
+  assert.equal(
+    (await submit('relay_ask_shared_requester', { summary: 'Who should read the file?' }))?.success,
+    false,
+  );
+  assert.equal(store.lookup('sharedSadeLocalPlan', offer.id), undefined);
+  assert.equal(
+    (await submit('relay_submit_plan', { summary: 'Read returns policy.', tasks: [draft] }))
+      ?.success,
+    true,
+  );
+  await workspace.sessions.notification(session.id, peer, 'turn/completed', {
+    ...turn,
+    turn: { id: session.turnId, status: 'completed' },
+  });
+  const snapshot = (await worker.execute({ action: 'snapshot' })) as {
+    results: { jobId: string; result: SharedFinish }[];
+  };
+  assert.equal(snapshot.results.length, 1);
+  assert.equal(snapshot.results[0].jobId, offer.id);
+  cloud.finish(0, offer.id, snapshot.results[0].result);
+  const task = cloud.poll(1).delivery!;
+  assert.equal(task.grantId, cloud.grants[1]);
+  assert.equal(task.task?.kind, 'research');
+  assert.deepEqual(task.task?.scope, [scope]);
+  assert.equal(peer.calls.filter(({ method }) => method === 'turn/start').length, 1);
+  assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 1);
 });
 
 test(
@@ -4341,6 +4497,339 @@ test('an opted-in status update can close planning without assigning any work', 
   } finally {
     f.store.close();
   }
+});
+
+function ownerRoutingFixture(t: TestContext, grantC = true) {
+  const f = fixture(undefined, { names: ['Gemini', 'Astra'], grantC });
+  t.after(() => f.store.close());
+  const turnsUsed = () =>
+    f.grants.map((id) => f.store.lookup<{ used: number }>('sharedSadeGrant', id)?.used || 0);
+  const send = (content: string) => {
+    const request = {
+      action: 'message',
+      groupId: f.groupId,
+      id: randomUUID(),
+      content,
+      sade: { projectKey: key },
+    };
+    f.call(0, request);
+    return request;
+  };
+  return { ...f, send, turnsUsed };
+}
+
+test('Shared Sade holds Astra of Chi before planning until that exact publication grants the project', (t) => {
+  const f = ownerRoutingFixture(t, false);
+  const { message } = ownerRoutingCases.find(({ tag }) => tag === 'missing-grant')!;
+  const request = f.send(message);
+  const [run] = f.view().sadeRuns;
+  const [waiting] = run.jobs;
+  assert.equal(run.state, 'planning');
+  assert.equal(waiting.phase, 'plan');
+  assert.equal(waiting.state, 'waiting');
+  assert.match(waiting.summary || '', /Astra.*Chi|Chi.*Astra/i);
+  assert.match(waiting.summary || '', /grant|permission|access|quyền/i);
+  // Replay the benchmark's resolved destination (Bình), with the captured task scope.
+  assert.throws(() =>
+    f.finish(0, waiting.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Astra of Chi reads and summarizes the return conditions in docs/returns.md.',
+        tasks: [
+          work('read-returns-md', {
+            scope: ['docs/returns.md'],
+            preferredMemberId: f.grants[1],
+          }),
+        ],
+      },
+    }),
+  );
+  const answer = {
+    action: 'sade-answer',
+    groupId: f.groupId,
+    runId: request.id,
+    jobId: waiting.id,
+    answer: 'tiếp tục',
+  };
+  assert.throws(() => f.call(1, answer), /request author/i);
+  assert.throws(() => f.call(0, { ...answer, answer: 'Bình' }));
+  const otherProject = randomUUID();
+  f.grant(2, { id: otherProject, projectKey: 'b'.repeat(64) });
+  assert.throws(() => f.call(0, answer), /grant|permission|access|quyền/i);
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.poll(2, [], [otherProject]).delivery, undefined);
+  assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+  assert.equal(f.view().sadeRuns[0].jobs[0].id, waiting.id);
+
+  f.grant(2);
+  f.call(0, request);
+  const planner = f.poll(0).delivery!;
+  assert.equal(planner.phase, 'plan');
+  assert.notEqual(planner.id, waiting.id);
+  assert.equal(planner.request, request.content);
+  assert.equal(f.view().messages.filter(({ id }) => id === request.id).length, 1);
+  assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Chi reads the requested returns policy.',
+      tasks: [
+        work('read-returns-md', { scope: ['docs/returns.md'], preferredMemberId: f.grants[2] }),
+      ],
+    },
+  });
+  assert.equal(f.poll(1).delivery, undefined);
+  const task = f.poll(2).delivery!;
+  assert.equal(task.phase, 'task');
+  assert.equal(task.grantId, f.grants[2]);
+  assert.equal(task.task?.kind, 'research');
+  assert.deepEqual(task.task?.scope, ['docs/returns.md']);
+  f.finish(2, task.id, { kind: 'done', summary: 'Reviewed the scoped returns policy.' });
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+  assert.deepEqual(f.turnsUsed(), [1, 0, 1]);
+});
+
+test('Shared Sade asks before spending a turn when two other owners publish Astra', (t) => {
+  const f = ownerRoutingFixture(t);
+  const { message } = ownerRoutingCases.find(({ tag }) => tag === 'ambiguous-owner')!;
+  const request = f.send(message);
+  const [run] = f.view().sadeRuns;
+  const [waiting] = run.jobs;
+  assert.equal(run.state, 'planning');
+  assert.equal(waiting.phase, 'plan');
+  assert.equal(waiting.state, 'waiting');
+  assert.match(waiting.summary || '', /Astra/i);
+  assert.match(waiting.summary || '', /Bình/);
+  assert.match(waiting.summary || '', /Chi/);
+  assert.throws(() =>
+    f.finish(0, waiting.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Astra reads pickup-policy.md and explains the delivery hours to the requester.',
+        tasks: [
+          work('read-delivery-hours', {
+            scope: ['docs/pickup-policy.md'],
+            preferredMemberId: f.grants[1],
+          }),
+        ],
+      },
+    }),
+  );
+  const answer = {
+    action: 'sade-answer',
+    groupId: f.groupId,
+    runId: request.id,
+    jobId: waiting.id,
+    answer: 'Chi',
+  };
+  assert.throws(() => f.call(2, answer), /request author/i);
+  assert.throws(() => f.call(0, { ...answer, answer: 'Whichever one is free.' }));
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.poll(2).delivery, undefined);
+  assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+
+  f.call(2, { action: 'sade-revoke', groupId: f.groupId, grantId: f.grants[2] });
+  f.call(0, answer);
+  assert.equal(f.view().sadeRuns[0].jobs[0].state, 'waiting');
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+  const replacement = randomUUID();
+  f.grant(2, { id: replacement });
+  const planner = f.poll(0).delivery!;
+  assert.equal(planner.phase, 'plan');
+  assert.notEqual(planner.id, waiting.id);
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Chi reads the requested pickup policy.',
+      tasks: [
+        work('read-delivery-hours', {
+          scope: ['docs/pickup-policy.md'],
+          preferredMemberId: replacement,
+        }),
+      ],
+    },
+  });
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.poll(2, [], [replacement]).delivery?.grantId, replacement);
+});
+
+test('Shared Sade keeps a named read bound to its original sharing', (t) => {
+  const f = ownerRoutingFixture(t, false);
+  const { message } = ownerRoutingCases.find(({ tag }) => tag === 'missing-grant')!;
+  const request = f.send(message);
+  const original = f.view().sadeRuns[0].jobs[0];
+  f.call(2, { action: 'teammates', groupId: f.groupId, teammates: [] });
+  const publication = f.call(2, {
+    action: 'teammates',
+    groupId: f.groupId,
+    teammates: [{ localId: f.members[2], name: 'Astra', provider: 'codex' }],
+  }) as { teammates: SharedTeammate[] };
+  const sharingId = publication.teammates.find(
+    ({ localId }) => localId === f.members[2],
+  )?.sharingId;
+  assert.ok(sharingId);
+  f.grant(2, { sharingId });
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.poll(2).delivery, undefined);
+  assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+  f.call(0, {
+    action: 'sade-answer',
+    groupId: f.groupId,
+    runId: request.id,
+    jobId: original.id,
+    answer: 'continue',
+  });
+  const [blocked] = f.view().sadeRuns;
+  assert.equal(blocked.state, 'blocked');
+  assert.match(blocked.error || '', /publication ended/i);
+  f.send(message);
+  assert.equal(f.poll(0).delivery?.phase, 'plan');
+});
+
+test('Shared Sade keeps the last turn for the requested read until a separate planner can start', (t) => {
+  const f = fixture(undefined, { names: ['Gemini', 'Astra'], turnsA: 1 });
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Gemini của mình đọc docs/returns.md. Chỉ đọc thôi.',
+    sade: { projectKey: key },
+  });
+  const [wait] = f.view().sadeRuns;
+  assert.equal(wait.jobs[0].state, 'waiting');
+  assert.match(wait.jobs[0].summary || '', /turn/i);
+  assert.equal(f.poll(0).delivery, undefined);
+  assert.equal(f.poll(1).delivery, undefined);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
+
+  const localPlanner = randomUUID();
+  const alternate = randomUUID();
+  f.call(0, {
+    action: 'teammates',
+    groupId: f.groupId,
+    teammates: [
+      { name: 'Gemini', localId: f.members[0], provider: 'gemini' },
+      { name: 'Bếp', localId: localPlanner, provider: 'codex' },
+    ],
+  });
+  f.call(0, {
+    action: 'sade-grant',
+    groupId: f.groupId,
+    id: alternate,
+    teammateId: localPlanner,
+    projectKey: key,
+    projectName: 'Fixture project',
+    role: 'engineer',
+    platform: 'win32',
+    allowWrites: false,
+    turns: 1,
+  });
+  const plan = f.poll(0, [], [alternate]).delivery!;
+  assert.equal(plan.phase, 'plan');
+  assert.equal(plan.grantId, alternate);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 0);
+  f.finish(0, plan.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Use Gemini for the requested read.',
+      tasks: [work('returns', { scope: ['docs/returns.md'], preferredMemberId: f.grants[0] })],
+    },
+  });
+  const task = f.poll(0).delivery!;
+  assert.equal(task.phase, 'task');
+  assert.equal(task.grantId, f.grants[0]);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
+  assert.equal(f.poll(1).delivery, undefined);
+});
+
+test('Shared Sade enforces a single named read at allocation and keeps independent requests', async (t) => {
+  for (const variant of [
+    'correct',
+    'substituted owner',
+    'automatic assignee',
+    'fallback',
+    'write',
+    'broader scope',
+    'extra task',
+    'no task',
+    'invented platform',
+  ]) {
+    await t.test(variant, (t) => {
+      const f = ownerRoutingFixture(t);
+      f.send(
+        'Nhờ đúng Astra của Binh đọc docs/returns.md và tóm tắt điều kiện trả hàng giúp mình. Chỉ đọc thôi.',
+      );
+      const planner = f.poll(0).delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(f.poll(2).delivery, undefined);
+      const task = work('read-returns-md', {
+        scope: ['docs/returns.md'],
+        preferredMemberId: f.grants[1],
+      });
+      if (variant === 'substituted owner') task.preferredMemberId = f.grants[2];
+      if (variant === 'automatic assignee') task.preferredMemberId = undefined;
+      if (variant === 'fallback') task.fallbackMemberId = f.grants[2];
+      if (variant === 'write') task.kind = 'code';
+      if (variant === 'broader scope') task.scope = ['docs'];
+      if (variant === 'invented platform') task.requiredPlatform = 'win32';
+      const tasks = variant === 'no task' ? [] : [task];
+      if (variant === 'extra task') tasks.push(work('unrequested'));
+      f.finish(0, planner.id, { kind: 'plan', plan: { summary: 'Read returns policy.', tasks } });
+      const [run] = f.view().sadeRuns;
+      if (variant === 'correct') {
+        assert.equal(run.state, 'running', run.error || 'The named research task should be queued');
+        assert.equal(f.poll(1).delivery?.grantId, f.grants[1]);
+        assert.deepEqual(f.turnsUsed(), [1, 1, 0]);
+      } else {
+        assert.equal(run.state, 'blocked');
+        assert.deepEqual(
+          run.jobs.map(({ phase }) => phase),
+          ['plan'],
+        );
+        assert.equal(f.poll(0).delivery, undefined);
+        assert.equal(f.poll(1).delivery, undefined);
+        assert.equal(f.poll(2).delivery, undefined);
+        assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+      }
+    });
+  }
+
+  await t.test('negated alternative leaves the intended research available', (t) => {
+    const f = ownerRoutingFixture(t);
+    const { message } = ownerRoutingCases.find(({ tag }) => tag === 'negated-assignee')!;
+    f.send(message);
+    const planner = f.poll(0).delivery!;
+    assert.equal(planner.phase, 'plan');
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Gemini reads the reorder policy.',
+        tasks: [
+          work('read-reorder', { scope: ['docs/reorder.md'], preferredMemberId: f.grants[0] }),
+        ],
+      },
+    });
+    assert.equal(f.poll(0).delivery?.task?.key, 'read-reorder');
+    assert.equal(f.poll(1).delivery, undefined);
+    assert.equal(f.poll(2).delivery, undefined);
+  });
+
+  await t.test('quoted assignment stays informational', (t) => {
+    const f = ownerRoutingFixture(t);
+    f.send('“Astra của bạn đọc docs/pickup-policy.md.” Mình chỉ trích lại câu đó để báo nhóm.');
+    const planner = f.poll(0).delivery!;
+    assert.equal(planner.phase, 'plan');
+    f.finish(0, planner.id, { kind: 'plan', plan: { summary: 'Status only.', tasks: [] } });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+    assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+  });
 });
 
 test('only the requester can clarify a duplicate harness name before any Shared Sade task starts', () => {
