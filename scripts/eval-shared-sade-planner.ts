@@ -17,6 +17,11 @@ import {
   type SharedFinish,
 } from '../server/group-sade.ts';
 import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
+import {
+  sharedSadeHandoffContext,
+  sharedSadeHandoffPrompt,
+} from '../server/shared-sade-handoff-context.ts';
+import { foldSharedSadeName } from '../server/shared-sade-assignment.ts';
 import { Store } from '../server/store.ts';
 import { collectPrerequisites, parseTeamPlan } from '../server/workflow-plan.ts';
 import type { SharedSadeJob, SharedSadeRun } from '../shared/collaboration.ts';
@@ -24,6 +29,11 @@ import {
   ownerRoutingCases,
   type OwnerRoutingCase,
 } from '../tests/fixtures/shared-sade-owner-routing.ts';
+import {
+  handoffPlanningCases,
+  type HandoffPlanningCase,
+} from '../tests/fixtures/shared-sade-handoff-planning.ts';
+import { handoffDraftSchema, parseHandoffDraft } from './shared-sade-handoff-draft.ts';
 
 const messages = {
   handoff: [
@@ -233,6 +243,7 @@ type Case =
   | 'frontend-style'
   | 'frontend-style-ungranted'
   | 'owner-routing'
+  | 'handoff-planning'
   | 'referenced-read'
   | 'quota-followup'
   | (typeof ownerHandoffs)[number]['scenario']
@@ -358,6 +369,8 @@ const { values, positionals } = parseArgs({
     'full-handoff': { type: 'boolean' },
     'frontend-style': { type: 'boolean' },
     'owner-routing': { type: 'boolean' },
+    'handoff-planning': { type: 'boolean' },
+    'one-planner-call': { type: 'boolean' },
   },
 });
 const model = values.model;
@@ -379,6 +392,7 @@ assert.ok(
     'quota-example',
     'frontend-style-deferred',
     'owner-routing',
+    'handoff-compact',
   ].includes(values['planning-prompt']),
   'Unknown planning prompt.',
 );
@@ -393,12 +407,19 @@ assert.ok(
   'Use the ownership prompt with --owner-routing or --frontend-style.',
 );
 assert.ok(
+  values['planning-prompt'] !== 'handoff-compact' ||
+    values['handoff-planning'] ||
+    (values['frontend-style'] && values['one-planner-call']),
+  'Use the compact handoff with --handoff-planning or --frontend-style --one-planner-call.',
+);
+assert.ok(
   [
     values['handoff-holdout'],
     values['handoff-varied'],
     values['full-handoff'],
     values['frontend-style'],
     values['owner-routing'],
+    values['handoff-planning'],
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
@@ -431,6 +452,8 @@ type SavedRun = {
     id: string;
     promptSha256?: string;
     execution?: 'coordinator-preflight';
+    protocol?: 'tools' | 'compact-json';
+    modelCalls?: number;
     plan?: unknown;
     question?: string;
     error?: string;
@@ -439,7 +462,10 @@ type SavedRun = {
 };
 const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
 const plannerTools =
-  values['owner-handoff'] || values['frontend-style'] || values['owner-routing']
+  values['owner-handoff'] ||
+  values['frontend-style'] ||
+  values['owner-routing'] ||
+  values['handoff-planning']
     ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
     : [groupPlanTool, groupNoWorkTool];
 const tools = plannerTools.map(({ type, name, description, inputSchema }) => ({
@@ -460,7 +486,7 @@ const people = [
 ];
 
 async function withGroup<T>(
-  { scenario, message, reference, ownerRouting }: PlannerCase,
+  { scenario, message, reference, ownerRouting, handoffPlanning }: PlannerCase,
   run: (
     context:
       | { waiting: SharedSadeRun }
@@ -471,6 +497,10 @@ async function withGroup<T>(
           jobs: () => SharedSadeRun;
           verifyReview: (job: SharedSadeJob) => void;
           verifyFrontendOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
+          verifyReviewedArchitecture: (
+            architecture: SharedSadeJob,
+            frontend: SharedSadeJob,
+          ) => void;
           verifyQuotaFollowup: (
             plan: ReturnType<typeof parseTeamPlan>,
             expected: QuotaFollowup,
@@ -482,7 +512,11 @@ async function withGroup<T>(
   const store = new Store(':memory:');
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    const fullHandoff = scenario === 'full-handoff' || scenario.startsWith('frontend-style');
+    const fullHandoff =
+      scenario === 'full-handoff' ||
+      scenario.startsWith('frontend-style') ||
+      Boolean(handoffPlanning);
+    const fixtureRoster = (ownerRouting || handoffPlanning)?.roster;
     if (fullHandoff || ownerRouting)
       store.put('billingEntitlement', {
         id: people[0].id,
@@ -494,8 +528,8 @@ async function withGroup<T>(
       });
     const quotaFallback = scenario.startsWith('quota-');
     const quotaFollowup = scenario === 'quota-followup';
-    const names = ownerRouting
-      ? ownerRouting.roster.map(({ name }) => name)
+    const names = fixtureRoster
+      ? fixtureRoster.map(({ name }) => name)
       : scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['Gemini', 'Gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
@@ -510,8 +544,8 @@ async function withGroup<T>(
     const roles = fullHandoff
       ? ['engineer', 'designer', 'engineer', 'reviewer']
       : ['engineer', 'reviewer', 'designer'];
-    const providers = ownerRouting
-      ? ownerRouting.roster.map(({ provider }) => provider)
+    const providers = fixtureRoster
+      ? fixtureRoster.map(({ provider }) => provider)
       : scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['gemini', 'gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
@@ -555,7 +589,7 @@ async function withGroup<T>(
       if (index && ['mac', 'missing-mac', 'owner-ungranted'].includes(scenario)) continue;
       if (
         (index === 1 && scenario === 'frontend-style-ungranted') ||
-        ownerRouting?.roster[index].granted === false
+        fixtureRoster?.[index].granted === false
       )
         continue;
       call(index, {
@@ -579,6 +613,9 @@ async function withGroup<T>(
           grants: [grants[index]],
           active,
           referencedMessage: true,
+          ...(handoffPlanning || values['one-planner-call']
+            ? { reviewedRevisionFiles: true, unchangedRevisionScopes: true }
+            : {}),
           ...(ownerRouting ? { readAssignment: true } : {}),
         }) as { delivery?: SharedDelivery }
       ).delivery;
@@ -604,8 +641,8 @@ async function withGroup<T>(
       return await run({ waiting: jobs() });
     }
     assert.ok(delivery?.phase === 'plan');
-    if (ownerRouting) {
-      const expectedTeam = ownerRouting.roster.flatMap(({ name, provider, granted }, index) =>
+    if (fixtureRoster) {
+      const expectedTeam = fixtureRoster.flatMap(({ name, provider, granted }, index) =>
         granted ? [{ id: grants[index], name, provider, owner: people[index].name }] : [],
       );
       assert.deepEqual(
@@ -640,6 +677,69 @@ async function withGroup<T>(
           poll(1)?.id,
           frontend.id,
           'Astra waits for the architecture before starting the frontend',
+        );
+      },
+      verifyReviewedArchitecture(architecture, frontend) {
+        const author = grants.indexOf(architecture.grantId);
+        const receiver = grants.indexOf(frontend.grantId);
+        const file = architecture.task!.scope[0];
+        assert.equal(poll(author)?.id, architecture.id, 'the producer starts first');
+        assert.equal(poll(receiver), undefined, 'the frontend owner waits for architecture');
+        finishJob(author, architecture.id, {
+          kind: 'change',
+          summary: 'Fixture produced the requested contract.',
+          diff: {
+            files: [file],
+            diff: '+A synthetic contract for this benchmark.\n',
+            stat: '1 file',
+            truncated: false,
+          },
+        });
+        const review = jobs().jobs.find(({ phase }) => phase === 'review');
+        assert.ok(review, 'architecture is independently reviewed');
+        assert.notEqual(
+          review.grantId,
+          architecture.grantId,
+          'the producer cannot review their own patch',
+        );
+        const reviewer = grants.indexOf(review.grantId);
+        assert.equal(poll(reviewer)?.id, review.id);
+        finishJob(reviewer, review.id, {
+          kind: 'review',
+          verdict: 'approved',
+          summary: 'Contract verified.',
+        });
+        assert.equal(
+          poll(receiver),
+          undefined,
+          'the frontend waits for integration, even after review',
+        );
+        const revision = 'b'.repeat(40);
+        finishJob(author, architecture.id, {
+          kind: 'done',
+          summary: 'Contract integrated.',
+          revision,
+          published: true,
+        });
+        let next = poll(receiver);
+        // An independently schedulable backend or test can share the receiver's grant.
+        // Finish only those fixture tasks to show the frontend also becomes dispatchable.
+        for (let completed = 0; next && next.id !== frontend.id && completed < 2; completed++) {
+          assert.equal(next.phase, 'task');
+          assert.ok(needsGroupWrite(next.task), 'unexpected work ahead of frontend');
+          finishJob(receiver, next.id, {
+            kind: 'unchanged',
+            revision,
+            summary: 'Independent fixture work already matches its requirements.',
+          });
+          next = poll(receiver);
+        }
+        assert.equal(next?.id, frontend.id, 'frontend receives the reviewed architecture first');
+        assert.ok(
+          next?.prerequisites.some(
+            (prior) => prior.revision === revision && prior.publishedFiles?.includes(file),
+          ),
+          'frontend receives the exact published contract revision',
         );
       },
       verifyOwnerQuota(key, primary, fallback) {
@@ -761,7 +861,11 @@ function scopedWriter(jobs: SharedSadeJob[], file: string) {
   return matches[0];
 }
 
-function checkFrontendAcceptance(frontend: SharedSadeJob, style: FrontendStyle) {
+function checkFrontendAcceptance(
+  frontend: SharedSadeJob,
+  style: FrontendStyle,
+  suppliedTokens?: readonly string[],
+) {
   assert.ok(frontend.task);
   const { description, acceptance } = frontend.task;
   const ask =
@@ -788,13 +892,107 @@ function checkFrontendAcceptance(frontend: SharedSadeJob, style: FrontendStyle) 
       .replace(/(?:kh[oô]ng(?: c[aầ]n| ph[aả]i)?|ch[aẳ]ng c[aầ]n)\s+h[oỏ]i[^.!?;]*/gi, '');
     assert.doesNotMatch(positiveInstructions, ask, 'the sender already resolved the style choice');
     if (style === 'supplied') {
-      assert.match(instructions, /minimal|t[oố]i gi[aả]n/i, 'retain the minimalist style');
-      assert.match(instructions, /navy|xanh h[aả]i qu[aâ]n/i, 'retain the navy background');
+      if (suppliedTokens) {
+        const variants: Record<string, string[]> = {
+          cam: ['cam', 'orange'],
+          dam: ['dam', 'bold'],
+          teal: ['teal', 'xanh ngoc', 'turquoise'],
+          rounded: ['rounded', 'bo goc'],
+        };
+        const folded = foldSharedSadeName(instructions);
+        for (const token of suppliedTokens) {
+          const key = foldSharedSadeName(token);
+          assert.ok(
+            (variants[key] || [key]).some((term) => folded.includes(term)),
+            `keep supplied style ${token}`,
+          );
+        }
+      } else {
+        assert.match(instructions, /minimal|t[oố]i gi[aả]n/i, 'retain the minimalist style');
+        assert.match(instructions, /navy|xanh h[aả]i qu[aâ]n/i, 'retain the navy background');
+      }
     } else {
       assert.equal(style, 'delegated');
       assert.match(instructions, choice, 'retain the sender’s delegation to Astra');
     }
   }
+}
+
+type HandoffPlanExpectation = Extract<HandoffPlanningCase['expected'], { kind: 'plan' }>;
+
+function assessHandoffPlan(
+  expected: HandoffPlanExpectation,
+  plan: ReturnType<typeof parseTeamPlan>,
+  run: SharedSadeRun,
+  verify: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void,
+  strictDelegation: boolean,
+) {
+  assert.equal(run.state, 'running', run.error || 'the handoff plan should be queued');
+  const jobs = run.jobs.filter(({ phase }) => phase === 'task');
+  assert.equal(jobs.length, 5, 'queue four scoped writers and one defensive reviewer');
+  const { files, owners, style, reviewSubjects } = expected;
+  const architecture = scopedWriter(jobs, files.architecture);
+  const frontend = scopedWriter(jobs, files.frontend);
+  const backend = scopedWriter(jobs, files.backend);
+  const codebase = scopedWriter(jobs, files.tests);
+  const review = jobs.find(({ task }) => task?.kind === 'review');
+  assert.ok(review?.task, 'the defensive review is read-only');
+  assert.equal(review.task.scope.length, 2);
+  assert.deepEqual(new Set(review.task.scope), new Set([files.frontend, files.backend]));
+  assert.notEqual(review.grantId, frontend.grantId);
+  assert.notEqual(review.grantId, backend.grantId);
+  assert.ok(
+    plan.tasks.every(
+      ({ fallbackMemberId, requiredPlatform }) => !fallbackMemberId && !requiredPlatform,
+    ),
+    'do not invent an OS restriction or quota fallback',
+  );
+  for (const [job, owner] of [
+    [architecture, owners.architecture],
+    [frontend, owners.frontend],
+  ] as const) {
+    assert.equal(job.task!.preferredMemberId, grants[owner], 'pin the requested owner in the plan');
+    assert.equal(job.grantId, grants[owner], 'dispatch to the requested owner');
+  }
+  if (strictDelegation) {
+    for (const job of [backend, codebase, review])
+      assert.equal(
+        job.task!.preferredMemberId,
+        undefined,
+        'let Sade assign work the user delegated',
+      );
+  }
+  assert.deepEqual(architecture.task!.dependsOn, [], 'the architecture can start immediately');
+  assert.deepEqual(
+    frontend.task!.dependsOn,
+    [architecture.task!.key],
+    'frontend waits for the contract alone',
+  );
+  const byKey = new Map(plan.tasks.map((task) => [task.key, task]));
+  const reliesOn = (task: SharedSadeJob, prior: SharedSadeJob) =>
+    collectPrerequisites(task.task!.dependsOn, byKey, (item) => item.dependsOn).some(
+      ({ key }) => key === prior.task!.key,
+    );
+  for (const job of [backend, codebase])
+    assert.ok(reliesOn(job, architecture), 'downstream writers use the contract');
+  for (const job of [frontend, backend])
+    assert.ok(reliesOn(review, job), 'review waits for both of the reviewed files');
+  const reviewText = foldSharedSadeName(`${review.task.description} ${review.task.acceptance}`);
+  assert.ok(
+    reviewSubjects.some((subject) => reviewText.includes(subject)),
+    'check the requested private field',
+  );
+  assert.match(
+    reviewText,
+    /\b(?:lo|ro ri|hien|expos\w*|leak\w*|disclos\w*|show\w*|reveal\w*|visible|sanitize\w*|redact\w*)\b/,
+    'review the potential disclosure in the output',
+  );
+  checkFrontendAcceptance(
+    frontend,
+    style.kind,
+    style.kind === 'supplied' && style.tokens.length ? style.tokens : undefined,
+  );
+  verify(architecture, frontend);
 }
 
 function assess(
@@ -952,7 +1150,11 @@ type PlannerReply = {
   content: string;
   tool_calls?: { function: { name: string; arguments: unknown } }[];
 };
-async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
+async function getPlannerReply(
+  messages: unknown[],
+  fullHandoff: boolean,
+  format?: typeof handoffDraftSchema,
+) {
   const response = await local('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -962,7 +1164,7 @@ async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
       think: false,
       keep_alive: '45s',
       options: { ...generation, num_predict: fullHandoff ? 1600 : 768 },
-      tools,
+      ...(format ? { format } : { tools }),
       messages,
     }),
     signal: AbortSignal.timeout(timeoutMs),
@@ -1024,6 +1226,7 @@ type PlannerCase = {
   quotaFollowup?: QuotaFollowup;
   frontendStyle?: FrontendStyle;
   ownerRouting?: OwnerRoutingCase;
+  handoffPlanning?: HandoffPlanningCase;
 };
 const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
@@ -1057,21 +1260,29 @@ const defaultCases: PlannerCase[] = values['quota-fallback']
                   message,
                 })),
               );
-const cases: PlannerCase[] = values['owner-routing']
-  ? ownerRoutingCases.map((ownerRouting) => ({
-      scenario: 'owner-routing',
-      id: ownerRouting.id,
-      message: ownerRouting.message,
-      reference: ownerRouting.reference,
-      ownerRouting,
+const cases: PlannerCase[] = values['handoff-planning']
+  ? handoffPlanningCases.map((handoffPlanning) => ({
+      scenario: 'handoff-planning',
+      id: handoffPlanning.id,
+      message: handoffPlanning.message,
+      reference: handoffPlanning.reference,
+      handoffPlanning,
     }))
-  : values['frontend-style']
-    ? [...frontendStyleCases]
-    : values['referenced-requests']
-      ? [...referencedRequests]
-      : values['quota-followup']
-        ? [...quotaFollowups]
-        : defaultCases;
+  : values['owner-routing']
+    ? ownerRoutingCases.map((ownerRouting) => ({
+        scenario: 'owner-routing',
+        id: ownerRouting.id,
+        message: ownerRouting.message,
+        reference: ownerRouting.reference,
+        ownerRouting,
+      }))
+    : values['frontend-style']
+      ? [...frontendStyleCases]
+      : values['referenced-requests']
+        ? [...referencedRequests]
+        : values['quota-followup']
+          ? [...quotaFollowups]
+          : defaultCases;
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
@@ -1116,6 +1327,15 @@ For reproducing, fixing and rerunning on one paired machine, include those three
 ${base}`;
 }
 
+function plannerInput(delivery: SharedDelivery) {
+  if (values['planning-prompt'] === 'handoff-compact') {
+    const prompt = sharedSadeHandoffPrompt(delivery);
+    assert.ok(prompt, 'this evaluation requires a compact handoff prompt');
+    return { prompt, format: handoffDraftSchema };
+  }
+  return { prompt: planningPrompt(delivery) };
+}
+
 function frontendExpectation(style: FrontendStyle) {
   if (style === 'ungranted')
     return {
@@ -1138,6 +1358,10 @@ function frontendExpectation(style: FrontendStyle) {
 
 function ownerRoutingEvidence({ tag, message, reference, roster, expected }: OwnerRoutingCase) {
   return { tag, input: { message, reference, roster }, expected };
+}
+
+function handoffPlanningEvidence({ message, reference, roster, expected }: HandoffPlanningCase) {
+  return { input: { message, reference, roster }, expected };
 }
 
 function assessOwnerRoutingPlan(
@@ -1176,7 +1400,10 @@ function assessOwnerRoutingPlan(
   }
 }
 
-function assessOwnerRoutingQuestion({ expected }: OwnerRoutingCase, question: string) {
+function assessOwnerRoutingQuestion(
+  { expected }: { expected: OwnerRoutingCase['expected'] | HandoffPlanningCase['expected'] },
+  question: string,
+) {
   assert.equal(expected.kind, 'question', 'do not ask again when the requester resolved the route');
   const normalized = question
     .normalize('NFD')
@@ -1241,7 +1468,7 @@ function ownerRoutingPreflight({ id, scenario, ownerRouting }: PlannerCase, run:
 
 if (exportPrompt) {
   const plannerCase = selectedCases[0];
-  const { id, message, reference, frontendStyle, ownerRouting } = plannerCase;
+  const { id, message, reference, frontendStyle, ownerRouting, handoffPlanning } = plannerCase;
   const execution = await withGroup(plannerCase, async (group) => {
     if ('waiting' in group) {
       const row = ownerRoutingPreflight(plannerCase, group.waiting);
@@ -1250,7 +1477,7 @@ if (exportPrompt) {
       return row.execution;
     }
     const { delivery } = group;
-    const prompt = planningPrompt(delivery);
+    const { prompt, format } = plannerInput(delivery);
     const decisionSchema = {
       type: 'object',
       properties: {
@@ -1279,10 +1506,12 @@ if (exportPrompt) {
           tool: groupPlanTool,
           toolsSha256,
           decisionSchema,
+          ...(format ? { protocol: 'compact-json', responseFormat: format } : {}),
           ...(frontendStyle
             ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
             : {}),
           ...(ownerRouting ? ownerRoutingEvidence(ownerRouting) : {}),
+          ...(handoffPlanning ? handoffPlanningEvidence(handoffPlanning) : {}),
         },
         null,
         2,
@@ -1305,15 +1534,21 @@ for (const plannerCase of selectedCases) {
     quotaFollowup,
     frontendStyle,
     ownerRouting,
+    handoffPlanning,
   } = plannerCase;
-  const detailed = Boolean(frontendStyle || ownerRouting);
+  const onePlannerCall = Boolean(handoffPlanning || values['one-planner-call']);
+  const detailed = Boolean(frontendStyle || ownerRouting || handoffPlanning);
   const row = await withGroup(plannerCase, async (group) => {
     if ('waiting' in group) return ownerRoutingPreflight(plannerCase, group.waiting);
-    const prompt = planningPrompt(group.delivery);
+    const { prompt, format } = plannerInput(group.delivery);
+    const protocol = format ? 'compact-json' : 'tools';
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
-    if (saved) assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
+    if (saved) {
+      assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
+      assert.equal(prior?.protocol ?? 'tools', protocol, `Response protocol changed for ${id}`);
+    }
     if (!saved && !externalPath) await selectLiveModel();
     const started = performance.now();
     let parsed = false;
@@ -1324,6 +1559,7 @@ for (const plannerCase of selectedCases) {
     let toolName;
     let correction;
     let generatedTokens = 0;
+    let modelCalls = prior?.modelCalls ?? 0;
     const modelReplies: Awaited<ReturnType<typeof getPlannerReply>>[] = [];
     const roster = group.delivery.team.map((member) => member.id);
     function acceptReply(tool: { name: string; arguments: unknown }) {
@@ -1354,14 +1590,22 @@ for (const plannerCase of selectedCases) {
         );
       } else {
         const messages: unknown[] = [{ role: 'user', content: prompt }];
-        for (let attempt = 0; attempt < 2; attempt++) {
+        const attempts = onePlannerCall ? 1 : 2;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          modelCalls++;
           const modelReply = await getPlannerReply(
             messages,
-            scenario === 'full-handoff' || Boolean(frontendStyle),
+            scenario === 'full-handoff' || Boolean(frontendStyle || handoffPlanning),
+            format,
           );
           if (detailed) modelReplies.push(modelReply);
           const { message: reply, eval_count, done_reason } = modelReply;
           generatedTokens += eval_count || 0;
+          if (format) {
+            assert.ok(!reply.tool_calls?.length, 'expected compact content instead of a tool call');
+            acceptReply(parseHandoffDraft(reply.content));
+            break;
+          }
           assert.equal(
             reply.tool_calls?.length,
             1,
@@ -1372,7 +1616,7 @@ for (const plannerCase of selectedCases) {
             acceptReply(tool);
             break;
           } catch (cause) {
-            if (attempt !== 0 || toolName !== groupPlanTool.name) throw cause;
+            if (attempt + 1 === attempts || toolName !== groupPlanTool.name) throw cause;
             correction = cause instanceof Error ? cause.message : String(cause);
             messages.push(reply, { role: 'tool', tool_name: toolName, content: correction });
           }
@@ -1381,7 +1625,8 @@ for (const plannerCase of selectedCases) {
       assert.ok(plan || question, 'expected a validated plan or question');
       parsed = true;
       if (question) {
-        if (ownerRouting) assessOwnerRoutingQuestion(ownerRouting, question);
+        if (ownerRouting || handoffPlanning)
+          assessOwnerRoutingQuestion((ownerRouting || handoffPlanning)!, question);
         else {
           assert.ok(
             ['owner-ambiguous', 'owner-ungranted', 'frontend-style-ungranted'].includes(scenario),
@@ -1406,6 +1651,44 @@ for (const plannerCase of selectedCases) {
             group.verifyOwnerQuota(plan.tasks[0].key, owner, fallback);
             run = group.jobs();
           }
+        } else if (handoffPlanning) {
+          assert.equal(
+            handoffPlanning.expected.kind,
+            'plan',
+            'ask about missing access or an ambiguous owner',
+          );
+          assessHandoffPlan(
+            handoffPlanning.expected,
+            plan,
+            run,
+            group.verifyReviewedArchitecture,
+            true,
+          );
+          run = group.jobs();
+        } else if (frontendStyle && onePlannerCall) {
+          assert.notEqual(frontendStyle, 'ungranted', 'ask for the missing project grant');
+          assert.ok(
+            frontendStyle === 'supplied' ||
+              frontendStyle === 'delegated' ||
+              frontendStyle === 'unspecified',
+          );
+          assessHandoffPlan(
+            {
+              kind: 'plan',
+              files: workshop,
+              owners: { architecture: 0, frontend: 1 },
+              style:
+                frontendStyle === 'supplied'
+                  ? { kind: 'supplied', tokens: [] }
+                  : { kind: frontendStyle },
+              reviewSubjects: ['email', 'e-mail'],
+            },
+            plan,
+            run,
+            group.verifyReviewedArchitecture,
+            false,
+          );
+          run = group.jobs();
         } else if (quotaFollowup) {
           group.verifyQuotaFollowup(plan, quotaFollowup);
           run = group.jobs();
@@ -1445,6 +1728,19 @@ for (const plannerCase of selectedCases) {
         ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
         : {}),
       ...(ownerRouting ? ownerRoutingEvidence(ownerRouting) : {}),
+      ...(handoffPlanning ? handoffPlanningEvidence(handoffPlanning) : {}),
+      ...(onePlannerCall
+        ? {
+            protocol,
+            modelCalls,
+            ...(format
+              ? {
+                  responseSchemaSha256: sha256(JSON.stringify(format)),
+                  ownerHints: Boolean(sharedSadeHandoffContext(group.delivery)),
+                }
+              : {}),
+          }
+        : {}),
       ...(detailed
         ? {
             prompt,
@@ -1479,16 +1775,22 @@ for (const plannerCase of selectedCases) {
             ? { model, digest: modelDigest }
             : {}),
         toolsSha256,
-        ...(values['frontend-style'] || values['owner-routing']
+        ...(values['frontend-style'] || values['owner-routing'] || values['handoff-planning']
           ? {
               planningPrompt: values['planning-prompt'],
               generation: {
                 ...generation,
-                num_predict: values['frontend-style'] ? 1600 : 768,
+                num_predict: values['frontend-style'] || values['handoff-planning'] ? 1600 : 768,
                 think: false,
               },
               memoryMeasurement:
                 'Ollama /api/ps post-reply model allocation. RAM is allocation minus VRAM. Sample excludes peak process and runner memory.',
+              ...(values['one-planner-call'] || values['handoff-planning']
+                ? {
+                    maximumModelCallsPerCase: 1,
+                    timeoutMs,
+                  }
+                : {}),
             }
           : {}),
         ...(source ? { replayedFrom: path.basename(source) } : {}),

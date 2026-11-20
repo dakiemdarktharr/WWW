@@ -29,6 +29,7 @@ on:
             contrast,
             planner-constraints,
             frontend-style,
+            handoff-planning,
             owner-routing,
             referenced-requests,
             quota-followup,
@@ -224,7 +225,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || inputs.sade_suite == 'frontend-style' && '[0,1,2,3]' || inputs.sade_suite == 'owner-routing' && '[0,1,2,3,4,5,6,7,8,9,10,11]' || '[0,1,2,3,4]') }}
+        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || inputs.sade_suite == 'frontend-style' && '[0,1,2,3]' || inputs.sade_suite == 'handoff-planning' && '[0,1,2,3,4,5,6,7,8,9]' || inputs.sade_suite == 'owner-routing' && '[0,1,2,3,4,5,6,7,8,9,10,11]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -298,6 +299,20 @@ jobs:
               node --import tsx scripts/eval-shared-sade-planner.ts "$results/frontend-style-$mode.json" \
                 --model "$SADE_MODEL" --frontend-style --planning-prompt "$mode" \
                 --shard "$SADE_SHARD/4" --timeout-ms 120000
+            done
+          elif [[ "$SADE_SUITE" == handoff-planning ]]; then
+            prompts=(baseline handoff-compact)
+            if (( SADE_SHARD % 2 == 1 )); then
+              prompts=(handoff-compact baseline)
+            fi
+            if (( SADE_SHARD < 4 )); then
+              cases=(--frontend-style --shard "$SADE_SHARD/4")
+            else
+              cases=(--handoff-planning --shard "$((SADE_SHARD - 4))/6")
+            fi
+            for mode in "${prompts[@]}"; do
+              node --import tsx scripts/eval-shared-sade-planner.ts "$results/handoff-planning-$mode.json" \
+                --model "$SADE_MODEL" "${cases[@]}" --one-planner-call --planning-prompt "$mode" --timeout-ms 180000
             done
           elif [[ "$SADE_SUITE" == owner-routing ]]; then
             prompts=(baseline owner-routing)
