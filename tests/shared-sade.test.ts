@@ -4102,6 +4102,152 @@ test('Shared Sade balances open implementation work without consuming the only i
   }
 });
 
+test('Shared Sade hands Gemini architecture to Astra before asking about frontend style', (t) => {
+  const f = fixture(['gemini', 'antigravity'], {
+    names: ['Gemini', 'Astra'],
+    patchHandoff: true,
+    turnsA: 6,
+    turnsB: 5,
+  });
+  t.after(() => f.store.close());
+  const [gemini, astra] = f.grants;
+  const request = {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content:
+      'Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của ông làm frontend, codebase, backend, cyber nhé.',
+    sade: { projectKey: key },
+  };
+  const run = () => f.view().sadeRuns[0];
+  assert.deepEqual(f.call(0, request), f.call(0, request));
+  assert.equal(f.poll(1).delivery, undefined);
+  const planner = f.poll(0).delivery!;
+  assert.equal(planner.phase, 'plan');
+  assert.equal(planner.request, request.content);
+  assert.deepEqual(
+    planner.team.map(({ name, ownedByRequester }) => [name, ownedByRequester]),
+    [
+      ['Gemini', true],
+      ['Astra', false],
+    ],
+  );
+  assert.deepEqual(f.poll(0).delivery, planner);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', gemini).used, 1);
+  const prompt = sharedGroupPlanningPrompt(planner, { deferFrontendStyle: true });
+  assert.match(prompt, /frontend task after its dependencies/);
+  assert.match(prompt, /requester wants to choose the style or let the frontend harness choose/);
+  const plan = parseSharedGroupPlan(
+    {
+      summary: 'Use the Gemini architecture before implementing, then review all three outputs.',
+      tasks: [
+        {
+          ...work('architecture', { scope: ['docs/architecture.md'] }),
+          kind: 'edit-files',
+          preferredMemberId: sharedPlanMemberRef(0),
+        },
+        {
+          ...work('frontend', {
+            dependsOn: ['architecture'],
+            acceptance:
+              'Sau khi đọc cấu trúc chung, hỏi người gửi muốn chọn phong cách giao diện hay để Astra tự chọn.',
+          }),
+          kind: 'edit-design',
+          preferredMemberId: sharedPlanMemberRef(1),
+        },
+        ...['codebase', 'backend'].map((key) => ({
+          ...work(key, { dependsOn: ['architecture'] }),
+          kind: 'edit-files',
+          preferredMemberId: 'auto',
+        })),
+        {
+          ...work('defensive-review', {
+            dependsOn: ['frontend', 'codebase', 'backend'],
+            scope: ['src/frontend.ts', 'src/codebase.ts', 'src/backend.ts'],
+            acceptance: 'Check authorization and accidental disclosure in error messages.',
+          }),
+          kind: 'review-read-only',
+          preferredMemberId: 'auto',
+        },
+      ].map((task) => ({ ...task, requiredPlatform: 'any' })),
+    },
+    planner.team.map(({ id }) => id),
+  );
+  f.finish(0, planner.id, { kind: 'plan', plan });
+  assert.equal(run().state, 'running', run().error);
+
+  const finishWrite = (author: number, job: SharedDelivery, summary: string) => {
+    const diff = { ...patch, files: job.task!.scope, diff: `+${summary}\n` };
+    f.finish(author, job.id, { kind: 'change', diff, portable: true, summary });
+    const reviewer = f.poll(1 - author).delivery!;
+    assert.equal(reviewer.phase, 'review');
+    assert.deepEqual(reviewer.review, diff);
+    f.finish(1 - author, reviewer.id, { kind: 'review', verdict: 'approved', summary });
+    if (job.task?.key === 'architecture')
+      assert.equal(f.poll(1).delivery, undefined, 'Frontend waits for the reviewed output');
+    f.finish(author, job.id, { kind: 'done', revision: sha, summary });
+    return diff;
+  };
+  const architecture = f.poll(0).delivery!;
+  assert.equal(architecture.task?.key, 'architecture');
+  assert.equal(f.poll(1).delivery, undefined);
+  const document = finishWrite(0, architecture, 'Reviewed architecture delivered.');
+  const frontend = f.poll(1).delivery!;
+  assert.equal(frontend.task?.key, 'frontend');
+  assert.equal(frontend.grantId, astra);
+  assert.deepEqual(frontend.prerequisites[0]?.patch?.change, document);
+
+  const question = 'Bạn muốn chọn phong cách giao diện hay để Astra tự chọn?';
+  f.finish(1, frontend.id, { kind: 'question', summary: question });
+  for (const key of ['codebase', 'backend']) {
+    const independent = f.poll(1).delivery!;
+    assert.equal(independent.task?.key, key);
+    assert.deepEqual(independent.prerequisites[0]?.patch?.change, document);
+    finishWrite(1, independent, `Integrated ${key}.`);
+    assert.equal(run().jobs.find(({ id }) => id === frontend.id)?.state, 'waiting');
+  }
+  assert.equal(f.poll(0).delivery, undefined, 'Review of all outputs still needs the frontend');
+  const answer = 'Astra tự chọn phong cách nhé.';
+  const reply = {
+    action: 'sade-answer',
+    groupId: f.groupId,
+    runId: request.id,
+    jobId: frontend.id,
+    answer,
+  };
+  assert.throws(() => f.call(1, reply), /request author/);
+  f.call(0, reply);
+  const resumed = f.poll(1).delivery!;
+  assert.notEqual(resumed.id, frontend.id);
+  assert.deepEqual(resumed.task, frontend.task);
+  assert.deepEqual(resumed.clarification, { question, answer });
+  assert.deepEqual(resumed.prerequisites, frontend.prerequisites);
+  finishWrite(1, resumed, 'Implemented the frontend in the selected style.');
+  const review = f.poll(0).delivery!;
+  assert.equal(review.task?.key, 'defensive-review');
+  assert.equal(review.task?.kind, 'review');
+  assert.equal(review.grantId, gemini);
+  assert.equal(review.prerequisites.length, 4);
+  f.finish(0, review.id, { kind: 'done', summary: 'Reviewed all integrated outputs.' });
+  assert.equal(run().state, 'done');
+  assert.deepEqual(
+    run()
+      .jobs.filter(({ phase }) => phase === 'plan')
+      .map(({ id }) => id),
+    [planner.id],
+  );
+  assert.deepEqual(
+    run()
+      .jobs.filter(({ task }) => task?.key === 'architecture')
+      .map(({ id }) => id),
+    [architecture.id],
+  );
+  assert.deepEqual(
+    f.grants.map((id) => f.store.get<{ used: number }>('sharedSadeGrant', id).used),
+    [6, 5],
+  );
+});
+
 test('Shared Sade saves the last turn on the desktop required by a later task', () => {
   const f = fixture(['gemini', 'codex'], { turnsA: 2, mac: true, roleA: 'researcher' });
   try {

@@ -18,7 +18,7 @@ import {
 } from '../server/group-sade.ts';
 import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
-import { parseTeamPlan } from '../server/workflow-plan.ts';
+import { collectPrerequisites, parseTeamPlan } from '../server/workflow-plan.ts';
 import type { SharedSadeJob, SharedSadeRun } from '../shared/collaboration.ts';
 
 const messages = {
@@ -226,6 +226,8 @@ const referencedRequests = [
 type Case =
   | keyof typeof messages
   | 'full-handoff'
+  | 'frontend-style'
+  | 'frontend-style-ungranted'
   | 'referenced-read'
   | 'quota-followup'
   | (typeof ownerHandoffs)[number]['scenario']
@@ -243,6 +245,40 @@ const fullHandoffs = [
   'Gemini owns and writes docs/workshop-contract.md. Astra implements src/workshop/Form.tsx after the contract and should offer to choose the aesthetic. Automatically assign src/workshop/signup.ts after the contract, and tests/workshop-signup.test.ts after backend. Once frontend and backend are ready, assign an independent read-only review of both source files for email leakage in errors.',
   'Cho Astra làm src/workshop/Form.tsx, nhưng chờ Gemini viết docs/workshop-contract.md trước rồi hỏi mình có thích phong cách nào không. Sade tự chọn người làm src/workshop/signup.ts từ cùng hợp đồng, rồi thêm tests/workshop-signup.test.ts khi backend xong. Riêng review bảo mật phòng thủ thì để người không viết hai file nguồn đọc kiểm tra dữ liệu lỗi sau cả backend lẫn giao diện.',
 ];
+const frontendRequest =
+  'Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của ông làm frontend, codebase, backend, cyber nhé.';
+const frontendProjectMap = `Bản đồ dự án Workshop của Bình: cấu trúc chung nằm ở ${workshop.architecture}; frontend ở ${workshop.frontend}; codebase là bộ test ở ${workshop.tests}; backend ở ${workshop.backend}. Phần cyber là rà soát phòng thủ, chỉ đọc frontend và backend để xem thông báo lỗi có làm lộ địa chỉ email không.`;
+const frontendStyleCases = [
+  {
+    scenario: 'frontend-style',
+    id: 'frontend-style/unspecified',
+    message: frontendRequest,
+    reference: frontendProjectMap,
+    frontendStyle: 'unspecified',
+  },
+  {
+    scenario: 'frontend-style',
+    id: 'frontend-style/supplied',
+    message: `${frontendRequest} Riêng frontend dùng phong cách tối giản, nền xanh navy.`,
+    reference: frontendProjectMap,
+    frontendStyle: 'supplied',
+  },
+  {
+    scenario: 'frontend-style',
+    id: 'frontend-style/delegated',
+    message: `${frontendRequest} Về phong cách frontend thì để Astra tự chọn luôn.`,
+    reference: frontendProjectMap,
+    frontendStyle: 'delegated',
+  },
+  {
+    scenario: 'frontend-style-ungranted',
+    id: 'frontend-style/ungranted',
+    message: frontendRequest,
+    reference: frontendProjectMap,
+    frontendStyle: 'ungranted',
+  },
+] as const;
+type FrontendStyle = (typeof frontendStyleCases)[number]['frontendStyle'];
 const handoffHoldout = [
   'Mây làm src/signup.ts sau khi nhận docs/contract.md, cái file tài liệu em nhờ Bếp cập nhật trước nghen.',
   'Cho Bep dien quy uoc vao docs/contract.md. Khi nao nhan dung file thi May moi sua src/signup.ts nha.',
@@ -315,6 +351,7 @@ const { values, positionals } = parseArgs({
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
+    'frontend-style': { type: 'boolean' },
   },
 });
 const model = values.model;
@@ -329,14 +366,21 @@ assert.ok(
   'Use a zero-based shard such as 0/3.',
 );
 assert.ok(
-  ['baseline', 'constraints', 'quota-compact', 'quota-example'].includes(values['planning-prompt']),
+  ['baseline', 'constraints', 'quota-compact', 'quota-example', 'frontend-style-deferred'].includes(
+    values['planning-prompt'],
+  ),
   'Unknown planning prompt.',
+);
+assert.ok(
+  values['planning-prompt'] !== 'frontend-style-deferred' || values['frontend-style'],
+  'Use the deferred frontend prompt with --frontend-style.',
 );
 assert.ok(
   [
     values['handoff-holdout'],
     values['handoff-varied'],
     values['full-handoff'],
+    values['frontend-style'],
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
@@ -375,9 +419,10 @@ type SavedRun = {
   }[];
 };
 const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
-const plannerTools = values['owner-handoff']
-  ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
-  : [groupPlanTool, groupNoWorkTool];
+const plannerTools =
+  values['owner-handoff'] || values['frontend-style']
+    ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
+    : [groupPlanTool, groupNoWorkTool];
 const tools = plannerTools.map(({ type, name, description, inputSchema }) => ({
   type,
   function: { name, description, parameters: inputSchema },
@@ -405,13 +450,23 @@ async function withGroup<T>(
     ask: (summary: string) => void;
     jobs: () => SharedSadeRun;
     verifyReview: (job: SharedSadeJob) => void;
+    verifyFrontendOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
     verifyQuotaFollowup: (plan: ReturnType<typeof parseTeamPlan>, expected: QuotaFollowup) => void;
   }) => Promise<T>,
 ) {
   const store = new Store(':memory:');
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    const fullHandoff = scenario === 'full-handoff';
+    const fullHandoff = scenario === 'full-handoff' || scenario.startsWith('frontend-style');
+    if (fullHandoff)
+      store.put('billingEntitlement', {
+        id: people[0].id,
+        ownerId: people[0].id,
+        tier: 'plus',
+        paidUntil: Date.now() + 30 * 86400000,
+        syncedBlock: 100,
+        updatedAt: new Date().toISOString(),
+      });
     const quotaFallback = scenario.startsWith('quota-');
     const quotaFollowup = scenario === 'quota-followup';
     const names =
@@ -471,6 +526,7 @@ async function withGroup<T>(
         ],
       });
       if (index && ['mac', 'missing-mac', 'owner-ungranted'].includes(scenario)) continue;
+      if (index === 1 && scenario === 'frontend-style-ungranted') continue;
       call(index, {
         action: 'sade-grant',
         groupId,
@@ -531,6 +587,14 @@ async function withGroup<T>(
         for (let index = 1; index < names.length; index++) assert.equal(poll(index), undefined);
       },
       jobs,
+      verifyFrontendOrder(architecture, frontend) {
+        assert.equal(poll(0)?.id, architecture.id, 'Gemini can start the architecture now');
+        assert.notEqual(
+          poll(1)?.id,
+          frontend.id,
+          'Astra waits for the architecture before starting the frontend',
+        );
+      },
       verifyQuotaFollowup(plan, { files, secondBackup }) {
         const run = jobs();
         assert.equal(run.state, 'running', run.error || 'the plan should be queued');
@@ -631,12 +695,52 @@ function scopedWriter(jobs: SharedSadeJob[], file: string) {
   return matches[0];
 }
 
+function checkFrontendAcceptance(frontend: SharedSadeJob, style: FrontendStyle) {
+  assert.ok(frontend.task);
+  const { description, acceptance } = frontend.task;
+  const ask =
+    /\b(?:ask|consult|confirm with|clarify with)\b|h[oỏ]i|x[aá]c nh[aậ]n v[oớ]i|tham kh[aả]o [yý]/i;
+  const choice = /\b(?:choose|select|decide|pick)\b|t[uự] (?:ch[oọ]n|quy[eế]t)/i;
+  if (style === 'unspecified') {
+    assert.match(
+      acceptance,
+      /\b(?:style|aesthetic|theme)\b|phong c[aá]ch/i,
+      'ask about frontend style',
+    );
+    assert.match(acceptance, ask, 'put the request for a style preference in frontend acceptance');
+    assert.match(acceptance, /\b(?:or|alternatively)\b|ho[aặ]c|hay (?:l[aà]|[đd][eể])/i);
+    assert.match(
+      acceptance,
+      /\b(?:astra|harness|designer|their own|itself|yourself)\b|t[uự] (?:ch[oọ]n|quy[eế]t)/i,
+      'the alternate style decision belongs to Astra',
+    );
+    assert.match(acceptance, choice, 'include the option for Astra to choose the style');
+  } else {
+    const instructions = `${description} ${acceptance}`;
+    const positiveInstructions = instructions
+      .replace(/\b(?:do not|don't|no need to|without)\s+(?:ask|consult|confirm)[^.!?;]*/gi, '')
+      .replace(/(?:kh[oô]ng(?: c[aầ]n| ph[aả]i)?|ch[aẳ]ng c[aầ]n)\s+h[oỏ]i[^.!?;]*/gi, '');
+    assert.doesNotMatch(positiveInstructions, ask, 'the sender already resolved the style choice');
+    if (style === 'supplied') {
+      assert.match(instructions, /minimal|t[oố]i gi[aả]n/i, 'retain the minimalist style');
+      assert.match(instructions, /navy|xanh h[aả]i qu[aâ]n/i, 'retain the navy background');
+    } else {
+      assert.equal(style, 'delegated');
+      assert.match(instructions, choice, 'retain the sender’s delegation to Astra');
+    }
+  }
+}
+
 function assess(
   scenario: Case,
   plan: ReturnType<typeof parseTeamPlan>,
   run: SharedSadeRun,
   handoff = defaultHandoff,
   reader: 0 | 1 = 1,
+  frontendStyle?: {
+    style: FrontendStyle;
+    verifyOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
+  },
 ) {
   assert.notEqual(scenario, 'owner-ambiguous', 'ask which owner before assigning a named harness');
   assert.notEqual(
@@ -644,6 +748,7 @@ function assess(
     'owner-ungranted',
     'report the missing grant before assigning a named harness',
   );
+  assert.notEqual(scenario, 'frontend-style-ungranted', 'ask for Astra’s missing project grant');
   if (scenario === 'missing-mac') {
     assert.equal(run.state, 'blocked', 'missing Mac must stop assignment');
     assert.ok(
@@ -675,7 +780,7 @@ function assess(
       scenario === 'quota-named' ? grants[1] : scenario === 'quota-delegated' ? 'auto' : undefined,
       'preserve only the fallback the requester authorized',
     );
-  } else if (scenario === 'full-handoff') {
+  } else if (scenario === 'full-handoff' || scenario === 'frontend-style') {
     assert.equal(jobs.length, 5, 'architecture, frontend, backend, tests and a defensive review');
     const architecture = scopedWriter(jobs, workshop.architecture);
     const frontend = scopedWriter(jobs, workshop.frontend);
@@ -685,27 +790,50 @@ function assess(
     assert.ok(review, 'use review-read-only for the coordinator to exclude patch authors');
     assert.equal(architecture.grantId, grants[0], 'architecture stays with Gemini');
     assert.equal(frontend.grantId, grants[1], 'frontend stays with Astra');
-    assert.deepEqual(frontend.task?.dependsOn, [architecture.task?.key]);
-    const designInstructions = `${frontend.task?.description} ${frontend.task?.acceptance}`;
-    assert.match(designInstructions, /style|aesthetic|phong cách|phong cach/i);
-    assert.match(
-      designInstructions,
-      /ask|hỏi|hoi|\boffer\b[^.]{0,80}\b(?:requester|sender|user)\b[^.]{0,100}\bor\b\s+(?:let|allow)\b[^.]{0,100}\b(?:choose|decide|pick)\b/i,
-      'ask the requester about the style',
-    );
-    assert.match(
-      designInstructions,
-      /tự (chọn|quyết)|tu (chon|quyet)|choose|decide/i,
-      'offer to let Astra choose the style',
-    );
-    assert.deepEqual(backend.task?.dependsOn, [architecture.task?.key]);
-    assert.deepEqual(tests.task?.dependsOn, [backend.task?.key]);
     assert.deepEqual(new Set(review.task?.scope), new Set([workshop.frontend, workshop.backend]));
-    assert.ok(review.task?.dependsOn.includes(frontend.task!.key), 'review waits for frontend');
-    assert.ok(review.task?.dependsOn.includes(backend.task!.key), 'review waits for backend');
-    assert.equal(review.grantId, grants[3], 'the granted independent reviewer gets the audit');
-    for (const job of [backend, tests, review])
-      assert.equal(job.task?.preferredMemberId, undefined, 'delegate unnamed assignments to Sade');
+    if (frontendStyle) {
+      const byKey = new Map(plan.tasks.map((task) => [task.key, task]));
+      const follows = (later: SharedSadeJob, earlier: SharedSadeJob) =>
+        collectPrerequisites(later.task!.dependsOn, byKey, (task) => task.dependsOn).some(
+          (task) => task.key === earlier.task!.key,
+        );
+      assert.ok(follows(frontend, architecture), 'frontend depends on the Gemini architecture');
+      assert.ok(follows(backend, architecture), 'backend respects the architecture handoff');
+      assert.ok(follows(tests, architecture), 'codebase work follows the architecture');
+      assert.ok(follows(review, frontend), 'review waits for frontend');
+      assert.ok(follows(review, backend), 'review waits for backend');
+      assert.ok(
+        review.grantId !== frontend.grantId && review.grantId !== backend.grantId,
+        'the defensive review stays independent of the writers',
+      );
+      checkFrontendAcceptance(frontend, frontendStyle.style);
+      frontendStyle.verifyOrder(architecture, frontend);
+    } else {
+      assert.deepEqual(frontend.task?.dependsOn, [architecture.task?.key]);
+      const designInstructions = `${frontend.task?.description} ${frontend.task?.acceptance}`;
+      assert.match(designInstructions, /style|aesthetic|phong cách|phong cach/i);
+      assert.match(
+        designInstructions,
+        /ask|hỏi|hoi|\boffer\b[^.]{0,80}\b(?:requester|sender|user)\b[^.]{0,100}\bor\b\s+(?:let|allow)\b[^.]{0,100}\b(?:choose|decide|pick)\b/i,
+        'ask the requester about the style',
+      );
+      assert.match(
+        designInstructions,
+        /tự (chọn|quyết)|tu (chon|quyet)|choose|decide/i,
+        'offer to let Astra choose the style',
+      );
+      assert.deepEqual(backend.task?.dependsOn, [architecture.task?.key]);
+      assert.deepEqual(tests.task?.dependsOn, [backend.task?.key]);
+      assert.ok(review.task?.dependsOn.includes(frontend.task!.key), 'review waits for frontend');
+      assert.ok(review.task?.dependsOn.includes(backend.task!.key), 'review waits for backend');
+      assert.equal(review.grantId, grants[3], 'the granted independent reviewer gets the audit');
+      for (const job of [backend, tests, review])
+        assert.equal(
+          job.task?.preferredMemberId,
+          undefined,
+          'delegate unnamed assignments to Sade',
+        );
+    }
   } else if (['handoff', 'owner-relative', 'owner-named'].includes(scenario)) {
     assert.equal(jobs.length, 2, 'two tasks are sufficient');
     const source = scopedWriter(jobs, handoff.source);
@@ -752,6 +880,7 @@ function assess(
 }
 
 const local = (route: string, options?: RequestInit) => fetch(`${endpoint}${route}`, options);
+const generation = { temperature: 0, seed: 7013, num_ctx: 4096 };
 type PlannerReply = {
   role: 'assistant';
   content: string;
@@ -766,7 +895,7 @@ async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
       stream: false,
       think: false,
       keep_alive: '45s',
-      options: { temperature: 0, seed: 7013, num_ctx: 4096, num_predict: fullHandoff ? 1600 : 768 },
+      options: { ...generation, num_predict: fullHandoff ? 1600 : 768 },
       tools,
       messages,
     }),
@@ -777,7 +906,32 @@ async function getPlannerReply(messages: unknown[], fullHandoff: boolean) {
     message: PlannerReply;
     eval_count?: number;
     done_reason?: string;
+    total_duration?: number;
+    load_duration?: number;
+    prompt_eval_count?: number;
+    prompt_eval_duration?: number;
+    eval_duration?: number;
   };
+}
+const loadedModels = z.object({
+  models: z.array(z.object({ digest: z.string(), size: z.number(), size_vram: z.number() })),
+});
+async function sampleModelMemory(digest: string) {
+  try {
+    const response = await local('/api/ps', { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return null;
+    const { models } = loadedModels.parse(await response.json());
+    const active = models.find((entry) => entry.digest === digest);
+    return active
+      ? {
+          allocatedBytes: active.size,
+          estimatedRamBytes: Math.max(0, active.size - active.size_vram),
+          vramBytes: active.size_vram,
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const toolsSha256 = sha256(JSON.stringify(tools));
@@ -802,6 +956,7 @@ type PlannerCase = {
   reference?: string;
   reader?: 0 | 1;
   quotaFollowup?: QuotaFollowup;
+  frontendStyle?: FrontendStyle;
 };
 const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
@@ -835,11 +990,13 @@ const defaultCases: PlannerCase[] = values['quota-fallback']
                   message,
                 })),
               );
-const cases: PlannerCase[] = values['referenced-requests']
-  ? [...referencedRequests]
-  : values['quota-followup']
-    ? [...quotaFollowups]
-    : defaultCases;
+const cases: PlannerCase[] = values['frontend-style']
+  ? [...frontendStyleCases]
+  : values['referenced-requests']
+    ? [...referencedRequests]
+    : values['quota-followup']
+      ? [...quotaFollowups]
+      : defaultCases;
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
@@ -856,6 +1013,8 @@ const externalDecision = z.object({
   decision: z.object({ name: z.string(), arguments: z.unknown() }).strict(),
 });
 function planningPrompt(delivery: SharedDelivery) {
+  if (values['planning-prompt'] === 'frontend-style-deferred')
+    return sharedGroupPlanningPrompt(delivery, { deferFrontendStyle: true });
   const base = sharedGroupPlanningPrompt(delivery);
   if (values['planning-prompt'] === 'baseline') return base;
   if (values['planning-prompt'] === 'quota-compact')
@@ -877,8 +1036,28 @@ For reproducing, fixing and rerunning on one paired machine, include those three
 ${base}`;
 }
 
+function frontendExpectation(style: FrontendStyle) {
+  if (style === 'ungranted')
+    return {
+      tool: groupQuestionTool.name,
+      question: 'Astra’s owner needs to grant permission for this project.',
+    };
+  return {
+    tool: groupPlanTool.name,
+    architecture: `Gemini on ${workshop.architecture} can start before Astra.`,
+    frontend: `Astra on ${workshop.frontend} waits for Gemini’s architecture.`,
+    style:
+      style === 'unspecified'
+        ? 'Frontend acceptance asks for the sender’s preference or offers to let Astra choose.'
+        : style === 'supplied'
+          ? 'Frontend retains a minimalist style and navy background.'
+          : 'Frontend retains the sender’s delegation to Astra.',
+    remaining: 'Keep the mapped backend and codebase work and the independent defensive review.',
+  };
+}
+
 if (exportPrompt) {
-  const { scenario, id, message, reference } = selectedCases[0];
+  const { scenario, id, message, reference, frontendStyle } = selectedCases[0];
   await withGroup(scenario, message, reference, async ({ delivery }) => {
     const prompt = planningPrompt(delivery);
     const decisionSchema = {
@@ -909,6 +1088,9 @@ if (exportPrompt) {
           tool: groupPlanTool,
           toolsSha256,
           decisionSchema,
+          ...(frontendStyle
+            ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
+            : {}),
         },
         null,
         2,
@@ -920,7 +1102,16 @@ if (exportPrompt) {
   process.exit(0);
 }
 
-for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } of selectedCases) {
+for (const {
+  scenario,
+  id,
+  message,
+  handoff,
+  reference,
+  reader,
+  quotaFollowup,
+  frontendStyle,
+} of selectedCases) {
   const row = await withGroup(scenario, message, reference, async (group) => {
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
@@ -936,10 +1127,11 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
     let toolName;
     let correction;
     let generatedTokens = 0;
+    const modelReplies: Awaited<ReturnType<typeof getPlannerReply>>[] = [];
     const roster = group.delivery.team.map((member) => member.id);
     function acceptReply(tool: { name: string; arguments: unknown }) {
       toolName = tool.name;
-      if (toolName === groupQuestionTool.name && values['owner-handoff']) {
+      if (toolName === groupQuestionTool.name && (values['owner-handoff'] || frontendStyle)) {
         const args = z.object({ summary: z.string() }).strict().parse(tool.arguments);
         const result = sharedFinish.parse({ kind: 'question', ...args });
         assert.equal(result.kind, 'question');
@@ -966,11 +1158,12 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
       } else {
         const messages: unknown[] = [{ role: 'user', content: prompt }];
         for (let attempt = 0; attempt < 2; attempt++) {
-          const {
-            message: reply,
-            eval_count,
-            done_reason,
-          } = await getPlannerReply(messages, scenario === 'full-handoff');
+          const modelReply = await getPlannerReply(
+            messages,
+            scenario === 'full-handoff' || Boolean(frontendStyle),
+          );
+          if (frontendStyle) modelReplies.push(modelReply);
+          const { message: reply, eval_count, done_reason } = modelReply;
           generatedTokens += eval_count || 0;
           assert.equal(
             reply.tool_calls?.length,
@@ -992,10 +1185,10 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
       parsed = true;
       if (question) {
         assert.ok(
-          ['owner-ambiguous', 'owner-ungranted'].includes(scenario),
+          ['owner-ambiguous', 'owner-ungranted', 'frontend-style-ungranted'].includes(scenario),
           'a uniquely identified, granted harness should start work directly',
         );
-        assert.match(question, /Bình|Binh/i);
+        assert.match(question, scenario === 'frontend-style-ungranted' ? /Astra/i : /Bình|Binh/i);
         if (scenario === 'owner-ambiguous') assert.match(question, /Chi/i);
         else assert.match(question, /quyền|cho phép|grant|authoriz|permission/i);
         group.ask(question);
@@ -1008,20 +1201,30 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
           group.verifyQuotaFollowup(plan, quotaFollowup);
           run = group.jobs();
         } else {
-          const writer = assess(scenario, plan, run, handoff, reader);
+          const writer = assess(
+            scenario,
+            plan,
+            run,
+            handoff,
+            reader,
+            frontendStyle
+              ? { style: frontendStyle, verifyOrder: group.verifyFrontendOrder }
+              : undefined,
+          );
           if (writer) group.verifyReview(writer);
         }
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
+    const milliseconds = Math.round(performance.now() - started);
     return {
       id,
       scenario,
       promptSha256,
       parsed,
       pass: !error,
-      milliseconds: Math.round(performance.now() - started),
+      milliseconds,
       ...(generatedTokens ? { generatedTokens } : {}),
       plan,
       question,
@@ -1029,6 +1232,17 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
       correction,
       state: run?.state,
       error,
+      ...(frontendStyle
+        ? {
+            input: { message, reference },
+            expected: frontendExpectation(frontendStyle),
+            prompt,
+            modelReplies,
+            ...(selected && !saved
+              ? { modelMemory: await sampleModelMemory(selected.digest) }
+              : {}),
+          }
+        : {}),
     };
   });
   rows.push(row);
@@ -1050,6 +1264,14 @@ for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } 
           ? { source: values['external-decision'] ? 'external-decision' : 'external-plan' }
           : { model, digest: selected.digest }),
         toolsSha256,
+        ...(values['frontend-style']
+          ? {
+              planningPrompt: values['planning-prompt'],
+              generation: { ...generation, num_predict: 1600, think: false },
+              memoryMeasurement:
+                'Ollama /api/ps post-reply model allocation. RAM is allocation minus VRAM. Sample excludes peak process and runner memory.',
+            }
+          : {}),
         ...(source ? { replayedFrom: path.basename(source) } : {}),
         rows,
       },

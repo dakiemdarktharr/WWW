@@ -19,6 +19,7 @@ on:
             corpus,
             contrast,
             planner-constraints,
+            frontend-style,
             referenced-requests,
             quota-followup,
             quota-example,
@@ -189,7 +190,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || '[0,1,2,3,4]') }}
+        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || inputs.sade_suite == 'frontend-style' && '[0,1,2,3]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -254,6 +255,16 @@ jobs:
             prompts=(baseline ordered)
             node --import tsx scripts/eval-shared-sade-local.ts --categories --contrast --model "$SADE_MODEL" \
               --intent-prompt "${prompts[$SADE_SHARD]}" --output "$results/contrast-$SADE_SHARD.jsonl"
+          elif [[ "$SADE_SUITE" == frontend-style ]]; then
+            prompts=(baseline frontend-style-deferred)
+            if (( SADE_SHARD % 2 == 1 )); then
+              prompts=(frontend-style-deferred baseline)
+            fi
+            for mode in "${prompts[@]}"; do
+              node --import tsx scripts/eval-shared-sade-planner.ts "$results/frontend-style-$mode.json" \
+                --model "$SADE_MODEL" --frontend-style --planning-prompt "$mode" \
+                --shard "$SADE_SHARD/4" --timeout-ms 120000
+            done
           elif [[ "$SADE_SUITE" == referenced-requests ]]; then
             node --import tsx scripts/eval-shared-sade-planner.ts "$results/referenced-requests.json" \
               --referenced-requests --timeout-ms 120000
