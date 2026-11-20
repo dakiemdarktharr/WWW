@@ -135,7 +135,8 @@
   padding: 12px 0;
   border-bottom: 1px solid var(--line-soft);
 }
-.shared-group-history time {
+.shared-group-history time,
+.shared-group-history small {
   margin-left: 12px;
   font-size: 11px;
   color: var(--muted);
@@ -144,6 +145,24 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 8px 0;
+}
+.shared-group-reference {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--line-soft);
+}
+.shared-group-reference div {
+  min-width: 0;
+}
+.shared-group-reference p {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
 }
 .shared-group-compose {
   display: flex;

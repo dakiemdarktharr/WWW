@@ -53,7 +53,7 @@ const command = z.discriminatedUnion('action', [
       id: groupId,
       content: z.string().trim().min(1).max(8000),
       sade: z
-        .object({ projectKey, readOnly: z.literal(true).optional() })
+        .object({ projectKey, readOnly: z.literal(true).optional(), replyTo: groupId.optional() })
         .strict()
         .optional(),
     })
@@ -311,7 +311,8 @@ export class SharedGroups {
             message.groupId !== group.id ||
             message.content !== input.content ||
             message.sade?.projectKey !== input.sade?.projectKey ||
-            message.sade?.readOnly !== input.sade?.readOnly
+            message.sade?.readOnly !== input.sade?.readOnly ||
+            message.sade?.replyTo !== input.sade?.replyTo
           )
             throw new DomainError('Message ID already used.', 409);
           return message;

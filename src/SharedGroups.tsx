@@ -46,6 +46,9 @@ export default function SharedGroups({
   const [machineId, setMachineId] = useState('');
   const [projectKey, setProjectKey] = useState('');
   const [readOnlyRequest, setReadOnlyRequest] = useState(false);
+  const [supportsReferencedMessage, setSupportsReferencedMessage] = useState(false);
+  const [reference, setReference] = useState<SharedMessage>();
+  const composer = useRef<HTMLTextAreaElement>(null);
   const [answer, setAnswer] = useState('');
   const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
     null,
@@ -123,6 +126,8 @@ export default function SharedGroups({
     setMachineId('');
     setProjectKey('');
     setReadOnlyRequest(false);
+    setSupportsReferencedMessage(false);
+    setReference(undefined);
     setAnswer('');
     setTaskUpdate(null);
     messageDraft.current = null;
@@ -139,11 +144,13 @@ export default function SharedGroups({
           hasMore: boolean;
           sadeGrants?: SharedHarnessGrant[];
           sadeRuns?: SharedSadeRun[];
+          supportsReferencedMessage?: true;
         }>({ action: 'read', groupId: selected, after: cursor });
         if (active) {
           setRoom(next.group);
           setGrants(next.sadeGrants || []);
           setSadeRuns(next.sadeRuns || []);
+          setSupportsReferencedMessage(next.supportsReferencedMessage === true);
           setError('');
           if (next.messages.length) {
             cursor = next.messages[next.messages.length - 1].sequence;
@@ -226,6 +233,14 @@ export default function SharedGroups({
   const linkedProjects = [
     ...new Map(localGrants.map((grant) => [grant.projectKey, grant.projectName])).entries(),
   ];
+  const referenceProjectKey = reference?.sade?.projectKey;
+  const projectOptions = referenceProjectKey
+    ? linkedProjects.filter(([key]) => key === referenceProjectKey)
+    : linkedProjects;
+  const projectIsAvailable = projectOptions.some(([key]) => key === projectKey);
+  const needsReferenceProject = Boolean(
+    reference && (!supportsReferencedMessage || !projectIsAvailable),
+  );
   const grantLabels = new Map(
     grants.map((grant) => {
       const owner = room?.people.find((person) => person.id === grant.ownerId);
@@ -836,41 +851,93 @@ export default function SharedGroups({
                       minute: '2-digit',
                     })}
                   </time>
+                  {message.sade?.replyTo && <small>Refers to a group message</small>}
                   <p>{message.content}</p>
+                  {supportsReferencedMessage &&
+                    linkedProjects.some(
+                      ([key]) => !message.sade || key === message.sade.projectKey,
+                    ) && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => {
+                          setReference(message);
+                          if (message.sade) setProjectKey(message.sade.projectKey);
+                          else if (linkedProjects.length === 1) setProjectKey(linkedProjects[0][0]);
+                          composer.current?.focus();
+                        }}
+                      >
+                        Ask Sade about this
+                      </button>
+                    )}
                 </article>
               ))}
             </div>
+            {reference && (
+              <div
+                className="shared-group-reference"
+                role="group"
+                aria-label="Selected message for Sade"
+              >
+                <div>
+                  <strong>{reference.author}</strong>
+                  <p title={reference.content.slice(0, 160)}>{reference.content.slice(0, 160)}</p>
+                </div>
+                <button
+                  type="button"
+                  className="text-button"
+                  aria-label="Remove message reference"
+                  disabled={busy}
+                  onClick={() => setReference(undefined)}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
             <form
               className="shared-group-compose"
               onSubmit={(event) => {
                 event.preventDefault();
+                if (needsReferenceProject || !content.trim()) return;
                 void run(async () => {
                   const draft = messageDraft.current;
                   const readOnly = Boolean(projectKey) && readOnlyRequest;
+                  const replyTo = reference?.id;
                   const next: NonNullable<typeof messageDraft.current> =
                     draft?.content === content &&
                     draft.groupId === room.id &&
                     (draft.sade?.projectKey || '') === projectKey &&
-                    Boolean(draft.sade?.readOnly) === readOnly
+                    Boolean(draft.sade?.readOnly) === readOnly &&
+                    draft.sade?.replyTo === replyTo
                       ? draft
                       : {
                           id: crypto.randomUUID(),
                           content,
                           groupId: room.id,
                           ...(projectKey
-                            ? { sade: { projectKey, ...(readOnly ? { readOnly: true } : {}) } }
+                            ? {
+                                sade: {
+                                  projectKey,
+                                  ...(readOnly ? { readOnly: true } : {}),
+                                  ...(replyTo ? { replyTo } : {}),
+                                },
+                              }
                             : {}),
                         };
                   messageDraft.current = next;
                   await request({ action: 'message', ...next });
+                  if (selectedRef.current !== room.id) return;
                   messageDraft.current = null;
                   setContent('');
                   setProjectKey('');
                   setReadOnlyRequest(false);
+                  setReference(undefined);
                 });
               }}
             >
               <textarea
+                ref={composer}
                 aria-label="Message group"
                 placeholder="Message group"
                 value={content}
@@ -878,15 +945,17 @@ export default function SharedGroups({
                 maxLength={8000}
                 required
               />
-              {linkedProjects.length > 0 && (
+              {(projectOptions.length > 0 || reference) && (
                 <div className="shared-group-compose-controls">
                   <select
                     aria-label="Ask Sade in this group"
-                    value={projectKey}
+                    value={reference && !projectIsAvailable ? '' : projectKey}
                     onChange={(event) => setProjectKey(event.target.value)}
                   >
-                    <option value="">Send a group message</option>
-                    {linkedProjects.map(([key, name]) => (
+                    <option value="">
+                      {reference ? 'Choose a project' : 'Send a group message'}
+                    </option>
+                    {projectOptions.map(([key, name]) => (
                       <option key={key} value={key}>
                         Ask Sade · {name}
                       </option>
@@ -904,8 +973,11 @@ export default function SharedGroups({
                   )}
                 </div>
               )}
-              <button className="button primary" disabled={busy || !content.trim()}>
-                {projectKey ? 'Ask Sade' : 'Send'}
+              <button
+                className="button primary"
+                disabled={busy || !content.trim() || needsReferenceProject}
+              >
+                {projectKey || reference ? 'Ask Sade' : 'Send'}
               </button>
             </form>
           </>

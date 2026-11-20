@@ -249,11 +249,22 @@ try {
     turns: 4,
   });
   await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
-  await a.page.getByLabel('Ask Sade in this group').selectOption(projectKey);
+  const aboutBob = a.page
+    .getByRole('article')
+    .filter({ hasText: 'Reply from Bob' })
+    .getByRole('button', { name: 'Ask Sade about this' });
+  await aboutBob.click();
+  const selectedMessage = a.page.getByRole('group', { name: 'Selected message for Sade' });
+  await expect(selectedMessage).toContainText('Reply from Bob');
+  await a.page.getByRole('button', { name: 'Remove message reference' }).click();
+  await expect(selectedMessage).toHaveCount(0);
+  await aboutBob.click();
+  await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue(projectKey);
   await a.page.getByLabel('Read-only request').check();
   await a.page.getByLabel('Message group', { exact: true }).fill('Check the current plan.');
   await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
   await expect(a.page.getByLabel('Ask Sade in this group')).toHaveValue('');
+  await expect(selectedMessage).toHaveCount(0);
   await expect(a.page.getByLabel('Read-only request')).toHaveCount(0);
   await a.page.getByLabel('Message group', { exact: true }).fill('Cảm ơn, nghe rõ rồi.');
   await a.page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -269,10 +280,12 @@ try {
       grants: [grantId],
       active,
       taskUpdates: true,
+      referencedMessage: true,
       readUpdates,
       waitingForCapacity,
     });
   const firstPlan = (poll() as { delivery: SharedDelivery }).delivery;
+  assert.deepEqual(firstPlan.referencedMessage, { author: 'Bob', content: 'Reply from Bob' });
   assert.ok(firstPlan.team.length);
   assert.ok(firstPlan.team.every(({ allowWrites }) => !allowWrites));
   const question = 'Should Alice Codex or Bob Codex check the plan?';
@@ -294,6 +307,7 @@ try {
   const plan = (poll() as { delivery: SharedDelivery }).delivery;
   assert.notEqual(plan.id, firstPlan.id);
   assert.equal(plan.clarification?.answer, 'Alice Codex should check the plan.');
+  assert.deepEqual(plan.referencedMessage, firstPlan.referencedMessage);
   dispatch({
     action: 'sade-finish',
     jobId: plan.id,
@@ -318,6 +332,7 @@ try {
     },
   });
   const task = (poll() as { delivery: SharedDelivery }).delivery;
+  assert.equal(task.referencedMessage, undefined);
   await expect(
     progress.getByRole('listitem').filter({ hasText: /^Check the current plan\s+·/ }),
   ).toContainText('Alice Codex · Alice');

@@ -695,6 +695,7 @@ async function sharedSadeLoop(generation, owner) {
   let supportsRosterLookup = false;
   let supportsReviewedRevisionFiles = false;
   let supportsUnchangedRevisionScopes = false;
+  let supportsReferencedMessage = false;
   let supportsCapacityWait = false;
   let grantCursor;
   let revocationSync;
@@ -756,6 +757,7 @@ async function sharedSadeLoop(generation, owner) {
           ...(supportsRosterLookup ? { rosterLookup: true } : {}),
           ...(supportsReviewedRevisionFiles ? { reviewedRevisionFiles: true } : {}),
           ...(supportsUnchangedRevisionScopes ? { unchangedRevisionScopes: true } : {}),
+          ...(supportsReferencedMessage ? { referencedMessage: true } : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -771,6 +773,7 @@ async function sharedSadeLoop(generation, owner) {
       supportsReviewedRevisionFiles = response.ok && body.supportsReviewedRevisionFiles === true;
       supportsUnchangedRevisionScopes =
         response.ok && body.supportsUnchangedRevisionScopes === true;
+      supportsReferencedMessage = response.ok && body.supportsReferencedMessage === true;
       supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
       if (response.ok) {
         await localSharedSade({

@@ -24,6 +24,7 @@ let sharedPolls = 0;
 const rosterCapabilities: unknown[] = [];
 const revisionFileCapabilities: unknown[] = [];
 const unchangedScopeCapabilities: unknown[] = [];
+const referenceCapabilities: unknown[] = [];
 const sharedGrantPages: string[][] = [];
 let sharedGrantCursorSentToCloud = false;
 const reportedSharedJobs: string[] = [];
@@ -113,6 +114,7 @@ const fixture = createServer(async (request, response) => {
     rosterCapabilities.push(payload.rosterLookup);
     revisionFileCapabilities.push(payload.reviewedRevisionFiles);
     unchangedScopeCapabilities.push(payload.unchangedRevisionScopes);
+    referenceCapabilities.push(payload.referencedMessage);
     sharedGrantPages.push(payload.grants);
     sharedGrantCursorSentToCloud ||= 'grantCursor' in payload || 'nextGrantCursor' in payload;
     if (sharedGrantPages.length === 2) response.statusCode = 503;
@@ -124,6 +126,7 @@ const fixture = createServer(async (request, response) => {
         supportsRosterLookup: true,
         supportsReviewedRevisionFiles: true,
         supportsUnchangedRevisionScopes: true,
+        supportsReferencedMessage: true,
       }),
     );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
@@ -328,6 +331,8 @@ try {
     assert.ok(revisionFileCapabilities.includes(true));
     assert.equal(unchangedScopeCapabilities[0], undefined);
     assert.ok(unchangedScopeCapabilities.includes(true));
+    assert.equal(referenceCapabilities[0], undefined);
+    assert.ok(referenceCapabilities.includes(true));
     await expect.poll(() => sharedGrantPages.length, { timeout: 18000 }).toBeGreaterThanOrEqual(3);
     assert.equal(sharedGrantPages[0].length, 32);
     assert.ok(!sharedGrantPages[0].includes(lastGrant));

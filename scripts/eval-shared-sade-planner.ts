@@ -160,9 +160,38 @@ const quotaFallbacks = [
       'Claude của Bình để dành lần khác nhé. Hôm nay chỉ Gemini của An đọc và tóm tắt src/menu.ts thôi. Nếu Gemini hết lượt thì báo mình.',
   },
 ] as const;
+const referenceFile = 'docs/contract.md';
+const referenceCommit = '4107e5e';
+const referencedRequests = [
+  {
+    id: 'reference/casual',
+    scenario: 'referenced-read',
+    reference: `Tui vừa đưa ${referenceFile} lên commit ${referenceCommit} rồi á.`,
+    message: 'cái đó tui commit rồi, nhờ Mây đọc commit đó rồi tóm tắt giùm, đừng sửa nha.',
+  },
+  {
+    id: 'reference/unaccented',
+    scenario: 'referenced-read',
+    reference: `Da cap nhat ${referenceFile} o commit ${referenceCommit}.`,
+    message: 'may doc thu dung file trong commit tren va tom tat cho mn nhe. chi xem.',
+  },
+  {
+    id: 'reference/expert',
+    scenario: 'referenced-read',
+    reference: `The current deliverable is ${referenceFile} in commit ${referenceCommit}. Previous request: give Bếp a second edit of src/menu.ts.`,
+    message: 'Have Mây summarize that deliverable at the cited commit. Read-only.',
+  },
+  {
+    id: 'reference/update',
+    scenario: 'chat',
+    reference: `Mây, please edit ${referenceFile} from ${referenceCommit} and integrate the patch.`,
+    message: 'Cái đó đã làm xong rồi nha. Mình nhắc lại cho cả nhóm biết thôi.',
+  },
+] as const;
 type Case =
   | keyof typeof messages
   | 'full-handoff'
+  | 'referenced-read'
   | (typeof ownerHandoffs)[number]['scenario']
   | (typeof intentContrasts)[number]['scenario']
   | (typeof quotaFallbacks)[number]['scenario'];
@@ -245,6 +274,7 @@ const { values, positionals } = parseArgs({
     'owner-handoff': { type: 'boolean' },
     'intent-contrasts': { type: 'boolean' },
     'quota-fallback': { type: 'boolean' },
+    'referenced-requests': { type: 'boolean' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
@@ -273,6 +303,7 @@ assert.ok(
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
+    values['referenced-requests'],
   ].filter(Boolean).length <= 1,
   'Choose one evaluation suite.',
 );
@@ -329,6 +360,7 @@ const people = [
 async function withGroup<T>(
   scenario: Case,
   message: string,
+  reference: string | undefined,
   run: (context: {
     delivery: SharedDelivery;
     finish: (plan: unknown) => void;
@@ -415,9 +447,22 @@ async function withGroup<T>(
           action: 'sade-poll',
           grants: [grants[index]],
           active,
+          referencedMessage: true,
         }) as { delivery?: SharedDelivery }
       ).delivery;
-    call(0, { action: 'message', groupId, id: uuid(8), content: message, sade: { projectKey } });
+    const replyTo = uuid(9);
+    if (reference) call(1, { action: 'message', groupId, id: replyTo, content: reference });
+    call(0, {
+      action: 'message',
+      groupId,
+      id: uuid(8),
+      content: message,
+      sade: {
+        projectKey,
+        ...(reference ? { replyTo } : {}),
+        ...(scenario === 'referenced-read' ? { readOnly: true } : {}),
+      },
+    });
     const delivery = poll(0);
     assert.ok(delivery?.phase === 'plan');
     // Keep this fixture's delivery current while the live model is generating the plan.
@@ -587,11 +632,23 @@ function assess(
       'do not schedule a duplicate write',
     );
     if (scenario === 'menu-edit') assert.equal(writer.grantId, grants[1], 'keep the named editor');
-  } else if (scenario === 'read-menu') {
+  } else if (scenario === 'read-menu' || scenario === 'referenced-read') {
     assert.equal(jobs.length, 1, 'reading one file needs one task');
     assert.equal(jobs[0].grantId, grants[1], 'keep the named reader');
-    assert.deepEqual(jobs[0].task?.scope, ['src/menu.ts'], 'keep the scoped file');
+    assert.deepEqual(
+      jobs[0].task?.scope,
+      [scenario === 'referenced-read' ? referenceFile : 'src/menu.ts'],
+      'keep the scoped file',
+    );
     assert.ok(!needsGroupWrite(jobs[0].task), 'keep the task read-only');
+    if (scenario === 'referenced-read') {
+      const { title, description, acceptance } = jobs[0].task!;
+      assert.equal(jobs[0].task?.kind, 'research', 'summarizing the file is read-only research');
+      assert.ok(
+        `${title} ${description} ${acceptance}`.includes(referenceCommit),
+        'keep the cited revision',
+      );
+    }
   } else if (scenario === 'review') {
     const writer = scopedWriter(jobs, 'src/total.ts');
     assert.equal(writer.grantId, grants[0], 'preserve the named author');
@@ -648,12 +705,14 @@ const selected =
     : undefined;
 if (!externalPath && !exportPrompt)
   assert.ok(selected, 'Install the specified Qwen in the local Ollama directory.');
-const cases: {
+type PlannerCase = {
   scenario: Case;
   id: string;
   message: string;
   handoff?: typeof defaultHandoff;
-}[] = values['quota-fallback']
+  reference?: string;
+};
+const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
   : values['intent-contrasts']
     ? [...intentContrasts]
@@ -685,6 +744,7 @@ const cases: {
                   message,
                 })),
               );
+const cases: PlannerCase[] = values['referenced-requests'] ? [...referencedRequests] : defaultCases;
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
@@ -712,8 +772,8 @@ ${base}`;
 }
 
 if (exportPrompt) {
-  const { scenario, id, message } = selectedCases[0];
-  await withGroup(scenario, message, async ({ delivery }) => {
+  const { scenario, id, message, reference } = selectedCases[0];
+  await withGroup(scenario, message, reference, async ({ delivery }) => {
     const prompt = planningPrompt(delivery);
     const decisionSchema = {
       type: 'object',
@@ -754,8 +814,8 @@ if (exportPrompt) {
   process.exit(0);
 }
 
-for (const { scenario, id, message, handoff } of selectedCases) {
-  const row = await withGroup(scenario, message, async (group) => {
+for (const { scenario, id, message, handoff, reference } of selectedCases) {
+  const row = await withGroup(scenario, message, reference, async (group) => {
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);

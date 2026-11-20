@@ -4,6 +4,8 @@ Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let
 
 Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi chỉ báo tình hình qua **Ask Sade**, planner có thể kết thúc bằng một thao tác riêng, kèm lời giải thích. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
+Để nhờ Sade kiểm tra việc đã nêu trong một tin cũ, chọn **Ask Sade about this** ngay dưới tin đó. Ô soạn hiển thị người gửi và bản xem trước để bạn kiểm tra trước khi gửi. Planner nhận một đoạn đã lọc thông tin xác thực, tối đa 1.200 ký tự, từ đúng tin đã chọn. Nếu tin được chọn là yêu cầu Sade, yêu cầu mới phải cùng project. Harness thực hiện và review nhận nhiệm vụ đã phân công. Desktop cũ giữ yêu cầu tham chiếu trong hàng chờ và giữ nguyên lượt đã cấp.
+
 Desktop giữ kết quả đầu tiên đã được chấp nhận của planner hoặc reviewer. Lời gọi lặp đúng nội dung được xác nhận một lần nữa. Lời gọi mâu thuẫn trong cùng lượt bị từ chối. Planner vẫn có thể sửa và gửi lại đầu ra nếu lần trước bị lỗi kiểm tra cấu trúc.
 
 Planner nhận mã ngắn cho từng teammate cùng tên gốc và tên không dấu khi khác nhau. Desktop đối chiếu mã với roster của lượt lập kế hoạch và chuyển về ID quyền đã cấp trước khi nộp kế hoạch. Mã ngoài roster bị từ chối. Kế hoạch tham chiếu dependency không tồn tại trả về các khóa đã khai báo để harness có thể sửa trong cùng lượt. Việc phân công chỉ bắt đầu khi kế hoạch hợp lệ.

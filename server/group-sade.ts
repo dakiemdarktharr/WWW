@@ -182,6 +182,7 @@ export const groupSadeCommands = [
       patchHandoff: z.literal(true).optional(),
       reviewedRevisionFiles: z.literal(true).optional(),
       unchangedRevisionScopes: z.literal(true).optional(),
+      referencedMessage: z.literal(true).optional(),
       reviewRevision: z.literal(true).optional(),
       rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
@@ -226,11 +227,20 @@ type Job = SharedSadeJob & {
 type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
   content: string;
+  replyTo?: string;
   roster: string[];
   readOnly?: true;
   unavailableGrants?: string[];
   jobs: Job[];
 };
+const referenceAuthorLimit = 100;
+const referenceContentLimit = 1200;
+export const sharedMessageReference = z
+  .object({
+    author: z.string().max(referenceAuthorLimit),
+    content: z.string().max(referenceContentLimit),
+  })
+  .strict();
 export type SharedDelivery = {
   id: string;
   grantId: string;
@@ -238,6 +248,7 @@ export type SharedDelivery = {
   projectKey: string;
   phase: SharedSadeJob['phase'];
   request: string;
+  referencedMessage?: z.infer<typeof sharedMessageReference>;
   team: {
     id: string;
     name: string;
@@ -548,11 +559,12 @@ export class GroupSade {
   view(group: SharedGroup, ownerId?: string) {
     const grants = this.grants(group);
     return {
+      supportsReferencedMessage: true as const,
       sadeGrants: grants
         .filter((grant) => this.usable(grant, group, false))
         .map(({ deviceId, sharingId, revoked, ...view }) => view),
       sadeRuns: this.runs(group).map(
-        ({ authorId, content, roster, readOnly, unavailableGrants, ...run }) => ({
+        ({ authorId, content, replyTo, roster, readOnly, unavailableGrants, ...run }) => ({
           ...run,
           canAnswer: ownerId === authorId,
           jobs: run.jobs.map(
@@ -609,12 +621,22 @@ export class GroupSade {
   }
   start(group: SharedGroup, message: SharedMessage) {
     if (!message.sade) return;
-    const { projectKey, readOnly } = message.sade;
+    const { projectKey, readOnly, replyTo } = message.sade;
     const grants = this.grants(group).filter(
       (grant) => grant.projectKey === projectKey && this.usable(grant, group),
     );
     if (!grants.some((grant) => grant.ownerId === message.ownerId))
       throw new DomainError('Link your project and grant a teammate access before asking Sade.');
+    if (replyTo) {
+      const reference = this.store.lookup<SharedMessage>('sharedMessage', replyTo);
+      if (
+        !reference ||
+        reference.groupId !== group.id ||
+        reference.sequence >= message.sequence ||
+        (reference.sade && reference.sade.projectKey !== projectKey)
+      )
+        throw new DomainError('Choose an earlier message from this group and project.');
+    }
     const now = this.now();
     const similar = this.store.db
       .prepare(
@@ -666,6 +688,7 @@ export class GroupSade {
       groupId: group.id,
       projectKey,
       authorId: message.ownerId,
+      ...(replyTo ? { replyTo } : {}),
       content: redact(message.content),
       ...(readOnly ? { readOnly: true } : {}),
       roster: grants.map((grant) => grant.id),
@@ -1375,6 +1398,30 @@ export class GroupSade {
           }
           continue;
         }
+        let referencedMessage: SharedDelivery['referencedMessage'];
+        if (job.phase === 'plan' && run.replyTo) {
+          if (!command.referencedMessage) {
+            const summary = 'Update this desktop to let Sade use the selected group message.';
+            if (job.summary !== summary) {
+              job.summary = summary;
+              touched = true;
+            }
+            continue;
+          }
+          const reference = this.store.lookup<SharedMessage>('sharedMessage', run.replyTo);
+          if (
+            !reference ||
+            reference.groupId !== group.id ||
+            (reference.sade && reference.sade.projectKey !== run.projectKey)
+          ) {
+            this.block(run, job, 'The selected group message is no longer available.');
+            break;
+          }
+          referencedMessage = {
+            author: redact(reference.author).slice(0, referenceAuthorLimit),
+            content: redact(reference.content).slice(0, referenceContentLimit),
+          };
+        }
         if (!retry) {
           job.state = 'running';
           job.awaitingReceipt = true;
@@ -1410,6 +1457,7 @@ export class GroupSade {
           projectKey: run.projectKey,
           phase: job.phase,
           request: reviewRequirements ?? run.content,
+          ...(referencedMessage ? { referencedMessage } : {}),
           team,
           task: job.task,
           ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
@@ -1443,6 +1491,7 @@ export class GroupSade {
       supportsRosterLookup: true as const,
       supportsReviewedRevisionFiles: true as const,
       supportsUnchangedRevisionScopes: true as const,
+      supportsReferencedMessage: true as const,
       supportsCapacityWait: true as const,
       active,
       delivery,

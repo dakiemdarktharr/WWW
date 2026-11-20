@@ -39,7 +39,7 @@ export interface SharedMessage {
   content: string;
   createdAt: string;
   sequence: number;
-  sade?: { projectKey: string; readOnly?: true };
+  sade?: { projectKey: string; readOnly?: true; replyTo?: string };
 }
 export type SharedPlatform = 'win32' | 'darwin' | 'linux';
 export interface SharedHarnessGrant {
