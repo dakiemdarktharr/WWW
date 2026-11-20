@@ -62,7 +62,7 @@ export default function PublicRouter() {
       ]);
       const previousFocus = document.activeElement;
       try {
-        if (!reduced) {
+        if (push && !reduced) {
           overlay = document.createElement('div');
           overlay.className = 'kp-route-blinds';
           overlay.setAttribute('aria-hidden', 'true');
