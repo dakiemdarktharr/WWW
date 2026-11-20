@@ -6,28 +6,6 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
-    version: 'Web · 19.11',
-    date: '2026-11-19',
-    fixes: [
-      {
-        vi: 'Giao diện black–white–lime–violet với chế độ sáng/tối. Bốn hàng chữ Kivuno 3D phồng mềm: kéo để xoay, thả để trở về. Footer ghép ảnh hoa thật qua kính khúc xạ Three.js, có nút tải và thông tin bản quyền.',
-        en: 'A black, white, lime and violet interface with light/dark modes. Four rows of inflated 3D Kivuno letters: drag to rotate, release to return. A Three.js glass footer refracts a collage of real flower photographs, with downloads and copyright information.',
-      },
-      {
-        vi: 'Mô phỏng group chat liên tục thay cho các tab hướng dẫn; hỗ trợ tạm dừng, phát lại và gửi tin nhắn thử. Chữ 3D và kính có ảnh dự phòng khi máy không hỗ trợ WebGL.',
-        en: 'A continuous group chat replaces the guide tabs, with pause, replay and a local demo composer. The 3D title and glass retain photographic or rendered fallbacks when WebGL is unavailable.',
-      },
-      {
-        vi: 'Cập nhật giới thiệu Sade, review độc lập và bàn giao context. Đồng bộ thiết kế cho đăng nhập và gói Free/Plus/Max; checkout Fuji dùng token thử nghiệm, QR ngân hàng chỉ chạy trong demo cục bộ.',
-        en: 'Updated Sade, independent review and context handoff previews. Sign-in and Free/Plus/Max plans share the new design; Fuji checkout uses test tokens and bank QR remains a local demo.',
-      },
-      {
-        vi: 'Đây là cập nhật web; phiên bản bộ cài vẫn theo thông tin tải xuống của từng hệ điều hành.',
-        en: 'This is a web update; installer versions still follow the download information for each platform.',
-      },
-    ],
-  },
-  {
     version: '0.8.5',
     date: '2026-11-17',
     fixes: [

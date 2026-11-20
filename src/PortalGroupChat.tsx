@@ -10,7 +10,6 @@ import {
   MessageCircle,
   Pause,
   Play,
-  RotateCcw,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
@@ -94,8 +93,10 @@ export default function PortalGroupChat() {
   const copy = (vi: string, en: string) => (locale === 'vi' ? vi : en);
   const [messages, setMessages] = useState<ChatMessage[]>([conversation[0]]);
   const [progress, setProgress] = useState(1);
+  const [cycle, setCycle] = useState(0);
   const [paused, setPaused] = useState(false);
   const [visible, setVisible] = useState(false);
+  const [pageVisible, setPageVisible] = useState(!document.hidden);
   const [draft, setDraft] = useState('');
   const [approved, setApproved] = useState(false);
   const [following, setFollowing] = useState(true);
@@ -107,7 +108,7 @@ export default function PortalGroupChat() {
   const messageId = useRef(0);
   const reducedWasApplied = useRef(false);
   const finished = progress >= conversation.length;
-  const playing = !paused && !reduced && !finished;
+  const playing = !paused && !reduced;
 
   function follow(value: boolean) {
     followingRef.current = value;
@@ -120,6 +121,12 @@ export default function PortalGroupChat() {
     if (element.scrollHeight - element.scrollTop - element.clientHeight > 1)
       element.scrollTo({ top: element.scrollHeight, behavior: 'instant' });
   }
+
+  useEffect(() => {
+    const changed = () => setPageVisible(!document.hidden);
+    document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
 
   useEffect(() => {
     const observer = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting), {
@@ -137,21 +144,40 @@ export default function PortalGroupChat() {
     if (reducedWasApplied.current) return;
     reducedWasApplied.current = true;
     setMessages((current) => [
-      ...current,
-      ...conversation.filter((item) => !current.some((existing) => existing.id === item.id)),
+      ...conversation,
+      ...current.filter((item) => /^(local|reply|approved)-/.test(item.id)).slice(-8),
     ]);
     setProgress(conversation.length);
     setPaused(true);
   }, [reduced]);
 
   useEffect(() => {
-    if (!playing || !visible) return;
-    const timer = window.setTimeout(() => {
-      setMessages((current) => [...current, conversation[progress]]);
-      setProgress((current) => current + 1);
-    }, 3100);
+    if (!playing || !visible || !pageVisible || !following) return;
+    const timer = window.setTimeout(
+      () => {
+        if (finished) {
+          // Keep the conversation moving without resetting the scroll position.
+          // Bound the transcript so an open tab cannot accumulate an infinite DOM.
+          const nextCycle = cycle + 1;
+          setCycle(nextCycle);
+          setMessages((current) => [
+            ...current.slice(-15),
+            { ...conversation[0], id: `goal-${nextCycle}` },
+          ]);
+          setProgress(1);
+          setApproved(false);
+        } else {
+          setMessages((current) => [
+            ...current.slice(-15),
+            { ...conversation[progress], id: `${conversation[progress].id}-${cycle}` },
+          ]);
+          setProgress((current) => current + 1);
+        }
+      },
+      finished ? 4200 : 2400,
+    );
     return () => window.clearTimeout(timer);
-  }, [progress, playing, visible]);
+  }, [progress, playing, visible, pageVisible, following, finished, cycle]);
 
   useEffect(() => {
     scrollToLatest();
@@ -163,16 +189,6 @@ export default function PortalGroupChat() {
     return () => observer.disconnect();
   }, []);
 
-  function replay() {
-    setMessages(reduced ? conversation : [conversation[0]]);
-    setProgress(reduced ? conversation.length : 1);
-    setPaused(!!reduced);
-    setApproved(false);
-    setDraft('');
-    follow(true);
-    setAnnouncement({ vi: 'Đã bắt đầu lại mô phỏng.', en: 'The demo has restarted.' });
-  }
-
   function submit(event: FormEvent) {
     event.preventDefault();
     const text = draft.trim();
@@ -181,13 +197,13 @@ export default function PortalGroupChat() {
     setPaused(true);
     follow(true);
     setMessages((current) => [
-      ...current,
+      ...current.slice(-14),
       { id: `local-${id}`, actor: 'you', vi: text, en: text },
       {
         id: `reply-${id}`,
         actor: 'sade',
-        vi: `Đã nhận lời nhắn trong bản mô phỏng. Khi dùng Kivuno, cả đội sẽ nhận yêu cầu của bạn ngay tại đây. ${finished ? 'Bạn có thể phát lại để bắt đầu cuộc trò chuyện mới.' : 'Bạn có thể tiếp tục mô phỏng bằng nút phát.'}`,
-        en: `Your message is in the demo. In Kivuno, the whole team receives your request right here. ${finished ? 'Use replay to start a fresh conversation.' : 'Use play to continue the walkthrough.'}`,
+        vi: 'Đã nhận lời nhắn trong bản mô phỏng. Nhấn phát để cả đội tiếp tục nhé.',
+        en: 'Your message is in the demo. Press play to keep the team moving.',
       },
     ]);
     setDraft('');
@@ -200,9 +216,9 @@ export default function PortalGroupChat() {
     setPaused(true);
     follow(true);
     setMessages((current) => [
-      ...current,
+      ...current.slice(-15),
       {
-        id: 'approved',
+        id: `approved-${cycle}`,
         actor: 'you',
         vi: 'Mình đã duyệt bản thay đổi trong mô phỏng. Cảm ơn cả đội!',
         en: 'I’ve approved the changes in this demo. Thanks, team!',
@@ -218,17 +234,10 @@ export default function PortalGroupChat() {
     <section className="kg-section" id="workflow" ref={section} aria-labelledby="workflow-title">
       <div className="kg-section-heading">
         <div>
-          <p className="kg-eyebrow">KIVUNO / {copy('CÙNG LÀM', 'WORK TOGETHER')}</p>
           <h2 id="workflow-title">
             {copy('Từ ý tưởng đến cùng làm.', 'From an idea to working together.')}
           </h2>
         </div>
-        <p>
-          {copy(
-            'Một cuộc trò chuyện. Người và AI, cùng một nhịp.',
-            'One conversation. People and AI, in sync.',
-          )}
-        </p>
       </div>
 
       <div className="kg-window">
@@ -276,7 +285,6 @@ export default function PortalGroupChat() {
             <Laptop size={17} />
             <div>
               <strong>{copy('2 máy kết nối', '2 connected machines')}</strong>
-              <span>{copy('Ngữ cảnh luôn đi cùng.', 'Context comes along.')}</span>
             </div>
           </div>
         </aside>
@@ -293,7 +301,7 @@ export default function PortalGroupChat() {
               </span>
             </div>
             <div className="kg-controls">
-              {!reduced && !finished && (
+              {!reduced && (
                 <button
                   type="button"
                   onClick={() => setPaused((value) => !value)}
@@ -307,14 +315,6 @@ export default function PortalGroupChat() {
                   {paused ? <Play size={16} /> : <Pause size={16} />}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={replay}
-                aria-label={copy('Phát lại mô phỏng', 'Replay demo')}
-                title={copy('Phát lại', 'Replay')}
-              >
-                <RotateCcw size={16} />
-              </button>
             </div>
           </div>
 
@@ -343,9 +343,9 @@ export default function PortalGroupChat() {
                       className={`kg-message ${message.actor}`}
                       key={message.id}
                       data-demo-message={message.id}
-                      initial={reduced ? false : { opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3 }}
+                      initial={reduced ? false : { opacity: 0, y: 22, scale: 0.88 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 350, damping: 24, mass: 0.8 }}
                     >
                       <span className={`kg-avatar ${message.actor}`}>
                         {message.actor === 'sade' ? <Sparkles size={16} /> : name[0]}
@@ -433,7 +433,7 @@ export default function PortalGroupChat() {
           </div>
 
           <div className="kg-typing" aria-hidden="true">
-            {playing ? (
+            {playing && !finished ? (
               <>
                 <span className="kg-typing-dots">
                   <i />
@@ -480,12 +480,6 @@ export default function PortalGroupChat() {
               <ArrowUp size={19} />
             </button>
           </form>
-          <p className="kg-demo-note">
-            {copy(
-              'Thử ngay tại đây. Tin nhắn chỉ nằm trong bản mô phỏng này.',
-              'Try it here. Messages stay in this local demo.',
-            )}
-          </p>
           <span className="kg-sr-only" role="status">
             {announcement[locale]}
           </span>

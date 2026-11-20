@@ -8,6 +8,7 @@ import { Store } from './store.ts';
 import { Workspace } from './service.ts';
 import { buildApp } from './app.ts';
 import { createCloudIdentity, type CloudAccess } from './cloud-auth.ts';
+import { accountMailSender } from './account-mail.ts';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.RELAY_DATA_DIR || path.join(projectRoot, '.relay'));
@@ -45,6 +46,9 @@ if (process.env.RELAY_DEPLOYMENT === 'cloud') {
       origin,
       secret: process.env.RELAY_AUTH_SECRET || '',
       bootstrapPassword: process.env.RELAY_OWNER_PASSWORD || '',
+      mongodbUri: process.env.RELAY_MONGODB_URI || undefined,
+      mongodbDatabase: process.env.RELAY_MONGODB_DATABASE || undefined,
+      sendMail: accountMailSender(),
     }),
   };
   workspace.runtime.deployment = 'cloud';

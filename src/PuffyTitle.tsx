@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
 import { usePortalLocale } from './PortalLocale';
 import type { TitleScene } from './puffy-title-scene';
 import './puffy-title.css';
@@ -62,27 +61,14 @@ export default function PuffyTitle({ iteration }: { iteration: number }) {
         aria-label={
           state === 'ready'
             ? english
-              ? 'Four rows of soft, sculpted Kivuno letters. Drag to rotate; release to return. Arrow keys also rotate; Home resets.'
-              : 'Bốn hàng chữ Kivuno phồng mềm. Kéo để xoay, thả để trở về. Phím mũi tên để xoay, Home để đặt lại.'
+              ? 'Four rows of soft, sculpted Kivuno letters. Press to squish, drag to rotate, release to return slowly. Arrow keys rotate; Space presses a letter; Home resets.'
+              : 'Bốn hàng chữ Kivuno phồng mềm. Nhấn để làm lõm, kéo để xoay, thả để từ từ trở về. Phím mũi tên để xoay, Space để nhấn chữ, Home để đặt lại.'
             : english
               ? 'Four rows of soft, sculpted Kivuno letters in violet and lime.'
               : 'Bốn hàng chữ Kivuno phồng mềm màu violet và lime.'
         }
         tabIndex={state === 'ready' ? 0 : -1}
       />
-      {state === 'ready' && (
-        <div className="kp-puffy-controls">
-          <span>{english ? 'Drag, turn, let go.' : 'Kéo, xoay, rồi thả.'}</span>
-          <button
-            type="button"
-            onClick={() => scene.current?.reset()}
-            aria-label={english ? 'Reset title rotation' : 'Đặt lại góc xoay tiêu đề'}
-            title={english ? 'Reset title rotation' : 'Đặt lại góc xoay tiêu đề'}
-          >
-            <RotateCcw size={15} aria-hidden="true" />
-          </button>
-        </div>
-      )}
     </div>
   );
 }

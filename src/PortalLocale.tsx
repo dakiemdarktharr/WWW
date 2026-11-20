@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 export type PortalLocale = 'vi' | 'en';
 const english: Record<string, string> = {
+  'Quên mật khẩu?': 'Forgot password?',
   'Rừng hoa tím và lime sau lớp kính khúc xạ, mở ra khoảng trời dịu phía trên.':
     'A violet and lime flower forest behind refractive glass, with a quiet open sky above.',
   'Nhiều trí tuệ. Một nhịp làm việc.': 'Many minds. One shared rhythm.',

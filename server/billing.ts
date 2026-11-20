@@ -75,6 +75,14 @@ type Entitlement = {
   syncedBlock: number;
   updatedAt: string;
 };
+type Trial = {
+  id: string;
+  ownerId: string;
+  tier: Plan;
+  startedAt: number;
+  paidUntil: number;
+};
+const TRIAL_PERIOD = 30 * 86400_000;
 type BillingProfile = {
   id: string;
   ownerId: string;
@@ -109,7 +117,9 @@ function latestEntitlement(store: Store, userId: string) {
 
 function tierFor(store: Store, userId: string, now = Date.now()): Tier {
   const entitlement = latestEntitlement(store, userId);
-  return entitlement && entitlement.paidUntil > now ? entitlement.tier : 'free';
+  if (entitlement && entitlement.paidUntil > now) return entitlement.tier;
+  const trial = store.lookup<Trial>('billingTrial', userId);
+  return trial && trial.paidUntil > now ? trial.tier : 'free';
 }
 
 export function effectiveTier(store: Store, userId: string, now = Date.now()): Tier {
@@ -181,7 +191,8 @@ export function registerBillingRoutes(
   // Unsubmitted intents can be abandoned. Once Fuji has advanced beyond their
   // expiry, no further transaction can settle them within the accepted window.
   const pendingThrough = (userId: string, payer: string) => {
-    if (tierFor(store, userId) !== 'free')
+    const paid = latestEntitlement(store, userId);
+    if (paid && paid.paidUntil > Date.now())
       throw new DomainError('Wait until the current paid term ends before changing wallets.', 409);
     let latestExpiry = 0;
     for (const intent of store.all<PaymentIntent>('billingIntent')) {
@@ -269,12 +280,22 @@ export function registerBillingRoutes(
     const user = await userFor(request);
     const binding = findBinding(user.id);
     const entitlement = latestEntitlement(store, user.id);
+    const trial = store.lookup<Trial>('billingTrial', user.id);
+    const paidActive = Boolean(entitlement && entitlement.paidUntil > Date.now());
+    const trialActive = Boolean(!paidActive && trial && trial.paidUntil > Date.now());
+    const activeUntil = trialActive ? trial!.paidUntil : entitlement?.paidUntil;
     return {
       account: user,
       wallet: binding?.address || null,
       tier: tierFor(store, user.id),
       profileLimit: profileLimit(user.id),
-      paidUntil: entitlement ? new Date(entitlement.paidUntil).toISOString() : null,
+      paidUntil: activeUntil ? new Date(activeUntil).toISOString() : null,
+      trial: {
+        eligible: !trial && !paidActive,
+        active: trialActive,
+        tier: trial?.tier || null,
+        endsAt: trial ? new Date(trial.paidUntil).toISOString() : null,
+      },
       config: {
         chainId: FUJI_CHAIN_ID,
         chainName: 'Avalanche Fuji',
@@ -288,6 +309,37 @@ export function registerBillingRoutes(
           (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),
       },
     };
+  });
+
+  app.post('/api/billing/trial', async (request, reply) => {
+    const user = await userFor(request);
+    limited(paymentAttempts, `${user.id}:trial`, 5);
+    const input = z
+      .object({ plan: z.enum(['plus', 'max']) })
+      .strict()
+      .parse(request.body);
+    const trial = store.transaction(() => {
+      // The claim and entitlement are one record under the account primary key.
+      // A simultaneous request or a change of plan can never extend the trial.
+      if (store.lookup<Trial>('billingTrial', user.id))
+        throw new DomainError('Tài khoản này đã sử dụng 30 days trial.', 409);
+      const paid = latestEntitlement(store, user.id);
+      const now = Date.now();
+      if (paid && paid.paidUntil > now)
+        throw new DomainError('Tài khoản đang có gói trả phí còn hiệu lực.', 409);
+      return store.put('billingTrial', {
+        id: user.id,
+        ownerId: user.id,
+        tier: input.plan,
+        startedAt: now,
+        paidUntil: now + TRIAL_PERIOD,
+      } satisfies Trial);
+    });
+    return reply.code(201).send({
+      tier: trial.tier,
+      endsAt: new Date(trial.paidUntil).toISOString(),
+      automaticRenewal: false,
+    });
   });
 
   app.get('/api/billing/profiles', async (request) => {

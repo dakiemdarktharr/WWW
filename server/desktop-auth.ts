@@ -160,6 +160,15 @@ export class DesktopIdentity {
     this.drop(device.id, 'The desktop connection was revoked.');
     return { revoked: true };
   }
+  revokeOwner(ownerId: string) {
+    this.store.transaction(() => {
+      for (const grant of this.store.all<Grant>('desktopGrant'))
+        if ((grant.owner || legacyOwner).id === ownerId)
+          this.store.remove('desktopGrant', grant.id);
+      for (const device of this.store.all<DesktopDevice>('desktopDevice'))
+        if ((device.owner || legacyOwner).id === ownerId) this.revoke(device);
+    });
+  }
   async poll(
     device: DesktopDevice,
     bridgeKey: string,

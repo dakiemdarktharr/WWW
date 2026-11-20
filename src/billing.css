@@ -67,10 +67,10 @@
   width: min(1160px, 100%);
   margin: 0 auto;
   padding: clamp(42px, 7vw, 82px) 0 clamp(48px, 7vw, 80px);
-  display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(430px, 1.05fr);
+  display: flex;
+  flex-direction: column;
   align-items: start;
-  gap: clamp(40px, 8vw, 106px);
+  gap: 36px;
 }
 
 .billing-intro {
@@ -87,8 +87,8 @@
 }
 
 .billing-intro h1 {
-  max-width: 13ch;
-  margin: 28px 0 20px;
+  max-width: none;
+  margin: 0;
   font-size: clamp(42px, 5.2vw, 64px);
   font-weight: 510;
   letter-spacing: -0.065em;
@@ -190,6 +190,8 @@
 }
 
 .billing-panel {
+  width: min(740px, 100%);
+  align-self: center;
   min-width: 0;
   padding: clamp(22px, 3vw, 34px);
   border: 1px solid rgb(255 255 255 / 95%);
@@ -1193,4 +1195,37 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.billing-plan-actions {
+  display: grid;
+  gap: 14px;
+  padding-top: 24px;
+}
+.billing-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--bill-violet-ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-underline-offset: 4px;
+}
+.billing-auth > .billing-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.billing-panel h2:focus {
+  outline: none;
+}
+.billing-panel .billing-current {
+  margin-top: 0;
+}
+.billing-panel .billing-plan-actions .billing-primary,
+.billing-panel .billing-plan-actions .billing-secondary {
+  width: 100%;
 }

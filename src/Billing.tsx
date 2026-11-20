@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -15,6 +15,7 @@ import { BillingWallet, balance, fuji, legacySigner, type WalletMode } from './B
 import { walletForAccount } from './embedded-wallet';
 import { BankCheckout } from './BankCheckout';
 import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
+import { PlanBanners, type PlanTier } from './PlanBanners';
 import './billing.css';
 
 type Plan = 'plus' | 'max';
@@ -40,6 +41,7 @@ type WalletConfig = {
   available?: boolean;
 };
 type BillingSummary = {
+  trial?: { eligible: boolean; active: boolean; tier: Plan | null; endsAt: string | null };
   account?: AuthUser;
   wallet?: string | null;
   walletBinding?: { address?: string | null } | null;
@@ -212,6 +214,35 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [selectedBanner, setSelectedBanner] = useState<PlanTier | null>(() => {
+    const query = new URLSearchParams(window.location.search);
+    const plan = query.get('plan');
+    if (bank && (query.has('bank') || query.has('receipt'))) return 'plus';
+    return plan === 'free' || plan === 'plus' || plan === 'max' ? plan : null;
+  });
+  const [checkout, setCheckout] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    return bank && (query.has('bank') || query.has('receipt'));
+  });
+  const panel = useRef<HTMLDivElement>(null);
+
+  const choosePlan = (plan: PlanTier) => {
+    setSelectedBanner(plan);
+    if (plan !== 'free') setSelectedPlan(plan);
+    setCheckout(false);
+    setError('');
+    setNotice('');
+  };
+
+  useEffect(() => {
+    if (!selectedBanner || loading) return;
+    if (selectedBanner !== 'free') setSelectedPlan(selectedBanner);
+    const frame = requestAnimationFrame(() => {
+      panel.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      panel.current?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedBanner, loading]);
 
   const tier = currentTier(summary);
   const boundWallet = walletAddress(summary);
@@ -283,6 +314,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
         setIntentId(saved.id);
         setTxHash(saved.hash);
         setPending(true);
+        setCheckout(true);
       }
     } catch {
       /* The browser may have disabled local storage. */
@@ -609,6 +641,30 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       setTxHash('');
       setIntentId('');
       setPreparedIntent(null);
+      setSelectedBanner(null);
+      setCheckout(false);
+      setAuthMode('signin');
+      setName('');
+      setEmail('');
+      setPassword('');
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const startTrial = async () => {
+    if (!user || !selectedBanner || selectedBanner === 'free') return;
+    setBusy('trial');
+    setError('');
+    setNotice('');
+    try {
+      await postJson('/api/billing/trial', { plan: selectedBanner });
+      await refreshSummary();
+      setNotice(
+        `Đã kích hoạt ${selectedBanner === 'plus' ? 'Plus' : 'Max'} trong 30 ngày. Không tự gia hạn.`,
+      );
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -638,440 +694,482 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
 
       <section className="billing-shell" aria-labelledby="billing-title">
         <div className="billing-intro">
-          <span className="billing-mark">
-            <ShieldCheck size={16} /> Quyền Kivuno
-          </span>
-          <h1 id="billing-title">Chọn đúng không gian cho đội của bạn.</h1>
-          <p>
-            {bank
-              ? 'Chọn gói 30 ngày để nhận mã QR và thông tin chuyển khoản. Bản demo sử dụng ngân hàng mô phỏng trên máy này.'
-              : 'Chọn gói 30 ngày và xác nhận thanh toán bằng test USDC trên Avalanche Fuji.'}
-          </p>
-          <div className="billing-current">
-            <span className="billing-current-icon">
-              <LockKeyhole size={17} />
-            </span>
-            <div>
-              <span>Gói hiện tại</span>
-              <strong>{user ? activePlanTitle : 'Đăng nhập để xem'}</strong>
-            </div>
-            {user && activePaidPlan && paidUntil && (
-              <time dateTime={paidUntil}>
-                đến{' '}
-                {new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
-                  new Date(paidUntil),
-                )}
-              </time>
-            )}
-          </div>
-          <div className="billing-facts" aria-label="Giới hạn theo gói">
-            <div>
-              <strong>Free</strong>
-              <span>3 profile · 3 người/group</span>
-            </div>
-            <div>
-              <strong>Plus</strong>
-              <span>10 profile · 10 người/group</span>
-            </div>
-            <div>
-              <strong>Max</strong>
-              <span>Không giới hạn</span>
-            </div>
-          </div>
-          <p className="billing-fineprint">
-            Chủ group mua gói; giới hạn thành viên theo gói của chủ. Profile là kết nối lưu trong
-            Kivuno, không phải quota AI provider.
-          </p>
+          <h1 id="billing-title">Gói Kivuno.</h1>
         </div>
+        <PlanBanners
+          selected={selectedBanner}
+          onSelect={choosePlan}
+          disabled={busy !== '' || pending || !!preparedIntent}
+          trialAvailable={!user || !!summary?.trial?.eligible}
+        />
 
-        <div className="billing-panel">
-          {loading ? (
-            <div className="billing-loading" role="status">
-              <LoaderCircle className="billing-spin" size={20} /> Đang tải tài khoản…
-            </div>
-          ) : !user ? (
-            <form className="billing-auth" onSubmit={(event) => void beginAuth(event)}>
-              <div className="billing-panel-heading">
-                <span className="billing-step">Tài khoản Kivuno</span>
-                <h2>{authMode === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}</h2>
-                <p>
-                  {bank
-                    ? 'Đăng nhập để chọn gói và xem biên nhận chuyển khoản thử.'
-                    : 'Kivuno tạo ví thanh toán riêng sau khi bạn đăng nhập.'}
-                </p>
+        {(selectedBanner || user) && (
+          <div className="billing-panel" ref={panel}>
+            {loading ? (
+              <div className="billing-loading" role="status">
+                <LoaderCircle className="billing-spin" size={20} /> Đang tải tài khoản…
               </div>
-              {authMode === 'signup' && (
+            ) : !user ? (
+              <form className="billing-auth" onSubmit={(event) => void beginAuth(event)}>
+                <div className="billing-panel-heading">
+                  <h2 tabIndex={-1}>{authMode === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}</h2>
+                  <button
+                    className="billing-switch"
+                    type="button"
+                    onClick={() => setSelectedBanner(null)}
+                    disabled={busy !== ''}
+                  >
+                    Đóng
+                  </button>
+                </div>
+                {authMode === 'signup' && (
+                  <label className="billing-field">
+                    Tên của bạn
+                    <input
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      autoComplete="name"
+                      minLength={2}
+                      maxLength={80}
+                      required
+                      disabled={busy !== ''}
+                    />
+                  </label>
+                )}
                 <label className="billing-field">
-                  Tên của bạn
+                  Email
                   <input
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    autoComplete="name"
-                    minLength={2}
-                    maxLength={80}
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    autoComplete="email"
+                    maxLength={254}
                     required
                     disabled={busy !== ''}
                   />
                 </label>
-              )}
-              <label className="billing-field">
-                Email
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  maxLength={254}
-                  required
-                  disabled={busy !== ''}
-                />
-              </label>
-              <label className="billing-field">
-                Mật khẩu
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                  minLength={authMode === 'signup' ? 12 : undefined}
-                  maxLength={128}
-                  required
-                  disabled={busy !== ''}
-                />
-                {authMode === 'signup' && <small>Tối thiểu 12 ký tự.</small>}
-              </label>
-              {error && (
-                <p className="billing-alert" role="alert">
-                  <CircleAlert size={16} /> {error}
-                </p>
-              )}
-              <button className="billing-primary" type="submit" disabled={busy !== ''}>
-                {busy === 'auth' ? (
-                  <LoaderCircle className="billing-spin" size={17} />
-                ) : (
-                  <ArrowUpRight size={17} />
+                <label className="billing-field">
+                  Mật khẩu
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                    minLength={authMode === 'signup' ? 12 : undefined}
+                    maxLength={128}
+                    required
+                    disabled={busy !== ''}
+                  />
+                  {authMode === 'signup' && <small>Tối thiểu 12 ký tự.</small>}
+                </label>
+                {authMode === 'signin' && (
+                  <a className="billing-switch billing-forgot" href="/forgot-password">
+                    Quên mật khẩu?
+                  </a>
                 )}
-                {authMode === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}
-              </button>
-              <button
-                className="billing-switch"
-                type="button"
-                onClick={() => {
-                  setAuthMode(authMode === 'signup' ? 'signin' : 'signup');
-                  setError('');
-                }}
-                disabled={busy !== ''}
-              >
-                {authMode === 'signup'
-                  ? 'Đã có tài khoản? Đăng nhập'
-                  : 'Chưa có tài khoản? Đăng ký'}
-              </button>
-            </form>
-          ) : (
-            <>
-              <div className="billing-panel-heading billing-account-heading">
-                <div>
-                  <span className="billing-step">Tài khoản</span>
-                  <h2>{user.name || user.email}</h2>
-                  <p>{user.email}</p>
-                </div>
+                {error && (
+                  <p className="billing-alert" role="alert">
+                    <CircleAlert size={16} /> {error}
+                  </p>
+                )}
+                <button className="billing-primary" type="submit" disabled={busy !== ''}>
+                  {busy === 'auth' ? (
+                    <LoaderCircle className="billing-spin" size={17} />
+                  ) : (
+                    <ArrowUpRight size={17} />
+                  )}
+                  {authMode === 'signup' ? 'Tạo tài khoản' : 'Đăng nhập'}
+                </button>
                 <button
                   className="billing-switch"
                   type="button"
-                  onClick={() => void signOut()}
+                  onClick={() => {
+                    setAuthMode(authMode === 'signup' ? 'signin' : 'signup');
+                    setError('');
+                  }}
                   disabled={busy !== ''}
                 >
-                  Đăng xuất
+                  {authMode === 'signup'
+                    ? 'Đã có tài khoản? Đăng nhập'
+                    : 'Chưa có tài khoản? Đăng ký'}
                 </button>
-              </div>
-
-              {summary?.account?.id === user.id && (
-                <BillingWallet
-                  key={user.id}
-                  account={user.id}
-                  bound={boundWallet}
-                  bankCheckout={bank}
-                  token={bank ? undefined : config?.tokenAddress}
-                  busy={busy !== ''}
-                  onMode={setWalletMode}
-                  refresh={refreshSummary}
-                />
-              )}
-
-              {bank && summary?.account?.id === user.id && (
-                <BankCheckout key={user.id} onPaid={refreshSummary} />
-              )}
-              {bank && error && (
-                <p className="billing-alert" role="alert">
-                  {error}
-                </p>
-              )}
-              {!bank && (
-                <>
-                  <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
-                    {(['plus', 'max'] as Plan[]).map((plan) => {
-                      const selected = selectedPlan === plan;
-                      return (
-                        <button
-                          className={`billing-plan ${selected ? 'is-selected' : ''} ${plan === 'max' ? 'is-max' : ''}`}
-                          type="button"
-                          key={plan}
-                          aria-pressed={selected}
-                          onClick={() => setSelectedPlan(plan)}
-                          disabled={busy !== '' || !!preparedIntent}
-                        >
-                          <span className="billing-plan-radio" aria-hidden="true">
-                            {selected && <span />}
-                          </span>
-                          <span className="billing-plan-name">
-                            {plan === 'plus' ? 'Plus' : 'Max'}
-                          </span>
-                          <span className="billing-plan-price">
-                            <strong>{planFacts[plan].usdc} test USDC</strong>
-                            <small>/ tháng</small>
-                          </span>
-
-                          <span className="billing-plan-limit">
-                            {planFacts[plan].cap}
-                            <br />
-                            {planFacts[plan].people}
-                          </span>
-                        </button>
-                      );
-                    })}
+              </form>
+            ) : (
+              <>
+                <div className="billing-panel-heading billing-account-heading">
+                  <div>
+                    <span className="billing-step">Tài khoản</span>
+                    <h2 tabIndex={-1}>{user.name || user.email}</h2>
+                    <p>{user.email}</p>
                   </div>
-                </>
-              )}
-              {billingProfiles &&
-                billingProfiles.profiles.length > 0 &&
-                billingProfiles.profiles.some((profile) => !profile.selected) && (
-                  <section
-                    className="billing-profile-limits"
-                    aria-labelledby="billing-profiles-title"
+                  <button
+                    className="billing-switch"
+                    type="button"
+                    onClick={() => void signOut()}
+                    disabled={busy !== ''}
                   >
-                    <div className="billing-profile-heading">
-                      <div>
-                        <span className="billing-step">Profile theo gói</span>
-                        <h3 id="billing-profiles-title">Chọn profile đang hoạt động</h3>
-                      </div>
-                      <span className="billing-profile-count">
-                        {billingProfiles.profiles.filter((profile) => profile.selected).length} /{' '}
-                        {billingProfiles.limit === null ? '∞' : billingProfiles.limit}
-                      </span>
-                    </div>
-                    <p>
-                      Profile vượt giới hạn vẫn được giữ lại nhưng tạm khóa. Bỏ chọn một profile
-                      đang hoạt động trước, rồi chọn profile muốn mở; desktop đồng bộ khi kết nối
-                      lại.
-                    </p>
-                    <div className="billing-profile-list">
-                      {billingProfiles.profiles.map((profile) => (
-                        <label
-                          className={`billing-profile-option ${profile.selected ? 'is-selected' : 'is-locked'}`}
-                          key={profile.reservationId}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={profile.selected}
-                            onChange={(event) =>
-                              void toggleProfileSelection(profile, event.currentTarget.checked)
-                            }
-                            disabled={busy !== ''}
-                          />
-                          <span className="billing-profile-copy">
-                            <strong>{profile.name}</strong>
-                            <small>
-                              {profile.provider} · thiết bị …{profile.deviceId.slice(-4)}
-                            </small>
-                          </span>
-                          <span className="billing-profile-state">
-                            {profile.selected ? 'Đang mở' : 'Đang khóa'}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </section>
-                )}
+                    Đăng xuất
+                  </button>
+                </div>
 
-              {!bank && (
-                <>
-                  {!paymentReady && (
-                    <p className="billing-config-note" role="status">
-                      <CircleAlert size={16} />
-                      {Number(config?.chainId ?? FIJI_CHAIN_ID) !== FIJI_CHAIN_ID
-                        ? 'Cấu hình thanh toán không trỏ tới Fuji. Giao dịch đã bị khóa để tránh gửi nhầm mạng.'
-                        : 'Thanh toán Fuji đang chờ địa chỉ token và hợp đồng. Bạn có thể liên kết ví; chưa thể tạo giao dịch.'}
-                    </p>
+                <div className="billing-current">
+                  <span className="billing-current-icon">
+                    <LockKeyhole size={17} />
+                  </span>
+                  <div>
+                    <span>Gói hiện tại</span>
+                    <strong>
+                      {activePlanTitle}
+                      {activePaidPlan && summary?.trial?.active ? ' · Trial' : ''}
+                    </strong>
+                  </div>
+                  {activePaidPlan && paidUntil && (
+                    <time dateTime={paidUntil}>
+                      đến{' '}
+                      {new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
+                        new Date(paidUntil),
+                      )}
+                    </time>
                   )}
-                  {preparedIntent && (
-                    <section className="billing-review" aria-labelledby="billing-review-title">
-                      <div className="billing-review-heading">
-                        <div>
-                          <span className="billing-step">Xác nhận trước khi ký</span>
-                          <h3 id="billing-review-title">Kiểm tra yêu cầu thanh toán</h3>
-                        </div>
-                        <span className="billing-review-chain">Fuji · 43113</span>
-                      </div>
-                      <div className="billing-review-price">
-                        <strong>{planFacts[preparedIntent.plan].usdc} test USDC</strong>
-                        <span>30 ngày</span>
-                      </div>
-                      <dl className="billing-review-details">
-                        <div>
-                          <dt>Gói</dt>
-                          <dd>{preparedIntent.plan === 'plus' ? 'Plus' : 'Max'}</dd>
-                        </div>
-                        <div>
-                          <dt>Ví trả tiền</dt>
-                          <dd>
-                            <code>{getAddress(preparedIntent.payer)}</code>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Token USDC</dt>
-                          <dd>
-                            <code>{getAddress(preparedIntent.token)}</code>
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Hợp đồng nhận giao dịch</dt>
-                          <dd>
-                            <code>{getAddress(preparedIntent.contract)}</code>
-                          </dd>
-                        </div>
-                        {config?.treasuryAddress && (
-                          <div>
-                            <dt>Kho nhận USDC</dt>
-                            <dd>
-                              <code>{getAddress(config.treasuryAddress)}</code>
-                            </dd>
-                          </div>
+                </div>
+                {!checkout && (
+                  <div className="billing-plan-actions">
+                    {selectedBanner && selectedBanner !== 'free' && summary?.trial?.eligible && (
+                      <button
+                        className="billing-primary"
+                        type="button"
+                        disabled={busy !== ''}
+                        onClick={() => void startTrial()}
+                      >
+                        {busy === 'trial' ? (
+                          <LoaderCircle className="billing-spin" size={17} />
+                        ) : (
+                          <ArrowUpRight size={17} />
                         )}
-                        <div>
-                          <dt>Yêu cầu hết hạn</dt>
-                          <dd>
-                            <time dateTime={preparedIntent.expiresAt}>
-                              {new Intl.DateTimeFormat('vi-VN', {
-                                dateStyle: 'medium',
-                                timeStyle: 'short',
-                              }).format(new Date(preparedIntent.expiresAt))}
-                            </time>
-                          </dd>
-                        </div>
-                      </dl>
-                      <p className="billing-review-note">
-                        Hợp đồng nhận chữ ký USDC đúng số tiền này rồi chuyển vào kho nhận. Giao
-                        dịch cần thêm test AVAX để trả gas; không có gia hạn tự động.
+                        30 days trial · {selectedBanner === 'plus' ? 'Plus' : 'Max'}
+                      </button>
+                    )}
+                    {selectedBanner && selectedBanner !== 'free' && (
+                      <button
+                        className="billing-secondary"
+                        type="button"
+                        disabled={busy !== ''}
+                        onClick={() => setCheckout(true)}
+                      >
+                        Thanh toán · {planFacts[selectedPlan].usdc} test USDC / tháng
+                      </button>
+                    )}
+                    <a className="billing-download" href="/?download">
+                      <ArrowUpRight size={17} /> Tải Kivuno
+                    </a>
+                    {error && (
+                      <p className="billing-alert" role="alert">
+                        <CircleAlert size={16} /> {error}
                       </p>
-                      <div className="billing-review-actions">
-                        <button
-                          className="billing-primary"
-                          type="button"
-                          onClick={() => void confirmPayment()}
-                          disabled={busy !== ''}
-                        >
-                          {busy === 'pay' ? (
-                            <LoaderCircle className="billing-spin" size={17} />
-                          ) : (
-                            <ShieldCheck size={17} />
-                          )}
-                          Thanh toán {planFacts[preparedIntent.plan].usdc} test USDC
-                        </button>
-                        <button
-                          className="billing-secondary"
-                          type="button"
-                          onClick={cancelPayment}
-                          disabled={busy !== ''}
-                        >
-                          Hủy yêu cầu
-                        </button>
+                    )}
+                    {notice && (
+                      <p className="billing-notice" role="status">
+                        {notice}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {billingProfiles &&
+                  billingProfiles.profiles.length > 0 &&
+                  billingProfiles.profiles.some((profile) => !profile.selected) && (
+                    <section
+                      className="billing-profile-limits"
+                      aria-labelledby="billing-profiles-title"
+                    >
+                      <div className="billing-profile-heading">
+                        <div>
+                          <span className="billing-step">Profile theo gói</span>
+                          <h3 id="billing-profiles-title">Chọn profile đang hoạt động</h3>
+                        </div>
+                        <span className="billing-profile-count">
+                          {billingProfiles.profiles.filter((profile) => profile.selected).length} /{' '}
+                          {billingProfiles.limit === null ? '∞' : billingProfiles.limit}
+                        </span>
+                      </div>
+                      <p>
+                        Profile vượt giới hạn vẫn được giữ lại nhưng tạm khóa. Bỏ chọn một profile
+                        đang hoạt động trước, rồi chọn profile muốn mở; desktop đồng bộ khi kết nối
+                        lại.
+                      </p>
+                      <div className="billing-profile-list">
+                        {billingProfiles.profiles.map((profile) => (
+                          <label
+                            className={`billing-profile-option ${profile.selected ? 'is-selected' : 'is-locked'}`}
+                            key={profile.reservationId}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={profile.selected}
+                              onChange={(event) =>
+                                void toggleProfileSelection(profile, event.currentTarget.checked)
+                              }
+                              disabled={busy !== ''}
+                            />
+                            <span className="billing-profile-copy">
+                              <strong>{profile.name}</strong>
+                              <small>
+                                {profile.provider} · thiết bị …{profile.deviceId.slice(-4)}
+                              </small>
+                            </span>
+                            <span className="billing-profile-state">
+                              {profile.selected ? 'Đang mở' : 'Đang khóa'}
+                            </span>
+                          </label>
+                        ))}
                       </div>
                     </section>
                   )}
-                  {error && (
-                    <p className="billing-alert" role="alert">
-                      <CircleAlert size={16} /> {error}
-                    </p>
-                  )}
-                  {notice && (
-                    <p className="billing-notice" role="status">
-                      {notice}
-                    </p>
-                  )}
-                  {txHash && (
-                    <div className="billing-tx-row">
-                      <span>Transaction</span>
-                      <a
-                        href={`https://build.avax.network/explorer/fuji/c-chain/tx/${encodeURIComponent(txHash)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {shortAddress(txHash)} <ExternalLink size={14} />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => void verifyPending()}
-                        disabled={busy !== ''}
-                      >
-                        {busy === 'verify' ? (
-                          <LoaderCircle className="billing-spin" size={14} />
-                        ) : (
-                          <ArrowUpRight size={14} />
+
+                {checkout && (
+                  <>
+                    {summary?.account?.id === user.id && (
+                      <BillingWallet
+                        key={user.id}
+                        account={user.id}
+                        bound={boundWallet}
+                        bankCheckout={bank}
+                        token={bank ? undefined : config?.tokenAddress}
+                        busy={busy !== ''}
+                        onMode={setWalletMode}
+                        refresh={refreshSummary}
+                      />
+                    )}
+
+                    {bank && summary?.account?.id === user.id && (
+                      <BankCheckout key={user.id} onPaid={refreshSummary} />
+                    )}
+                    {bank && error && (
+                      <p className="billing-alert" role="alert">
+                        {error}
+                      </p>
+                    )}
+                    {!bank && (
+                      <>
+                        <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
+                          {(['plus', 'max'] as Plan[]).map((plan) => {
+                            const selected = selectedPlan === plan;
+                            return (
+                              <button
+                                className={`billing-plan ${selected ? 'is-selected' : ''} ${plan === 'max' ? 'is-max' : ''}`}
+                                type="button"
+                                key={plan}
+                                aria-pressed={selected}
+                                onClick={() => setSelectedPlan(plan)}
+                                disabled={busy !== '' || !!preparedIntent}
+                              >
+                                <span className="billing-plan-radio" aria-hidden="true">
+                                  {selected && <span />}
+                                </span>
+                                <span className="billing-plan-name">
+                                  {plan === 'plus' ? 'Plus' : 'Max'}
+                                </span>
+                                <span className="billing-plan-price">
+                                  <strong>{planFacts[plan].usdc} test USDC</strong>
+                                  <small>/ tháng</small>
+                                </span>
+
+                                <span className="billing-plan-limit">
+                                  {planFacts[plan].cap}
+                                  <br />
+                                  {planFacts[plan].people}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                    {!bank && (
+                      <>
+                        {!paymentReady && (
+                          <p className="billing-config-note" role="status">
+                            <CircleAlert size={16} />
+                            {Number(config?.chainId ?? FIJI_CHAIN_ID) !== FIJI_CHAIN_ID
+                              ? 'Cấu hình thanh toán không trỏ tới Fuji. Giao dịch đã bị khóa để tránh gửi nhầm mạng.'
+                              : 'Thanh toán Fuji đang chờ địa chỉ token và hợp đồng. Bạn có thể liên kết ví; chưa thể tạo giao dịch.'}
+                          </p>
                         )}
-                        Kiểm tra quyền
-                      </button>
-                    </div>
-                  )}
-                  {!preparedIntent && (
-                    <button
-                      className="billing-primary billing-buy"
-                      type="button"
-                      onClick={() => void preparePayment(selectedPlan)}
-                      disabled={
-                        !boundWallet || !walletMode || pending || busy !== '' || !paymentReady
-                      }
-                    >
-                      {busy === 'prepare' ? (
-                        <LoaderCircle className="billing-spin" size={17} />
-                      ) : (
-                        <ArrowUpRight size={17} />
-                      )}
-                      Tiếp tục với {planFacts[selectedPlan].usdc} test USDC
-                    </button>
-                  )}
-                  <div className="billing-terms">
-                    <p>
-                      <ShieldCheck size={15} /> Mỗi lần mua cần bạn xác nhận. Người mua trả gas bằng
-                      test AVAX.
-                    </p>
-                    <p>
-                      Không tự gia hạn. Gia hạn cùng gói sớm sẽ nối thêm 30 ngày; đổi tier bắt đầu
-                      kỳ mới ngay, thời gian cũ không được cộng hoặc hoàn lại.
-                    </p>
-                    <p>
-                      Fuji USDC chỉ dùng để thử nghiệm, không có giá trị tiền thật. Hãy sao lưu ví
-                      trước khi đổi thiết bị.
-                    </p>
-                  </div>
-                  <div className="billing-config-foot">
-                    <span>
-                      <LockKeyhole size={13} /> Ví thanh toán Fuji
-                    </span>
-                    <span>Avalanche Fuji · chain {config?.chainId ?? FIJI_CHAIN_ID}</span>
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </div>
+                        {preparedIntent && (
+                          <section
+                            className="billing-review"
+                            aria-labelledby="billing-review-title"
+                          >
+                            <div className="billing-review-heading">
+                              <div>
+                                <span className="billing-step">Xác nhận trước khi ký</span>
+                                <h3 id="billing-review-title">Kiểm tra yêu cầu thanh toán</h3>
+                              </div>
+                              <span className="billing-review-chain">Fuji · 43113</span>
+                            </div>
+                            <div className="billing-review-price">
+                              <strong>{planFacts[preparedIntent.plan].usdc} test USDC</strong>
+                              <span>30 ngày</span>
+                            </div>
+                            <dl className="billing-review-details">
+                              <div>
+                                <dt>Gói</dt>
+                                <dd>{preparedIntent.plan === 'plus' ? 'Plus' : 'Max'}</dd>
+                              </div>
+                              <div>
+                                <dt>Ví trả tiền</dt>
+                                <dd>
+                                  <code>{getAddress(preparedIntent.payer)}</code>
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Token USDC</dt>
+                                <dd>
+                                  <code>{getAddress(preparedIntent.token)}</code>
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Hợp đồng nhận giao dịch</dt>
+                                <dd>
+                                  <code>{getAddress(preparedIntent.contract)}</code>
+                                </dd>
+                              </div>
+                              {config?.treasuryAddress && (
+                                <div>
+                                  <dt>Kho nhận USDC</dt>
+                                  <dd>
+                                    <code>{getAddress(config.treasuryAddress)}</code>
+                                  </dd>
+                                </div>
+                              )}
+                              <div>
+                                <dt>Yêu cầu hết hạn</dt>
+                                <dd>
+                                  <time dateTime={preparedIntent.expiresAt}>
+                                    {new Intl.DateTimeFormat('vi-VN', {
+                                      dateStyle: 'medium',
+                                      timeStyle: 'short',
+                                    }).format(new Date(preparedIntent.expiresAt))}
+                                  </time>
+                                </dd>
+                              </div>
+                            </dl>
+                            <p className="billing-review-note">
+                              Hợp đồng nhận chữ ký USDC đúng số tiền này rồi chuyển vào kho nhận.
+                              Giao dịch cần thêm test AVAX để trả gas; không có gia hạn tự động.
+                            </p>
+                            <div className="billing-review-actions">
+                              <button
+                                className="billing-primary"
+                                type="button"
+                                onClick={() => void confirmPayment()}
+                                disabled={busy !== ''}
+                              >
+                                {busy === 'pay' ? (
+                                  <LoaderCircle className="billing-spin" size={17} />
+                                ) : (
+                                  <ShieldCheck size={17} />
+                                )}
+                                Thanh toán {planFacts[preparedIntent.plan].usdc} test USDC
+                              </button>
+                              <button
+                                className="billing-secondary"
+                                type="button"
+                                onClick={cancelPayment}
+                                disabled={busy !== ''}
+                              >
+                                Hủy yêu cầu
+                              </button>
+                            </div>
+                          </section>
+                        )}
+                        {error && (
+                          <p className="billing-alert" role="alert">
+                            <CircleAlert size={16} /> {error}
+                          </p>
+                        )}
+                        {notice && (
+                          <p className="billing-notice" role="status">
+                            {notice}
+                          </p>
+                        )}
+                        {txHash && (
+                          <div className="billing-tx-row">
+                            <span>Transaction</span>
+                            <a
+                              href={`https://build.avax.network/explorer/fuji/c-chain/tx/${encodeURIComponent(txHash)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {shortAddress(txHash)} <ExternalLink size={14} />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => void verifyPending()}
+                              disabled={busy !== ''}
+                            >
+                              {busy === 'verify' ? (
+                                <LoaderCircle className="billing-spin" size={14} />
+                              ) : (
+                                <ArrowUpRight size={14} />
+                              )}
+                              Kiểm tra quyền
+                            </button>
+                          </div>
+                        )}
+                        {!preparedIntent && (
+                          <button
+                            className="billing-primary billing-buy"
+                            type="button"
+                            onClick={() => void preparePayment(selectedPlan)}
+                            disabled={
+                              !boundWallet || !walletMode || pending || busy !== '' || !paymentReady
+                            }
+                          >
+                            {busy === 'prepare' ? (
+                              <LoaderCircle className="billing-spin" size={17} />
+                            ) : (
+                              <ArrowUpRight size={17} />
+                            )}
+                            Tiếp tục với {planFacts[selectedPlan].usdc} test USDC
+                          </button>
+                        )}
+                        <div className="billing-terms">
+                          <p>
+                            <ShieldCheck size={15} /> Mỗi lần mua cần bạn xác nhận. Người mua trả
+                            gas bằng test AVAX.
+                          </p>
+                          <p>
+                            Không tự gia hạn. Gia hạn cùng gói sớm sẽ nối thêm 30 ngày; đổi tier bắt
+                            đầu kỳ mới ngay, thời gian cũ không được cộng hoặc hoàn lại.
+                          </p>
+                          <p>
+                            Fuji USDC chỉ dùng để thử nghiệm, không có giá trị tiền thật. Hãy sao
+                            lưu ví trước khi đổi thiết bị.
+                          </p>
+                        </div>
+                        <div className="billing-config-foot">
+                          <span>
+                            <LockKeyhole size={13} /> Ví thanh toán Fuji
+                          </span>
+                          <span>Avalanche Fuji · chain {config?.chainId ?? FIJI_CHAIN_ID}</span>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {!selectedBanner && !user && error && (
+          <p className="billing-alert" role="alert">
+            {error}
+          </p>
+        )}
       </section>
 
       <footer className="billing-footer">
-        <span>
-          {bank
-            ? 'Dữ liệu, số tiền và tài khoản ngân hàng trong bản mô phỏng chỉ dùng để thử.'
-            : 'Fuji là mạng thử nghiệm. Plus 2 test USDC và Max 6 test USDC cho mỗi kỳ 30 ngày.'}
-        </span>
+        <span>© {new Date().getFullYear()} Kivuno</span>
         <a href="https://build.avax.network" target="_blank" rel="noreferrer">
           Avalanche <ExternalLink size={13} />
         </a>

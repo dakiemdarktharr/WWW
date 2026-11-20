@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isIP } from 'node:net';
 
 export function gatewayTarget(requestUrl: string) {
   const url = new URL(requestUrl, 'https://workspace.invalid');
@@ -119,6 +120,13 @@ export default async function handler(
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
+    // Vercel overwrites this header at its edge. Never forward a caller's
+    // x-relay-client-ip header or an arbitrary proxy chain into account limits.
+    const platformIp = process.env.VERCEL
+      ? request.headers['x-vercel-forwarded-for']
+      : request.socket.remoteAddress;
+    if (typeof platformIp === 'string' && isIP(platformIp))
+      headers.set('x-relay-client-ip', platformIp);
     for (const key of ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
