@@ -903,6 +903,7 @@ export class GroupSade {
       grantId: grant.id,
       state: 'queued',
       deadline: undefined,
+      awaitingReceipt: undefined,
       summary,
       reviewGrantId: undefined,
       acceptsUpdates: undefined,
@@ -922,6 +923,23 @@ export class GroupSade {
 
     this.store.put('sharedSadeGrant', { ...grant, used: grant.used - 1 });
     run.unavailableGrants = [...new Set([...(run.unavailableGrants || []), grant.id])];
+    this.reassignAfterQuota(run, job, group, grant, grants);
+  }
+  private reassignAfterQuota(
+    run: Run,
+    job: Job,
+    group: SharedGroup,
+    grant: Grant,
+    grants: Grant[],
+  ) {
+    if (job.reviewRevision) {
+      this.block(
+        run,
+        job,
+        'The original author reached their provider quota. The revision stays on their desktop.',
+      );
+      return;
+    }
     if (job.phase === 'plan') {
       const backup = grants.find(
         (entry) =>
@@ -1179,12 +1197,18 @@ export class GroupSade {
     for (const run of runs) {
       const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
       const grants = new Map(this.grants(group).map((grant) => [grant.id, grant]));
+      const quotaLimited = run.unavailableGrants?.length
+        ? new Set(run.unavailableGrants)
+        : undefined;
+      const suppliedByActor = (id: string) => {
+        const grant = grants.get(id);
+        return supplied.has(id) && grant && this.actorGrant(grant, actor);
+      };
       if (
-        !run.jobs.some(
-          (job) =>
-            supplied.has(job.grantId) &&
-            grants.has(job.grantId) &&
-            this.actorGrant(grants.get(job.grantId)!, actor),
+        !run.jobs.some((job) => suppliedByActor(job.grantId)) &&
+        !(
+          quotaLimited &&
+          run.roster.some((id) => suppliedByActor(id) && this.usable(grants.get(id)!, group, false))
         )
       )
         continue;
@@ -1195,6 +1219,22 @@ export class GroupSade {
         })
       )
         continue;
+      if (quotaLimited) {
+        const rosterGrants = [...grants.values()];
+        for (const job of run.jobs) {
+          if (
+            job.state !== 'queued' ||
+            !quotaLimited.has(job.grantId) ||
+            (job.phase === 'review' && !job.reviewOf) ||
+            prerequisitesOf(run, job).some((prior) => prior.state !== 'done')
+          )
+            continue;
+          // No delivery has reserved a shared turn for this task.
+          this.reassignAfterQuota(run, job, group, grants.get(job.grantId)!, rosterGrants);
+          if (final(run)) break;
+        }
+        if (final(run)) continue;
+      }
       const dependencies = new Map(
         run.jobs
           .filter((job) => job.state === 'queued' || awaitingDelivery(job))

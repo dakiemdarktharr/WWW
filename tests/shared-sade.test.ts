@@ -2335,6 +2335,112 @@ for (const unavailable of ['before allocation', 'before starting', 'both exhaust
   });
 }
 
+test('a known provider limit moves later work to its own named backup without polling the primary', (t) => {
+  const f = fixture(['gemini', 'claude'], { turnsA: 3, turnsB: 1 });
+  t.after(() => f.store.close());
+  const profile = randomUUID();
+  const backup = randomUUID();
+  f.call(1, {
+    action: 'teammates',
+    groupId: f.groupId,
+    teammates: [
+      { localId: f.members[1], provider: 'claude', name: 'Mây' },
+      { localId: profile, provider: 'antigravity', name: 'Sổ tay' },
+    ],
+  });
+  f.call(1, {
+    action: 'sade-grant',
+    groupId: f.groupId,
+    id: backup,
+    teammateId: profile,
+    projectKey: key,
+    projectName: 'Fixture project',
+    role: 'researcher',
+    platform: 'win32',
+    allowWrites: false,
+    turns: 1,
+  });
+  const request = {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content:
+      'Nhờ Bếp đọc src/source.ts rồi src/target.ts. Nếu Gemini hết lượt, nhờ Mây đọc file đầu và Sổ tay đọc file sau, giữ đúng thứ tự.',
+    sade: { projectKey: key, readOnly: true },
+  };
+  f.call(0, request);
+  const planner = f.poll(0).delivery!;
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Read the source before inspecting the target.',
+      tasks: [
+        work('source', { preferredMemberId: f.grants[0], fallbackMemberId: f.grants[1] }),
+        work('target', {
+          preferredMemberId: f.grants[0],
+          fallbackMemberId: backup,
+          dependsOn: ['source'],
+        }),
+      ],
+    },
+  });
+  const initial = f.poll(0).delivery!;
+  assert.deepEqual(initial.task?.scope, ['src/source.ts']);
+  const primaryOnly = f.poll(0, [initial.id]);
+  assert.deepEqual(primaryOnly.active, [initial.id]);
+  f.finish(0, initial.id, { kind: 'provider-unavailable' });
+  assert.equal(f.poll(1, [], [backup]).delivery, undefined);
+  const first = f.poll(1).delivery!;
+  assert.deepEqual(first.task?.scope, ['src/source.ts']);
+  f.finish(1, first.id, { kind: 'done', summary: 'The source check completed.' });
+  assert.equal(f.poll(1, [], [backup], randomUUID()).delivery, undefined);
+  const second = f.poll(1, [], [backup]).delivery;
+  assert.ok(second, 'the second authorized backup can receive work with the primary offline');
+  assert.equal(second.grantId, backup);
+  assert.deepEqual(second.task?.scope, ['src/target.ts']);
+  assert.match(second.prerequisites[0]?.summary || '', /source check completed/);
+  f.finish(1, second.id, { kind: 'done', summary: 'The target check completed.' });
+  f.call(0, request);
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+  assert.equal(f.view().messages.length, 1);
+  for (const id of [...f.grants, backup])
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', id).used, 1);
+});
+
+test('a known provider limit cannot reuse another task’s fallback for a pinned task', (t) => {
+  const f = fixture(['gemini', 'claude'], { turnsA: 3, turnsB: 2 });
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Bếp xem file đầu rồi file sau. Mây chỉ được thay Bếp ở file đầu nếu hết lượt.',
+    sade: { projectKey: key, readOnly: true },
+  });
+  const planner = f.poll(0).delivery!;
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Allow the backup for the first check only.',
+      tasks: [
+        work('first', { preferredMemberId: f.grants[0], fallbackMemberId: f.grants[1] }),
+        work('second', { preferredMemberId: f.grants[0], dependsOn: ['first'] }),
+      ],
+    },
+  });
+  const primary = f.poll(0).delivery!;
+  f.finish(0, primary.id, { kind: 'provider-unavailable' });
+  const first = f.poll(1).delivery!;
+  assert.equal(first.task?.key, 'first');
+  f.finish(1, first.id, { kind: 'done', summary: 'The authorized check completed.' });
+  assert.equal(f.poll(1).delivery, undefined);
+  const run = f.view().sadeRuns[0];
+  assert.equal(run.state, 'blocked');
+  assert.match(run.error || '', /requested harness.*provider quota/);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 1);
+});
+
 for (const pinned of ['named harness', 'required OS'] as const) {
   test(`quota failover preserves the ${pinned}`, () => {
     const f = fixture(['gemini', 'codex'], { mac: pinned === 'required OS' });
@@ -2522,6 +2628,95 @@ test('a quota fallback can write the same scope using another write grant and in
       f.store.close();
     }
   }
+});
+
+test('a queued review on a quota-limited harness moves to its named backup only after a patch exists', (t) => {
+  const f = fixture(['gemini', 'claude'], { turnsA: 3, turnsB: 2 });
+  t.after(() => f.store.close());
+  const teammateId = randomUUID();
+  const backup = randomUUID();
+  f.call(1, {
+    action: 'teammates',
+    groupId: f.groupId,
+    teammates: [
+      { localId: f.members[1], provider: 'claude', name: 'Mây' },
+      { localId: teammateId, provider: 'antigravity', name: 'Sổ tay' },
+    ],
+  });
+  f.call(1, {
+    action: 'sade-grant',
+    groupId: f.groupId,
+    id: backup,
+    teammateId,
+    projectKey: key,
+    projectName: 'Fixture project',
+    role: 'reviewer',
+    platform: 'win32',
+    allowWrites: false,
+    turns: 1,
+  });
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content:
+      'Mây đọc tiêu chí, Bếp sửa theo kết quả, Mây review diff. Nếu Mây hết lượt, Bếp đọc tiêu chí và Sổ tay review diff.',
+    sade: { projectKey: key },
+  });
+  const planner = f.poll(0).delivery!;
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Read requirements, edit the file and run an independent review.',
+      tasks: [
+        work('requirements', { preferredMemberId: f.grants[1], fallbackMemberId: f.grants[0] }),
+        work('write', {
+          kind: 'code',
+          scope: patch.files,
+          dependsOn: ['requirements'],
+          preferredMemberId: f.grants[0],
+        }),
+        work('review', {
+          kind: 'review',
+          scope: patch.files,
+          dependsOn: ['write'],
+          preferredMemberId: f.grants[1],
+          fallbackMemberId: backup,
+        }),
+      ],
+    },
+  });
+  const primary = f.poll(1).delivery!;
+  assert.equal(primary.task?.key, 'requirements');
+  f.finish(1, primary.id, { kind: 'provider-unavailable' });
+  const requirements = f.poll(0).delivery!;
+  assert.equal(requirements.task?.key, 'requirements');
+  f.finish(0, requirements.id, { kind: 'done', summary: 'The requirements were read.' });
+  const writer = f.poll(0).delivery!;
+  assert.equal(writer.task?.key, 'write');
+  assert.equal(f.poll(1, [], [backup]).delivery, undefined);
+  f.finish(0, writer.id, { kind: 'change', diff: patch, summary: 'The scoped change is ready.' });
+  assert.equal(f.poll(0, [writer.id]).reviews.length, 0);
+  const reviewer = f.poll(1, [], [backup]).delivery!;
+  assert.equal(reviewer.phase, 'review');
+  assert.deepEqual(reviewer.review, patch);
+  assert.equal(reviewer.grantId, backup);
+  f.finish(1, reviewer.id, {
+    kind: 'review',
+    verdict: 'approved',
+    summary: 'The scope was verified.',
+  });
+  assert.deepEqual(f.poll(0, [writer.id]).reviews, [
+    { jobId: writer.id, digest: reviewDigest(patch) },
+  ]);
+  f.finish(0, writer.id, {
+    kind: 'done',
+    revision: sha,
+    summary: 'Integrated the reviewed change.',
+  });
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used, 0);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', backup).used, 1);
 });
 
 test('a locked group seat cannot stall another project on the same desktop', (t) => {
