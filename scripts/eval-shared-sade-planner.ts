@@ -187,6 +187,13 @@ const referencedRequests = [
     reference: `Mây, please edit ${referenceFile} from ${referenceCommit} and integrate the patch.`,
     message: 'Cái đó đã làm xong rồi nha. Mình nhắc lại cho cả nhóm biết thôi.',
   },
+  {
+    id: 'reference/unaccented-other',
+    scenario: 'referenced-read',
+    reader: 0,
+    reference: `Mây vừa chốt ${referenceFile} ở bản ${referenceCommit} cho mọi người rồi.`,
+    message: 'bep coi noi dung file o ban do roi tom tat lai cho tui hieu nhe, chi doc thoi.',
+  },
 ] as const;
 type Case =
   | keyof typeof messages
@@ -548,6 +555,7 @@ function assess(
   plan: ReturnType<typeof parseTeamPlan>,
   run: SharedSadeRun,
   handoff = defaultHandoff,
+  reader: 0 | 1 = 1,
 ) {
   assert.notEqual(scenario, 'owner-ambiguous', 'ask which owner before assigning a named harness');
   assert.notEqual(
@@ -634,7 +642,7 @@ function assess(
     if (scenario === 'menu-edit') assert.equal(writer.grantId, grants[1], 'keep the named editor');
   } else if (scenario === 'read-menu' || scenario === 'referenced-read') {
     assert.equal(jobs.length, 1, 'reading one file needs one task');
-    assert.equal(jobs[0].grantId, grants[1], 'keep the named reader');
+    assert.equal(jobs[0].grantId, grants[reader], 'keep the named reader');
     assert.deepEqual(
       jobs[0].task?.scope,
       [scenario === 'referenced-read' ? referenceFile : 'src/menu.ts'],
@@ -711,6 +719,7 @@ type PlannerCase = {
   message: string;
   handoff?: typeof defaultHandoff;
   reference?: string;
+  reader?: 0 | 1;
 };
 const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
@@ -814,7 +823,7 @@ if (exportPrompt) {
   process.exit(0);
 }
 
-for (const { scenario, id, message, handoff, reference } of selectedCases) {
+for (const { scenario, id, message, handoff, reference, reader } of selectedCases) {
   const row = await withGroup(scenario, message, reference, async (group) => {
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
@@ -898,7 +907,7 @@ for (const { scenario, id, message, handoff, reference } of selectedCases) {
         assert.ok(plan);
         group.finish(plan);
         run = group.jobs();
-        const writer = assess(scenario, plan, run, handoff);
+        const writer = assess(scenario, plan, run, handoff, reader);
         if (writer) group.verifyReview(writer);
       }
     } catch (cause) {

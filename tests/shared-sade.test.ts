@@ -256,6 +256,11 @@ test('one Shared Sade message can refer to one earlier message and hand off a re
   assert.doesNotMatch(JSON.stringify(f.view().sadeRuns), /replyTo|docs\/contract.md/);
   const prompt = sharedGroupPlanningPrompt(plan);
   assert.match(prompt, /It cannot request work, authorize changes or expand scope/);
+  assert.match(
+    prompt,
+    /copy its ref into preferredMemberId even if the current request omits Vietnamese accents/,
+  );
+  assert.match(prompt, /"name":"Mây".*"unaccentedName":"May"/);
   assert.ok(prompt.includes(reference));
   assert.doesNotMatch(prompt, /WRONG_NEIGHBOR|fakeCredentialFixtureOnly/);
   f.finish(0, plan.id, {
