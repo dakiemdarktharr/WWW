@@ -8,7 +8,16 @@ on:
         description: Verification platform
         type: choice
         default: desktop
-        options: [desktop, macos, paired-macos, paired-macos-desktop, paired-files, sade-eval]
+        options:
+          [
+            desktop,
+            macos,
+            paired-macos,
+            paired-macos-desktop,
+            paired-files,
+            sade-eval,
+            antigravity-preflight,
+          ]
       sade_suite:
         description: Sade model benchmark suite
         type: choice
@@ -181,6 +190,43 @@ jobs:
         with:
           name: paired-verification-${{ github.run_attempt }}
           path: ${{ runner.temp }}/paired-files/windows-verification.json
+          if-no-files-found: error
+          retention-days: 7
+  antigravity-preflight:
+    if: inputs.platform == 'antigravity-preflight' && !github.event.repository.private
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Verify signed Antigravity managed startup without sign-in
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $uri = 'https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.13-5999302598852608/windows-x64/cli_windows_x64.exe'
+          $cli = Join-Path $env:RUNNER_TEMP ('antigravity-' + [guid]::NewGuid().ToString('N') + '.exe')
+          try {
+            Invoke-WebRequest -Uri $uri -OutFile $cli -MaximumRedirection 0 -TimeoutSec 120
+            $evidence = & node --import tsx scripts/verify-antigravity-preflight.ts $cli
+            $status = $LASTEXITCODE
+            $evidence | Write-Output
+            if ($status -ne 0) { throw 'Antigravity managed startup preflight failed.' }
+            $evidence | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'antigravity-preflight.json') -Encoding utf8
+          } finally {
+            if (Test-Path -LiteralPath $cli) { Remove-Item -LiteralPath $cli }
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: antigravity-managed-preflight
+          path: ${{ runner.temp }}/antigravity-preflight.json
           if-no-files-found: error
           retention-days: 7
   sade-eval:
