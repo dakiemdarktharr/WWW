@@ -95,6 +95,15 @@ const defensiveRead = /\b(?:chi doc|doc|read[ -]only|read)\b/;
 const defensiveAction = /\b(?:ra soat|kiem tra|xem|check|inspect|review|report whether)\b/;
 const defensiveConcern =
   /\b(?:phong thu|defensive|lo|lot|hien|expos(?:e[ds]?|ure)|leak(?:s|age)?|disclos(?:e[ds]?|ure))\b/;
+const negatedDefensiveAction =
+  /\b(?:khong (?:can|nen|phai)|dung|bo qua|do not|no need to|skip|omit) (?:doc|read|ra soat|kiem tra|xem|check|inspect|review|report)\b/;
+const bothReviewedFiles =
+  /\b(?:hai (?:file|tep)|ca hai|chung|(?:both|those two|the two) (?:source )?files)\b/;
+const reviewReadVerb = /\b(?:doc|read(?![ -]only\b))\b/;
+const reviewDesignation = /\b(?:cyber|review|ra soat|bao mat)\b/;
+const reviewDirective =
+  /^(?:(?:phan|ve phan|please|chi|only|just) )?(?:ra soat|cyber|review|inspect)\b|\b(?:backend|frontend)[ -]only\b/;
+const readOnlyReminder = /^(?:(?:that|the|this) )?review (?:is|must be|stays) read[ -]only\b/;
 
 function inlineDeliverables(receiverWork: string) {
   const parts = foldSharedSadeName(receiverWork)
@@ -132,15 +141,50 @@ function exactScope(work: string): string | null | undefined {
   return null;
 }
 
+function reviewSubjects(text: string) {
+  const action = reviewReadVerb.exec(text) ?? defensiveAction.exec(text);
+  if (!action) return '';
+  return text.slice(action.index + action[0].length).split(defensiveAction, 1)[0];
+}
+
+function reviewsBothTargets(text: string) {
+  const subjects = reviewSubjects(text);
+  const namesFrontend = frontend.test(subjects);
+  const namesBackend = backendRole.test(subjects);
+  return (
+    (namesFrontend && namesBackend) ||
+    (!namesFrontend &&
+      !namesBackend &&
+      frontend.test(text) &&
+      backendRole.test(text) &&
+      bothReviewedFiles.test(text))
+  );
+}
+
 function requestsDefensiveReview(text: string) {
   return (
     !pastWork.test(text) &&
+    !negatedDefensiveAction.test(text) &&
+    reviewsBothTargets(text) &&
     defensiveRead.test(text) &&
     defensiveAction.test(text) &&
     defensiveConcern.test(text) &&
     (/\b(?:giao|nho|de mot nguoi|ask|have|let)\b/.test(text) ||
       /^(?:ra soat|kiem tra|review|inspect)\b/.test(text))
   );
+}
+
+function restrictsDefensiveReview(sentence: string, text: string) {
+  if (!reviewDesignation.test(text) && !defensiveConcern.test(text)) return false;
+  if (negatedDefensiveAction.test(text)) return true;
+  if (reviewsBothTargets(text)) return false;
+  if (reviewDirective.test(text) && !readOnlyReminder.test(text)) return true;
+  const subjects = reviewSubjects(text);
+  const namesFrontend = frontend.test(subjects);
+  const namesBackend = backendRole.test(subjects);
+  if (namesFrontend !== namesBackend) return true;
+  const files = reviewSubjects(foldSharedSadeName(sentence)).match(fileToken) ?? [];
+  return !namesFrontend && !namesBackend && new Set(files).size === 1;
 }
 
 function keepsScope(sentence: string, scopes: (string | undefined)[]) {
@@ -164,12 +208,12 @@ function supportingDeliverables(
     )
   )
     return;
-  if (inlineDeliverables(receiverWork)) return { backend: {}, codebase: {}, defensiveReview: true };
 
   const textForRole = (sentence: string) => foldSharedSadeName(sentence.replace(fileToken, ''));
-  const reviews = tail.map(textForRole).filter(requestsDefensiveReview);
-  if (!reviews.length) return;
-  const backendReview = reviews.some((text) => backendRole.test(text));
+  const tailText = tail.map(textForRole);
+  if (tail.some((sentence, index) => restrictsDefensiveReview(sentence, tailText[index]))) return;
+  if (inlineDeliverables(receiverWork)) return { backend: {}, codebase: {}, defensiveReview: true };
+  if (!tailText.some(requestsDefensiveReview)) return;
   const backendScopes = new Set<string>();
   const codebaseScopes = new Set<string>();
   let backend = false;
@@ -196,7 +240,7 @@ function supportingDeliverables(
     // A named backend review can disambiguate a single assigned source paired with tests.
     if (
       backendRole.test(text) ||
-      (backendReview && !frontend.test(text) && source.length === 1 && tests.length > 0)
+      (!frontend.test(text) && source.length === 1 && tests.length > 0)
     ) {
       backend = true;
       source.forEach((file) => backendScopes.add(file));

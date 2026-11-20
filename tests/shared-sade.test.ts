@@ -5068,6 +5068,51 @@ test('Shared Sade requires each explicitly requested handoff deliverable', async
   }
 });
 
+test('Shared Sade preserves owner pins when the defensive review is declined or limited', async (t) => {
+  const splitHandoff =
+    'Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của Bình làm frontend. Sade chia backend và bộ test riêng theo cấu trúc đó.';
+  const requests = [
+    {
+      label: 'declines the defensive check',
+      content: `${splitHandoff} Giao người khác đọc frontend và backend, không cần xem có lộ dữ liệu.`,
+    },
+    {
+      label: 'reviews backend only',
+      content: `${splitHandoff} Giao người khác đọc riêng backend để xem thông báo lỗi có lộ dữ liệu.`,
+    },
+    {
+      label: 'later limits the inline review to frontend',
+      content: `${fullWorkshopHandoff} Giao người khác đọc riêng frontend để xem thông báo lỗi có lộ dữ liệu.`,
+    },
+  ];
+  for (const { label, content } of requests) {
+    await t.test(label, (t) => {
+      const f = fixture(undefined, {
+        names: ['Gemini', 'Astra'],
+        handoffAssignments: true,
+        handoffDeliverables: true,
+      });
+      t.after(() => f.store.close());
+      f.call(0, {
+        action: 'message',
+        groupId: f.groupId,
+        id: randomUUID(),
+        content,
+        sade: { projectKey: key },
+      });
+      const poll = f.poll(0);
+      assert.equal(poll.supportsHandoffDeliverables, true);
+      const planner = poll.delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.deepEqual(planner.handoffAssignments, {
+        producer: { grantId: f.grants[0] },
+        receiver: { grantId: f.grants[1] },
+      });
+      assert.equal(planner.handoffDeliverables, undefined);
+    });
+  }
+});
+
 test('Shared Sade accepts a short handoff that requests just architecture and frontend', (t) => {
   const f = ownerRoutingFixture(t, false, true);
   f.send('Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của Bình làm frontend.');
