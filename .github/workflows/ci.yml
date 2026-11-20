@@ -31,6 +31,7 @@ on:
             frontend-style,
             handoff-planning,
             handoff-compiled,
+            handoff-grounded,
             owner-routing,
             referenced-requests,
             quota-followup,
@@ -226,7 +227,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || inputs.sade_suite == 'frontend-style' && '[0,1,2,3]' || (inputs.sade_suite == 'handoff-planning' || inputs.sade_suite == 'handoff-compiled') && '[0,1,2,3,4,5,6,7,8,9]' || inputs.sade_suite == 'owner-routing' && '[0,1,2,3,4,5,6,7,8,9,10,11]' || '[0,1,2,3,4]') }}
+        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-example') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints' || inputs.sade_suite == 'quota-followup') && '[0,1]' || inputs.sade_suite == 'frontend-style' && '[0,1,2,3]' || (inputs.sade_suite == 'handoff-planning' || inputs.sade_suite == 'handoff-compiled') && '[0,1,2,3,4,5,6,7,8,9]' || inputs.sade_suite == 'handoff-grounded' && '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]' || inputs.sade_suite == 'owner-routing' && '[0,1,2,3,4,5,6,7,8,9,10,11]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -301,18 +302,22 @@ jobs:
                 --model "$SADE_MODEL" --frontend-style --planning-prompt "$mode" \
                 --shard "$SADE_SHARD/4" --timeout-ms 120000
             done
-          elif [[ "$SADE_SUITE" == handoff-planning || "$SADE_SUITE" == handoff-compiled ]]; then
+          elif [[ "$SADE_SUITE" == handoff-planning || "$SADE_SUITE" == handoff-compiled || "$SADE_SUITE" == handoff-grounded ]]; then
             prompts=(baseline handoff-compact)
             if [[ "$SADE_SUITE" == handoff-compiled ]]; then
               prompts=(handoff-compact handoff-compiled)
+            elif [[ "$SADE_SUITE" == handoff-grounded ]]; then
+              prompts=(handoff-compiled handoff-grounded)
             fi
             if (( SADE_SHARD % 2 == 1 )); then
               prompts=("${prompts[1]}" "${prompts[0]}")
             fi
             if (( SADE_SHARD < 4 )); then
               cases=(--frontend-style --shard "$SADE_SHARD/4")
-            else
+            elif (( SADE_SHARD < 10 )); then
               cases=(--handoff-planning --shard "$((SADE_SHARD - 4))/6")
+            else
+              cases=(--handoff-holdout-new --shard "$((SADE_SHARD - 10))/8")
             fi
             for mode in "${prompts[@]}"; do
               node --import tsx scripts/eval-shared-sade-planner.ts "$results/handoff-planning-$mode.json" \

@@ -34,6 +34,7 @@ import {
   handoffPlanningCases,
   type HandoffPlanningCase,
 } from '../tests/fixtures/shared-sade-handoff-planning.ts';
+import { handoffHoldoutCases } from '../tests/fixtures/shared-sade-handoff-holdout.ts';
 import { handoffDraftSchema, parseHandoffDraft } from './shared-sade-handoff-draft.ts';
 import { sharedSadeCompiledHandoff } from './shared-sade-compiled-handoff.ts';
 
@@ -372,10 +373,12 @@ const { values, positionals } = parseArgs({
     'frontend-style': { type: 'boolean' },
     'owner-routing': { type: 'boolean' },
     'handoff-planning': { type: 'boolean' },
+    'handoff-holdout-new': { type: 'boolean' },
     'one-planner-call': { type: 'boolean' },
   },
 });
 const model = values.model;
+const handoffPlanningSuite = values['handoff-planning'] || values['handoff-holdout-new'];
 const timeoutMs = Number(values['timeout-ms']);
 const [shard, shardCount] = values.shard.split('/').map(Number);
 assert.ok(
@@ -396,6 +399,7 @@ assert.ok(
     'owner-routing',
     'handoff-compact',
     'handoff-compiled',
+    'handoff-grounded',
   ].includes(values['planning-prompt']),
   'Unknown planning prompt.',
 );
@@ -410,10 +414,12 @@ assert.ok(
   'Use the ownership prompt with --owner-routing or --frontend-style.',
 );
 assert.ok(
-  !['handoff-compact', 'handoff-compiled'].includes(values['planning-prompt']) ||
-    values['handoff-planning'] ||
+  !['handoff-compact', 'handoff-compiled', 'handoff-grounded'].includes(
+    values['planning-prompt'],
+  ) ||
+    handoffPlanningSuite ||
     (values['frontend-style'] && values['one-planner-call']),
-  'Use the handoff prompts with --handoff-planning or --frontend-style --one-planner-call.',
+  'Use the handoff prompts with --handoff-planning, --handoff-holdout-new or --frontend-style --one-planner-call.',
 );
 assert.ok(
   [
@@ -423,6 +429,7 @@ assert.ok(
     values['frontend-style'],
     values['owner-routing'],
     values['handoff-planning'],
+    values['handoff-holdout-new'],
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
@@ -456,7 +463,7 @@ type SavedRun = {
     id: string;
     promptSha256?: string;
     execution?: 'coordinator-preflight';
-    protocol?: 'tools' | 'compact-json' | 'compiled-json';
+    protocol?: 'tools' | 'compact-json' | 'compiled-json' | 'grounded-json';
     responseSchemaSha256?: string;
     modelReplies?: Awaited<ReturnType<typeof getPlannerReply>>[];
     modelCalls?: number;
@@ -473,7 +480,7 @@ const plannerTools =
   values['owner-handoff'] ||
   values['frontend-style'] ||
   values['owner-routing'] ||
-  values['handoff-planning']
+  handoffPlanningSuite
     ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
     : [groupPlanTool, groupNoWorkTool];
 const tools = plannerTools.map(({ type, name, description, inputSchema }) => ({
@@ -1196,7 +1203,7 @@ type PlannerReply = {
 async function getPlannerReply(
   messages: unknown[],
   fullHandoff: boolean,
-  format?: typeof handoffDraftSchema,
+  format?: Record<string, unknown>,
 ) {
   const response = await local('/api/chat', {
     method: 'POST',
@@ -1303,14 +1310,16 @@ const defaultCases: PlannerCase[] = values['quota-fallback']
                   message,
                 })),
               );
-const cases: PlannerCase[] = values['handoff-planning']
-  ? handoffPlanningCases.map((handoffPlanning) => ({
-      scenario: 'handoff-planning',
-      id: handoffPlanning.id,
-      message: handoffPlanning.message,
-      reference: handoffPlanning.reference,
-      handoffPlanning,
-    }))
+const cases: PlannerCase[] = handoffPlanningSuite
+  ? (values['handoff-holdout-new'] ? handoffHoldoutCases : handoffPlanningCases).map(
+      (handoffPlanning) => ({
+        scenario: 'handoff-planning',
+        id: handoffPlanning.id,
+        message: handoffPlanning.message,
+        reference: handoffPlanning.reference,
+        handoffPlanning,
+      }),
+    )
   : values['owner-routing']
     ? ownerRoutingCases.map((ownerRouting) => ({
         scenario: 'owner-routing',
@@ -1372,18 +1381,22 @@ ${base}`;
 
 function plannerInput(delivery: SharedDelivery): {
   prompt: string;
-  format?: typeof handoffDraftSchema;
+  format?: Record<string, unknown>;
   compile?: (input: unknown) => { name: string; arguments: unknown };
+  protocol: NonNullable<SavedRun['rows'][number]['protocol']>;
 } {
-  if (values['planning-prompt'] === 'handoff-compiled') {
-    const compiled = sharedSadeCompiledHandoff(delivery);
-    if (compiled) return compiled;
+  const grounded = values['planning-prompt'] === 'handoff-grounded';
+  if (grounded || values['planning-prompt'] === 'handoff-compiled') {
+    const compiled = sharedSadeCompiledHandoff(delivery, { grounded });
+    if (compiled) return { ...compiled, protocol: grounded ? 'grounded-json' : 'compiled-json' };
   }
-  if (['handoff-compact', 'handoff-compiled'].includes(values['planning-prompt'])) {
+  if (
+    ['handoff-compact', 'handoff-compiled', 'handoff-grounded'].includes(values['planning-prompt'])
+  ) {
     const prompt = sharedSadeHandoffPrompt(delivery);
     assert.ok(prompt, 'this evaluation requires a compact handoff prompt');
     const assignments = delivery.handoffAssignments;
-    if (!assignments) return { prompt, format: handoffDraftSchema };
+    if (!assignments) return { prompt, format: handoffDraftSchema, protocol: 'compact-json' };
     const ref = ({ grantId, scope }: typeof assignments.producer) => {
       const index = delivery.team.findIndex(({ id }) => id === grantId);
       assert.ok(index >= 0, 'a pinned grant must appear in the planner roster');
@@ -1400,9 +1413,10 @@ function plannerInput(delivery: SharedDelivery): {
     return {
       prompt: `Use these coordinator-approved handoff bindings, even if the advisory context below differs: ${approved}. Return a plan with separate writing tasks keyed architecture and frontend, with frontend depending on architecture. Use each binding's by ref, with fallback none. Where the binding contains a scope, that exact file is the only scope for its task. Do not ask for confirmation of these grants.${supportingWork}\n\n${prompt}`,
       format: handoffDraftSchema,
+      protocol: 'compact-json',
     };
   }
-  return { prompt: planningPrompt(delivery) };
+  return { prompt: planningPrompt(delivery), protocol: 'tools' };
 }
 
 function frontendExpectation(style: FrontendStyle) {
@@ -1563,7 +1577,7 @@ if (exportPrompt) {
       return row.execution;
     }
     const { delivery } = group;
-    const { prompt, format, compile } = plannerInput(delivery);
+    const { prompt, format, protocol } = plannerInput(delivery);
     const decisionSchema = {
       type: 'object',
       properties: {
@@ -1592,9 +1606,7 @@ if (exportPrompt) {
           tool: groupPlanTool,
           toolsSha256,
           decisionSchema,
-          ...(format
-            ? { protocol: compile ? 'compiled-json' : 'compact-json', responseFormat: format }
-            : {}),
+          ...(format ? { protocol, responseFormat: format } : {}),
           ...(frontendStyle
             ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
             : {}),
@@ -1628,8 +1640,7 @@ for (const plannerCase of selectedCases) {
   const detailed = Boolean(frontendStyle || ownerRouting || handoffPlanning);
   const row = await withGroup(plannerCase, async (group) => {
     if ('preflight' in group) return scoreCoordinatorPreflight(plannerCase, group.preflight);
-    const { prompt, format, compile } = plannerInput(group.delivery);
-    const protocol = compile ? 'compiled-json' : format ? 'compact-json' : 'tools';
+    const { prompt, format, compile, protocol } = plannerInput(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
@@ -1885,20 +1896,20 @@ for (const plannerCase of selectedCases) {
             ? { model, digest: modelDigest }
             : {}),
         toolsSha256,
-        ...(values['frontend-style'] || values['owner-routing'] || values['handoff-planning']
+        ...(values['frontend-style'] || values['owner-routing'] || handoffPlanningSuite
           ? {
               planningPrompt: values['planning-prompt'],
-              ...(useHandoffDeliverables && (values['frontend-style'] || values['handoff-planning'])
+              ...(useHandoffDeliverables && (values['frontend-style'] || handoffPlanningSuite)
                 ? { handoffDeliverables: true }
                 : {}),
               generation: {
                 ...generation,
-                num_predict: values['frontend-style'] || values['handoff-planning'] ? 1600 : 768,
+                num_predict: values['frontend-style'] || handoffPlanningSuite ? 1600 : 768,
                 think: false,
               },
               memoryMeasurement:
                 'Ollama /api/ps post-reply model allocation. RAM is allocation minus VRAM. Sample excludes peak process and runner memory.',
-              ...(values['one-planner-call'] || values['handoff-planning']
+              ...(values['one-planner-call'] || handoffPlanningSuite
                 ? {
                     maximumModelCallsPerCase: 1,
                     timeoutMs,
