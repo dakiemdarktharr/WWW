@@ -19,7 +19,7 @@ npm run test:portal
 
 ## Demo A — một prompt, nhiều vai trò
 
-Tạo project mẫu trống, kết nối Gemini và một Codex profile tên Astra; cho phép usage của từng tài khoản. Chọn nhóm này trong Chat và bật Sade.
+Tạo repo mẫu có commit đầu tiên. A kết nối Gemini, B kết nối Codex với tên Astra. Trong Shared Groups, mỗi thành viên chia sẻ harness và cấp quyền cho repo đó. A chọn **Ask Sade** và gửi một tin.
 
 > Làm trang đăng ký workshop cho một câu lạc bộ. Gemini lo cấu trúc và hợp đồng dữ liệu trước, Astra làm giao diện theo cấu trúc đó. Hỏi tôi thích phong cách nào hoặc có muốn để Astra tự chọn. Codebase, backend và kiểm tra bảo mật hãy giao cho AI phù hợp đang được phép dùng. Chưa xuất bản.
 
@@ -29,7 +29,7 @@ Kỳ vọng: một workflow, các bước có dependency; frontend nhận kết 
 
 ## Demo B — chống trùng và mâu thuẫn
 
-Cho hai yêu cầu cùng sửa `src/registration.ts`. Gửi lại cùng HTTP request ID khi giả lập mất kết nối. Khi một nhiệm vụ đang chạy trong Shared Groups, chọn **Update task** và gửi “Phần này tôi đã commit rồi. Kiểm tra commit mới trước khi sửa tiếp nhé.”
+Trong một yêu cầu Shared Groups, giao hai việc có phạm vi cùng chạm `src/registration.ts`. Gửi lại cùng mã tin nhắn qua API thử nghiệm để mô phỏng mất phản hồi. Khi một nhiệm vụ đang chạy, chọn **Update task** và gửi “Phần này tôi đã commit rồi. Kiểm tra commit mới trước khi sửa tiếp nhé.”
 
 Khi gửi lại cùng yêu cầu, nhóm chỉ thấy một workflow. Các nhiệm vụ ghi vào cùng phạm vi chạy lần lượt. Chỉ đạo mới được chuyển đến harness trong lượt đang chạy. Nếu harness kết thúc lượt trước khi đọc chỉ đạo, nhóm thấy nhiệm vụ bị chặn. Code nằm trong worktree riêng và bước tích hợp kiểm tra trạng thái Git cùng phạm vi.
 
@@ -51,11 +51,17 @@ Hai người A/B có Windows và Mac. A yêu cầu kiểm tra trên Mac của B;
 
 Chạy các ca: chưa cấp quyền; cấp quyền đúng máy/project; hết hạn/thu hồi; mất kết nối giữa lệnh; đường dẫn ngoài scope; yêu cầu mang theo token đăng nhập của A. Kỳ vọng an toàn: không thực thi khi không đủ quyền, không lộ token, không chạy lại một thao tác có trạng thái chưa rõ.
 
-**Luồng cấp quyền và thực thi đã có trên nhánh Sade, chưa xác minh Windows → Mac end-to-end.** Trong Machines, nguồn chọn project và xuất cấu hình dùng máy để kiểm thử. Chủ máy đích mở Kivuno, nhập cấu hình và xác nhận native dialog: project, 30 phút, full access mặc định tắt. Chủ máy đích cần tài khoản Kivuno để mở ứng dụng nhưng không cần tài khoản ChatGPT/Claude/Gemini cho chế độ này. Không chuyển session AI: model ở nguồn, lệnh/file chạy trên máy đích.
+Trong **Machines**, A chọn project và xuất cấu hình ghép cặp. B nhập cấu hình trên Mac rồi xác nhận quyền cho project và thời hạn hiển thị trong hộp thoại. A mở **Let Sade use your teammate** trong Shared Groups, chọn project, bật **Allow local file changes** và chọn Mac ở **Paired machine**. B đăng nhập Kivuno để cấp quyền. Model dùng tài khoản của A trên Windows. Mac nhận file project được phép và chạy các lệnh kiểm thử đã cấp quyền.
 
-`machine_list` chỉ trả máy đang online có grant đúng project. `machine_use` hỗ trợ info/sync/read/write/run/pull. Lệnh tối đa 60 giây. Runner hỗ trợ chia gói nhận snapshot tối đa 8 MiB, 2.000 file và 4 MiB mỗi file. Runner đời cũ nhận tối đa 2 MiB và 512 KiB mỗi file. Credential paths bị loại và các mẫu secret phổ biến bị chặn. Full access cho phép thực thi với quyền OS của chủ máy, **cwd chỉ là thư mục làm việc**. Stop trên máy đích thu hồi quyền. Hết hạn dừng subprocess và mất liên lạc dừng sau cửa sổ giám sát. Kết quả chưa rõ không tự chạy lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
+`machine_list` chỉ trả máy đang online có grant đúng project. Dùng `machine_use` để kiểm tra máy, đồng bộ, đọc, ghi và nhận file sửa. `machine_run` nhận tên chương trình và danh sách đối số. Lệnh tối đa 60 giây. Runner hỗ trợ chia gói nhận snapshot tối đa 8 MiB, 2.000 file và 4 MiB mỗi file. Runner đời cũ nhận tối đa 2 MiB và 512 KiB mỗi file. Credential paths bị loại và các mẫu secret phổ biến bị chặn. Full access cho phép thực thi với quyền OS của chủ máy, **cwd chỉ là thư mục làm việc**. Stop trên máy đích thu hồi quyền. Hết hạn dừng subprocess và mất liên lạc dừng sau cửa sổ giám sát. Kết quả chưa rõ không tự chạy lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
 
-`machine-execution.test.ts` chạy tiến trình Node thật trên Windows và macOS CI, kiểm tra quyền, thu hồi, hết hạn, chống replay và giới hạn pull. Bài thử `paired-macos` kết nối Windows thật với runner macOS qua cầu nối Kivuno và đưa một bản sửa đúng scope về Windows. Harness dùng fixture. Phiên provider đăng nhập thật cần kiểm tra riêng. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
+`machine-execution.test.ts` kiểm tra quyền, thu hồi, hết hạn, gửi lại và giới hạn nhận file sửa. Bài `paired-macos` chạy Node trên Windows và runner macOS arm64, tái hiện lỗi đường dẫn rồi chạy lại sau khi sửa. Windows nhận đúng file đã sửa. Một lượt riêng dùng Codex đã đăng nhập trên Windows và reviewer mô phỏng. Lượt cấp quyền từ desktop Mac của thành viên B vẫn cần kiểm chứng. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
+
+## Chấm demo với hai tài khoản thật
+
+1. Hai thành viên mở cùng một repo thử nghiệm, mỗi người dùng một profile provider mà mình đã đăng nhập. Chia sẻ và cấp quyền cho từng harness trong Shared Groups. Ghi commit app, hệ điều hành, provider, số lượt và quyền sửa của từng grant.
+2. Với mỗi ca A–D, một thành viên dùng **Ask Sade** gửi prompt một lần. Ghi thứ tự phân công, số lượt model thật đã mở, thao tác cần chủ harness xác nhận, kết quả review và bằng chứng bàn giao. Dùng cùng mã tin nhắn khi kiểm tra gửi lại qua API thử nghiệm.
+3. Chạy thêm ca một provider hết quota với phương án dự phòng được nêu trong tin, và ca chủ harness thu hồi quyền khi nhiệm vụ phụ thuộc đang chờ. Ghi grant nào đã dùng, nhiệm vụ nào dừng và vai trò nào dùng fixture. Dùng mã công việc để đối chiếu. Mỗi người giữ thông tin đăng nhập trên máy của mình.
 
 ## Demo cho người không chuyên kỹ thuật
 
