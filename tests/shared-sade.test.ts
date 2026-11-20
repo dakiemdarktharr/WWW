@@ -4174,7 +4174,7 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
     planner.team.map(({ id }) => id),
   );
   f.finish(0, planner.id, { kind: 'plan', plan });
-  assert.equal(run().state, 'running', run().error);
+  assert.equal(run().state, 'running', run().error || 'Architecture handoff should be queued');
 
   const finishWrite = (author: number, job: SharedDelivery, summary: string) => {
     const diff = { ...patch, files: job.task!.scope, diff: `+${summary}\n` };
