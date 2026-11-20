@@ -231,6 +231,7 @@ export const groupReadUpdatesTool = {
 } as const;
 export const needsGroupWrite = writesTask;
 const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
+const unfinishedRuns = "kind='sharedSadeRun' AND json_extract(data,'$.state') IS NOT 'done'";
 function plannedReviews(run: Run, writer: Job) {
   const key = writer.task?.key;
   return key
@@ -450,6 +451,10 @@ export class GroupSade {
       CREATE INDEX IF NOT EXISTS shared_sade_run_group ON records(json_extract(data,'$.groupId')) WHERE kind='sharedSadeRun';
       CREATE INDEX IF NOT EXISTS shared_sade_active ON records(json_extract(data,'$.groupId'))
         WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running');
+      CREATE INDEX IF NOT EXISTS shared_sade_unfinished_group ON records(json_extract(data,'$.groupId'))
+        WHERE ${unfinishedRuns};
+      CREATE INDEX IF NOT EXISTS shared_sade_unfinished_project ON records(json_extract(data,'$.projectKey'))
+        WHERE ${unfinishedRuns};
     `);
   }
   private grants(group: SharedGroup) {
@@ -565,15 +570,35 @@ export class GroupSade {
   }
   start(group: SharedGroup, message: SharedMessage) {
     if (!message.sade) return;
+    const { projectKey, readOnly } = message.sade;
     const grants = this.grants(group).filter(
-      (grant) => grant.projectKey === message.sade?.projectKey && this.usable(grant, group),
+      (grant) => grant.projectKey === projectKey && this.usable(grant, group),
     );
     if (!grants.some((grant) => grant.ownerId === message.ownerId))
       throw new DomainError('Link your project and grant a teammate access before asking Sade.');
-    const similar = this.store
-      .all<Run>('sharedSadeRun')
-      .filter((run) => run.projectKey === message.sade?.projectKey || run.groupId === group.id);
     const now = this.now();
+    const similar = this.store.db
+      .prepare(
+        `WITH matching AS (
+           SELECT rowid, data FROM records INDEXED BY shared_sade_unfinished_group
+           WHERE ${unfinishedRuns} AND json_extract(data,'$.groupId')=$groupId
+           UNION ALL
+           SELECT rowid, data FROM records INDEXED BY shared_sade_unfinished_project
+           WHERE ${unfinishedRuns} AND json_extract(data,'$.projectKey')=$projectKey
+             AND json_extract(data,'$.groupId') IS NOT $groupId
+         )
+         SELECT data FROM matching
+         WHERE (json_extract(data,'$.state') IS NOT 'blocked'
+            AND json_extract(data,'$.state') IS NOT 'cancelled')
+           OR EXISTS (
+             SELECT 1 FROM json_each(matching.data,'$.jobs') AS job
+             WHERE json_extract(job.value,'$.state') IS NOT 'done'
+               AND CAST(json_extract(job.value,'$.deadline') AS REAL)>$now
+           )
+         ORDER BY rowid`,
+      )
+      .all({ groupId: group.id, projectKey, now })
+      .map((row) => JSON.parse(String(row.data)) as Run);
     const hasLiveLease = (run: Run) =>
       run.jobs.some((job) => job.state !== 'done' && (job.deadline || 0) > now);
     for (const run of similar) {
@@ -600,10 +625,10 @@ export class GroupSade {
     this.store.put('sharedSadeRun', {
       id: message.id,
       groupId: group.id,
-      projectKey: message.sade.projectKey,
+      projectKey,
       authorId: message.ownerId,
       content: redact(message.content),
-      ...(message.sade.readOnly ? { readOnly: true } : {}),
+      ...(readOnly ? { readOnly: true } : {}),
       roster: grants.map((grant) => grant.id),
       state: 'planning',
       jobs: [

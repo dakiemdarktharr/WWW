@@ -2437,6 +2437,73 @@ test('a locked group seat cannot stall another project on the same desktop', (t)
   assert.equal(f.store.get<{ revoked: boolean }>('sharedSadeGrant', f.grants[1]).revoked, true);
 });
 
+test('Shared Sade admission fences a group and shared repository without scanning run history', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  const secondGroup = randomUUID();
+  const anotherProject = 'c'.repeat(64);
+  f.call(1, { action: 'create', id: secondGroup, name: 'Another group on the same repository' });
+  f.call(1, {
+    action: 'teammates',
+    groupId: secondGroup,
+    teammates: [{ localId: f.members[1], name: 'Mây', provider: 'codex' }],
+  });
+  const grant = (index: number, groupId: string, projectKey: string) => {
+    const id = randomUUID();
+    f.call(index, {
+      action: 'sade-grant',
+      groupId,
+      id,
+      teammateId: f.members[index],
+      projectKey,
+      projectName: 'Fixture project',
+      role: 'researcher',
+      platform: 'win32',
+      allowWrites: false,
+      turns: 2,
+    });
+    return id;
+  };
+  const secondGrant = grant(1, secondGroup, key);
+  grant(0, f.groupId, anotherProject);
+  const message = (groupId: string, projectKey: string) => ({
+    action: 'message',
+    groupId,
+    id: randomUUID(),
+    content: 'Nhờ đọc tài liệu từ project này.',
+    sade: { projectKey },
+  });
+  const scans = t.mock.method(f.store, 'all');
+  const original = message(f.groupId, key);
+  f.call(0, original);
+  const delivered = f.poll(0).delivery!;
+  const retry = message(secondGroup, key);
+  assert.throws(() => f.call(1, retry), /active Sade request/);
+  assert.throws(() => f.call(0, message(f.groupId, anotherProject)), /active Sade request/);
+
+  f.call(0, { action: 'sade-cancel', groupId: f.groupId, runId: original.id });
+  assert.throws(() => f.call(1, retry), /previous Sade request is stopping/);
+  const stopped = f.store.get<{ id: string; jobs: { id: string; deadline?: number }[] }>(
+    'sharedSadeRun',
+    original.id,
+  );
+  stopped.jobs.find((job) => job.id === delivered.id)!.deadline = Date.now() - 1;
+  f.store.put('sharedSadeRun', stopped);
+  f.call(1, retry);
+  f.call(1, retry);
+  const next = f.poll(1, [], [secondGrant]).delivery!;
+  assert.equal(next.groupId, secondGroup);
+  assert.equal(next.projectKey, key);
+  assert.equal(next.grantId, secondGrant);
+  const { messages, sadeRuns } = f.call(1, { action: 'read', groupId: secondGroup });
+  assert.equal(messages.length, 1);
+  assert.deepEqual(
+    sadeRuns.map(({ id }: { id: string }) => id),
+    [retry.id],
+  );
+  assert.ok(scans.mock.calls.every(({ arguments: [kind] }) => kind !== 'sharedSadeRun'));
+});
+
 test('Shared Sade polls only groups from the desktop grant page', (t) => {
   const f = fixture();
   t.after(() => f.store.close());
