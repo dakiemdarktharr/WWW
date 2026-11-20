@@ -2927,6 +2927,34 @@ const managedHandoff =
     }
 
     const [author, reader] = desktops;
+    const occupied = Array.from({ length: author.workspace.autonomy.capacity }, () =>
+      author.workspace.autonomy.reserve(randomUUID(), author.memberId),
+    );
+    const releaseSlots = () => occupied.forEach((release) => release());
+    t.after(releaseSlots);
+    const reservations = t.mock.method(author.workspace.autonomy, 'reserve');
+    await waitFor(
+      'the same planner to wait for desktop capacity',
+      () => reservations.mock.callCount() >= 2,
+    );
+    const waiting = author.store.sessions();
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].status, 'idle');
+    assert.equal(waiting[0].threadId, null);
+    assert.deepEqual(
+      reservations.mock.calls.map(({ arguments: [id] }) => id),
+      [waiting[0].id, waiting[0].id],
+    );
+    const planner = deliveries[0];
+    assert.equal(planner.phase, 'plan');
+    assert.equal(deliveries.length, 1);
+    assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 1);
+    assert.ok(
+      !author.store.get<{ providerTurnConsumed?: boolean }>('sharedSadeLocalReceipt', planner.id)
+        .providerTurnConsumed,
+    );
+    releaseSlots();
+
     const approval = await waitFor(
       'scoped file approval',
       () => author.workspace.sessions.approvals()[0],

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { CapacityError } from './autonomy.ts';
 import { ProviderQuotaUnavailable } from './quota.ts';
 import { mkdtemp, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -291,7 +292,7 @@ export class SharedSadeWorker {
   private planRosters = new Map<string, PlannerMember[]>();
   private stopping = new Set<string>();
   private starting = new Set<string>();
-  private waitingForRevisions = new Map<string, SharedDelivery>();
+  private deferred = new Map<string, { delivery: SharedDelivery; waitingForRevision?: true }>();
   private readingChanges = new Set<string>();
   private notifiedUpdates = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
@@ -924,7 +925,7 @@ export class SharedSadeWorker {
         })
         .catch(() => {});
     }
-    for (const [jobId, delivery] of this.waitingForRevisions)
+    for (const [jobId, { delivery }] of this.deferred)
       if (command.active.includes(jobId) && this.leases.has(jobId)) this.startDelivery(delivery);
     if (command.delivery) {
       const delivery: SharedDelivery = {
@@ -1037,19 +1038,24 @@ export class SharedSadeWorker {
       });
     if (result.kind !== 'change') this.leases.delete(jobId);
     this.planRosters.delete(jobId);
-    this.waitingForRevisions.delete(jobId);
+    this.deferred.delete(jobId);
     this.notifiedUpdates.delete(jobId);
   }
   private startDelivery(delivery: SharedDelivery) {
     if (this.starting.has(delivery.id)) return;
     this.starting.add(delivery.id);
     void this.run(delivery)
-      .catch((error) => this.reportStartFailure(delivery.id, error))
+      .catch((error) => this.reportStartFailure(delivery, error))
       .finally(() => this.starting.delete(delivery.id));
   }
-  private reportStartFailure(jobId: string, cause: unknown) {
+  private reportStartFailure(delivery: SharedDelivery, cause: unknown) {
     if (this.host.closing) return;
+    const jobId = delivery.id;
     const receipt = this.receipt(jobId);
+    if (cause instanceof CapacityError && !receipt.providerTurnConsumed && this.leases.has(jobId)) {
+      this.deferred.set(jobId, { delivery });
+      return;
+    }
     const error = redact(cause) || 'Could not start the harness.';
     if (
       cause instanceof ProviderQuotaUnavailable &&
@@ -1123,11 +1129,11 @@ export class SharedSadeWorker {
         throw new DomainError(
           'Sync the prerequisite Git revision into the linked project before retrying.',
         );
-      this.waitingForRevisions.set(delivery.id, delivery);
+      this.deferred.set(delivery.id, { delivery, waitingForRevision: true });
       return;
     }
     this.assertCurrent(delivery.id);
-    this.waitingForRevisions.delete(delivery.id);
+    this.deferred.delete(delivery.id);
     const review = delivery.phase === 'review';
     const description = review
       ? [delivery.task?.description, delivery.task?.acceptance, delivery.request]
@@ -1189,7 +1195,7 @@ export class SharedSadeWorker {
     if (this.stopping.has(jobId)) return;
     this.stopping.add(jobId);
     this.leases.delete(jobId);
-    this.waitingForRevisions.delete(jobId);
+    this.deferred.delete(jobId);
     try {
       const { sessionId } = this.receipt(jobId);
       if (sessionId)
@@ -1370,14 +1376,15 @@ export class SharedSadeWorker {
       if (page.length < remaining) page.push(...available.slice(0, remaining - page.length));
       nextGrantCursor = page.at(-1);
     }
+    const waitingForRevisions = active.filter(
+      (jobId) => this.deferred.get(jobId)?.waitingForRevision,
+    );
     return {
       grants: [...activeGrants, ...page],
       revocations: this.pendingRevocations(),
       ...(nextGrantCursor ? { nextGrantCursor } : {}),
       active,
-      ...(this.waitingForRevisions.size
-        ? { waitingForRevisions: [...this.waitingForRevisions.keys()].slice(0, 4) }
-        : {}),
+      ...(waitingForRevisions.length ? { waitingForRevisions } : {}),
       readUpdates: active.flatMap((jobId) => {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];
@@ -1398,7 +1405,7 @@ export class SharedSadeWorker {
   close() {
     clearInterval(this.timer);
     this.leases.clear();
-    this.waitingForRevisions.clear();
+    this.deferred.clear();
     this.notifiedUpdates.clear();
   }
 }
