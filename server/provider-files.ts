@@ -41,16 +41,8 @@ export const providerFileTools: DynamicTool[] = [
     },
   },
 ];
-export async function providerFileTool(
-  name: string,
-  args: any,
-  policy: { cwd: string; readOnly: boolean; scopes: string[] },
-  assertCurrent: () => void,
-) {
-  assertCurrent();
-  if (!providerFileTools.some((tool) => tool.name === name))
-    throw new DomainError('Unknown file tool.');
-  const relative = normalizeScope(typeof args.path === 'string' ? args.path : '.');
+export async function resolveProviderPath(cwd: string, input: string) {
+  const relative = normalizeScope(input);
   if (relative !== '.' && relative.split('/').some((part) => /[. ]$/.test(part)))
     throw new DomainError(
       'Ambiguous file names with trailing dots or spaces are not supported.',
@@ -71,7 +63,7 @@ export async function providerFileTool(
       )
   )
     throw new DomainError('Private files cannot be accessed through this tool.', 403);
-  const root = await realpath(policy.cwd),
+  const root = await realpath(cwd),
     target = path.resolve(root, relative);
   if (!inside(root, target)) throw new DomainError('File is outside the workspace.', 403);
   let cursor = root;
@@ -83,6 +75,22 @@ export async function providerFileTool(
     });
     if (info?.isSymbolicLink()) throw new DomainError('Linked paths are not allowed.', 403);
   }
+  return { relative, target };
+}
+
+export async function providerFileTool(
+  name: string,
+  args: any,
+  policy: { cwd: string; readOnly: boolean; scopes: string[] },
+  assertCurrent: () => void,
+) {
+  assertCurrent();
+  if (!providerFileTools.some((tool) => tool.name === name))
+    throw new DomainError('Unknown file tool.');
+  const { relative, target } = await resolveProviderPath(
+    policy.cwd,
+    typeof args.path === 'string' ? args.path : '.',
+  );
   assertCurrent();
   if (name === 'workspace_list_files') {
     const entries = await readdir(target, { withFileTypes: true });

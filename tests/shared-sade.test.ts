@@ -748,6 +748,218 @@ class DesktopPeer extends CodexClient {
   }
 }
 
+test('Shared Sade reads scoped Git evidence in the same turn before planning existing work', async (t) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'shared-sade-git-e2e-')));
+  const repo = path.join(root, 'project');
+  const data = path.join(root, 'desktop');
+  const remote = path.join(root, 'remote.git');
+  const origin = 'https://example.test/shared/git-fixture.git';
+  const projectKey = canonicalSharedRepository(origin, 'main');
+  const commit = (subject: string) =>
+    git(repo, [
+      '-c',
+      'user.name=Shared fixture',
+      '-c',
+      'user.email=fixture@example.test',
+      'commit',
+      '-m',
+      subject,
+    ]);
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, data, repo);
+  const member = store.addMember({ name: 'Bếp', role: 'engineer', provider: 'gemini' });
+  const cloud = fixture(['gemini', 'codex'], {
+    key: projectKey,
+    members: [member.id, randomUUID()],
+    turnsA: 1,
+    turnsB: 1,
+  });
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+    cloud.store.close();
+    assert.equal(path.dirname(root), await realpath(os.tmpdir()));
+    assert.ok(path.basename(root).startsWith('shared-sade-git-e2e-'));
+    await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  });
+
+  const target = 'docs/contract.md';
+  await mkdir(path.join(repo, 'docs'), { recursive: true });
+  await mkdir(data);
+  await git(repo, ['init', '-b', 'main']);
+  await writeFile(path.join(repo, target), 'Draft contract\n');
+  await writeFile(path.join(repo, 'README.md'), 'Project baseline\n');
+  await git(repo, ['add', '--', target, 'README.md']);
+  await commit('Initial fixture');
+  const initial = await git(repo, ['rev-parse', 'HEAD']);
+  await git(root, ['clone', '--bare', '--', repo, remote]);
+  await git(repo, ['remote', 'add', 'origin', origin]);
+  await git(repo, ['config', `url.${remote}.insteadOf`, origin]);
+
+  await writeFile(path.join(repo, target), 'Approved contract fixture\n');
+  await git(repo, ['add', '--', target]);
+  await commit('Contract committed before the group request');
+  const cited = await git(repo, ['rev-parse', 'HEAD']);
+  await writeFile(path.join(repo, 'README.md'), 'An unrelated committed edit\n');
+  await git(repo, ['add', '--', 'README.md']);
+  await commit('UNRELATED_COMMIT_SUBJECT');
+  const head = await git(repo, ['rev-parse', 'HEAD']);
+  await writeFile(path.join(repo, 'README.md'), 'Unrelated pending local edit\n');
+  await writeFile(path.join(repo, '.env.local'), 'LOCAL_ONLY=fixture\n');
+  const statusBefore = await git(repo, ['status', '--porcelain']);
+
+  const peer = new DesktopPeer(repo, 'gemini');
+  store.updateMember(member.id, { status: 'ready', account: { type: 'gemini-google' } });
+  workspace.client = async () => new DesktopPeer(repo, 'gemini');
+  workspace.refresh = async () => store.get('member', member.id);
+  workspace.sessions.createClient = () => peer;
+  const projectId = randomUUID();
+  store.put('project', {
+    id: projectId,
+    path: repo,
+    name: 'Git evidence fixture',
+    goal: 'Check the committed contract',
+    memberIds: [member.id],
+    createdAt: new Date().toISOString(),
+  });
+  const worker = workspace.sharedSade;
+  await worker.execute({
+    action: 'grant',
+    groupId: cloud.groupId,
+    id: cloud.grants[0],
+    projectId,
+    teammateId: member.id,
+    turns: 1,
+    allowWrites: true,
+  });
+  const reference = {
+    action: 'message',
+    groupId: cloud.groupId,
+    id: randomUUID(),
+    content: `Tui đã commit ${cited.slice(0, 12)} cho ${target} rồi.`,
+  };
+  cloud.call(0, reference);
+  const request = {
+    ...reference,
+    id: randomUUID(),
+    content: 'Cái đó tui commit rồi mà sao ông commit y chang? Nhờ Mây kiểm tra bản đã có.',
+    sade: { projectKey, replyTo: reference.id },
+  };
+  assert.deepEqual(cloud.call(0, request), cloud.call(0, request));
+  const offer = cloud.poll(0).delivery;
+  assert.equal(offer?.phase, 'plan');
+  assert.ok(offer);
+  assert.deepEqual(cloud.poll(0).delivery, offer);
+  const exchange = { action: 'exchange', active: [], delivery: offer, acknowledged: [] };
+  await worker.execute(exchange);
+  await worker.execute(exchange);
+
+  const started = () => store.tasks().find((task) => task.sharedSadeJobId === offer.id)?.turnId;
+  for (let attempt = 0; attempt < 200 && !started(); attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(started(), 'the shared planner did not start');
+  const planner = store.tasks().find((task) => task.sharedSadeJobId === offer.id)!;
+  const session = store.get<CodexSession>('session', planner.sessionId!);
+  assert.equal(session.readOnly, true);
+  assert.equal(cloud.poll(0, [offer.id]).delivery, undefined);
+  assert.equal(cloud.view().sadeRuns.length, 1);
+  const tools = peer.calls.find(({ method }) => method === 'thread/start')?.params.dynamicTools;
+  assert.ok(tools.some(({ name }: { name: string }) => name === 'relay_read_shared_git'));
+  const prompt = peer.calls.find(({ method }) => method === 'turn/start')?.params.input[0].text;
+  assert.match(prompt, /relay_read_shared_git/);
+  assert.ok(prompt.includes(reference.content));
+  const turn = { threadId: session.threadId, turnId: session.turnId };
+  const tool = async (name: string, args: object) => {
+    peer.responded = undefined;
+    await workspace.sessions.request(session.id, peer, {
+      id: randomUUID(),
+      method: 'item/tool/call',
+      params: { ...turn, tool: name, arguments: args },
+    });
+    return peer.responded as DesktopPeer['responded'];
+  };
+  const query = { path: target, revision: cited.slice(0, 12) };
+  const result = await tool('relay_read_shared_git', query);
+  assert.equal(result?.success, true, JSON.stringify(result));
+  const { statusUsesDisabledFilters, ...facts } = JSON.parse(
+    result?.contentItems?.[0]?.text || '{}',
+  );
+  if (statusUsesDisabledFilters !== undefined) assert.equal(statusUsesDisabledFilters, true);
+  assert.deepEqual(facts, {
+    head,
+    dirty: false,
+    recentCommits: [cited, initial],
+    citedRevision: {
+      found: true,
+      commit: cited,
+      inHead: true,
+      touchesScope: true,
+      matchesHead: true,
+    },
+  });
+  const dirty = await tool('relay_read_shared_git', { path: 'README.md' });
+  assert.equal(dirty?.success, true);
+  assert.equal(JSON.parse(dirty?.contentItems?.[0]?.text || '{}').dirty, true);
+  assert.doesNotMatch(JSON.stringify([result, dirty]), /UNRELATED_COMMIT_SUBJECT|LOCAL_ONLY/);
+  for (const denied of [
+    { path: '.env.local' },
+    { path: '../README.md' },
+    { path: target, revision: 'main' },
+  ])
+    assert.equal((await tool('relay_read_shared_git', denied))?.success, false);
+  await git(repo, ['remote', 'set-url', 'origin', 'https://example.test/shared/different.git']);
+  try {
+    const mismatched = await tool('relay_read_shared_git', query);
+    assert.equal(mismatched?.success, false);
+    assert.match(mismatched?.contentItems?.[0]?.text || '', /no longer matches the grant/);
+    assert.doesNotMatch(JSON.stringify(mismatched), new RegExp(`${head}|${cited}|example\\.test`));
+  } finally {
+    await git(repo, ['remote', 'set-url', 'origin', origin]);
+  }
+  assert.equal(cloud.poll(1).delivery, undefined);
+  const reader = offer.team.findIndex(({ id }) => id === cloud.grants[1]);
+  assert.ok(reader >= 0);
+  const submitted = await tool('relay_submit_plan', {
+    summary: `Confirm the existing contract from ${facts.citedRevision.commit}.`,
+    tasks: [
+      {
+        ...work('existing-contract', { scope: [target] }),
+        kind: 'research-read-only',
+        preferredMemberId: sharedPlanMemberRef(reader),
+        requiredPlatform: 'any',
+      },
+    ],
+  });
+  assert.equal(submitted?.success, true, JSON.stringify(submitted));
+  const afterPlan = await tool('relay_read_shared_git', query);
+  assert.equal(afterPlan?.success, false);
+  assert.match(afterPlan?.contentItems?.[0]?.text || '', /already recorded a result/);
+  await workspace.sessions.notification(session.id, peer, 'turn/completed', {
+    ...turn,
+    turn: { id: session.turnId, status: 'completed' },
+  });
+  const snapshot = (await worker.execute({ action: 'snapshot' })) as {
+    results: { jobId: string; result: SharedFinish }[];
+  };
+  assert.equal(snapshot.results.length, 1);
+  cloud.finish(0, snapshot.results[0].jobId, snapshot.results[0].result);
+  const verification = cloud.poll(1).delivery!;
+  assert.equal(verification.task?.kind, 'research');
+  assert.deepEqual(verification.task?.scope, [target]);
+  cloud.finish(1, verification.id, { kind: 'done', summary: 'Confirmed the existing contract.' });
+  assert.equal(cloud.view().sadeRuns[0].state, 'done');
+
+  const denied = t.mock.method(peer, 'rejectRequest', () => {});
+  assert.equal(await tool('relay_read_shared_git', query), undefined);
+  assert.equal(denied.mock.callCount(), 1);
+  assert.match(denied.mock.calls[0].arguments[1] || '', /current session lease|permission ended/);
+  assert.equal(peer.calls.filter(({ method }) => method === 'turn/start').length, 1);
+  assert.equal(cloud.store.get<{ used: number }>('sharedSadeGrant', cloud.grants[0]).used, 1);
+  assert.equal(await git(repo, ['rev-parse', 'HEAD']), head);
+  assert.equal(await git(remote, ['rev-parse', 'HEAD']), initial);
+  assert.equal(await git(repo, ['status', '--porcelain']), statusBefore);
+});
+
 test(
   'two desktop workspaces hand off reviewed code without a Git push and verify a consented paired runner',
   { timeout: crossHostOrigin ? 660000 : 60000 },

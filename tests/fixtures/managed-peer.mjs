@@ -110,9 +110,15 @@ async function sharedTurn(bridge, prompt, authorize) {
   if (tools.includes('relay_submit_plan')) {
     assert.match(prompt, /(?:Claude|Antigravity) viết hợp đồng/);
     assert.ok(!tools.includes('workspace_write_file'));
+    assert.ok(tools.includes('relay_read_shared_git'));
+    const evidence = await checkedTool('relay_read_shared_git', { path: 'contract.txt' });
+    assert.match(evidence.head, /^[a-f0-9]{40}$/);
+    assert.equal(evidence.dirty, false);
+    assert.deepEqual(evidence.recentCommits, [evidence.head]);
     await checkedTool('relay_submit_plan', sharedPlan);
     return 'Structured handoff plan submitted.';
   }
+  assert.ok(!tools.includes('relay_read_shared_git'));
   if (tools.includes('relay_submit_shared_review')) {
     assert.match(prompt, /\+Native shared contract v1/);
     assert.ok(!tools.includes('workspace_write_file'));

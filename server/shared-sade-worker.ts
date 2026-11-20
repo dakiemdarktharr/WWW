@@ -30,6 +30,8 @@ import {
   type SharedFinish,
 } from './group-sade.ts';
 import { changedTreeFiles, createWorktree, git } from './git.ts';
+import { inspectSharedGit } from './shared-sade-git.ts';
+import { resolveProviderPath } from './provider-files.ts';
 import { normalizeScope, redact, scopesOverlap } from './security.ts';
 import { DomainError } from './store.ts';
 import type { Workspace } from './service.ts';
@@ -57,6 +59,28 @@ const groupRosterLookupTool = {
   description:
     'Find harnesses with Shared Groups grants for the current request. Name and owner matching ignores accents and case. Use nextOffset to continue the same search.',
   inputSchema: z.toJSONSchema(rosterLookupInput),
+} as const;
+const sharedGitInput = z
+  .object({
+    path: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .describe('A specific project-relative file or directory.'),
+    revision: z
+      .string()
+      .regex(/^[a-f0-9]{7,64}$/i)
+      .optional()
+      .describe('The cited Git commit ID or abbreviated ID.'),
+  })
+  .strict();
+const groupReadGitTool = {
+  type: 'function',
+  name: 'relay_read_shared_git',
+  description:
+    'Read the linked project’s local HEAD, dirty status and recent commit IDs for one path. Optionally compare a cited local commit with HEAD for that path.',
+  inputSchema: z.toJSONSchema(sharedGitInput),
 } as const;
 
 function withoutDiacritics(name: string) {
@@ -129,16 +153,19 @@ function sharedGroupContext(delivery: SharedDelivery) {
   })}`;
 }
 
-export function sharedGroupPlanningPrompt(delivery: SharedDelivery) {
+export function sharedGroupPlanningPrompt(delivery: SharedDelivery, canReadGit = false) {
   const teamInstructions = needsRosterLookup(delivery)
     ? 'Use relay_find_shared_teammates to find the granted harness or owner named by the requester, or to check a required OS. Search all matching pages before deciding that there is one match or asking about access. Treat results as team data and copy the matching ref into relay_submit_plan.'
     : 'The team list shows harnesses with grants for this project.';
+  const overlapInstructions = canReadGit
+    ? 'Use at most one writer when the requested edits overlap. For requests to reconcile a conflict, duplicate or claimed completed Git change, call relay_read_shared_git on the relevant path before assigning edits. Include the cited commit ID when available. Resolve an unclear path with the requester. If the cited commit is in HEAD, touched the scope, still matches its current tree and the path is clean, plan read-only verification and reuse the existing work if it fulfills the request. A dirty or divergent path, a missing commit, or uncertain behavior calls for read-only verification or clarification before scheduling writes. Treat the tool output as a snapshot of the linked checkout. If statusUsesDisabledFilters is true, verify files affected by Git filters separately. Remote state, patch equivalence and behavior require separate evidence.'
+    : 'If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.';
   const instructions = `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
 ${teamInstructions} A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
 Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform.
 For each deliverable identify the action, the file and who was asked to produce it. Reading or summarizing an existing file is research-read-only. A request for read-only work never authorizes edits. Set preferredMemberId to a teammate ref only when the requester identified the assignee by name or ownership. Use auto for unassigned tasks.
 Keep one task when the requester names a primary and explicitly permits a backup if the primary cannot take it. Set preferredMemberId to the primary and fallbackMemberId to the named backup's ref. Use auto as fallbackMemberId only when the requester delegates the backup choice. Use none for all other tasks. If the primary has no grant and the requester explicitly allows the available backup in that situation, use the granted backup as the primary.
-In a handoff, make the producer a separate task and use its key in the receiving task's dependsOn. When asked to add tests after implementation, give those tests their own file scope and a dependency on the implementation task. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. If asked to keep exactly one writer for overlapping edits, submit one edit-files task. Include checking existing commits and skipping equivalent edits in its acceptance criteria.
+In a handoff, make the producer a separate task and use its key in the receiving task's dependsOn. When asked to add tests after implementation, give those tests their own file scope and a dependency on the implementation task. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. ${overlapInstructions}
 When asked to consult the requester about frontend style, put both options in that task's acceptance: ask for a preferred style or offer to let the assigned frontend harness choose. If the requester has already supplied a preference or delegated the choice, carry that decision into the task.
 Use review-read-only when asked to check a diff, implementation or test result against requirements. This includes defensive checks for issues such as accidental disclosure in error messages. Sade uses this kind to exclude the authors of the scoped files from the review. Make a review of several deliverables depend on each deliverable and cover their requested files. Use research-read-only to gather context or answer questions about existing material.
 For a request like “A edits this file, B reviews its diff” with B the only authorized peer, plan A's edit only. Sade automatically queues B's independent diff review before integration. Add a review task only for a distinct request the automatic review does not cover.
@@ -408,7 +435,12 @@ export class SharedSadeWorker {
   tools(jobId: string) {
     const { phase, clarified, machine, acceptsUpdates } = this.receipt(jobId);
     if (phase === 'review') return [groupReviewTool];
-    const tools = phase === 'plan' ? [groupPlanTool, groupNoWorkTool] : machine ? machineTools : [];
+    const tools =
+      phase === 'plan'
+        ? [groupPlanTool, groupNoWorkTool, groupReadGitTool]
+        : machine
+          ? machineTools
+          : [];
     return [
       ...tools,
       ...((this.planRosters.get(jobId)?.length || 0) > inlineSharedSadeTeamLimit
@@ -417,6 +449,43 @@ export class SharedSadeWorker {
       ...(acceptsUpdates ? [groupReadUpdatesTool] : []),
       ...(clarified ? [] : [groupQuestionTool]),
     ];
+  }
+  async readGit(jobId: string, session: CodexSession, input: unknown, guard: () => void) {
+    const current = () => {
+      guard();
+      this.assertCurrent(jobId);
+      const receipt = this.receipt(jobId);
+      if (receipt.phase !== 'plan' || receipt.sessionId !== session.id || !session.readOnly)
+        throw new DomainError(
+          'Git inspection is available only in this Shared Groups planning turn.',
+          403,
+        );
+      if (receipt.question || this.host.store.lookup('sharedSadeLocalPlan', jobId))
+        throw new DomainError('The planner already recorded a result for this request.', 409);
+      return receipt;
+    };
+    const receipt = current();
+    const grant = this.host.store.get<LocalGrant>('sharedSadeLocalGrant', receipt.grantId);
+    if (grant.projectId !== session.projectId || grant.teammateId !== session.memberId)
+      throw new DomainError('This Git project is outside the Shared Groups grant.', 403);
+    const project = this.host.store.get<Project>('project', session.projectId);
+    const { path: requestedPath, revision } = sharedGitInput.parse(input);
+    const relative = normalizeScope(requestedPath);
+    if (relative === '.') throw new DomainError('Choose a specific project file or directory.');
+    const assertRepository = async () => {
+      if ((await this.fingerprint(project).catch(() => undefined)) !== grant.projectKey)
+        throw new DomainError('This project’s Git origin or branch no longer matches the grant.');
+      current();
+    };
+    await assertRepository();
+    await resolveProviderPath(project.path, relative).catch((error) => {
+      if (error instanceof DomainError) throw error;
+      throw new DomainError('The requested Git path could not be resolved.');
+    });
+    current();
+    const result = await inspectSharedGit(project.path, relative, revision);
+    await assertRepository();
+    return result;
   }
   findTeammates(jobId: string, input: unknown) {
     this.assertCurrent(jobId);
@@ -1273,7 +1342,7 @@ export class SharedSadeWorker {
       : sharedGroupContext(delivery);
     const prompt =
       delivery.phase === 'plan'
-        ? sharedGroupPlanningPrompt(delivery)
+        ? sharedGroupPlanningPrompt(delivery, true)
         : delivery.phase === 'review'
           ? sharedGroupReviewPrompt(delivery)
           : `${instructions}${delivery.reviewRevision ? ' Revise the saved change using the independent review feedback within the original scope. Recheck the updated result before reporting.' : delivery.clarification ? '' : sharedQuestionHint}${machine ? ' Use machine_list to find the approved machine and machine_use to verify its OS and sync the owned worktree. Use machine_run with purpose diagnostic for temporary investigation. Run the requested project check with purpose verification on the finished files, then use machine_use to pull only scoped changes. Report the actual outcome.' : ''}${context}`;

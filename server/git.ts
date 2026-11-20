@@ -13,7 +13,12 @@ export async function git(
   cwd: string,
   args: string[],
   maxBuffer = 4 * 1024 * 1024,
-  options: { preserveOutput?: boolean } = {},
+  options: {
+    preserveOutput?: boolean;
+    timeout?: number;
+    allowNoMatch?: boolean;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<string> {
   try {
     const { stdout } = await exec(
@@ -22,10 +27,10 @@ export async function git(
       {
         cwd,
         windowsHide: true,
-        timeout: 30000,
+        timeout: options.timeout ?? 30000,
         maxBuffer,
         env: {
-          ...process.env,
+          ...(options.env ?? process.env),
           GIT_TERMINAL_PROMPT: '0',
           GIT_EDITOR: 'true',
           GIT_MERGE_AUTOEDIT: 'no',
@@ -34,7 +39,8 @@ export async function git(
     );
     return options.preserveOutput ? stdout : stdout.trimEnd();
   } catch (error) {
-    const e = error as Error & { stderr?: string };
+    const e = error as Error & { code?: number; stdout?: string; stderr?: string };
+    if (options.allowNoMatch && e.code === 1 && !e.stdout && !e.stderr) return '';
     throw new DomainError((e.stderr || e.message).slice(0, 2000));
   }
 }

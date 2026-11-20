@@ -1027,8 +1027,19 @@ export class SessionManager {
         let result: unknown;
         let readThrough: number | undefined;
         let sharedReadThrough: number | undefined;
+        const assertActiveSession = () => {
+          this.assertLease(this.get(id), active.token);
+          if (active.finished || active.stopping || this.host.closing)
+            throw new DomainError('Session stopped.');
+        };
         if (sharedJob && params.tool === 'relay_find_shared_teammates') {
           result = this.host.sharedSade.findTeammates(sharedJob, args);
+        } else if (sharedJob && params.tool === 'relay_read_shared_git') {
+          result = await this.host.sharedSade.readGit(sharedJob, session, args, () => {
+            assertActiveSession();
+            if (client.provider !== 'codex')
+              this.host.quota.assertCanRun(session.memberId, session.projectId, id);
+          });
         } else if (sharedJob && params.tool === 'relay_read_shared_updates') {
           const updates = this.host.sharedSade.readUpdates(sharedJob, args);
           sharedReadThrough = updates.at(-1)?.sequence || 0;
@@ -1061,20 +1072,12 @@ export class SessionManager {
             session,
             params.tool,
             args,
-            () => {
-              this.assertLease(this.get(id), active.token);
-              if (active.finished || active.stopping || this.host.closing)
-                throw new DomainError('Session stopped.');
-            },
+            assertActiveSession,
           );
         } else if (sharedJob && !params.tool?.startsWith('workspace_')) {
           throw new DomainError('This tool is unavailable to shared jobs.');
         } else if (params.tool?.startsWith('machine_')) {
-          result = await machineTool(this.host, session, params.tool, args, () => {
-            this.assertLease(this.get(id), active.token);
-            if (active.finished || active.stopping || this.host.closing)
-              throw new DomainError('Session stopped.');
-          });
+          result = await machineTool(this.host, session, params.tool, args, assertActiveSession);
         } else if (params.tool?.startsWith('workspace_') && client.provider !== 'codex') {
           const task = this.host.store.get<Task>('task', session.taskId);
           result = await providerFileTool(
