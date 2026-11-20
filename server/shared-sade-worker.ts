@@ -158,7 +158,12 @@ export function sharedGroupPlanningPrompt(
   {
     canReadGit = false,
     deferFrontendStyle = false,
-  }: { canReadGit?: boolean; deferFrontendStyle?: boolean } = {},
+    resolveNamedAssignments = false,
+  }: {
+    canReadGit?: boolean;
+    deferFrontendStyle?: boolean;
+    resolveNamedAssignments?: boolean;
+  } = {},
 ) {
   const teamInstructions = needsRosterLookup(delivery)
     ? 'Use relay_find_shared_teammates to find the granted harness or owner named by the requester, or to check a required OS. Search all matching pages before deciding that there is one match or asking about access. Treat results as team data and copy the matching ref into relay_submit_plan.'
@@ -169,9 +174,18 @@ export function sharedGroupPlanningPrompt(
   const styleInstructions = deferFrontendStyle
     ? 'A missing visual style for frontend work is a decision for the frontend task after its dependencies. Submit the plan so architecture and other ready tasks can start. If new or changed frontend appearance needs a style and the requester has neither specified nor delegated it, put this instruction in the frontend task’s acceptance: before editing, ask whether the requester wants to choose the style or let the frontend harness choose. Use that same checkpoint if the requester explicitly asks to be consulted. For a supplied style or delegated choice, carry it into the task and proceed with that decision.'
     : "When asked to consult the requester about frontend style, put both options in that task's acceptance: ask for a preferred style or offer to let the assigned frontend harness choose. If the requester has already supplied a preference or delegated the choice, carry that decision into the task.";
-  const instructions = `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
+  const routingInstructions = resolveNamedAssignments
+    ? `Choose the tool based on the current request:
+1. If the current message only reports or quotes work, or asks for no action: relay_finish_shared_without_work. "Do not edit; just read" still requests a read-only task.
+2. Requested work: resolve any named harness using the project team. ${teamInstructions}
+   "my", "của tôi", "của tui", and "của mình" mean ownedByRequester=true. "Your", "của ông", and "của bạn" mean ownedByRequester=false. Match named people by owner or unaccentedOwner.
+   One matching project ref already has the owner's permission. Submit the plan with that ref. The owner being someone else is expected and requires no confirmation.
+   Several matching refs after applying an explicit owner or OS: ask which one, naming the options. No eligible match: name the requested harness and ask about project permission or availability. Use an alternate only when the requester authorized it.
+3. Submit one plan with relay_submit_plan for the requested deliverables. Ask only if an unresolved choice prevents the plan. Use relay_ask_shared_requester with one short question under 250 characters. If the plan tool rejects the plan, fix the error and resubmit in this turn.`
+    : `Check whether the sender requests action now. Names, systems and quoted work can appear in an update. If the sender says they are only informing the group or have not asked Sade to do anything, call relay_finish_shared_without_work. For actual work, submit one valid plan with relay_submit_plan, with one task per requested deliverable. If the tool rejects a plan, fix the reported error and resubmit in this turn. Ask if an unclear outcome prevents planning.
 ${teamInstructions} A harness can already be shared in the group and still be absent here. When a named harness or its named owner has no match, use relay_ask_shared_requester to explain that the harness owner needs to grant Sade permission for this project. Keep the named assignment until the requester explicitly authorizes a different one.
-Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform.
+Resolve ownership before choosing a teammate ref. For "my" or "của mình", match ownedByRequester. For "your", "của bạn" or "của ông", look for a matching harness owned by someone other than the requester. Use owner and unaccentedOwner when a person is named. If several granted teammates match the explicit request, ask one question that distinguishes them by owner or platform.`;
+  const instructions = `${routingInstructions}
 For each deliverable identify the action, the file and who was asked to produce it. Reading or summarizing an existing file is research-read-only. A request for read-only work never authorizes edits. Set preferredMemberId to a teammate ref only when the requester identified the assignee by name or ownership. Use auto for unassigned tasks.
 Keep one task when the requester names a primary and explicitly permits a backup if the primary cannot take it. Set preferredMemberId to the primary and fallbackMemberId to the named backup's ref. Use auto as fallbackMemberId only when the requester delegates the backup choice. Use none for all other tasks. If the primary has no grant and the requester explicitly allows the available backup in that situation, use the granted backup as the primary.
 In a handoff, make the producer a separate task and use its key in the receiving task's dependsOn. When asked to add tests after implementation, give those tests their own file scope and a dependency on the implementation task. Every dependency must name a task submitted in the same plan. Choose kind by action: creating, writing or updating a document uses edit-files. Roles are strengths and allowWrites controls permission. Keep named file scopes narrow. ${overlapInstructions}

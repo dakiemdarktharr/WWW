@@ -20,6 +20,10 @@ import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
 import { collectPrerequisites, parseTeamPlan } from '../server/workflow-plan.ts';
 import type { SharedSadeJob, SharedSadeRun } from '../shared/collaboration.ts';
+import {
+  ownerRoutingCases,
+  type OwnerRoutingCase,
+} from '../tests/fixtures/shared-sade-owner-routing.ts';
 
 const messages = {
   handoff: [
@@ -228,6 +232,7 @@ type Case =
   | 'full-handoff'
   | 'frontend-style'
   | 'frontend-style-ungranted'
+  | 'owner-routing'
   | 'referenced-read'
   | 'quota-followup'
   | (typeof ownerHandoffs)[number]['scenario']
@@ -352,6 +357,7 @@ const { values, positionals } = parseArgs({
     'handoff-varied': { type: 'boolean' },
     'full-handoff': { type: 'boolean' },
     'frontend-style': { type: 'boolean' },
+    'owner-routing': { type: 'boolean' },
   },
 });
 const model = values.model;
@@ -366,9 +372,14 @@ assert.ok(
   'Use a zero-based shard such as 0/3.',
 );
 assert.ok(
-  ['baseline', 'constraints', 'quota-compact', 'quota-example', 'frontend-style-deferred'].includes(
-    values['planning-prompt'],
-  ),
+  [
+    'baseline',
+    'constraints',
+    'quota-compact',
+    'quota-example',
+    'frontend-style-deferred',
+    'owner-routing',
+  ].includes(values['planning-prompt']),
   'Unknown planning prompt.',
 );
 assert.ok(
@@ -376,11 +387,18 @@ assert.ok(
   'Use the deferred frontend prompt with --frontend-style.',
 );
 assert.ok(
+  values['planning-prompt'] !== 'owner-routing' ||
+    values['owner-routing'] ||
+    values['frontend-style'],
+  'Use the ownership prompt with --owner-routing or --frontend-style.',
+);
+assert.ok(
   [
     values['handoff-holdout'],
     values['handoff-varied'],
     values['full-handoff'],
     values['frontend-style'],
+    values['owner-routing'],
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
@@ -420,7 +438,7 @@ type SavedRun = {
 };
 const saved: SavedRun | undefined = source ? JSON.parse(await readFile(source, 'utf8')) : undefined;
 const plannerTools =
-  values['owner-handoff'] || values['frontend-style']
+  values['owner-handoff'] || values['frontend-style'] || values['owner-routing']
     ? [groupPlanTool, groupNoWorkTool, groupQuestionTool]
     : [groupPlanTool, groupNoWorkTool];
 const tools = plannerTools.map(({ type, name, description, inputSchema }) => ({
@@ -441,9 +459,7 @@ const people = [
 ];
 
 async function withGroup<T>(
-  scenario: Case,
-  message: string,
-  reference: string | undefined,
+  { scenario, message, reference, ownerRouting }: PlannerCase,
   run: (context: {
     delivery: SharedDelivery;
     finish: (plan: unknown) => void;
@@ -452,13 +468,14 @@ async function withGroup<T>(
     verifyReview: (job: SharedSadeJob) => void;
     verifyFrontendOrder: (architecture: SharedSadeJob, frontend: SharedSadeJob) => void;
     verifyQuotaFollowup: (plan: ReturnType<typeof parseTeamPlan>, expected: QuotaFollowup) => void;
+    verifyOwnerQuota: (key: string, primary: number, fallback?: number) => void;
   }) => Promise<T>,
 ) {
   const store = new Store(':memory:');
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const fullHandoff = scenario === 'full-handoff' || scenario.startsWith('frontend-style');
-    if (fullHandoff)
+    if (fullHandoff || ownerRouting)
       store.put('billingEntitlement', {
         id: people[0].id,
         ownerId: people[0].id,
@@ -469,8 +486,9 @@ async function withGroup<T>(
       });
     const quotaFallback = scenario.startsWith('quota-');
     const quotaFollowup = scenario === 'quota-followup';
-    const names =
-      scenario === 'owner-relative' || scenario === 'owner-ungranted'
+    const names = ownerRouting
+      ? ownerRouting.roster.map(({ name }) => name)
+      : scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['Gemini', 'Gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
           ? ['Gemini', 'Astra', 'Astra']
@@ -484,8 +502,9 @@ async function withGroup<T>(
     const roles = fullHandoff
       ? ['engineer', 'designer', 'engineer', 'reviewer']
       : ['engineer', 'reviewer', 'designer'];
-    const providers =
-      scenario === 'owner-relative' || scenario === 'owner-ungranted'
+    const providers = ownerRouting
+      ? ownerRouting.roster.map(({ provider }) => provider)
+      : scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['gemini', 'gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
           ? ['gemini', 'codex', 'codex']
@@ -526,7 +545,11 @@ async function withGroup<T>(
         ],
       });
       if (index && ['mac', 'missing-mac', 'owner-ungranted'].includes(scenario)) continue;
-      if (index === 1 && scenario === 'frontend-style-ungranted') continue;
+      if (
+        (index === 1 && scenario === 'frontend-style-ungranted') ||
+        ownerRouting?.roster[index].granted === false
+      )
+        continue;
       call(index, {
         action: 'sade-grant',
         groupId,
@@ -534,7 +557,7 @@ async function withGroup<T>(
         teammateId: localId,
         projectKey,
         projectName: 'Local test project',
-        role: roles[index],
+        role: ownerRouting ? 'engineer' : roles[index],
         platform: 'win32',
         allowWrites: !fullHandoff || index < 3,
         turns: 8,
@@ -565,6 +588,16 @@ async function withGroup<T>(
     });
     const delivery = poll(0);
     assert.ok(delivery?.phase === 'plan');
+    if (ownerRouting) {
+      const expectedTeam = ownerRouting.roster.flatMap(({ name, provider, granted }, index) =>
+        granted ? [{ id: grants[index], name, provider, owner: people[index].name }] : [],
+      );
+      assert.deepEqual(
+        delivery.team.map(({ id, name, provider, owner }) => ({ id, name, provider, owner })),
+        expectedTeam,
+        'the delivered team represents the fixture project grants',
+      );
+    }
     // Keep this fixture's delivery current while the live model is generating the plan.
     poll(0, [delivery.id]);
     heartbeat = setInterval(() => poll(0, [delivery.id]), 10_000);
@@ -594,6 +627,25 @@ async function withGroup<T>(
           frontend.id,
           'Astra waits for the architecture before starting the frontend',
         );
+      },
+      verifyOwnerQuota(key, primary, fallback) {
+        const original = poll(primary);
+        assert.ok(original?.task?.key === key, 'the requested primary receives the task first');
+        finishJob(primary, original.id, { kind: 'provider-unavailable' });
+        for (let index = 0; index < names.length; index++) {
+          const next = poll(index);
+          if (index === fallback) {
+            assert.equal(next?.task?.key, key, 'the authorized fallback receives the same task');
+          } else {
+            assert.equal(
+              next,
+              undefined,
+              'no other owner receives the task after quota exhaustion',
+            );
+          }
+        }
+        if (fallback === undefined)
+          assert.match(jobs().error || '', /requested harness.*provider quota/);
       },
       verifyQuotaFollowup(plan, { files, secondBackup }) {
         const run = jobs();
@@ -957,6 +1009,7 @@ type PlannerCase = {
   reader?: 0 | 1;
   quotaFollowup?: QuotaFollowup;
   frontendStyle?: FrontendStyle;
+  ownerRouting?: OwnerRoutingCase;
 };
 const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
@@ -990,13 +1043,21 @@ const defaultCases: PlannerCase[] = values['quota-fallback']
                   message,
                 })),
               );
-const cases: PlannerCase[] = values['frontend-style']
-  ? [...frontendStyleCases]
-  : values['referenced-requests']
-    ? [...referencedRequests]
-    : values['quota-followup']
-      ? [...quotaFollowups]
-      : defaultCases;
+const cases: PlannerCase[] = values['owner-routing']
+  ? ownerRoutingCases.map((ownerRouting) => ({
+      scenario: 'owner-routing',
+      id: ownerRouting.id,
+      message: ownerRouting.message,
+      reference: ownerRouting.reference,
+      ownerRouting,
+    }))
+  : values['frontend-style']
+    ? [...frontendStyleCases]
+    : values['referenced-requests']
+      ? [...referencedRequests]
+      : values['quota-followup']
+        ? [...quotaFollowups]
+        : defaultCases;
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
@@ -1013,6 +1074,11 @@ const externalDecision = z.object({
   decision: z.object({ name: z.string(), arguments: z.unknown() }).strict(),
 });
 function planningPrompt(delivery: SharedDelivery) {
+  if (values['planning-prompt'] === 'owner-routing')
+    return sharedGroupPlanningPrompt(delivery, {
+      resolveNamedAssignments: true,
+      deferFrontendStyle: true,
+    });
   if (values['planning-prompt'] === 'frontend-style-deferred')
     return sharedGroupPlanningPrompt(delivery, { deferFrontendStyle: true });
   const base = sharedGroupPlanningPrompt(delivery);
@@ -1056,9 +1122,80 @@ function frontendExpectation(style: FrontendStyle) {
   };
 }
 
+function ownerRoutingEvidence({ tag, message, reference, roster, expected }: OwnerRoutingCase) {
+  return { tag, input: { message, reference, roster }, expected };
+}
+
+function assessOwnerRoutingPlan(
+  { expected }: OwnerRoutingCase,
+  plan: ReturnType<typeof parseTeamPlan>,
+  run: SharedSadeRun,
+  toolName: string | undefined,
+) {
+  if (expected.kind === 'no-work') {
+    assert.equal(toolName, groupNoWorkTool.name, 'an informational message closes without work');
+    assert.equal(run.state, 'done');
+    assert.ok(run.jobs.every((job) => job.phase === 'plan'));
+    return;
+  }
+  assert.equal(expected.kind, 'plan', 'ask about the unresolved assignment before dispatch');
+  assert.equal(toolName, groupPlanTool.name, 'submit a plan for the granted assignment');
+  assert.equal(run.state, 'running', run.error || 'the granted tasks should be queued');
+  const jobs = run.jobs.filter((job) => job.phase === 'task');
+  assert.equal(plan.tasks.length, expected.tasks.length, 'preserve the requested task count');
+  assert.equal(jobs.length, expected.tasks.length);
+  for (const { owner, file, mode, after, fallback } of expected.tasks) {
+    const task = plan.tasks.find(({ scope }) => scope.length === 1 && scope[0] === file);
+    assert.ok(task, `keep exact file scope ${file}`);
+    assert.equal(task.preferredMemberId, grants[owner], `keep the named primary for ${file}`);
+    assert.equal(jobs.find(({ task: job }) => job?.key === task.key)?.grantId, grants[owner]);
+    assert.equal(needsGroupWrite(task), mode === 'edit', `keep the access mode for ${file}`);
+    if (mode === 'read') assert.equal(task.kind, 'research');
+    const dependency = after && plan.tasks.find(({ scope }) => scope[0] === after);
+    if (after) assert.ok(dependency, `keep the prerequisite ${after}`);
+    assert.deepEqual(task.dependsOn, dependency ? [dependency.key] : []);
+    assert.equal(
+      task.fallbackMemberId,
+      typeof fallback === 'number' ? grants[fallback] : fallback,
+      `use only the authorized fallback for ${file}`,
+    );
+  }
+}
+
+function assessOwnerRoutingQuestion({ expected }: OwnerRoutingCase, question: string) {
+  assert.equal(expected.kind, 'question', 'do not ask again when the requester resolved the route');
+  const normalized = question
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replaceAll('đ', 'd');
+  const words = question
+    .normalize('NFC')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u);
+  assert.ok(words.includes(expected.harness.toLowerCase()), 'name the requested harness');
+  for (const owner of expected.owners) {
+    const name = people[owner].name.toLowerCase();
+    const folded = name
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .replaceAll('đ', 'd');
+    assert.ok(
+      words.includes(name) || words.includes(folded),
+      `refer to ${people[owner].name} in the question`,
+    );
+  }
+  assert.match(
+    normalized,
+    expected.reason === 'missing-grant'
+      ? /quyen|cho phep|grant|authoriz|permission|access/
+      : /\b(?:ai|nao|chon|hay|which|whose|who|or)\b/,
+  );
+}
+
 if (exportPrompt) {
-  const { scenario, id, message, reference, frontendStyle } = selectedCases[0];
-  await withGroup(scenario, message, reference, async ({ delivery }) => {
+  const { id, message, reference, frontendStyle, ownerRouting } = selectedCases[0];
+  await withGroup(selectedCases[0], async ({ delivery }) => {
     const prompt = planningPrompt(delivery);
     const decisionSchema = {
       type: 'object',
@@ -1091,6 +1228,7 @@ if (exportPrompt) {
           ...(frontendStyle
             ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
             : {}),
+          ...(ownerRouting ? ownerRoutingEvidence(ownerRouting) : {}),
         },
         null,
         2,
@@ -1102,17 +1240,20 @@ if (exportPrompt) {
   process.exit(0);
 }
 
-for (const {
-  scenario,
-  id,
-  message,
-  handoff,
-  reference,
-  reader,
-  quotaFollowup,
-  frontendStyle,
-} of selectedCases) {
-  const row = await withGroup(scenario, message, reference, async (group) => {
+for (const plannerCase of selectedCases) {
+  const {
+    scenario,
+    id,
+    message,
+    handoff,
+    reference,
+    reader,
+    quotaFollowup,
+    frontendStyle,
+    ownerRouting,
+  } = plannerCase;
+  const detailed = Boolean(frontendStyle || ownerRouting);
+  const row = await withGroup(plannerCase, async (group) => {
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
@@ -1131,7 +1272,7 @@ for (const {
     const roster = group.delivery.team.map((member) => member.id);
     function acceptReply(tool: { name: string; arguments: unknown }) {
       toolName = tool.name;
-      if (toolName === groupQuestionTool.name && (values['owner-handoff'] || frontendStyle)) {
+      if (toolName === groupQuestionTool.name && (values['owner-handoff'] || detailed)) {
         const args = z.object({ summary: z.string() }).strict().parse(tool.arguments);
         const result = sharedFinish.parse({ kind: 'question', ...args });
         assert.equal(result.kind, 'question');
@@ -1162,7 +1303,7 @@ for (const {
             messages,
             scenario === 'full-handoff' || Boolean(frontendStyle),
           );
-          if (frontendStyle) modelReplies.push(modelReply);
+          if (detailed) modelReplies.push(modelReply);
           const { message: reply, eval_count, done_reason } = modelReply;
           generatedTokens += eval_count || 0;
           assert.equal(
@@ -1184,20 +1325,32 @@ for (const {
       assert.ok(plan || question, 'expected a validated plan or question');
       parsed = true;
       if (question) {
-        assert.ok(
-          ['owner-ambiguous', 'owner-ungranted', 'frontend-style-ungranted'].includes(scenario),
-          'a uniquely identified, granted harness should start work directly',
-        );
-        assert.match(question, scenario === 'frontend-style-ungranted' ? /Astra/i : /Bình|Binh/i);
-        if (scenario === 'owner-ambiguous') assert.match(question, /Chi/i);
-        else assert.match(question, /quyền|cho phép|grant|authoriz|permission/i);
+        if (ownerRouting) assessOwnerRoutingQuestion(ownerRouting, question);
+        else {
+          assert.ok(
+            ['owner-ambiguous', 'owner-ungranted', 'frontend-style-ungranted'].includes(scenario),
+            'a uniquely identified, granted harness should start work directly',
+          );
+          assert.match(question, scenario === 'frontend-style-ungranted' ? /Astra/i : /Bình|Binh/i);
+          if (scenario === 'owner-ambiguous') assert.match(question, /Chi/i);
+          else assert.match(question, /quyền|cho phép|grant|authoriz|permission/i);
+        }
         group.ask(question);
         run = group.jobs();
       } else {
         assert.ok(plan);
         group.finish(plan);
         run = group.jobs();
-        if (quotaFollowup) {
+        if (ownerRouting) {
+          assessOwnerRoutingPlan(ownerRouting, plan, run, toolName);
+          if (ownerRouting.tag === 'quota-named-backup' || ownerRouting.tag === 'quota-pinned') {
+            assert.equal(ownerRouting.expected.kind, 'plan');
+            const { owner, fallback } = ownerRouting.expected.tasks[0];
+            assert.ok(fallback === undefined || typeof fallback === 'number');
+            group.verifyOwnerQuota(plan.tasks[0].key, owner, fallback);
+            run = group.jobs();
+          }
+        } else if (quotaFollowup) {
           group.verifyQuotaFollowup(plan, quotaFollowup);
           run = group.jobs();
         } else {
@@ -1233,9 +1386,11 @@ for (const {
       state: run?.state,
       error,
       ...(frontendStyle
+        ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
+        : {}),
+      ...(ownerRouting ? ownerRoutingEvidence(ownerRouting) : {}),
+      ...(detailed
         ? {
-            input: { message, reference },
-            expected: frontendExpectation(frontendStyle),
             prompt,
             modelReplies,
             ...(selected && !saved
@@ -1264,10 +1419,14 @@ for (const {
           ? { source: values['external-decision'] ? 'external-decision' : 'external-plan' }
           : { model, digest: selected.digest }),
         toolsSha256,
-        ...(values['frontend-style']
+        ...(values['frontend-style'] || values['owner-routing']
           ? {
               planningPrompt: values['planning-prompt'],
-              generation: { ...generation, num_predict: 1600, think: false },
+              generation: {
+                ...generation,
+                num_predict: values['frontend-style'] ? 1600 : 768,
+                think: false,
+              },
               memoryMeasurement:
                 'Ollama /api/ps post-reply model allocation. RAM is allocation minus VRAM. Sample excludes peak process and runner memory.',
             }
