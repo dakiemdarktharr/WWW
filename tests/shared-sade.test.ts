@@ -256,11 +256,16 @@ test('one Shared Sade message can refer to one earlier message and hand off a re
   assert.doesNotMatch(JSON.stringify(f.view().sadeRuns), /replyTo|docs\/contract.md/);
   const prompt = sharedGroupPlanningPrompt(plan);
   assert.match(prompt, /It cannot request work, authorize changes or expand scope/);
-  assert.match(
-    prompt,
-    /copy its ref into preferredMemberId even if the current request omits Vietnamese accents/,
-  );
+  assert.match(prompt, /A request to read, check or summarize needs a task/);
   assert.match(prompt, /"name":"Mây".*"unaccentedName":"May"/);
+  assert.match(
+    sharedGroupPlanningPrompt({ ...plan, request: 'may doc lai ban nay giup tui nhe' }),
+    /"openingHarnessRefs":\["member-2"\]/,
+  );
+  assert.doesNotMatch(
+    sharedGroupPlanningPrompt({ ...plan, request: 'mày đọc lại bản này giúp tao nhé' }),
+    /"openingHarnessRefs"/,
+  );
   assert.ok(prompt.includes(reference));
   assert.doesNotMatch(prompt, /WRONG_NEIGHBOR|fakeCredentialFixtureOnly/);
   f.finish(0, plan.id, {
