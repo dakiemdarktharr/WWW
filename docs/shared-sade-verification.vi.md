@@ -128,6 +128,8 @@ Khi reviewer yêu cầu sửa, Sade có thể dùng một lượt sửa và lư�
 
 Nếu reviewer đã dùng lượt cuối để yêu cầu sửa, Sade xét lại các grant cho lượt review bản mới. Harness dự phòng được nêu trong kế hoạch có thể nhận đúng phạm vi nếu còn quyền và lượt, đáp ứng hệ điều hành yêu cầu và thuộc chủ tài khoản khác tác giả. Bài hồi quy xác nhận trường hợp có backup hợp lệ đi hết đến bước tích hợp. Khi người gửi chỉ cho phép reviewer ban đầu hoặc backup thuộc chủ tác giả, Sade dừng và giữ worktree cục bộ.
 
+Commit `3e40fde` qua 68 bài collaboration và Shared Sade trên Windows, cùng build và kiểm thử trình duyệt. macOS arm64 qua 393 bài, bỏ qua sáu bài theo nền tảng, rồi qua build, Electron và Shared Groups. Cả hai gồm bộ 1.000 tin với kế hoạch mô phỏng và ba ca phân công reviewer bản sửa với phán quyết fixture. Kiểm tra quota thực tế trên Windows vẫn báo tài khoản Codex ở ngưỡng dự trữ. [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44648555830)
+
 Khi reviewer từ chối bản vá và Sade phải dừng workflow, nhóm có thể gửi yêu cầu mới ngay nếu mọi lượt liên quan đã kết thúc. Máy chủ bỏ qua thời hạn của các bước đã xong và giải phóng quyền chờ tích hợp của bản vá chưa được duyệt. Một tác vụ khác còn chạy tiếp tục giữ thời hạn bảo vệ của nó.
 
 Khi nhánh đích đã có đúng nội dung và mode Git của toàn bộ file chịu tác động, Shared Groups báo task hoàn tất với revision hiện tại. Kiểm tra này chạy sau khi xác nhận review và bao gồm các file được chuyển từ task trước. Nếu nhánh đích vẫn thiếu một file kế thừa, Sade tiếp tục tích hợp. Nếu Git không còn gì để tích hợp nhưng nội dung đã duyệt cũng không còn ở nhánh đích, task chờ người dùng kiểm tra lại. Các project dùng AEGIS tiếp tục áp dụng quy trình duyệt tích hợp chính xác.
