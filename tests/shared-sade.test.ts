@@ -57,7 +57,7 @@ function fixture(
     mac?: boolean;
     key?: string;
     members?: string[];
-    names?: [string, string];
+    names?: [string, string, string?];
     patchHandoff?: boolean;
     reviewRevision?: boolean;
     readAssignment?: true;
@@ -122,7 +122,7 @@ function fixture(
         {
           localId: member,
           provider: providers[index] ?? 'codex',
-          name: index === 2 ? 'Astra' : options.names?.[index] || (index ? 'Mây' : 'Bếp'),
+          name: options.names?.[index] || (index === 2 ? 'Astra' : index ? 'Mây' : 'Bếp'),
         },
       ],
     });
@@ -5629,6 +5629,122 @@ test('planned patch reviews use their allocated turns and all verdicts are requi
   } finally {
     f.store.close();
   }
+});
+
+test('Claude and ChatGPT must both review the current Gemini patch for one group request', (t) => {
+  const f = fixture(['gemini', 'claude'], {
+    names: ['Gemini', 'Claude', 'ChatGPT'],
+    allowWritesB: false,
+    grantC: true,
+    reviewRevision: true,
+    turnsA: 3,
+    turnsB: 2,
+  });
+  t.after(() => f.store.close());
+  const scope = ['src/discount.ts'];
+  const defective = {
+    ...patch,
+    files: scope,
+    diff: '+export const discount = (total: number) => total > 50 ? 10 : 0;\n',
+  };
+  const corrected = {
+    ...defective,
+    diff: '+export const discount = (total: number) => total >= 50 ? 10 : 0;\n',
+  };
+  const approved = {
+    kind: 'review',
+    verdict: 'approved',
+    summary: 'The boundary case passes.',
+  } as const;
+  const propose = (job: SharedDelivery, diff: typeof defective) =>
+    f.finish(0, job.id, { kind: 'change', diff, summary: 'Gemini submitted the scoped patch.' });
+  const integrate = (job: SharedDelivery) =>
+    f.finish(0, job.id, { kind: 'done', revision: sha, summary: 'Simulated local integration.' });
+  const reviewers = [1, 2];
+  const receiveReviews = (diff: typeof defective) =>
+    reviewers.map((owner) => {
+      const review = f.poll(owner).delivery!;
+      assert.equal(review.phase, 'review');
+      assert.equal(review.grantId, f.grants[owner]);
+      assert.deepEqual(review.review, diff);
+      return review;
+    });
+
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Đây là code Gemini tạo, lấy Claude và ChatGPT check thử.',
+    sade: { projectKey: key },
+  });
+  const planner = f.poll(0).delivery!;
+  assert.deepEqual(
+    planner.team.map(({ name, provider, allowWrites }) => [name, provider, allowWrites]),
+    [
+      ['Gemini', 'gemini', true],
+      ['Claude', 'claude', false],
+      ['ChatGPT', 'codex', false],
+    ],
+  );
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: {
+      summary: 'Independently verify the Gemini discount patch with Claude and ChatGPT.',
+      tasks: [
+        work('discount', {
+          kind: 'code',
+          scope,
+          acceptance: 'Return ten when the total is at least fifty.',
+          preferredMemberId: f.grants[0],
+        }),
+        ...['claude', 'chatgpt'].map((reviewer, index) =>
+          work(reviewer, {
+            kind: 'review',
+            scope,
+            preferredMemberId: f.grants[index + 1],
+            dependsOn: ['discount'],
+          }),
+        ),
+      ],
+    },
+  });
+  const author = f.poll(0).delivery!;
+  for (const owner of reviewers) assert.equal(f.poll(owner).delivery, undefined);
+  propose(author, defective);
+  const [claude, chatgpt] = receiveReviews(defective);
+  assert.throws(() => propose(author, corrected), /diff changed/);
+  f.finish(1, claude.id, approved);
+  assert.deepEqual(f.poll(0, [author.id]).reviews, []);
+  assert.throws(() => integrate(author), /independent review/);
+  f.finish(2, chatgpt.id, {
+    kind: 'review',
+    verdict: 'changes',
+    summary: 'At fifty, the patch returns zero instead of ten.',
+  });
+
+  const revision = f.poll(0, [author.id]).delivery!;
+  assert.equal(revision.reviewRevision?.previousJobId, author.id);
+  assert.throws(() => integrate(author), /unavailable/);
+  propose(revision, corrected);
+  const [newClaude, newChatGPT] = receiveReviews(corrected);
+  assert.notEqual(newClaude.id, claude.id);
+  assert.notEqual(newChatGPT.id, chatgpt.id);
+  assert.throws(() => f.finish(1, claude.id, approved), /unavailable/);
+  assert.throws(() => f.finish(2, chatgpt.id, approved), /unavailable/);
+  f.finish(2, newChatGPT.id, approved);
+  assert.deepEqual(f.poll(0, [revision.id]).reviews, []);
+  assert.throws(() => integrate(revision), /independent review/);
+  f.finish(1, newClaude.id, approved);
+  const newDigest = reviewDigest(corrected);
+  assert.notEqual(newDigest, reviewDigest(defective));
+  assert.deepEqual(f.poll(0, [revision.id]).reviews, [{ jobId: revision.id, digest: newDigest }]);
+  integrate(revision);
+  assert.equal(f.view().sadeRuns.length, 1);
+  assert.equal(f.view().sadeRuns[0].state, 'done');
+  assert.deepEqual(
+    f.grants.map((id) => f.store.get<{ used: number }>('sharedSadeGrant', id).used),
+    [3, 2, 2],
+  );
 });
 
 test('a planned review skips a different provider profile owned by the author', () => {
