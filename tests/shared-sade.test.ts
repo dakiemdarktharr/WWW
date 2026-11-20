@@ -182,6 +182,7 @@ function fixture(
       supportsUnchangedRevisionScopes?: true;
       supportsReadAssignment?: true;
       supportsHandoffAssignments?: true;
+      supportsHandoffDeliverables?: true;
       supportsCapacityWait?: true;
       supportsMachineCheckWait?: true;
       delivery?: SharedDelivery;
