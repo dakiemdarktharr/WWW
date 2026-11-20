@@ -289,6 +289,39 @@ Các đầu ra kiểm soát xác nhận bộ chấm loại kế hoạch sai ch�
 
 `npm run check` trên `780f775` qua 475 ca Windows, 471 Ubuntu và 470 macOS arm64, với 0 lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. Cả ba chạy corpus 1.000 tin với kế hoạch mô phỏng. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44702834110) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44702834453)
 
+Trên `9e566cff116a4f155373eddf66a3e09361bc3365`, bộ điều phối giữ cả hai chủ trong câu bàn giao rõ từ kiến trúc hoặc hợp đồng sang frontend. Danh sách harness đã chia sẻ được dùng để xác định chủ trước khi xét quyền ghi và lượt còn lại của từng grant trong project. Sade hỏi đúng người gửi khi có nhiều tên khớp, hoặc tiếp tục chính tin nhắn đã chờ khi grant ghi của đúng chủ và đúng lần chia sẻ được cấp. Mã câu hỏi đổi khi yêu cầu chuyển sang bước chờ khác, nên trả lời lại câu cũ không chọn nhầm người ở bước mới. Cả hai cách chờ diễn ra trước khi gọi planner.
+
+Kế hoạch phải giữ grant đã xác định ở cả hai công việc và để frontend phụ thuộc vào kiến trúc. Nếu tin hiện tại nêu đúng file, tác vụ phải giữ file đó và tránh một tác vụ ghi khác chồng phạm vi. Khi tin chỉ định công việc theo vai trò, planner dùng khóa `architecture` và `frontend`. Desktop có hỗ trợ truyền các ràng buộc này vào lượt lập kế hoạch và cho sửa đầu ra sai trong cùng lượt. Sade vẫn kiểm tra ở bộ điều phối đối với desktop cũ. Lượt thử nguyên văn A xác nhận Astra nhận bản kiến trúc đã duyệt rồi mới hỏi về phong cách, còn kiểm thử hết quota giữ nguyên Astra đã chọn. Câu trích dẫn chỉ báo nhóm và câu có dự phòng được giữ luồng phân tích thông thường.
+
+```powershell
+node --import tsx --test --test-name-pattern 'holds a named handoff|invalid named handoff|selected handoff receiver|hands Gemini architecture|quoted or conditional handoffs' tests/shared-sade.test.ts
+$previousOllamaHost = $env:OLLAMA_HOST
+try {
+  $env:OLLAMA_HOST = 'http://127.0.0.1:1'
+  node --import tsx scripts/eval-shared-sade-planner.ts .local/ungranted-a.json --frontend-style --case frontend-style/ungranted
+  node --import tsx scripts/eval-shared-sade-planner.ts .local/ungranted-handoff.json --handoff-planning --case handoff-planning/parcel-exact-owner-without-grant
+  node --import tsx scripts/eval-shared-sade-planner.ts .local/ambiguous-handoff.json --handoff-planning --case handoff-planning/library-ambiguous-other-owner
+} finally {
+  $env:OLLAMA_HOST = $previousOllamaHost
+}
+```
+
+Ba ca trên ghi kết quả `coordinator-preflight` và dùng 0 lượt model, 0 lượt grant. Dùng checkout `780f775` nếu cần chạy lại kết quả model trước khi có ràng buộc này. Sáu prompt hồi quy cũ giữ nguyên hash và kết quả khi phát lại. Ràng buộc mới áp dụng cho cấu trúc câu bàn giao kiến trúc sang frontend mà bộ nhận diện hỗ trợ. Chất lượng phân rã từng việc của model vẫn được chấm riêng.
+
+Windows cục bộ qua 18/18 ca tập trung, 120/120 ca Shared Sade và 207/207 ca Sade. Ở CI, mỗi nhánh của phép đo `handoff-planning` xác nhận cả ba ca chờ. Ca nguyên văn A báo cần Bình cấp quyền ghi cho Astra. Ca yêu cầu Astra của Chi báo đúng Chi. Ca chưa phân biệt hai Astra hỏi người gửi chọn giữa Bình và Chi. Các artifact chờ không có model, hash prompt hoặc số đo suy luận. [CI và artifact của phép đo](https://github.com/dakiemdarktharr/WWW/actions/runs/44705873623)
+
+Bảy ca được phép chuyển đến Qwen vẫn chưa có đầu ra đạt toàn bộ yêu cầu ở cả hai nhánh. Cả bảy lượt baseline hết hạn ở 180 giây. Biến thể JSON trả bảy kế hoạch trong 51,1–115,6 giây, với 837–945 token đầu vào. Bộ điều phối chặn ba kế hoạch vì phạm vi ghi chồng nhau hoặc biến việc viết kiến trúc thành nghiên cứu chỉ đọc. Bốn kế hoạch khác đi qua ràng buộc hai chủ nhưng bộ chấm phát hiện thiếu việc backend hoặc kiểm thử, hoặc thiếu loại review phòng thủ đúng yêu cầu. Bảy cặp ghi cùng mẫu bộ nhớ cấp cho model trong từng cặp. Kết quả được tách khỏi ba ca chờ trước planner và nằm trong `.local/sade-handoff-preflight/44705873623/complete`. Kivuno giữ nguyên lựa chọn model và reasoning. [CI và phản hồi gốc](https://github.com/dakiemdarktharr/WWW/actions/runs/44705873623)
+
+Trên `9e566cf`, luồng ghép Windows–macOS arm64 lại qua cả hai đầu. Windows tái hiện lỗi trên Mac, giữ kết quả đã ký, chỉ nhận `path-label.cjs` và xác nhận revision. Chủ Mac mô phỏng dừng một chẩn đoán đang chạy trong Electron. Tiến trình dừng, Windows không nhận kết quả cho lệnh bị dừng, từ chối yêu cầu mới và đóng tunnel. Bài Windows đạt 1/1 trong 241,1 giây. [CI ghép Mac trên cùng SHA](https://github.com/dakiemdarktharr/WWW/actions/runs/44706161537)
+
+`npm run check` trên `9e566cf` qua 493 ca Windows, 489 Ubuntu và 488 macOS arm64, với 0 lỗi. Cả ba chạy corpus 1.000 tin với kế hoạch mô phỏng và hai ca chờ chọn chủ hoặc grant mới. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44705873651) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44705873638)
+
+Rà soát `f814b337a7b886a4670178152966220c2507e234` bổ sung ba ca. Câu đổi người nhận ở phần sau và đường dẫn chỉ làm nguồn đối chiếu được chuyển cho planner thường, nên bộ nhận diện không khóa nhầm chủ hoặc file ghi. Khi câu trả lời `1` đồng thời khớp tên chủ và một số thứ tự chỉ người khác, Sade giữ yêu cầu chờ. Nhập `option 2` hoặc `lựa chọn 2` chọn đúng phương án đã hiển thị. Windows cục bộ qua 21/21 ca tập trung, 123/123 ca Shared Sade và 210/210 ca Sade.
+
+Chạy lại sáu tổ hợp ca chờ với hai lựa chọn prompt vẫn ghi 0 lượt model. Phát lại bằng `--replay` đủ 20 artifact từ `44705873623` trên bản sửa cuối với Ollama không truy cập được. Kết quả và hash prompt của các ca có suy luận khớp bản gốc, còn các ca chờ vẫn được tách khỏi điểm model. Báo cáo phát lại nằm trong `.local/sade-handoff-preflight/f814b33-replay`.
+
+`npm run check` trên `f814b33` qua 496 ca Windows, 492 Ubuntu và 491 macOS arm64. Số ca bỏ qua là một, năm và sáu, với 0 lỗi trong bộ này. Cả ba chạy corpus 1.000 tin có kế hoạch mô phỏng và các ca chặn chọn sai chủ. Job Ubuntu lần đầu lỗi sau đó ở `test:portal` vì trình duyệt không thấy phần tử hiệu ứng chuyển trang `.kp-route-blinds`. Chạy lại riêng job lỗi trên cùng SHA bằng `gh run rerun 44707623917 --repo dakiemdarktharr/WWW --failed` qua cả 492 ca và `test:portal`. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44707623917) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44707624013) · [Ubuntu lần đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44707623917/job/136191057471) · [Ubuntu chạy lại](https://github.com/dakiemdarktharr/WWW/actions/runs/44707623917/job/136195137242)
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
