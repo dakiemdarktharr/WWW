@@ -8,6 +8,20 @@ const loadBilling = () => import('./Billing');
 const Portal = lazy(loadPortal);
 const Billing = lazy(loadBilling);
 
+async function waitForVisuals(finished: Promise<unknown>) {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      finished.then(() => true),
+      new Promise<boolean>((resolve) => {
+        deadline = setTimeout(() => resolve(false), 1500);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
 // Cover / swap / reveal, with horizontal slats inspired by Motion's blinds.
 // Keep ordinary anchors so downloads, new tabs and browser history still work.
 export default function PublicRouter() {
@@ -20,6 +34,12 @@ export default function PublicRouter() {
     let disposed = false;
     let overlay: HTMLDivElement | null = null;
     const controls: ReturnType<typeof animate>[] = [];
+    function clearOverlay() {
+      controls.forEach((animation) => animation.cancel());
+      controls.length = 0;
+      overlay?.remove();
+      overlay = null;
+    }
     async function navigate(url: URL, push: boolean) {
       if (busy.current) {
         pending.current = { url, push };
@@ -57,17 +77,20 @@ export default function PublicRouter() {
           }
           document.body.append(overlay);
           if (typeof overlay.showPopover === 'function') overlay.showPopover();
-          await Promise.all(
-            [...overlay.children].map((slat) => {
-              const animation = animate(
-                slat,
-                { transform: ['scaleY(0)', 'scaleY(1)'] },
-                { duration: 0.42, ease: [0.76, 0, 0.24, 1] },
-              );
-              controls.push(animation);
-              return animation.finished;
-            }),
+          const covered = await waitForVisuals(
+            Promise.all(
+              [...overlay.children].map((slat) => {
+                const animation = animate(
+                  slat,
+                  { transform: ['scaleY(0)', 'scaleY(1)'] },
+                  { duration: 0.42, ease: [0.76, 0, 0.24, 1] },
+                );
+                controls.push(animation);
+                return animation.finished;
+              }),
+            ),
           );
+          if (!covered) clearOverlay();
         }
         if (!(await loaded)) {
           location.assign(url.href);
@@ -79,8 +102,10 @@ export default function PublicRouter() {
         flushSync(() => setRoute(current.current));
         window.scrollTo({ top: 0, behavior: 'instant' });
         // Let the preloaded page and theme commit before uncovering it.
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        await waitForVisuals(
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
         );
         if (disposed) return;
         const heading =
@@ -91,17 +116,19 @@ export default function PublicRouter() {
           heading.focus({ preventScroll: true });
         } else if (previousFocus instanceof HTMLElement) previousFocus.blur();
         if (overlay) {
-          await Promise.all(
-            [...overlay.children].map((slat) => {
-              (slat as HTMLElement).style.transformOrigin = 'center bottom';
-              const animation = animate(
-                slat,
-                { transform: ['scaleY(1)', 'scaleY(0)'] },
-                { duration: 0.52, ease: [0.76, 0, 0.24, 1] },
-              );
-              controls.push(animation);
-              return animation.finished;
-            }),
+          await waitForVisuals(
+            Promise.all(
+              [...overlay.children].map((slat) => {
+                (slat as HTMLElement).style.transformOrigin = 'center bottom';
+                const animation = animate(
+                  slat,
+                  { transform: ['scaleY(1)', 'scaleY(0)'] },
+                  { duration: 0.52, ease: [0.76, 0, 0.24, 1] },
+                );
+                controls.push(animation);
+                return animation.finished;
+              }),
+            ),
           );
         }
       } catch {
@@ -109,9 +136,7 @@ export default function PublicRouter() {
         if (!disposed) location.assign(url.href);
       } finally {
         clearTimeout(loadDeadline);
-        overlay?.remove();
-        overlay = null;
-        controls.length = 0;
+        clearOverlay();
         busy.current = false;
         const next = pending.current;
         pending.current = null;
@@ -148,8 +173,7 @@ export default function PublicRouter() {
     window.addEventListener('popstate', popped);
     return () => {
       disposed = true;
-      controls.forEach((animation) => animation.stop());
-      overlay?.remove();
+      clearOverlay();
       document.removeEventListener('click', clicked);
       window.removeEventListener('popstate', popped);
     };

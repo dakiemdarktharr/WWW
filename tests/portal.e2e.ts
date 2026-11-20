@@ -426,9 +426,23 @@ try {
   await expect(page.locator('html')).toHaveAttribute('data-portal-theme', 'dark');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('A forest of real photographs.');
   await page.goto(origin);
+  await page.evaluate(() => {
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = animate.call(this, keyframes, options);
+      const first = (animation.effect as KeyframeEffect | null)?.getKeyframes()[0];
+      if (this.classList.contains('kp-route-slat') && first?.transform === 'scaleY(1)') {
+        animation.pause();
+        document.documentElement.dataset.testPausedRouteReveal = 'true';
+        Element.prototype.animate = animate;
+      }
+      return animation;
+    };
+  });
   await page.getByRole('link', { name: 'Kivuno plans', exact: true }).click();
   await expect(page.locator('.kp-route-blinds')).toHaveCount(1);
   await expect(page).toHaveURL(origin + '/billing');
+  await expect(page.locator('html')).toHaveAttribute('data-test-paused-route-reveal', 'true');
   await expect(page.locator('.kp-route-blinds')).toHaveCount(0);
   await expect(page.locator('.plan-banner')).toHaveCount(3);
   await expect(page.locator('.billing-auth')).toHaveCount(0);
