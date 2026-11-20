@@ -1633,6 +1633,7 @@ for (const plannerCase of selectedCases) {
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
+    const compiledReplay = compile && prior?.modelReplies?.[0]?.message.content;
     if (saved) {
       assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
       assert.equal(prior?.protocol ?? 'tools', protocol, `Response protocol changed for ${id}`);
@@ -1673,15 +1674,8 @@ for (const plannerCase of selectedCases) {
     }
     try {
       if (prior) {
-        const raw = compile && prior.modelReplies?.[0]?.message.content;
-        if (compile && raw) {
-          acceptReply(compile(JSON.parse(raw)));
-          assert.deepEqual(
-            plan,
-            prior.plan && parseTeamPlan(prior.plan, { allowEmpty: true }),
-            'Compiled plan changed during replay.',
-          );
-          assert.equal(question, prior.question, 'Compiled question changed during replay.');
+        if (compile && compiledReplay) {
+          acceptReply(compile(JSON.parse(compiledReplay)));
         } else {
           toolName = prior.toolName;
           if (prior.question) question = prior.question;
@@ -1816,6 +1810,14 @@ for (const plannerCase of selectedCases) {
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
+    }
+    if (compiledReplay) {
+      assert.deepEqual(
+        plan && JSON.parse(JSON.stringify(plan)),
+        prior?.plan,
+        'Compiled plan changed during replay.',
+      );
+      assert.equal(question, prior?.question, 'Compiled question changed during replay.');
     }
     const milliseconds = Math.round(performance.now() - started);
     return {
