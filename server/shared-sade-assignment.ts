@@ -39,6 +39,43 @@ function matchesName(input: string, published: string) {
   );
 }
 
+type PublicationOwner = string | { relative: 'requester' | 'other' };
+
+/** Match active group publications without assuming anything about grants. */
+export function resolveSharedSadePublishedCandidates(
+  harnessName: string,
+  owner: PublicationOwner,
+  requesterId: string,
+  group: Pick<SharedGroup, 'people' | 'teammates'>,
+): SharedSadeAssignmentCandidate[] | undefined {
+  const people = group.people.filter((person) => person.state === 'active');
+  const published = group.teammates.filter(
+    (member) =>
+      matchesName(harnessName, member.name) &&
+      people.some((person) => person.id === member.ownerId),
+  );
+  if (!published.length) return;
+  const owners = people.filter((person) =>
+    typeof owner === 'string'
+      ? matchesName(owner, person.name)
+      : (person.id === requesterId) === (owner.relative === 'requester'),
+  );
+  if (!owners.length) return;
+  return published.flatMap((member) => {
+    const person = owners.find(({ id }) => id === member.ownerId);
+    return person
+      ? [
+          {
+            ownerId: person.id,
+            ownerName: person.name,
+            teammateId: member.localId,
+            sharingId: member.sharingId ?? member.localId,
+          },
+        ]
+      : [];
+  });
+}
+
 function hasReadEnding(tail: string) {
   const text = foldSharedSadeName(tail);
   if (readEnding.test(text)) return true;
@@ -67,33 +104,13 @@ export function resolveSharedSadeReadAssignment(
     return;
   }
 
-  const people = group.people.filter((person) => person.state === 'active');
-  const published = group.teammates.filter(
-    (member) =>
-      matchesName(harnessName, member.name) &&
-      people.some((person) => person.id === member.ownerId),
-  );
-  if (!published.length) return;
   const qualifier = foldSharedSadeName(ownerQualifier);
-  const owners = people.filter((person) => {
-    if (qualifier === 'toi' || qualifier === 'tui' || qualifier === 'minh')
-      return person.id === requesterId;
-    if (qualifier === 'ban' || qualifier === 'ong') return person.id !== requesterId;
-    return matchesName(ownerQualifier, person.name);
-  });
-  if (!owners.length) return;
-  const candidates = published.flatMap((member) => {
-    const owner = owners.find((person) => person.id === member.ownerId);
-    return owner
-      ? [
-          {
-            ownerId: owner.id,
-            ownerName: owner.name,
-            teammateId: member.localId,
-            sharingId: member.sharingId ?? member.localId,
-          },
-        ]
-      : [];
-  });
+  const owner: PublicationOwner = ['toi', 'tui', 'minh'].includes(qualifier)
+    ? { relative: 'requester' }
+    : ['ban', 'ong'].includes(qualifier)
+      ? { relative: 'other' }
+      : ownerQualifier;
+  const candidates = resolveSharedSadePublishedCandidates(harnessName, owner, requesterId, group);
+  if (!candidates) return;
   return { scope, harnessName, ownerQualifier, candidates };
 }

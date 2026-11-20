@@ -26,6 +26,10 @@ import {
   type SharedSadeAssignmentCandidate,
   type SharedSadeReadAssignment,
 } from './shared-sade-assignment.ts';
+import {
+  resolveSharedSadeHandoffAssignment,
+  type SharedSadeHandoffBinding,
+} from './shared-sade-handoff-assignment.ts';
 
 const id = z.string().uuid();
 export const projectKey = z.string().regex(/^[a-f0-9]{64}$/);
@@ -194,6 +198,7 @@ export const groupSadeCommands = [
       rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
       readAssignment: z.literal(true).optional(),
+      handoffAssignments: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
@@ -215,6 +220,7 @@ export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
   awaitingReadAssignment?: true;
+  awaitingHandoffAssignments?: true;
   fallbackMemberId?: string;
   deadline?: number;
   awaitingReceipt?: true;
@@ -234,6 +240,7 @@ type Job = SharedSadeJob & {
   acceptsUpdates?: boolean;
   updates?: (z.infer<typeof sharedSadeUpdate> & { ownerId: string })[];
 };
+type SelectedHandoff = SharedSadeHandoffBinding & { target?: SharedSadeAssignmentCandidate };
 type Run = Omit<SharedSadeRun, 'jobs'> & {
   authorId: string;
   content: string;
@@ -242,6 +249,7 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   readOnly?: true;
   unavailableGrants?: string[];
   readAssignment?: SharedSadeReadAssignment & { target?: SharedSadeAssignmentCandidate };
+  handoffAssignments?: { producer: SelectedHandoff; receiver: SelectedHandoff };
   jobs: Job[];
 };
 const referenceAuthorLimit = 100;
@@ -275,6 +283,52 @@ export function assertSharedReadPlan(
     );
   }
 }
+const handoffSlot = z
+  .object({ grantId: id, scope: z.string().min(1).max(500).optional() })
+  .strict();
+export const sharedHandoffAssignments = z
+  .object({ producer: handoffSlot, receiver: handoffSlot })
+  .strict()
+  .refine(({ producer, receiver }) => producer.grantId !== receiver.grantId, {
+    message: 'The handoff needs different harness grants.',
+  });
+type HandoffAssignments = z.infer<typeof sharedHandoffAssignments>;
+type HandoffReadiness =
+  | { state: 'ready'; assignments: HandoffAssignments }
+  | { state: 'waiting'; reason: string; choose?: 'producer' | 'receiver' }
+  | { state: 'blocked'; reason: string };
+const handoffPlannerWait =
+  'The request needs a separate granted planner turn and a turn for each handoff writer.';
+export function assertSharedHandoffPlan(plan: TeamPlan, assignments: HandoffAssignments) {
+  function writer(key: string, { grantId, scope }: z.infer<typeof handoffSlot>) {
+    const found = plan.tasks.filter(
+      (task) => writes(task) && (scope ? task.scope.includes(scope) : task.key === key),
+    );
+    const [task] = found;
+    if (
+      found.length !== 1 ||
+      task.preferredMemberId !== grantId ||
+      task.fallbackMemberId ||
+      (scope && task.scope.length !== 1)
+    )
+      throw new DomainError(
+        `Pin the ${key} write to the requested harness, with its own scope and no fallback.`,
+      );
+    if (
+      task.scope.includes('.') ||
+      plan.tasks.some(
+        (other) => other !== task && writes(other) && scopesOverlap(task.scope, other.scope),
+      )
+    )
+      throw new DomainError(`Keep the ${key} write in a separate scope from other writers.`);
+    return task;
+  }
+  const producer = writer('architecture', assignments.producer);
+  const receiver = writer('frontend', assignments.receiver);
+  const tasks = new Map(plan.tasks.map((task) => [task.key, task]));
+  if (!collectPrerequisites(receiver.dependsOn, tasks, (task) => task.dependsOn).includes(producer))
+    throw new DomainError('The frontend must depend on the architecture handoff.');
+}
 export type SharedDelivery = {
   id: string;
   grantId: string;
@@ -284,6 +338,7 @@ export type SharedDelivery = {
   request: string;
   referencedMessage?: z.infer<typeof sharedMessageReference>;
   readAssignment?: z.infer<typeof sharedReadAssignment>;
+  handoffAssignments?: HandoffAssignments;
   team: {
     id: string;
     name: string;
@@ -607,6 +662,7 @@ export class GroupSade {
           readOnly,
           unavailableGrants,
           readAssignment,
+          handoffAssignments,
           ...run
         } = stored;
         return {
@@ -633,6 +689,7 @@ export class GroupSade {
               acceptsUpdates,
               updates,
               awaitingReadAssignment,
+              awaitingHandoffAssignments,
               ...job
             }) => ({
               ...job,
@@ -663,7 +720,7 @@ export class GroupSade {
       (owner === requester || owner === grant.ownerId || owner === group.ownerId),
     );
   }
-  private readAssignmentPublished(group: SharedGroup, target: SharedSadeAssignmentCandidate) {
+  private assignmentPublished(group: SharedGroup, target: SharedSadeAssignmentCandidate) {
     return (
       group.people.some(({ id, state }) => id === target.ownerId && state === 'active') &&
       group.teammates.some(
@@ -674,15 +731,24 @@ export class GroupSade {
       )
     );
   }
-  private readAssignmentGrant(run: Run, group: SharedGroup, eligible: readonly Grant[]) {
-    const target = run.readAssignment?.target;
-    if (!target || !this.readAssignmentPublished(group, target)) return undefined;
+  private assignmentGrant(
+    run: Run,
+    eligible: readonly Grant[],
+    target: SharedSadeAssignmentCandidate,
+    write = false,
+  ) {
     return eligible.find(
       (grant) =>
         grant.ownerId === target.ownerId &&
         grant.teammateId === target.teammateId &&
-        grant.projectKey === run.projectKey,
+        grant.projectKey === run.projectKey &&
+        (!write || grant.allowWrites),
     );
+  }
+  private readAssignmentGrant(run: Run, group: SharedGroup, eligible: readonly Grant[]) {
+    const target = run.readAssignment?.target;
+    if (!target || !this.assignmentPublished(group, target)) return undefined;
+    return this.assignmentGrant(run, eligible, target);
   }
   private waitForReadAssignment(run: Run, job: Job, reason: string) {
     job.state = 'waiting';
@@ -690,10 +756,15 @@ export class GroupSade {
     job.summary = redact(reason);
     this.store.put('sharedSadeRun', run);
   }
-  private readPlannerGrant(run: Run, eligible: readonly Grant[], target: Grant) {
+  private plannerWithWorkTurns(
+    run: Run,
+    eligible: readonly Grant[],
+    pinnedGrants: readonly string[],
+  ) {
     return eligible.find(
       (grant) =>
-        grant.ownerId === run.authorId && (grant.id !== target.id || grant.turns - grant.used >= 2),
+        grant.ownerId === run.authorId &&
+        (!pinnedGrants.includes(grant.id) || grant.turns - grant.used >= 2),
     );
   }
   private readAccessMessage(run: Run, targetAvailable = false) {
@@ -708,8 +779,11 @@ export class GroupSade {
     );
     const target = this.readAssignmentGrant(run, group, eligible);
     if (!target) return this.readAccessMessage(run);
-    const lead = this.readPlannerGrant(run, eligible, target);
+    const lead = this.plannerWithWorkTurns(run, eligible, [target.id]);
     if (!lead) return this.readAccessMessage(run, true);
+    this.requeueAssignmentPlan(run, job, eligible, lead);
+  }
+  private requeueAssignmentPlan(run: Run, job: Job, eligible: readonly Grant[], lead: Grant) {
     run.roster = eligible.map((grant) => grant.id);
     run.jobs[run.jobs.indexOf(job)] = {
       id: randomUUID(),
@@ -719,6 +793,79 @@ export class GroupSade {
       state: 'queued',
     };
     this.store.put('sharedSadeRun', run);
+  }
+  private handoffReadiness(
+    run: Run,
+    group: SharedGroup,
+    eligible: readonly Grant[],
+  ): HandoffReadiness {
+    const { producer, receiver } = run.handoffAssignments!;
+    const check = (binding: SelectedHandoff, slot: 'producer' | 'receiver') => {
+      const { harnessName, candidates, ownerQualifier, target, scope } = binding;
+      if (!candidates.length)
+        return {
+          state: 'blocked',
+          reason: `No published ${harnessName} matches ${ownerQualifier} in this group.`,
+        } as const;
+      if (!target)
+        return {
+          state: 'waiting',
+          choose: slot,
+          reason: `Which ${harnessName} should handle the ${slot === 'producer' ? 'architecture' : 'frontend'}? Reply with the option number or an unambiguous owner name. ${candidates.map(({ ownerName }, index) => `${index + 1}. ${ownerName}`).join(', ')}`,
+        } as const;
+      if (!this.assignmentPublished(group, target))
+        return {
+          state: 'blocked',
+          reason: `The requested ${harnessName} publication ended. Start a new request for its current publication.`,
+        } as const;
+      const grant = this.assignmentGrant(run, eligible, target, true);
+      if (!grant)
+        return {
+          state: 'waiting',
+          reason: `Waiting for ${target.ownerName} to grant ${harnessName} write access and an available turn for this project.`,
+        } as const;
+      return { state: 'ready', pin: { grantId: grant.id, ...(scope ? { scope } : {}) } } as const;
+    };
+    const first = check(producer, 'producer');
+    if (first.state !== 'ready') return first;
+    const second = check(receiver, 'receiver');
+    if (second.state !== 'ready') return second;
+    if (first.pin.grantId === second.pin.grantId)
+      return {
+        state: 'blocked',
+        reason: 'The architecture and frontend need the two requested harness grants.',
+      };
+    return { state: 'ready', assignments: { producer: first.pin, receiver: second.pin } };
+  }
+  private waitForHandoffAssignments(run: Run, job: Job, reason: string) {
+    const summary = redact(reason);
+    if (job.awaitingHandoffAssignments && job.summary !== summary) job.id = randomUUID();
+    job.state = 'waiting';
+    job.awaitingHandoffAssignments = true;
+    job.summary = summary;
+    this.store.put('sharedSadeRun', run);
+  }
+  private resumeHandoffAssignments(
+    run: Run,
+    job: Job,
+    eligible: readonly Grant[],
+    status: HandoffReadiness,
+  ) {
+    if (status.state === 'blocked') {
+      this.block(run, job, status.reason);
+      return;
+    }
+    if (status.state === 'waiting') {
+      this.waitForHandoffAssignments(run, job, status.reason);
+      return;
+    }
+    const { producer, receiver } = status.assignments;
+    const lead = this.plannerWithWorkTurns(run, eligible, [producer.grantId, receiver.grantId]);
+    if (!lead) {
+      this.waitForHandoffAssignments(run, job, handoffPlannerWait);
+      return;
+    }
+    this.requeueAssignmentPlan(run, job, eligible, lead);
   }
   start(group: SharedGroup, message: SharedMessage) {
     if (!message.sade) return;
@@ -829,12 +976,28 @@ export class GroupSade {
       }
       run.readAssignment.target = candidates[0];
       const target = this.readAssignmentGrant(run, group, grants);
-      const planner = target && this.readPlannerGrant(run, grants, target);
+      const planner = target && this.plannerWithWorkTurns(run, grants, [target.id]);
       if (!planner) {
         this.waitForReadAssignment(run, job, this.readAccessMessage(run, Boolean(target)));
         return;
       }
       job.grantId = planner.id;
+    }
+    const handoff =
+      !assignment &&
+      !readOnly &&
+      resolveSharedSadeHandoffAssignment(content, message.ownerId, group);
+    if (handoff) {
+      const select = (binding: SharedSadeHandoffBinding): SelectedHandoff => ({
+        ...binding,
+        target: binding.candidates.length === 1 ? binding.candidates[0] : undefined,
+      });
+      run.handoffAssignments = {
+        producer: select(handoff.producer),
+        receiver: select(handoff.receiver),
+      };
+      this.resumeHandoffAssignments(run, job, grants, this.handoffReadiness(run, group, grants));
+      return;
     }
     this.store.put('sharedSadeRun', run);
   }
@@ -899,15 +1062,24 @@ export class GroupSade {
         used: 0,
       } satisfies Grant);
       for (const run of this.runs(group)) {
+        if (run.projectKey !== command.projectKey || final(run)) continue;
+        const handoff = run.jobs.find(
+          ({ awaitingHandoffAssignments, state }) =>
+            awaitingHandoffAssignments && state === 'waiting',
+        );
+        if (handoff && run.handoffAssignments) {
+          const eligible = this.grants(group).filter(
+            (entry) => entry.projectKey === run.projectKey && this.usableForRun(entry, group, run),
+          );
+          const status = this.handoffReadiness(run, group, eligible);
+          if (status.state !== 'waiting' || handoff.summary !== status.reason)
+            this.resumeHandoffAssignments(run, handoff, eligible, status);
+          continue;
+        }
         const job = run.jobs.find(
           ({ awaitingReadAssignment, state }) => awaitingReadAssignment && state === 'waiting',
         );
-        if (
-          job &&
-          run.projectKey === command.projectKey &&
-          run.readAssignment?.target &&
-          !final(run)
-        ) {
+        if (job && run.readAssignment?.target) {
           const reason = this.resumeReadAssignment(run, job, group);
           if (reason && job.summary !== reason) this.waitForReadAssignment(run, job, reason);
         }
@@ -965,6 +1137,44 @@ export class GroupSade {
         const job = run.jobs.find((item) => item.id === command.jobId);
         if (!job || job.state !== 'waiting' || !job.summary || final(run))
           throw new DomainError('This question is no longer waiting.', 409);
+        if (job.awaitingHandoffAssignments && run.handoffAssignments) {
+          const eligible = this.grants(group).filter(
+            (entry) => entry.projectKey === run.projectKey && this.usableForRun(entry, group, run),
+          );
+          let status = this.handoffReadiness(run, group, eligible);
+          const answer = foldSharedSadeName(command.answer);
+          if (status.state === 'waiting' && status.choose) {
+            const choice = run.handoffAssignments[status.choose];
+            const numbered = /^[1-9][0-9]*$/.test(answer)
+              ? choice.candidates[Number(answer) - 1]
+              : undefined;
+            const named = choice.candidates.filter(
+              ({ ownerName }) => answer === foldSharedSadeName(ownerName),
+            );
+            const selected = numbered ?? (named.length === 1 ? named[0] : undefined);
+            if (!selected)
+              throw new DomainError('Reply with a single listed owner or option number.', 409);
+            if (!this.assignmentPublished(group, selected))
+              throw new DomainError(
+                'That harness publication ended. Choose another listed owner or start a new request.',
+                409,
+              );
+            choice.target = selected;
+            status = this.handoffReadiness(run, group, eligible);
+          } else if (status.state !== 'blocked') {
+            const { producer, receiver } = run.handoffAssignments;
+            const originalOwners = [producer.target, receiver.target].flatMap((target) =>
+              target ? [foldSharedSadeName(target.ownerName)] : [],
+            );
+            if (!['continue', 'tiep tuc', ...originalOwners].includes(answer))
+              throw new DomainError(
+                'The requested harness owners are fixed for this handoff.',
+                409,
+              );
+          }
+          this.resumeHandoffAssignments(run, job, eligible, status);
+          return this.view(group, actor.ownerId);
+        }
         if (job.awaitingReadAssignment && run.readAssignment) {
           const assignment = run.readAssignment;
           const answer = foldSharedSadeName(command.answer);
@@ -976,7 +1186,7 @@ export class GroupSade {
             if (choices.length !== 1)
               throw new DomainError('Reply with a single listed owner or option number.', 409);
             const [target] = choices;
-            if (!this.readAssignmentPublished(group, target))
+            if (!this.assignmentPublished(group, target))
               throw new DomainError(
                 'That harness publication ended. Choose another listed owner or start a new request.',
                 409,
@@ -991,7 +1201,7 @@ export class GroupSade {
               )
             )
               throw new DomainError('The selected harness owner is fixed for this request.', 409);
-            if (!this.readAssignmentPublished(group, assignment.target)) {
+            if (!this.assignmentPublished(group, assignment.target)) {
               this.block(
                 run,
                 job,
@@ -1240,7 +1450,8 @@ export class GroupSade {
     if (this.stopUnsafeChange(run)) return true;
     const now = this.now();
     for (const job of run.jobs) {
-      if (job.state === 'waiting' && job.awaitingReadAssignment) continue;
+      if (job.state === 'waiting' && (job.awaitingReadAssignment || job.awaitingHandoffAssignments))
+        continue;
       const needsTurn = job.state === 'queued' || job.state === 'waiting';
       const holdsLease = job.state === 'running' || job.state === 'reviewing';
       if (!needsTurn && !holdsLease) continue;
@@ -1473,6 +1684,42 @@ export class GroupSade {
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
         const retry = awaitingDelivery(job);
         let assignmentGrant: Grant | undefined;
+        let handoffAssignments: HandoffAssignments | undefined;
+        if (job.phase === 'plan' && run.handoffAssignments && (job.state === 'queued' || retry)) {
+          const eligible = [...grants.values()].filter(
+            (entry) =>
+              entry.projectKey === run.projectKey &&
+              (!retry || run.roster.includes(entry.id)) &&
+              this.usableForRun(entry, group, run),
+          );
+          const status = this.handoffReadiness(run, group, eligible);
+          if (status.state === 'blocked' || (retry && status.state === 'waiting')) {
+            this.block(run, job, status.reason);
+            break;
+          }
+          if (status.state === 'waiting') {
+            this.waitForHandoffAssignments(run, job, status.reason);
+            continue;
+          }
+          const { producer, receiver } = status.assignments;
+          const pinned = [producer.grantId, receiver.grantId];
+          if (job.state === 'queued' && pinned.includes(grant.id) && grant.turns - grant.used < 2) {
+            const other = this.plannerWithWorkTurns(run, eligible, pinned);
+            if (other) {
+              job.grantId = other.id;
+              touched = true;
+            } else {
+              this.waitForHandoffAssignments(run, job, handoffPlannerWait);
+            }
+            continue;
+          }
+          for (const id of pinned) {
+            if (run.roster.includes(id)) continue;
+            run.roster.push(id);
+            touched = true;
+          }
+          handoffAssignments = status.assignments;
+        }
         if (job.phase === 'plan' && run.readAssignment && (job.state === 'queued' || retry)) {
           const eligible = [...grants.values()].filter(
             (entry) =>
@@ -1494,7 +1741,7 @@ export class GroupSade {
             assignmentGrant.id === grant.id &&
             grant.turns - grant.used < 2
           ) {
-            const other = this.readPlannerGrant(run, eligible, assignmentGrant);
+            const other = this.plannerWithWorkTurns(run, eligible, [assignmentGrant.id]);
             if (other) {
               job.grantId = other.id;
               touched = true;
@@ -1766,6 +2013,7 @@ export class GroupSade {
           ...(command.readAssignment && assignmentGrant && run.readAssignment
             ? { readAssignment: { scope: run.readAssignment.scope, grantId: assignmentGrant.id } }
             : {}),
+          ...(command.handoffAssignments && handoffAssignments ? { handoffAssignments } : {}),
           team,
           task: job.task,
           ...(job.reviewRevision ? { reviewRevision: job.reviewRevision } : {}),
@@ -1801,6 +2049,7 @@ export class GroupSade {
       supportsUnchangedRevisionScopes: true as const,
       supportsReferencedMessage: true as const,
       supportsReadAssignment: true as const,
+      supportsHandoffAssignments: true as const,
       supportsCapacityWait: true as const,
       supportsMachineCheckWait: true as const,
       active,
@@ -1895,6 +2144,11 @@ export class GroupSade {
               'The requested harness no longer has an available project grant.',
             );
           assertSharedReadPlan(plan, { scope: run.readAssignment.scope, grantId: target.id });
+        }
+        if (run.handoffAssignments) {
+          const status = this.handoffReadiness(run, group, eligible);
+          if (status.state !== 'ready') throw new DomainError(status.reason);
+          assertSharedHandoffPlan(plan, status.assignments);
         }
         if (run.readOnly && plan.tasks.some(writes))
           throw new DomainError(

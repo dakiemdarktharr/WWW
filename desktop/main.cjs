@@ -697,6 +697,7 @@ async function sharedSadeLoop(generation, owner) {
   let supportsUnchangedRevisionScopes = false;
   let supportsReferencedMessage = false;
   let supportsReadAssignment = false;
+  let supportsHandoffAssignments = false;
   let supportsCapacityWait = false;
   let supportsMachineCheckWait = false;
   let grantCursor;
@@ -761,6 +762,7 @@ async function sharedSadeLoop(generation, owner) {
           ...(supportsUnchangedRevisionScopes ? { unchangedRevisionScopes: true } : {}),
           ...(supportsReferencedMessage ? { referencedMessage: true } : {}),
           ...(supportsReadAssignment ? { readAssignment: true } : {}),
+          ...(supportsHandoffAssignments ? { handoffAssignments: true } : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -781,6 +783,7 @@ async function sharedSadeLoop(generation, owner) {
         response.ok && body.supportsUnchangedRevisionScopes === true;
       supportsReferencedMessage = response.ok && body.supportsReferencedMessage === true;
       supportsReadAssignment = response.ok && body.supportsReadAssignment === true;
+      supportsHandoffAssignments = response.ok && body.supportsHandoffAssignments === true;
       supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
       supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
       if (response.ok) {

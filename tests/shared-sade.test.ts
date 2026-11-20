@@ -15,6 +15,10 @@ import {
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
+import {
+  handoffPlanningCases,
+  type HandoffPlanningCase,
+} from './fixtures/shared-sade-handoff-planning.ts';
 import { ownerRoutingCases } from './fixtures/shared-sade-owner-routing.ts';
 import { mkdir, mkdtemp, writeFile, readFile, rm, realpath } from 'node:fs/promises';
 import os from 'node:os';
@@ -61,6 +65,7 @@ function fixture(
     patchHandoff?: boolean;
     reviewRevision?: boolean;
     readAssignment?: true;
+    handoffAssignments?: true;
     taskUpdates?: boolean;
     roleA?: 'researcher';
     allowWritesB?: boolean;
@@ -98,7 +103,7 @@ function fixture(
   }
   const grant = (
     index: number,
-    overrides: { id?: string; projectKey?: string; sharingId?: string } = {},
+    overrides: { id?: string; projectKey?: string; sharingId?: string; allowWrites?: boolean } = {},
   ) =>
     call(index, {
       action: 'sade-grant',
@@ -147,6 +152,7 @@ function fixture(
         unchangedRevisionScopes: true,
         referencedMessage: true,
         ...(options.readAssignment ? { readAssignment: true } : {}),
+        ...(options.handoffAssignments ? { handoffAssignments: true } : {}),
         ...(options.patchHandoff ? { patchHandoff: true } : {}),
         ...(options.reviewRevision ? { reviewRevision: true } : {}),
         ...(rosterLookup ? { rosterLookup } : {}),
@@ -161,6 +167,7 @@ function fixture(
       supportsReviewedRevisionFiles?: true;
       supportsUnchangedRevisionScopes?: true;
       supportsReadAssignment?: true;
+      supportsHandoffAssignments?: true;
       supportsCapacityWait?: true;
       supportsMachineCheckWait?: true;
       delivery?: SharedDelivery;
@@ -4287,6 +4294,7 @@ test('Shared Sade balances open implementation work without consuming the only i
 test('Shared Sade hands Gemini architecture to Astra before asking about frontend style', (t) => {
   const f = fixture(['gemini', 'antigravity'], {
     names: ['Gemini', 'Astra'],
+    handoffAssignments: true,
     patchHandoff: true,
     turnsA: 6,
     turnsB: 5,
@@ -4316,7 +4324,11 @@ test('Shared Sade hands Gemini architecture to Astra before asking about fronten
   );
   assert.deepEqual(f.poll(0).delivery, planner);
   assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', gemini).used, 1);
-  const prompt = sharedGroupPlanningPrompt(planner, { deferFrontendStyle: true });
+  assert.deepEqual(planner.handoffAssignments, {
+    producer: { grantId: gemini },
+    receiver: { grantId: astra },
+  });
+  const prompt = sharedGroupPlanningPrompt(planner);
   assert.match(prompt, /frontend task after its dependencies/);
   assert.match(prompt, /requester wants to choose the style or let the frontend harness choose/);
   const plan = parseSharedGroupPlan(
@@ -4499,24 +4511,295 @@ test('an opted-in status update can close planning without assigning any work', 
   }
 });
 
-function ownerRoutingFixture(t: TestContext, grantC = true) {
-  const f = fixture(undefined, { names: ['Gemini', 'Astra'], grantC });
+function ownerRoutingFixture(t: TestContext, grantC = true, handoffAssignments?: true) {
+  const f = fixture(undefined, { names: ['Gemini', 'Astra'], grantC, handoffAssignments });
   t.after(() => f.store.close());
   const turnsUsed = () =>
     f.grants.map((id) => f.store.lookup<{ used: number }>('sharedSadeGrant', id)?.used || 0);
-  const send = (content: string) => {
+  const send = (content: string, reference?: string) => {
+    const replyTo = reference ? randomUUID() : undefined;
+    if (replyTo)
+      f.call(1, { action: 'message', groupId: f.groupId, id: replyTo, content: reference });
     const request = {
       action: 'message',
       groupId: f.groupId,
       id: randomUUID(),
       content,
-      sade: { projectKey: key },
+      sade: { projectKey: key, ...(replyTo ? { replyTo } : {}) },
     };
     f.call(0, request);
     return request;
   };
   return { ...f, send, turnsUsed };
 }
+
+type HandoffFiles = Extract<HandoffPlanningCase['expected'], { kind: 'plan' }>['files'];
+
+function pinnedHandoffTasks(files: HandoffFiles, producer: string, receiver: string) {
+  return [
+    work('architecture', {
+      kind: 'code',
+      scope: [files.architecture],
+      preferredMemberId: producer,
+    }),
+    work('frontend', {
+      kind: 'design',
+      scope: [files.frontend],
+      preferredMemberId: receiver,
+      dependsOn: ['architecture'],
+    }),
+    work('backend', { kind: 'code', scope: [files.backend], dependsOn: ['architecture'] }),
+    work('codebase', { kind: 'code', scope: [files.tests], dependsOn: ['architecture'] }),
+    work('defensive-review', {
+      kind: 'review',
+      scope: [files.frontend, files.backend],
+      dependsOn: ['frontend', 'backend'],
+      acceptance: 'Read the two files and check for disclosure in error messages.',
+    }),
+  ];
+}
+
+for (const name of ['parcel-exact-owner-without-grant', 'library-ambiguous-other-owner'] as const) {
+  test(`Shared Sade holds a named handoff before using a planner turn for ${name}`, (t) => {
+    const ambiguous = name === 'library-ambiguous-other-owner';
+    const f = ownerRoutingFixture(t, ambiguous, true);
+    const input = handoffPlanningCases.find(({ id }) => id === `handoff-planning/${name}`)!;
+    const { expected } = handoffPlanningCases.find(({ id }) =>
+      id.endsWith(ambiguous ? '/library-implicit-style' : '/parcel-explicit-owner-and-style'),
+    )!;
+    assert.equal(expected.kind, 'plan');
+    const request = f.send(input.message, input.reference);
+    const [run] = f.view().sadeRuns;
+    const [waiting] = run.jobs;
+    assert.equal(run.state, 'planning');
+    assert.deepEqual([waiting.phase, waiting.state], ['plan', 'waiting']);
+    assert.match(waiting.summary || '', /Astra/i);
+    assert.match(waiting.summary || '', /Chi/);
+    if (ambiguous) assert.match(waiting.summary || '', /Bình/);
+    else assert.match(waiting.summary || '', /grant|permission|access|quyền/i);
+    // The failed compact output selected Bình in both fixtures. It must not execute while waiting.
+    assert.throws(() =>
+      f.finish(0, waiting.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Send the frontend to the wrong Astra.',
+          tasks: pinnedHandoffTasks(expected.files, f.grants[0], f.grants[1]),
+        },
+      }),
+    );
+    const answer = {
+      action: 'sade-answer',
+      groupId: f.groupId,
+      runId: request.id,
+      jobId: waiting.id,
+      answer: 'Chi',
+    };
+    assert.throws(() => f.call(1, answer), /request author/i);
+    assert.throws(() => f.call(0, { ...answer, answer: 'Whichever one is free.' }));
+    assert.equal(f.poll(0).supportsHandoffAssignments, true);
+    for (const index of [0, 1, 2]) assert.equal(f.poll(index).delivery, undefined);
+    assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+
+    let receiver = f.grants[2];
+    if (ambiguous) {
+      f.call(2, { action: 'sade-revoke', groupId: f.groupId, grantId: receiver });
+      f.call(0, answer);
+      const selected = f.view().sadeRuns[0].jobs[0];
+      assert.equal(selected.state, 'waiting');
+      assert.notEqual(selected.id, waiting.id);
+      assert.match(selected.summary || '', /Chi.*grant.*Astra/i);
+      assert.throws(() => f.call(0, answer), /no longer waiting/i);
+      assert.deepEqual(f.turnsUsed(), [0, 0, 0]);
+      receiver = randomUUID();
+      f.grant(2, { id: receiver });
+    } else {
+      const otherProject = randomUUID();
+      f.grant(2, { id: otherProject, projectKey: 'b'.repeat(64) });
+      assert.equal(f.poll(2, [], [otherProject]).delivery, undefined);
+      const readOnly = randomUUID();
+      f.grant(2, { id: readOnly, allowWrites: false });
+      assert.equal(f.poll(2, [], [readOnly]).delivery, undefined);
+      assert.equal(f.poll(0).delivery, undefined);
+      assert.equal(f.view().sadeRuns[0].jobs[0].id, waiting.id);
+      f.grant(2);
+    }
+    f.call(0, request);
+    const planner = f.poll(0).delivery!;
+    assert.equal(planner.phase, 'plan');
+    assert.notEqual(planner.id, waiting.id);
+    assert.equal(planner.request, request.content);
+    assert.deepEqual(planner.handoffAssignments, {
+      producer: {
+        grantId: f.grants[0],
+        ...(ambiguous ? {} : { scope: expected.files.architecture }),
+      },
+      receiver: {
+        grantId: receiver,
+        ...(ambiguous ? {} : { scope: expected.files.frontend }),
+      },
+    });
+    assert.equal(f.view().messages.filter(({ id }) => id === request.id).length, 1);
+    assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: {
+        summary: 'Gemini produces the contract, then Chi implements the scoped frontend.',
+        tasks: pinnedHandoffTasks(expected.files, f.grants[0], receiver),
+      },
+    });
+    const [queued] = f.view().sadeRuns;
+    assert.equal(queued.state, 'running', queued.error || 'The selected handoff should be queued');
+    const frontend = queued.jobs.find(({ task }) => task?.key === 'frontend')!;
+    assert.equal(frontend.grantId, receiver);
+    assert.equal(
+      f.poll(2, [], [receiver]).delivery,
+      undefined,
+      'Wait for the upstream architecture',
+    );
+    const architecture = f.poll(0).delivery!;
+    assert.equal(architecture.task?.key, 'architecture');
+    f.finish(0, architecture.id, {
+      kind: 'unchanged',
+      revision: sha,
+      summary: 'The linked checkout already contains the scoped architecture.',
+    });
+    assert.equal(f.poll(2, [], [receiver]).delivery?.id, frontend.id);
+  });
+}
+
+test('Shared Sade rejects invalid named handoff drafts even from legacy planners', async (t) => {
+  const { message, expected } = handoffPlanningCases.find(({ id }) =>
+    id.endsWith('/parcel-explicit-owner-and-style'),
+  )!;
+  assert.equal(expected.kind, 'plan');
+  for (const variant of [
+    'correct anchored tasks',
+    'producer substitution',
+    'receiver substitution',
+    'automatic receiver',
+    'unauthorized fallback',
+    'frontend without architecture',
+    'wrong frontend scope',
+    'broadened frontend scope',
+    'overlapping writer',
+    'no work',
+  ]) {
+    await t.test(variant, (t) => {
+      const f = ownerRoutingFixture(t);
+      f.send(message);
+      const planner = f.poll(0).delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.equal(planner.handoffAssignments, undefined);
+      const tasks = pinnedHandoffTasks(expected.files, f.grants[0], f.grants[2]);
+      const [architecture, frontend, backend] = tasks;
+      // Explicit paths are the binding. Valid plans need not use the coordinator's fallback labels.
+      architecture.key = 'contract';
+      frontend.key = 'pickup-panel';
+      for (const task of tasks)
+        task.dependsOn = task.dependsOn.map((key) =>
+          key === 'architecture' ? 'contract' : key === 'frontend' ? 'pickup-panel' : key,
+        );
+      if (variant === 'producer substitution') architecture.preferredMemberId = f.grants[1];
+      if (variant === 'receiver substitution') frontend.preferredMemberId = f.grants[1];
+      if (variant === 'automatic receiver') frontend.preferredMemberId = undefined;
+      if (variant === 'unauthorized fallback') frontend.fallbackMemberId = f.grants[1];
+      if (variant === 'frontend without architecture') frontend.dependsOn = [];
+      if (variant === 'wrong frontend scope') frontend.scope = ['src/locker/OtherPanel.tsx'];
+      if (variant === 'broadened frontend scope')
+        frontend.scope.push('src/locker/InventedPanel.tsx');
+      if (variant === 'overlapping writer') backend.scope = ['src/locker'];
+      f.finish(0, planner.id, {
+        kind: 'plan',
+        plan: {
+          summary: 'Plan the architecture and expose an invalid handoff candidate.',
+          tasks: variant === 'no work' ? [] : tasks,
+        },
+      });
+      const [run] = f.view().sadeRuns;
+      if (variant === 'correct anchored tasks') {
+        assert.equal(run.state, 'running', run.error || 'The file-anchored handoff should run');
+        assert.equal(
+          run.jobs.find(({ task }) => task?.key === 'pickup-panel')?.grantId,
+          f.grants[2],
+        );
+        assert.equal(f.poll(2).delivery, undefined);
+        assert.equal(f.poll(0).delivery?.task?.key, 'contract');
+        return;
+      }
+      assert.equal(run.state, 'blocked', `Expected scheduler to block ${variant}`);
+      assert.deepEqual(
+        run.jobs.map(({ phase }) => phase),
+        ['plan'],
+      );
+      for (const index of [0, 1, 2]) assert.equal(f.poll(index).delivery, undefined);
+      assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+    });
+  }
+});
+
+test('Shared Sade keeps the selected handoff receiver when the provider is unavailable', (t) => {
+  const { message, expected } = handoffPlanningCases.find(({ id }) =>
+    id.endsWith('/parcel-explicit-owner-and-style'),
+  )!;
+  assert.equal(expected.kind, 'plan');
+  const f = ownerRoutingFixture(t, true, true);
+  f.send(message);
+  const planner = f.poll(0).delivery!;
+  const tasks = pinnedHandoffTasks(expected.files, f.grants[0], f.grants[2]);
+  f.finish(0, planner.id, {
+    kind: 'plan',
+    plan: { summary: 'Keep Chi as the requested frontend owner.', tasks },
+  });
+  const architecture = f.poll(0).delivery!;
+  assert.equal(architecture.task?.key, 'architecture');
+  f.finish(0, architecture.id, {
+    kind: 'unchanged',
+    revision: sha,
+    summary: 'The exact architecture contract already exists.',
+  });
+  const frontend = f.poll(2).delivery!;
+  assert.equal(frontend.task?.key, 'frontend');
+  f.finish(2, frontend.id, { kind: 'provider-unavailable' });
+  const [run] = f.view().sadeRuns;
+  assert.equal(run.state, 'blocked');
+  assert.match(run.error || '', /requested harness.*quota/i);
+  assert.equal(run.jobs.find(({ task }) => task?.key === 'frontend')?.grantId, f.grants[2]);
+  assert.equal(f.poll(1).delivery, undefined, 'Another Astra cannot take the pinned frontend');
+  assert.deepEqual(f.turnsUsed(), [2, 0, 0]);
+});
+
+test('Shared Sade does not turn quoted or conditional handoffs into mandatory pins', async (t) => {
+  const { message, expected } = handoffPlanningCases.find(({ id }) =>
+    id.endsWith('/parcel-explicit-owner-and-style'),
+  )!;
+  assert.equal(expected.kind, 'plan');
+  await t.test('quoted status', (t) => {
+    const f = ownerRoutingFixture(t, false, true);
+    f.send(`Mình chỉ trích dẫn để báo nhóm. “${message}”`);
+    const planner = f.poll(0).delivery!;
+    assert.equal(planner.handoffAssignments, undefined);
+    f.finish(0, planner.id, { kind: 'plan', plan: { summary: 'Status only.', tasks: [] } });
+    assert.equal(f.view().sadeRuns[0].state, 'done');
+    assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+  });
+
+  await t.test('explicit quota fallback', (t) => {
+    const f = ownerRoutingFixture(t, true, true);
+    f.send(`${message} Nếu Astra của Chi hết quota thì giao giao diện cho Astra của Bình.`);
+    const planner = f.poll(0).delivery!;
+    assert.equal(planner.handoffAssignments, undefined);
+    const tasks = pinnedHandoffTasks(expected.files, f.grants[0], f.grants[2]);
+    tasks[1].fallbackMemberId = f.grants[1];
+    f.finish(0, planner.id, {
+      kind: 'plan',
+      plan: { summary: 'Allow Bình to take frontend only if Chi has no provider quota.', tasks },
+    });
+    const [run] = f.view().sadeRuns;
+    assert.equal(run.state, 'running', run.error || 'The authorized handoff fallback should run');
+    assert.equal(run.jobs.find(({ task }) => task?.key === 'frontend')?.grantId, f.grants[2]);
+    assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+  });
+});
 
 test('Shared Sade holds Astra of Chi before planning until that exact publication grants the project', (t) => {
   const f = ownerRoutingFixture(t, false);

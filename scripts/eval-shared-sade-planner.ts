@@ -13,6 +13,7 @@ import {
   parseGroupNoWork,
   parseSharedGroupPlan,
   sharedFinish,
+  sharedPlanMemberRef,
   type SharedDelivery,
   type SharedFinish,
 } from '../server/group-sade.ts';
@@ -485,11 +486,17 @@ const people = [
   { id: 'owner-d', name: 'Dũng' },
 ];
 
+type CoordinatorPreflight = {
+  run: SharedSadeRun;
+  offeredWork: boolean;
+  usedTurns: number;
+};
+
 async function withGroup<T>(
-  { scenario, message, reference, ownerRouting, handoffPlanning }: PlannerCase,
+  { scenario, message, reference, frontendStyle, ownerRouting, handoffPlanning }: PlannerCase,
   run: (
     context:
-      | { waiting: SharedSadeRun }
+      | { preflight: CoordinatorPreflight }
       | {
           delivery: SharedDelivery;
           finish: (plan: unknown) => void;
@@ -512,10 +519,8 @@ async function withGroup<T>(
   const store = new Store(':memory:');
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    const fullHandoff =
-      scenario === 'full-handoff' ||
-      scenario.startsWith('frontend-style') ||
-      Boolean(handoffPlanning);
+    const namedHandoff = Boolean(frontendStyle || handoffPlanning);
+    const fullHandoff = scenario === 'full-handoff' || namedHandoff;
     const fixtureRoster = (ownerRouting || handoffPlanning)?.roster;
     if (fullHandoff || ownerRouting)
       store.put('billingEntitlement', {
@@ -616,6 +621,7 @@ async function withGroup<T>(
           ...(handoffPlanning || values['one-planner-call']
             ? { reviewedRevisionFiles: true, unchangedRevisionScopes: true }
             : {}),
+          ...(namedHandoff ? { handoffAssignments: true } : {}),
           ...(ownerRouting ? { readAssignment: true } : {}),
         }) as { delivery?: SharedDelivery }
       ).delivery;
@@ -635,12 +641,33 @@ async function withGroup<T>(
     const delivery = poll(0);
     const jobs = () =>
       (call(0, { action: 'read', groupId }) as { sadeRuns: SharedSadeRun[] }).sadeRuns[0];
-    if (!delivery && ownerRouting) {
-      for (let index = 1; index < names.length; index++)
-        assert.equal(poll(index), undefined, 'preflight must offer no harness work');
-      return await run({ waiting: jobs() });
+    const expectsHandoffWait =
+      frontendStyle === 'ungranted' || handoffPlanning?.expected.kind === 'question';
+    if (expectsHandoffWait || (!delivery && (ownerRouting || namedHandoff))) {
+      const offeredWork = Boolean(delivery) || names.slice(1).some((_, index) => poll(index + 1));
+      const usedTurns = grants.reduce(
+        (total, id) => total + (store.lookup<{ used: number }>('sharedSadeGrant', id)?.used ?? 0),
+        0,
+      );
+      return await run({ preflight: { run: jobs(), offeredWork, usedTurns } });
     }
     assert.ok(delivery?.phase === 'plan');
+    if (namedHandoff) {
+      const assigns = delivery.handoffAssignments;
+      assert.ok(assigns, 'the planner receives the two coordinator-approved handoff assignments');
+      const { producer, receiver } = assigns;
+      const expected = handoffPlanning?.expected;
+      if (expected?.kind === 'plan') {
+        assert.equal(producer.grantId, grants[expected.owners.architecture]);
+        assert.equal(receiver.grantId, grants[expected.owners.frontend]);
+        const { architecture, frontend } = expected.files;
+        assert.equal(producer.scope, message.includes(architecture) ? architecture : undefined);
+        assert.equal(receiver.scope, message.includes(frontend) ? frontend : undefined);
+      } else {
+        assert.deepEqual(producer, { grantId: grants[0] });
+        assert.deepEqual(receiver, { grantId: grants[1] });
+      }
+    }
     if (fixtureRoster) {
       const expectedTeam = fixtureRoster.flatMap(({ name, provider, granted }, index) =>
         granted ? [{ id: grants[index], name, provider, owner: people[index].name }] : [],
@@ -1331,7 +1358,21 @@ function plannerInput(delivery: SharedDelivery) {
   if (values['planning-prompt'] === 'handoff-compact') {
     const prompt = sharedSadeHandoffPrompt(delivery);
     assert.ok(prompt, 'this evaluation requires a compact handoff prompt');
-    return { prompt, format: handoffDraftSchema };
+    const assignments = delivery.handoffAssignments;
+    if (!assignments) return { prompt, format: handoffDraftSchema };
+    const ref = ({ grantId, scope }: typeof assignments.producer) => {
+      const index = delivery.team.findIndex(({ id }) => id === grantId);
+      assert.ok(index >= 0, 'a pinned grant must appear in the planner roster');
+      return { by: sharedPlanMemberRef(index), scope };
+    };
+    const approved = JSON.stringify({
+      architecture: ref(assignments.producer),
+      frontend: ref(assignments.receiver),
+    });
+    return {
+      prompt: `Use these coordinator-approved handoff bindings, even if the advisory context below differs: ${approved}. Return a plan with separate writing tasks keyed architecture and frontend, with frontend depending on architecture. Use each binding's by ref, with fallback none. Where the binding contains a scope, that exact file is the only scope for its task. Do not ask for confirmation of these grants.\n\n${prompt}`,
+      format: handoffDraftSchema,
+    };
   }
   return { prompt: planningPrompt(delivery) };
 }
@@ -1434,8 +1475,10 @@ function assessOwnerRoutingQuestion(
   );
 }
 
-function ownerRoutingPreflight({ id, scenario, ownerRouting }: PlannerCase, run: SharedSadeRun) {
-  assert.ok(ownerRouting, 'only owner-routing cases can be gated before model inference');
+function scoreCoordinatorPreflight(
+  { id, scenario, message, reference, frontendStyle, ownerRouting, handoffPlanning }: PlannerCase,
+  { run, offeredWork, usedTurns }: CoordinatorPreflight,
+) {
   if (saved)
     assert.equal(
       savedRows.get(id)?.execution,
@@ -1443,14 +1486,23 @@ function ownerRoutingPreflight({ id, scenario, ownerRouting }: PlannerCase, run:
       'This case no longer reaches a planner. Replay the saved model result at its original commit.',
     );
   const job = run.jobs[0];
+  const expectation =
+    ownerRouting?.expected ??
+    handoffPlanning?.expected ??
+    (frontendStyle === 'ungranted'
+      ? ({ kind: 'question', reason: 'missing-grant', harness: 'Astra', owners: [1] } as const)
+      : undefined);
   let error: string | undefined;
   try {
+    assert.ok(expectation, 'this case should have reached a planner');
+    assert.equal(offeredWork, false, 'preflight must offer no harness work');
+    assert.equal(usedTurns, 0, 'preflight must not spend a grant turn');
     assert.equal(run.state, 'planning');
     assert.equal(run.jobs.length, 1);
     assert.equal(job.phase, 'plan');
     assert.equal(job.state, 'waiting');
     assert.ok(job.summary);
-    assessOwnerRoutingQuestion(ownerRouting, job.summary);
+    assessOwnerRoutingQuestion({ expected: expectation }, job.summary);
   } catch (cause) {
     error = cause instanceof Error ? cause.message : String(cause);
   }
@@ -1458,11 +1510,17 @@ function ownerRoutingPreflight({ id, scenario, ownerRouting }: PlannerCase, run:
     id,
     scenario,
     execution: 'coordinator-preflight' as const,
+    modelCalls: 0,
+    usedTurns,
     preflightPassed: !error,
     question: job?.summary,
     state: run.state,
     error,
-    ...ownerRoutingEvidence(ownerRouting),
+    ...(ownerRouting
+      ? ownerRoutingEvidence(ownerRouting)
+      : handoffPlanning
+        ? handoffPlanningEvidence(handoffPlanning)
+        : { input: { message, reference }, expected: expectation }),
   };
 }
 
@@ -1470,8 +1528,8 @@ if (exportPrompt) {
   const plannerCase = selectedCases[0];
   const { id, message, reference, frontendStyle, ownerRouting, handoffPlanning } = plannerCase;
   const execution = await withGroup(plannerCase, async (group) => {
-    if ('waiting' in group) {
-      const row = ownerRoutingPreflight(plannerCase, group.waiting);
+    if ('preflight' in group) {
+      const row = scoreCoordinatorPreflight(plannerCase, group.preflight);
       await writeFile(output, JSON.stringify(row, null, 2), 'utf8');
       if (!row.preflightPassed) process.exitCode = 1;
       return row.execution;
@@ -1539,7 +1597,7 @@ for (const plannerCase of selectedCases) {
   const onePlannerCall = Boolean(handoffPlanning || values['one-planner-call']);
   const detailed = Boolean(frontendStyle || ownerRouting || handoffPlanning);
   const row = await withGroup(plannerCase, async (group) => {
-    if ('waiting' in group) return ownerRoutingPreflight(plannerCase, group.waiting);
+    if ('preflight' in group) return scoreCoordinatorPreflight(plannerCase, group.preflight);
     const { prompt, format } = plannerInput(group.delivery);
     const protocol = format ? 'compact-json' : 'tools';
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
