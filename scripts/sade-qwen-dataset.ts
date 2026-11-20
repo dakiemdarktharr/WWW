@@ -1,7 +1,12 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sharedSadeCorpus } from '../tests/fixtures/shared-sade-corpus.ts';
-import { challengePairs, trainingPairs } from './sade-qwen-contrast.ts';
+import {
+  acceptancePairs,
+  challengePairs,
+  contextPairs,
+  trainingPairs,
+} from './sade-qwen-contrast.ts';
 
 const goldens = {
   general: [
@@ -83,7 +88,11 @@ const styles = {
 };
 const args = process.argv.slice(2);
 const contrastive = args.includes('--contrastive');
-const target = path.resolve(args.find((arg) => arg !== '--contrastive') || '.local/sade-qwen');
+const extraContext = args.includes('--context-pairs');
+if (extraContext && !contrastive) throw new Error('--context-pairs requires --contrastive.');
+const target = path.resolve(
+  args.find((arg) => arg !== '--contrastive' && arg !== '--context-pairs') || '.local/sade-qwen',
+);
 const corpus = sharedSadeCorpus().map(({ id, message, style, scenario }) => ({
   id,
   message,
@@ -107,9 +116,11 @@ const pairRows = (rows: typeof trainingPairs, split: string) =>
       { id: `${split}/${index + 1}/${style}/chat`, route: 'chat', style, message: render(chat) },
     ]),
   );
-const train = contrastive ? [...corpus, ...pairRows(trainingPairs, 'contrastive')] : corpus;
+const pairs = extraContext ? [...trainingPairs, ...contextPairs] : trainingPairs;
+const train = contrastive ? [...corpus, ...pairRows(pairs, 'contrastive')] : corpus;
 const challenge = contrastive ? pairRows(challengePairs, 'challenge') : [];
-const all = [...train, ...holdout, ...challenge];
+const acceptance = contrastive ? pairRows(acceptancePairs, 'acceptance') : [];
+const all = [...train, ...holdout, ...challenge, ...acceptance];
 if (new Set(all.map((item) => item.message)).size !== all.length)
   throw new Error('Training and evaluation messages must be distinct.');
 await mkdir(target, { recursive: true });
@@ -117,11 +128,18 @@ const splits = [
   ['train', train],
   ['holdout', holdout],
 ] as const;
-for (const [name, data] of contrastive ? [...splits, ['challenge', challenge] as const] : splits)
+for (const [name, data] of contrastive
+  ? [...splits, ['challenge', challenge] as const, ['acceptance', acceptance] as const]
+  : splits)
   await writeFile(
     path.join(target, `${name}.jsonl`),
     `${data.map((row) => JSON.stringify(row)).join('\n')}\n`,
   );
 console.log(
-  JSON.stringify({ train: train.length, holdout: holdout.length, challenge: challenge.length }),
+  JSON.stringify({
+    train: train.length,
+    holdout: holdout.length,
+    challenge: challenge.length,
+    acceptance: acceptance.length,
+  }),
 );

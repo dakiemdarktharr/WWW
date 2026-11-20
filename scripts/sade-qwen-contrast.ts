@@ -106,6 +106,109 @@ export const trainingPairs: Pair[] = [
   ],
 ];
 
+export const contextPairs: Pair[] = [
+  [
+    'general',
+    'cái file điểm danh hôm nay có ba lớp á, gom thành một sheet tổng giùm với',
+    'cái file điểm danh hôm nay có ba lớp á, mình vừa gom thành một sheet tổng rồi',
+  ],
+  [
+    'general',
+    'We have one Flash turn left. Spend it on extracting the failed import rows.',
+    'We have one Flash turn left. I am saving it until someone asks about the failed import rows.',
+  ],
+  [
+    'general',
+    'Dựa vào ảnh menu gửi trên, giúp mình ghi lại giá từng món để mai nhập liệu nha.',
+    'Dựa vào ảnh menu gửi trên, mình đã ghi lại giá từng món để mai nhập liệu nha.',
+  ],
+  [
+    'general',
+    'Mỗi trợ lý thử một cách đặt tên cho ba bộ lọc mới, gửi lại các phương án ở đây.',
+    'Mỗi trợ lý đã thử một cách đặt tên cho ba bộ lọc mới, mình đưa lên đây để cả nhóm đọc.',
+  ],
+  [
+    'mac',
+    'Bản nén báo lỗi khi mở trên Mac M2, thử mở lại trên máy đã cấp quyền rồi ghi mã lỗi nhé.',
+    'Bản nén từng báo lỗi khi mở trên Mac M2, Lan đã gửi mã lỗi nên mình chỉ cập nhật tiến độ.',
+  ],
+  [
+    'mac',
+    'Please check whether the app keeps its settings across a restart on the available Apple Silicon runner.',
+    'The available Apple Silicon runner kept its settings across a restart last night. Just sharing the result.',
+  ],
+  [
+    'mac',
+    'cái nút export bị treo trên macbook, cho chạy ca export một lần rồi gửi thời gian chờ được ko',
+    'cái nút export bị treo trên macbook, tui mới báo cho Phúc biết để tự thử lại sau',
+  ],
+  [
+    'mac',
+    'Máy em dùng Linux. Tìm máy Mac mà nhóm đã cho phép rồi kiểm tra vị trí lưu hình giúp em.',
+    'Máy em dùng Linux. Em nghe nói vị trí lưu hình trên Mac khác, ghi chú lại để tuần sau tính.',
+  ],
+  [
+    'handoff',
+    'Bên Mai chốt thứ tự câu hỏi trước. Bên Lộc lấy thứ tự đó làm mẫu khảo sát nhé.',
+    'Bên Mai chốt thứ tự câu hỏi trước, bên Lộc đã lấy thứ tự đó làm mẫu khảo sát rồi nhé.',
+  ],
+  [
+    'handoff',
+    'Export the cleaned schedule with the first assistant. Feed that exact file to the second to draft reminders.',
+    'The first assistant exported the cleaned schedule and the second used it to draft reminders. Both are done.',
+  ],
+  [
+    'handoff',
+    'ủa chưa có danh sách ảnh hả, cho bên Google liệt kê trước rồi GPT dựa vô đó viết mô tả nha',
+    'ủa chưa có danh sách ảnh hả, để mình hỏi bạn bên Google, GPT với mấy bot chờ mình nhắn sau',
+  ],
+  [
+    'handoff',
+    'Sau khi có sơ đồ đường đi từ trợ lý của Vy, chuyển sơ đồ đó cho bên Sơn chia các chặng.',
+    'Sau khi có sơ đồ đường đi từ trợ lý của Vy, bên Sơn đã chia xong các chặng. Mình cập nhật đội biết.',
+  ],
+  [
+    'review',
+    'Mục sắp xếp theo ngày có bản sửa rồi, cho một model khác rà kết quả khi thiếu ngày giao nhé.',
+    'Mục sắp xếp theo ngày có bản sửa rồi, mình đang kể để team để ý ca thiếu ngày giao trong buổi họp.',
+  ],
+  [
+    'review',
+    'Before we accept this checkout change, have an independent harness compare the totals with the examples.',
+    'The checkout totals in the examples came up in the last independent review. No follow-up until the meeting.',
+  ],
+  [
+    'review',
+    'nhờ con bên Huy đọc cái patch của Gemini xem còn lọt tên rỗng ko nha, đọc rồi báo thôi',
+    'con bên Huy hôm qua đọc cái patch của Gemini rồi, bảo ca tên rỗng đã có test, báo mng biết',
+  ],
+  [
+    'review',
+    'Bản dịch nút bấm đã sửa. Giao một bạn khác tác giả đối chiếu với danh sách nhãn cũ giúp.',
+    'Bản dịch nút bấm đã sửa. Một bạn khác tác giả đang đối chiếu danh sách nhãn cũ nên cứ đợi.',
+  ],
+  [
+    'scope',
+    'An đang động vào trang lịch rồi. Cho bên Bình đổi sang phần trang trợ giúp để khỏi trùng.',
+    'An đang động vào trang lịch rồi. Bình đã tự chuyển qua trang trợ giúp, xác nhận với team vậy.',
+  ],
+  [
+    'scope',
+    'The receipt formatter is already patched. Reuse that change and move the other runner to tests.',
+    'The receipt formatter is already patched. The other runner is doing tests and I am just reporting the split.',
+  ],
+  [
+    'scope',
+    'hai con đang dịch chung file tiếng Nhật á, giữ một con làm file đó thôi, con kia qua tiếng Hàn hộ',
+    'hai con từng dịch chung file tiếng Nhật, tụi tui chia tiếng Nhật tiếng Hàn xong rồi á',
+  ],
+  [
+    'scope',
+    'Khoanh phần lọc danh sách cho một harness duy nhất, cho bên còn lại đọc tài liệu trong lúc đợi.',
+    'Phần lọc danh sách đã có người nhận, bên còn lại đang đọc tài liệu. Tin này để chốt biên bản.',
+  ],
+];
+
 export const challengePairs: Pair[] = [
   [
     'general',
@@ -181,5 +284,85 @@ export const challengePairs: Pair[] = [
     'scope',
     'Nhóm vừa có commit sửa khoảng cách badge rồi, ngăn lượt mới sửa lại cùng file đó giúp.',
     'Nhóm vừa có commit sửa khoảng cách badge rồi, mọi người yên tâm nha.',
+  ],
+];
+
+// Reserved for comparing checkpoint behavior. Each pair changes what the
+// sender is asking the group to do while keeping the workspace context.
+export const acceptancePairs: Pair[] = [
+  [
+    'general',
+    'mình mới vô nhóm á, còn ai có lượt AI thì nhờ Sade gom các email chưa có mã vé dùm',
+    'mình mới vô nhóm á, ai còn lượt AI nhắn mình để tính lịch nha, danh sách email chưa có mã vé mình tự gom',
+  ],
+  [
+    'general',
+    'Could someone have the available assistant turn the unread sponsor notes into three bullets for us today?',
+    'Could someone ask Mai whether she is already turning the sponsor notes into bullets? I am checking with the team here.',
+  ],
+  [
+    'general',
+    'Claude báo hết quota. Sade xem Gemini bên Tâm có quyền đọc sheet chi phí không, nếu có nhờ làm bản tổng hợp.',
+    'Claude báo hết quota. Gemini bên Tâm đọc sheet chi phí được. Mình kể để team tính người phụ trách ở buổi mai.',
+  ],
+  [
+    'mac',
+    'win ra tiếng bth, Sade gửi lượt test âm lượng sang Mac Dung đã cho nhóm dùng được k',
+    'win ra tiếng bth, Mac Dung chưa tới lượt test. Dung với tớ thống nhất trao đổi trước, khoan chạy.',
+  ],
+  [
+    'mac',
+    'Smoke test the notarized build on an authorized arm64 Mac and return launch time and exit status.',
+    'The arm64 Mac smoke test and exit status are written in my notes. Sharing for the release call only.',
+  ],
+  [
+    'mac',
+    'Tớ trên PC, máy Mac của Vy có cấp quyền thì nhờ kiểm mở menu Share. Vy chỉ có Kivuno, chưa cài AI.',
+    'Vy chỉ có Kivuno trên máy Mac nên tớ báo nhóm trước. Menu Share để Vy tự xem trong buổi demo.',
+  ],
+  [
+    'handoff',
+    'nhờ Gemini của em lấy tên cột trước, xong chuyển nguyên tên cột qua Claude của anh để ráp form',
+    'Gemini của em đưa tên cột qua Claude của anh rồi à? Anh với em xem chung giúp, em hỏi tiến độ thôi.',
+  ],
+  [
+    'handoff',
+    'After the starter design exists, route its copy notes to the translation teammate. Keep the original author free for layout.',
+    'In our playbook the instruction reads “route the copy notes to translation.” Pasting the wording for the team to discuss.',
+  ],
+  [
+    'handoff',
+    'Để An viết outline. Khi An báo xong thì Sade gửi đúng bản đó cho Bình chuẩn bị slide.',
+    'Hôm qua An nhắn Bình dùng outline để chuẩn bị slide. Chuyển lời lại cho nhóm biết, ai cũng đang làm phần mình.',
+  ],
+  [
+    'review',
+    'Bản Gemini thêm tính điểm xong rùi, Sade kiếm bạn AI khác đọc diff coi điểm trống xử lý sao, giữ nguyên file giúp.',
+    'Bản Gemini thêm tính điểm xong rùi, mình đã nhắc cả nhóm nhớ soi điểm trống khi họp, cứ để nguyên như vậy nha.',
+  ],
+  [
+    'review',
+    'Get one non-author harness to review timezone handling in the patch. Hold the merge because an earlier review covered a different diff.',
+    'We are holding the merge. “Get one non-author harness to review timezone handling” is an example for tomorrow’s onboarding doc.',
+  ],
+  [
+    'review',
+    'Mình tự đọc phần happy path rồi, nhờ Sade thuê lượt kiểm khác xem chỗ số lượng bằng 0 trước khi tích hợp.',
+    'Mình tự đọc phần happy path và số lượng bằng 0 rồi, ghi vào group để mọi người xem kết quả.',
+  ],
+  [
+    'scope',
+    'hai con đang mò cùng file giỏ hàng hả, Sade giữ lượt của An còn bên kia dời sang test bảng giá giùm',
+    'hai con hồi nãy mò cùng file giỏ hàng, An với tớ chia lại xong rồi, báo để cả nhóm khỏi mất công hỏi á',
+  ],
+  [
+    'scope',
+    'The date-format change is already on the sidebar branch. Ask Sade to reuse that commit and cancel the redundant write task.',
+    'The date-format change is already on the sidebar branch. I canceled the redundant write task and posted this for the record.',
+  ],
+  [
+    'scope',
+    'Để tránh đụng route đăng ký, Sade cho mỗi agent giữ một file riêng rồi ghi lại ai đang phụ trách file nào.',
+    'Để tránh đụng route đăng ký, bọn mình đã tự chia mỗi người một file. Ghi lại ở đây để team dễ tra.',
   ],
 ];
