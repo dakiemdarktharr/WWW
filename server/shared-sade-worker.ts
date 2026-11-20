@@ -1469,6 +1469,25 @@ export class SharedSadeWorker {
         );
     }
     const grantExpirations = new Map(this.grants().map(({ id, expiresAt }) => [id, expiresAt]));
+    // Pending results can survive a desktop upgrade or a lost acknowledgement.
+    const pendingResults = this.host.store
+      .all<Receipt>('sharedSadeLocalReceipt')
+      .filter((item) => item.result && !item.reported && grantExpirations.has(item.grantId))
+      .slice(0, 8)
+      .map((item) => {
+        if (item.result?.kind === 'change') {
+          try {
+            reviewDigest(item.result.diff);
+          } catch {
+            this.result(item.id, {
+              kind: 'blocked',
+              summary: 'The queued diff cannot be safely shared. Inspect the change locally.',
+            });
+            return this.receipt(item.id);
+          }
+        }
+        return item;
+      });
     const active = [...this.leases.keys()].slice(0, 4);
     // The cloud renews held jobs only when their current grants are in the poll.
     const activeGrants = new Set(
@@ -1513,17 +1532,13 @@ export class SharedSadeWorker {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];
       }),
-      results: this.host.store
-        .all<Receipt>('sharedSadeLocalReceipt')
-        .filter((item) => item.result && !item.reported && grantExpirations.has(item.grantId))
-        .slice(0, 8)
-        .map((item) => ({
-          jobId: item.id,
-          result: item.result,
-          version: item.version || 1,
-          updatesRead: item.updatesRead,
-          grantExpiresAt: grantExpirations.get(item.grantId)!,
-        })),
+      results: pendingResults.map((item) => ({
+        jobId: item.id,
+        result: item.result,
+        version: item.version || 1,
+        updatesRead: item.updatesRead,
+        grantExpiresAt: grantExpirations.get(item.grantId)!,
+      })),
     };
   }
   close() {

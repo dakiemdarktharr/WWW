@@ -3333,6 +3333,64 @@ test('the desktop keeps staged patches local after a grant is revoked or expires
   assert.deepEqual((await snapshot()).revocations, []);
 });
 
+test('the desktop replaces an unsafe queued patch with a versioned block before sync', async (t) => {
+  const store = new Store(':memory:');
+  const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+  });
+  const worker = workspace.sharedSade;
+  const grantId = randomUUID();
+  const jobId = randomUUID();
+  const otherId = randomUUID();
+  const grantExpiresAt = Date.now() + 60_000;
+  const marker = 'sk-fixture-credential-000';
+  store.put('sharedSadeLocalGrant', { id: grantId, expiresAt: grantExpiresAt });
+  for (const id of [jobId, otherId]) {
+    store.put('sharedSadeLocalReceipt', {
+      id,
+      grantId,
+      phase: 'task',
+      version: 2,
+      result: {
+        kind: 'change',
+        diff: id === jobId ? { ...patch, stat: marker } : patch,
+        summary: 'Ready for independent review.',
+      },
+    });
+  }
+  const queued = async () =>
+    (
+      (await worker.execute({ action: 'snapshot' })) as {
+        results: { jobId: string; version: number; result: SharedFinish }[];
+      }
+    ).results;
+  const first = await queued();
+  assert.doesNotMatch(JSON.stringify(first), /fixture-credential-000/);
+  assert.equal(first.find((entry) => entry.jobId === jobId)?.result.kind, 'blocked');
+  assert.equal(first.find((entry) => entry.jobId === jobId)?.version, 3);
+  assert.equal(first.find((entry) => entry.jobId === otherId)?.result.kind, 'change');
+  assert.deepEqual(await queued(), first);
+  assert.doesNotMatch(
+    JSON.stringify(store.get('sharedSadeLocalReceipt', jobId)),
+    /fixture-credential-000/,
+  );
+  for (const version of [2, 3]) {
+    await worker.execute({
+      action: 'exchange',
+      acknowledged: [{ jobId, version }],
+      active: [],
+      reviews: [],
+      updates: [],
+    });
+    assert.equal(
+      (await queued()).some((entry) => entry.jobId === jobId),
+      version === 2,
+    );
+  }
+});
+
 const managedHandoff =
   (providers: readonly ['claude', 'antigravity'] | readonly ['antigravity', 'claude']) =>
   async (t: TestContext) => {
