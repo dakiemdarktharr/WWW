@@ -259,6 +259,8 @@ Chế độ tùy chọn `paired-macos` đã có trong workflow **Verify RELAY**.
 
 Chạy lại trên `95f5899` với planner và reviewer mô phỏng. Node chạy thật trên Windows và runner macOS arm64. Mac tái hiện lỗi đường dẫn, chạy lại thành công sau khi sửa và trả đúng file về worktree Windows. Runner xác nhận `round-trip-verified`. Lượt kiểm thử kết thúc sau 126,4 giây. [Bàn giao Windows–Mac](https://github.com/dakiemdarktharr/WWW/actions/runs/44639956006)
 
+Biên nhận chạy từ máy ghép cặp gắn với mã tác vụ Shared Groups tại lúc gửi. Khi kết quả đến sau gián đoạn, bộ điều phối kiểm tra quyền của cả máy ghép cặp lẫn đúng tác vụ Shared Groups trước khi ghi nhận kết quả đạt. Bài hồi quy chạy Node thật trên máy thử, nhận kết quả có chữ ký qua giao thức runner và mô phỏng lần gửi lại đến sau khi phiên không còn hoặc tác vụ đã được thay. Hai ca đó giữ trạng thái chưa xác nhận. Ca đối chứng dùng quyền của tác vụ còn hiệu lực và ghi nhận đúng biên nhận. Chạy riêng bằng `node --import tsx --test --test-name-pattern "delayed signed machine result" tests/runners.test.ts`.
+
 Trên máy thử Windows, `.local/sade-native-live` giữ bản ghi `scoped-native-paired-mac.json`, mã chạy `run-paired-native.source.txt` và lệnh tái lập `run-paired-native.ps1`. Phép đo ghi 104,3 giây từ khi gửi tin nhắn đến khi hoàn tất tích hợp và các kiểm tra cục bộ.
 
 Cùng commit, Windows qua 80 bài liên quan và build. macOS arm64 qua 364 bài, bỏ qua sáu bài theo nền tảng, và đạt build, Electron cùng giao diện Shared Groups. Cả hai qua bộ 1.000 tin dùng kế hoạch mô phỏng. [Bộ kiểm tra đầy đủ trên macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44531356710)

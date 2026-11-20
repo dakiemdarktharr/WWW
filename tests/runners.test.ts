@@ -7,6 +7,10 @@ import { randomUUID, createHash } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { MachineAgent } from '../server/runner-agent.ts';
+import { MachineExecutor } from '../server/machine-execution.ts';
+import { checkRecoveryProtocol } from '../server/machine-check-outbox.ts';
+import { beginMachineCheck, inspectMachineChecks } from '../server/machine-checks.ts';
+import type { RunnerEvent } from '../server/runners.ts';
 import { CodexClient } from '../server/codex.ts';
 import { git } from '../server/git.ts';
 import {
@@ -82,6 +86,123 @@ test('remote file transfer rejects traversal, out-of-scope edits, stale bases an
   );
   assert.equal(await readFile(path.join(repo, 'safe.txt'), 'utf8'), 'local edit');
 });
+
+for (const shared of ['active', 'ended', 'replaced'] as const) {
+  test(`a delayed signed machine result checks its original Shared Groups job when ${shared}`, async (t) => {
+    const { host, store, root } = await fixture(t);
+    const worktree = path.join(root, 'change');
+    await mkdir(worktree);
+    await git(worktree, ['init']);
+    await writeFile(path.join(worktree, 'check.txt'), 'test input');
+    const project = store.put('project', {
+      id: randomUUID(),
+      name: 'Paired check',
+      path: worktree,
+      goal: '',
+      createdAt: new Date().toISOString(),
+    } satisfies Project);
+    const task = store.addTask({
+      projectId: project.id,
+      title: 'Check the changed file',
+      description: '',
+      kind: 'code',
+      priority: 'medium',
+      dependsOn: [],
+      scope: ['check.txt'],
+      acceptance: 'Read the test fixture on the paired machine.',
+      status: 'ready',
+    });
+    const localTask = store.updateTask(task.id, {
+      worktree,
+      status: 'review',
+      sharedSadeJobId: randomUUID(),
+    });
+    const node = host.runners.add('Paired machine fixture', 'computer', project.id);
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const permission = { id: randomUUID(), projectId: project.id, expiresAt, fullAccess: true };
+    const executor = new MachineExecutor(path.join(root, 'runner'), permission);
+    try {
+      const grant = executor.metadata()!;
+      const operation = { grantId: permission.id, projectId: project.id, taskId: task.id };
+      await executor.perform(randomUUID(), {
+        ...operation,
+        operation: 'sync',
+        args: { files: await exportRunnerFiles(worktree), before: [] },
+      });
+      const clientId = randomUUID();
+      const recipe = {
+        command: 'node',
+        args: ['-e', "console.log(require('node:fs').readFileSync('check.txt','utf8'))"],
+        timeoutMs: 6000,
+      };
+      const check = beginMachineCheck(
+        store,
+        localTask,
+        { id: node.id, name: 'Paired machine fixture' },
+        grant,
+        recipe,
+        { clientId, expiresAt },
+      );
+      const result = await executor.perform(check.id, {
+        ...operation,
+        operation: 'run',
+        checkId: check.id,
+        baseCommit: localTask.baseCommit,
+        args: recipe,
+      });
+      assert.ok('evidence' in result);
+      assert.equal(result.evidence.code, 0);
+      if (shared === 'replaced') store.updateTask(task.id, { sharedSadeJobId: randomUUID() });
+      if (shared === 'active') {
+        t.mock.method(
+          host.sharedSade,
+          'assertCheckMachine',
+          (jobId: string, runnerId: string, grantId: string) => {
+            assert.equal(jobId, localTask.sharedSadeJobId);
+            assert.equal(runnerId, node.id);
+            assert.equal(grantId, permission.id);
+          },
+        );
+      }
+
+      // The result is recovered from the stored check without the original in-memory RPC.
+      const event: RunnerEvent = {
+        id: check.id,
+        commandId: check.id,
+        clientId,
+        type: 'result',
+        method: checkRecoveryProtocol,
+        params: { taskId: task.id },
+        result,
+      };
+      const receipt = await host.runners.exchange(node.id, {
+        epoch: host.runners.epoch,
+        ready: true,
+        busy: false,
+        version: checkRecoveryProtocol,
+        events: [event],
+        execution: grant,
+      });
+      assert.deepEqual(receipt.ack, [check.id]);
+      const checks = await inspectMachineChecks(store, localTask, true);
+      if (shared === 'active') {
+        assert.equal(checks?.passed, true);
+        assert.deepEqual(host.machineCheckManifest(task.id, check.id).evidence, result.evidence);
+        return;
+      }
+      assert.equal(checks?.passed, false);
+      assert.equal(checks?.attempts[0].status, 'unconfirmed');
+      assert.match(
+        checks?.attempts[0].error || '',
+        shared === 'replaced' ? /original Shared Groups job/ : /Shared Groups permission ended/,
+      );
+      assert.throws(() => host.machineCheckManifest(task.id, check.id), /no signed runner result/);
+    } finally {
+      await executor.stop();
+    }
+  });
+}
+
 class ProtocolPeer extends CodexClient {
   calls: { method: string; params: any }[] = [];
   override async start() {}

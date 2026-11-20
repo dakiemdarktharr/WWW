@@ -57,6 +57,7 @@ export interface MachineCheck {
   runnerId: string;
   runnerName: string;
   grantId: string;
+  sharedSadeJobId?: string;
   platform: string;
   arch: string;
   base: string | null;
@@ -97,6 +98,7 @@ export function beginMachineCheck(
     runnerId: runner.id,
     runnerName: runner.name,
     grantId: grant.id,
+    ...(task.sharedSadeJobId ? { sharedSadeJobId: task.sharedSadeJobId } : {}),
     platform: grant.platform,
     arch: grant.arch,
     base: task.baseCommit,

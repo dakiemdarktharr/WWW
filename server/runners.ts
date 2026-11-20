@@ -341,7 +341,8 @@ export class Runners {
     if (check.finished) return true;
     try {
       if (event.error) throw new DomainError(redact(event.error));
-      this.pending.get(event.id)?.current?.();
+      const verifyRequest = this.pending.get(event.id)?.current;
+      verifyRequest?.();
       if (
         grant?.id !== check.grantId ||
         !grant.fullAccess ||
@@ -349,6 +350,14 @@ export class Runners {
         Date.parse(check.delivery.expiresAt) <= Date.now()
       )
         throw new DomainError('The original machine grant is no longer active.');
+      // Older checks without this binding still have their original guard while the RPC is live.
+      if (
+        check.sharedSadeJobId !== task.sharedSadeJobId &&
+        (check.sharedSadeJobId || !verifyRequest)
+      )
+        throw new DomainError('The original Shared Groups job is no longer active.');
+      if (task.sharedSadeJobId)
+        this.host.sharedSade.assertCheckMachine(task.sharedSadeJobId, node.id, check.grantId);
       receiveMachineResult(store, task, check, check.delivery.recipe, event.result);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code?.startsWith('ERR_SQLITE')) throw error;
