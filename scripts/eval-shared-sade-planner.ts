@@ -35,6 +35,7 @@ import {
   type HandoffPlanningCase,
 } from '../tests/fixtures/shared-sade-handoff-planning.ts';
 import { handoffDraftSchema, parseHandoffDraft } from './shared-sade-handoff-draft.ts';
+import { sharedSadeCompiledHandoff } from './shared-sade-compiled-handoff.ts';
 
 const messages = {
   handoff: [
@@ -394,6 +395,7 @@ assert.ok(
     'frontend-style-deferred',
     'owner-routing',
     'handoff-compact',
+    'handoff-compiled',
   ].includes(values['planning-prompt']),
   'Unknown planning prompt.',
 );
@@ -408,10 +410,10 @@ assert.ok(
   'Use the ownership prompt with --owner-routing or --frontend-style.',
 );
 assert.ok(
-  values['planning-prompt'] !== 'handoff-compact' ||
+  !['handoff-compact', 'handoff-compiled'].includes(values['planning-prompt']) ||
     values['handoff-planning'] ||
     (values['frontend-style'] && values['one-planner-call']),
-  'Use the compact handoff with --handoff-planning or --frontend-style --one-planner-call.',
+  'Use the handoff prompts with --handoff-planning or --frontend-style --one-planner-call.',
 );
 assert.ok(
   [
@@ -454,7 +456,9 @@ type SavedRun = {
     id: string;
     promptSha256?: string;
     execution?: 'coordinator-preflight';
-    protocol?: 'tools' | 'compact-json';
+    protocol?: 'tools' | 'compact-json' | 'compiled-json';
+    responseSchemaSha256?: string;
+    modelReplies?: Awaited<ReturnType<typeof getPlannerReply>>[];
     modelCalls?: number;
     plan?: unknown;
     question?: string;
@@ -1366,8 +1370,16 @@ For reproducing, fixing and rerunning on one paired machine, include those three
 ${base}`;
 }
 
-function plannerInput(delivery: SharedDelivery) {
-  if (values['planning-prompt'] === 'handoff-compact') {
+function plannerInput(delivery: SharedDelivery): {
+  prompt: string;
+  format?: typeof handoffDraftSchema;
+  compile?: (input: unknown) => { name: string; arguments: unknown };
+} {
+  if (values['planning-prompt'] === 'handoff-compiled') {
+    const compiled = sharedSadeCompiledHandoff(delivery);
+    if (compiled) return compiled;
+  }
+  if (['handoff-compact', 'handoff-compiled'].includes(values['planning-prompt'])) {
     const prompt = sharedSadeHandoffPrompt(delivery);
     assert.ok(prompt, 'this evaluation requires a compact handoff prompt');
     const assignments = delivery.handoffAssignments;
@@ -1551,7 +1563,7 @@ if (exportPrompt) {
       return row.execution;
     }
     const { delivery } = group;
-    const { prompt, format } = plannerInput(delivery);
+    const { prompt, format, compile } = plannerInput(delivery);
     const decisionSchema = {
       type: 'object',
       properties: {
@@ -1580,7 +1592,9 @@ if (exportPrompt) {
           tool: groupPlanTool,
           toolsSha256,
           decisionSchema,
-          ...(format ? { protocol: 'compact-json', responseFormat: format } : {}),
+          ...(format
+            ? { protocol: compile ? 'compiled-json' : 'compact-json', responseFormat: format }
+            : {}),
           ...(frontendStyle
             ? { input: { message, reference }, expected: frontendExpectation(frontendStyle) }
             : {}),
@@ -1614,14 +1628,20 @@ for (const plannerCase of selectedCases) {
   const detailed = Boolean(frontendStyle || ownerRouting || handoffPlanning);
   const row = await withGroup(plannerCase, async (group) => {
     if ('preflight' in group) return scoreCoordinatorPreflight(plannerCase, group.preflight);
-    const { prompt, format } = plannerInput(group.delivery);
-    const protocol = format ? 'compact-json' : 'tools';
+    const { prompt, format, compile } = plannerInput(group.delivery);
+    const protocol = compile ? 'compiled-json' : format ? 'compact-json' : 'tools';
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
     const promptSha256 = sha256(prompt);
     const prior = savedRows.get(id);
     if (saved) {
       assert.equal(prior?.promptSha256, promptSha256, `Prompt changed for ${id}`);
       assert.equal(prior?.protocol ?? 'tools', protocol, `Response protocol changed for ${id}`);
+      if (prior?.responseSchemaSha256)
+        assert.equal(
+          format && sha256(JSON.stringify(format)),
+          prior.responseSchemaSha256,
+          `Response schema changed for ${id}`,
+        );
     }
     if (!saved && !externalPath) await selectLiveModel();
     const started = performance.now();
@@ -1634,7 +1654,8 @@ for (const plannerCase of selectedCases) {
     let correction;
     let generatedTokens = 0;
     let modelCalls = prior?.modelCalls ?? 0;
-    const modelReplies: Awaited<ReturnType<typeof getPlannerReply>>[] = [];
+    const modelReplies: Awaited<ReturnType<typeof getPlannerReply>>[] =
+      (compile && prior?.modelReplies) || [];
     const roster = group.delivery.team.map((member) => member.id);
     function acceptReply(tool: { name: string; arguments: unknown }) {
       toolName = tool.name;
@@ -1652,10 +1673,21 @@ for (const plannerCase of selectedCases) {
     }
     try {
       if (prior) {
-        toolName = prior.toolName;
-        if (prior.question) question = prior.question;
-        else if (prior.plan) plan = parseTeamPlan(prior.plan, { allowEmpty: true });
-        else throw new Error(prior.error || 'Model returned no plan.');
+        const raw = compile && prior.modelReplies?.[0]?.message.content;
+        if (compile && raw) {
+          acceptReply(compile(JSON.parse(raw)));
+          assert.deepEqual(
+            plan,
+            prior.plan && parseTeamPlan(prior.plan, { allowEmpty: true }),
+            'Compiled plan changed during replay.',
+          );
+          assert.equal(question, prior.question, 'Compiled question changed during replay.');
+        } else {
+          toolName = prior.toolName;
+          if (prior.question) question = prior.question;
+          else if (prior.plan) plan = parseTeamPlan(prior.plan, { allowEmpty: true });
+          else throw new Error(prior.error || 'Model returned no plan.');
+        }
       } else if (externalPath) {
         acceptReply(
           values['external-decision']
@@ -1677,7 +1709,9 @@ for (const plannerCase of selectedCases) {
           generatedTokens += eval_count || 0;
           if (format) {
             assert.ok(!reply.tool_calls?.length, 'expected compact content instead of a tool call');
-            acceptReply(parseHandoffDraft(reply.content));
+            acceptReply(
+              compile ? compile(JSON.parse(reply.content)) : parseHandoffDraft(reply.content),
+            );
             break;
           }
           assert.equal(
