@@ -359,13 +359,15 @@ export class SharedSadeWorker {
       throw new DomainError('The check requires its original Shared Groups machine grant.');
   }
   assertCurrent(jobId: string) {
-    if (
-      this.host.closing ||
-      this.stopping.has(jobId) ||
-      (this.leases.get(jobId) || 0) <= Date.now() ||
-      !this.grants().some((grant) => grant.id === this.receipt(jobId).grantId)
-    )
-      throw new DomainError('This Shared Groups permission ended. Work is preserved locally.');
+    const now = Date.now();
+    if (!this.host.closing && !this.stopping.has(jobId) && (this.leases.get(jobId) || 0) > now) {
+      const grant = this.host.store.lookup<LocalGrant>(
+        'sharedSadeLocalGrant',
+        this.receipt(jobId).grantId,
+      );
+      if (grant && grant.expiresAt > now) return;
+    }
+    throw new DomainError('This Shared Groups permission ended. Work is preserved locally.');
   }
   consumeProviderTurn(jobId: string) {
     this.assertCurrent(jobId);

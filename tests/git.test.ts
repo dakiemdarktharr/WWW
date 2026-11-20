@@ -575,6 +575,7 @@ for (const sameFile of [true, false]) {
     const jobId = randomUUID();
     store.put('sharedSadeLocalReceipt', { id: jobId });
     store.updateTask(task.id, { ...worker, status: 'review', sharedSadeJobId: jobId });
+    t.mock.method(workspace.sharedSade, 'assertCurrent', (id: string) => assert.equal(id, jobId));
     t.mock.method(workspace.sharedSade, 'assertReviewed', async (id: string, diff: TaskDiff) => {
       assert.equal(id, jobId);
       assert.deepEqual(diff, preview);
@@ -597,6 +598,107 @@ for (const sameFile of [true, false]) {
       assert.equal(await readFile(path.join(f.repo, teammateFile), 'utf8'), teammate);
     }
     assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+  });
+}
+
+for (const during of ['staged', 'committed', 'already present'] as const) {
+  test(`Shared Sade stops integration when the author revokes permission at ${during}`, async (t) => {
+    const f = await fixture(t);
+    await git(f.repo, ['remote', 'add', 'origin', 'https://example.test/shared/revocation.git']);
+    const worker = await createWorktree(f.repo, f.storage, 'revoke-integration');
+    const file = 'shared.txt';
+    const reviewed = 'Reviewed change\n';
+    await writeFile(path.join(worker.worktree, file), reviewed);
+    if (during === 'already present') {
+      await writeFile(path.join(f.repo, file), reviewed);
+      await git(f.repo, ['add', file]);
+      await git(f.repo, ['commit', '-m', 'Independent equivalent change']);
+    }
+    const head = await git(f.repo, ['rev-parse', 'HEAD']);
+    const store = new Store(':memory:');
+    const workspace = new Workspace(store, f.storage, f.repo);
+    t.after(async () => {
+      await workspace.close();
+      store.close();
+    });
+    const member = store.addMember({ name: 'Author', role: 'engineer', provider: 'codex' });
+    store.updateMember(member.id, { status: 'ready', account: { type: 'chatgpt' } });
+    const project = store.put('project', {
+      id: randomUUID(),
+      path: f.repo,
+      name: 'Fixture',
+      memberIds: [member.id],
+    });
+    const groupId = randomUUID();
+    const grantId = randomUUID();
+    const jobId = randomUUID();
+    const grant = (await workspace.sharedSade.execute({
+      action: 'grant',
+      id: grantId,
+      groupId,
+      projectId: project.id,
+      teammateId: member.id,
+      turns: 1,
+      allowWrites: true,
+    })) as { projectKey: string };
+    const sent = t.mock.method(workspace.sessions, 'send', async () => undefined);
+    await workspace.sharedSade.execute({
+      action: 'exchange',
+      active: [],
+      acknowledged: [],
+      delivery: {
+        id: jobId,
+        groupId,
+        grantId,
+        projectKey: grant.projectKey,
+        phase: 'task',
+        request: 'Update the project contract.',
+        team: [],
+        prerequisites: [],
+        task: {
+          key: 'update-contract',
+          title: 'Update the contract',
+          kind: 'code',
+          scope: [file],
+          description: 'Update the project contract.',
+          acceptance: 'Keep the change within the contract file.',
+          stage: 'Implement',
+          effort: 1,
+          dependsOn: [],
+        },
+      } satisfies SharedDelivery,
+    });
+    const deadline = Date.now() + 10_000;
+    while (!sent.mock.callCount() && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(sent.mock.callCount(), 1);
+    const task = store.tasks().find((entry) => entry.sharedSadeJobId === jobId)!;
+    store.updateTask(task.id, { ...worker, status: 'review' });
+    store.put('sharedSadeLocalReceipt', {
+      ...store.get<{ id: string }>('sharedSadeLocalReceipt', jobId),
+      reviewedDigest: reviewDigest(await taskDiff(worker.worktree, worker.baseCommit)),
+    });
+    let revoked = false;
+    t.mock.method(workspace.aegis, 'consumeMerge', async () => {
+      return async (_diff: TaskDiff, context?: { phase: string }) => {
+        if (context?.phase !== (during === 'already present' ? 'worker' : during)) return;
+        assert.equal((await git(f.repo, ['rev-parse', 'HEAD'])) === head, during !== 'committed');
+        if (during === 'staged')
+          assert.equal(await git(f.repo, ['diff', '--cached', '--name-only']), file);
+        await workspace.sharedSade.execute({ action: 'revoke', groupId, grantId });
+        revoked = true;
+      };
+    });
+    await assert.rejects(workspace.accept(task.id), /Shared Groups permission ended/);
+    assert.equal(revoked, true);
+    assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), head);
+    assert.equal(await git(f.repo, ['status', '--porcelain']), '');
+    assert.equal(await readFile(path.join(worker.worktree, file), 'utf8'), reviewed);
+    assert.notEqual(store.get<Task>('task', task.id).status, 'done');
+    assert.equal(
+      store.get<{ revision?: string }>('sharedSadeLocalReceipt', jobId).revision,
+      undefined,
+    );
   });
 }
 

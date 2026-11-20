@@ -1667,13 +1667,16 @@ export class Workspace {
       throw new DomainError('Another check or integration is in progress.');
     this.mergeBusy.add(task.projectId);
     try {
-      const required = this.sharedSade.requiresMachine(task.sharedSadeJobId);
+      const sharedJob = task.sharedSadeJobId;
+      const assertCanIntegrate = sharedJob
+        ? () => this.sharedSade.assertCurrent(sharedJob)
+        : undefined;
+      const required = this.sharedSade.requiresMachine(sharedJob);
       const checked = await assertMachineChecks(this.store, task, required);
+      assertCanIntegrate?.();
       const verifyApprovedSource = await this.aegis.consumeMerge(taskId);
       const project = this.store.get<Project>('project', task.projectId);
-      const inherited = new Set(
-        task.sharedSadeJobId ? this.sharedSade.inheritedFiles(task.sharedSadeJobId) : [],
-      );
+      const inherited = new Set(sharedJob ? this.sharedSade.inheritedFiles(sharedJob) : []);
       const validateDiff = async (
         diff: Awaited<ReturnType<typeof taskDiff>>,
         context?: { root: string; phase: 'worker' | 'staged' | 'committed' },
@@ -1715,12 +1718,12 @@ export class Workspace {
               }
             : undefined,
           baseCommit: task.baseCommit || undefined,
-          ...(task.sharedSadeJobId
+          ...(sharedJob
             ? {
+                assertCanIntegrate,
                 skipAlreadyPresent: !this.aegis.isProtected(project.id),
                 requireReviewedFiles: true,
-                verifyReview: async (diff) =>
-                  this.sharedSade.assertReviewed(task.sharedSadeJobId!, diff),
+                verifyReview: (diff) => this.sharedSade.assertReviewed(sharedJob, diff),
               }
             : task.workflowId &&
                 this.store.get<Workflow>('workflow', task.workflowId).orchestrator === 'sade'
@@ -1729,7 +1732,7 @@ export class Workspace {
           validateDiff,
         },
       );
-      if (task.sharedSadeJobId) this.sharedSade.recordIntegration(task.sharedSadeJobId, revision);
+      if (sharedJob) this.sharedSade.recordIntegration(sharedJob, revision);
       const lease = this.store.lease(taskId);
       if (lease) this.store.release(taskId, lease.token);
       const existingSummary = 'The reviewed changes are already on the project branch.';

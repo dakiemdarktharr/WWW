@@ -370,6 +370,7 @@ export interface IntegrationOptions {
   baseCommit?: string;
   skipAlreadyPresent?: boolean;
   requireReviewedFiles?: boolean;
+  assertCanIntegrate?: () => void;
   verifyMachineInput?: () => Promise<void>;
   verifyReview?: (diff: TaskDiff) => Promise<void>;
   validateDiff?: (
@@ -431,6 +432,7 @@ export async function integrate(
     throw new DomainError('The worktree branch changed. Inspect it before integrating.');
   const baseCommit =
     options.baseCommit || (await git(worktree, ['merge-base', 'HEAD', startingHead]));
+  options.assertCanIntegrate?.();
   let reviewedTree = await stageReviewedTree(worktree, baseCommit, options.verifyReview);
   if (options.verifyMachineInput) {
     reviewedTree ??= await git(worktree, ['write-tree']);
@@ -480,10 +482,13 @@ export async function integrate(
       await assertProjectUnchanged();
       if (options.verifyMachineInput)
         checkTargetTree(await git(repo, ['rev-parse', 'HEAD^{tree}']));
+      options.assertCanIntegrate?.();
       return { revision: startingHead, alreadyPresent: true };
     }
   }
-  if (await git(worktree, ['diff', '--cached', '--name-only']))
+  const workerChanges = await git(worktree, ['diff', '--cached', '--name-only']);
+  options.assertCanIntegrate?.();
+  if (workerChanges)
     await git(worktree, [
       '-c',
       'user.name=RELAY',
@@ -506,6 +511,7 @@ export async function integrate(
       'A worker hook changed the reviewed files. Review the resulting diff before integration.',
     );
   await assertProjectUnchanged();
+  options.assertCanIntegrate?.();
   try {
     // Import the final proposal only. Worker commits can contain reverted private
     // or out-of-scope files and must not become ancestors of the project branch.
@@ -544,6 +550,7 @@ export async function integrate(
       throw new DomainError(
         'The project branch differs from the reviewed result and there is no change to integrate. Review the current branch before retrying.',
       );
+    options.assertCanIntegrate?.();
     if (stagedChanges)
       await git(repo, [
         '-c',
@@ -563,7 +570,9 @@ export async function integrate(
         root: repo,
         phase: 'committed',
       });
-    return { revision: await git(repo, ['rev-parse', 'HEAD']), alreadyPresent: false };
+    const revision = await git(repo, ['rev-parse', 'HEAD']);
+    options.assertCanIntegrate?.();
+    return { revision, alreadyPresent: false };
   } catch (error) {
     // --squash does not create MERGE_HEAD, so merge --abort cannot clean up its
     // conflicts. --merge restores the initial index/tree without a hard reset.
