@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Workspace } from '../server/service.ts';
+import type { SharedDelivery, SharedFinish } from '../server/group-sade.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
@@ -383,6 +384,98 @@ for (const remoteChange of [
     assert.equal(await git(f.repo, ['show-ref']), refs);
     assert.equal(await git(f.repo, ['status', '--porcelain']), '');
     assert.equal(await git(f.root, ['--git-dir', remote, 'rev-parse', 'refs/heads/main']), tip);
+  });
+}
+
+for (const reverted of [false, true]) {
+  test(`Shared Sade ${reverted ? 'blocks a reverted reviewed prerequisite' : 'keeps a newer reviewed prerequisite for the same file'}`, async (t) => {
+    const f = await fixture(t);
+    const origin = 'https://example.test/shared/prerequisite.git';
+    await git(f.repo, ['remote', 'add', 'origin', origin]);
+    const file = path.join(f.repo, 'shared.txt');
+    const prerequisites: SharedDelivery['prerequisites'] = [];
+    for (const content of ['First approved contract\n', 'Second approved contract\n']) {
+      await writeFile(file, content);
+      const change = await taskDiff(f.repo);
+      const title = content.trim();
+      await git(f.repo, ['add', 'shared.txt']);
+      await git(f.repo, ['commit', '-m', title]);
+      prerequisites.push({
+        title,
+        revision: await git(f.repo, ['rev-parse', 'HEAD']),
+        patch: { change, digest: reviewDigest(change) },
+      });
+    }
+    const lastReviewed = prerequisites.at(-1)!.revision!;
+    if (reverted) await git(f.repo, ['revert', '--no-edit', lastReviewed]);
+    await writeFile(path.join(f.repo, 'team.txt'), 'Unrelated team change\n');
+    await git(f.repo, ['add', 'team.txt']);
+    await git(f.repo, ['commit', '-m', 'Team change']);
+    const checkout = await git(f.repo, ['rev-parse', 'HEAD']);
+    await git(f.repo, ['merge-base', '--is-ancestor', lastReviewed, checkout]);
+
+    const store = new Store(':memory:');
+    const workspace = new Workspace(store, f.storage, f.repo);
+    t.after(async () => {
+      await workspace.close();
+      store.close();
+    });
+    const projectId = randomUUID();
+    const groupId = randomUUID();
+    const member = store.addMember({ name: 'Recipient', role: 'reviewer', provider: 'codex' });
+    store.updateMember(member.id, { status: 'ready', account: { type: 'chatgpt' } });
+    store.put('project', { id: projectId, path: f.repo, name: 'Fixture', memberIds: [member.id] });
+    const grant = (await workspace.sharedSade.execute({
+      action: 'grant',
+      id: randomUUID(),
+      groupId,
+      projectId,
+      teammateId: member.id,
+      turns: 2,
+      allowWrites: false,
+    })) as { id: string; projectKey: string };
+    const jobId = randomUUID();
+    const sent = t.mock.method(workspace.sessions, 'send', async () => undefined);
+    await workspace.sharedSade.execute({
+      action: 'exchange',
+      active: [],
+      acknowledged: [],
+      delivery: {
+        id: jobId,
+        groupId,
+        grantId: grant.id,
+        projectKey: grant.projectKey,
+        phase: 'task',
+        request: 'Check the accepted contract.',
+        team: [],
+        prerequisites,
+      } satisfies SharedDelivery,
+    });
+    const receipt = () => store.get<{ result?: SharedFinish }>('sharedSadeLocalReceipt', jobId);
+    const deadline = Date.now() + 12_000;
+    while (!sent.mock.callCount() && !receipt().result && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    const task = store.tasks().find((entry) => entry.sharedSadeJobId === jobId);
+    assert.ok(task?.worktree);
+    if (reverted) {
+      assert.deepEqual(sent.mock.callCount(), 0);
+      const result = receipt().result;
+      assert.equal(result?.kind, 'blocked');
+      assert.match(result.summary, /changed after it was reviewed/);
+      assert.equal(
+        await readFile(path.join(task.worktree, 'shared.txt'), 'utf8'),
+        'First approved contract\n',
+      );
+    } else {
+      assert.equal(sent.mock.callCount(), 1, JSON.stringify(receipt().result));
+      assert.equal(
+        await readFile(path.join(task.worktree, 'shared.txt'), 'utf8'),
+        'Second approved contract\n',
+      );
+    }
+    assert.equal(await git(task.worktree, ['rev-parse', 'HEAD']), checkout);
+    assert.equal(await git(f.repo, ['rev-parse', 'HEAD']), checkout);
+    assert.equal(await git(f.repo, ['status', '--porcelain']), '');
   });
 }
 

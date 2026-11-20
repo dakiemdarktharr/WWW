@@ -600,7 +600,9 @@ export class SharedSadeWorker {
     taskId: string,
     checkoutRevision?: string,
   ) {
-    const patches = delivery.prerequisites.filter((entry) => entry.patch);
+    const patches = delivery.prerequisites.flatMap((entry) =>
+      entry.patch ? [{ ...entry, patch: entry.patch }] : [],
+    );
     if (!patches.length && !checkoutRevision) return;
     const worktree = await createWorktree(
       project.path,
@@ -611,23 +613,48 @@ export class SharedSadeWorker {
     this.host.store.updateTask(taskId, worktree);
     const inherited = new Set<string>();
     let baseCommit = worktree.baseCommit;
-    for (const item of patches) {
+    const includedPatches = new Set<(typeof patches)[number]>();
+    const checkedFiles = new Set<string>();
+    // A later reviewed prerequisite can legitimately replace an earlier version of a file.
+    for (const item of [...patches].reverse()) {
       this.assertCurrent(delivery.id);
-      const { change, digest } = item.patch!;
+      const { change, digest } = item.patch;
       if (
+        !change.files.length ||
         reviewDigest(change) !== digest ||
         Buffer.byteLength(JSON.stringify(change)) > maxPortableDiff ||
         change.files.some((file) => file === '.' || normalizeScope(file) !== file)
       )
         throw new DomainError('A prerequisite patch failed verification.');
       if (
-        item.revision &&
-        (await git(worktree.worktree, ['merge-base', '--is-ancestor', item.revision, 'HEAD']).then(
+        !item.revision ||
+        !(await git(worktree.worktree, [
+          'merge-base',
+          '--is-ancestor',
+          item.revision,
+          worktree.baseCommit,
+        ]).then(
           () => true,
           () => false,
         ))
       )
         continue;
+      const paths = change.files.filter((file) => !checkedFiles.has(file));
+      if (
+        paths.length &&
+        (await changedTreeFiles(worktree.worktree, item.revision, worktree.baseCommit, paths))
+          .length
+      )
+        throw new DomainError(
+          `“${item.title}” changed after it was reviewed. Check the current project files before retrying.`,
+        );
+      paths.forEach((file) => checkedFiles.add(file));
+      includedPatches.add(item);
+    }
+    for (const item of patches) {
+      if (includedPatches.has(item)) continue;
+      this.assertCurrent(delivery.id);
+      const { change } = item.patch;
       const temp = await mkdtemp(path.join(this.host.dataDir, 'shared-patch-'));
       const patch = path.join(temp, 'reviewed.patch');
       try {
