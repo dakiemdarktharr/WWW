@@ -5,6 +5,7 @@ import { constants } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'node:util';
+import { providerLabels } from '../shared/providers.ts';
 import type { CodexModel, LoginResult, Member, ProviderId } from '../shared/types.ts';
 
 const execFileAsync = promisify(execFile);
@@ -766,7 +767,9 @@ export async function readRateLimits(client: CodexClient): Promise<unknown> {
 export async function readModels(client: CodexClient): Promise<CodexModel[]> {
   await client.start();
   if (!(await readAccount(client)))
-    throw new Error('Sign in to this Codex account to read its available models.');
+    throw new Error(
+      `Sign in to this ${providerLabels[client.provider]} account to read its available models.`,
+    );
   const models: CodexModel[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < 10; page++) {
@@ -807,7 +810,10 @@ export async function verifyModelSettings(
   const model = options.model
     ? models.find((model) => model.model === options.model)
     : models.find((model) => model.isDefault);
-  if (!model) throw new Error('This model is not available to the selected Codex account.');
+  if (!model)
+    throw new Error(
+      `This model is not available to the selected ${providerLabels[client.provider]} account.`,
+    );
   if (
     options.reasoningEffort &&
     !model.supportedReasoningEfforts.some(
@@ -834,8 +840,10 @@ export async function startTask(
   },
 ): Promise<{ threadId: string; turnId: string; model?: string; reasoningEffort?: string }> {
   await client.start();
-  if (!(await readAccount(client)))
-    throw new Error("Sign in to this member's ChatGPT account before running a task.");
+  if (!(await readAccount(client))) {
+    const account = client.provider === 'codex' ? 'ChatGPT' : providerLabels[client.provider];
+    throw new Error(`Sign in to this member's ${account} account before running a task.`);
+  }
   await verifyModelSettings(client, options);
   if (client.provider !== 'codex')
     await client.request('kivuno/policy', {

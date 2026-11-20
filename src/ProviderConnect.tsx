@@ -8,19 +8,14 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
-import { isExternalProvider } from '../shared/providers';
+import { isExternalProvider, providerLabels } from '../shared/providers';
 import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
 import type { FoundationRequest } from './Foundation';
 import './ProviderConnect.css';
 import ConnectionProgress from './ConnectionProgress';
 
-export const providerLabels: Record<ProviderId, string> = {
-  codex: 'Codex',
-  gemini: 'Gemini',
-  claude: 'Claude',
-  antigravity: 'Antigravity',
-};
+export { providerLabels };
 export const providerOf = (member?: Pick<Member, 'provider'>): ProviderId =>
   member?.provider || 'codex';
 export function ProviderPicker({

@@ -11,7 +11,10 @@ import { providerFileTool } from '../server/provider-files.ts';
 import { groupReadUpdatesTool } from '../server/group-sade.ts';
 import { isExternalMember } from '../shared/providers.ts';
 
-for (const Client of [ClaudeClient, AntigravityClient]) {
+for (const [Client, label] of [
+  [ClaudeClient, 'Claude'],
+  [AntigravityClient, 'Antigravity'],
+] as const) {
   test(
     `${Client.name}: separate sign-in, advertised models, scoped tools and human edits`,
     { timeout: 20000 },
@@ -33,15 +36,32 @@ for (const Client of [ClaudeClient, AntigravityClient]) {
         await rm(root, { recursive: true, force: true });
       });
       assert.equal(await readAccount(client), null);
+      await assert.rejects(readModels(client), {
+        message: `Sign in to this ${label} account to read its available models.`,
+      });
+      await assert.rejects(startTask(client, { cwd, prompt: 'edit-file', sharedGroup: true }), {
+        message: `Sign in to this member's ${label} account before running a task.`,
+      });
       await writeFile(path.join(home, 'managed-fixture-account.json'), '{}');
       assert.ok(await readAccount(client));
       const models = await readModels(client);
-      const chosen = chooseModel(models, {
+      const reviewTask = {
         kind: 'review',
         title: 'Review a small rename',
         description: '',
         effort: 1,
+      } as const;
+      assert.throws(() => chooseModel([], reviewTask, undefined, client.provider), {
+        message: `${label} returned no available models.`,
       });
+      await assert.rejects(
+        startTask(client, { cwd, prompt: 'edit-file', model: 'unavailable', sharedGroup: true }),
+        { message: `This model is not available to the selected ${label} account.` },
+      );
+      const blockedCalls = await readFile(path.join(home, 'managed-peer-events.jsonl'), 'utf8');
+      assert.doesNotMatch(blockedCalls, /"type":"user"|"method":"session\/prompt"|authenticate/);
+      assert.equal(await readFile(path.join(cwd, 'sample.txt'), 'utf8'), 'base');
+      const chosen = chooseModel(models, reviewTask);
       assert.equal(chosen.reasoningEffort, 'high');
       if (client.provider === 'claude') assert.equal(chosen.model, 'sonnet');
       let approvals = 0,

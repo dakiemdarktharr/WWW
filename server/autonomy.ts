@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { isExternalMember, isExternalProvider } from '../shared/providers.ts';
+import { isExternalMember, isExternalProvider, providerLabels } from '../shared/providers.ts';
 import path from 'node:path';
 import { lstat, readdir, readFile } from 'node:fs/promises';
-import type { CodexModel, Member, Task } from '../shared/types.ts';
+import type { CodexModel, Member, ProviderId, Task } from '../shared/types.ts';
 import type { Workspace } from './service.ts';
 import { readModels, readCapabilities } from './codex.ts';
 import { groupMembers } from './groups.ts';
@@ -47,8 +47,10 @@ export function chooseModel(
   models: CodexModel[],
   task: Pick<Task, 'kind' | 'title' | 'description' | 'effort' | 'phase'>,
   budget?: { projects: number; remaining: number | null; headroom: number | null },
+  provider: ProviderId = 'codex',
 ) {
-  if (!models.length) throw new DomainError('Codex returned no available models.');
+  if (!models.length)
+    throw new DomainError(`${providerLabels[provider]} returned no available models.`);
   const complex =
     task.phase === 'plan' ||
     (task.effort || 0) >= 3 ||
@@ -405,13 +407,16 @@ export class Autonomy {
           Date.parse(item.expiresAt) > Date.now(),
       );
     const floor = grant.length ? Math.min(...grant.map((item) => item.floor)) : 50;
-    return chooseModel(await readModels(await this.host.client(memberId)), task, {
-      projects: context.projects.filter(
-        (project) => project.assigned.length || project.pendingHumanRequests || project.workflow,
-      ).length,
-      remaining,
-      headroom: remaining === null ? null : Math.max(0, remaining - floor),
-    });
+    const client = await this.host.client(memberId);
+    const projects = context.projects.filter(
+      (project) => project.assigned.length || project.pendingHumanRequests || project.workflow,
+    ).length;
+    return chooseModel(
+      await readModels(client),
+      task,
+      { projects, remaining, headroom: remaining === null ? null : Math.max(0, remaining - floor) },
+      client.provider,
+    );
   }
   private plugins(memberId: string): Promise<void> {
     const existing = this.pluginSync.get(memberId);

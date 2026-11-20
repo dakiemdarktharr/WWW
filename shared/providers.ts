@@ -1,5 +1,12 @@
 import type { Member, ProviderId } from './types.ts';
 
+export const providerLabels: Record<ProviderId, string> = {
+  codex: 'Codex',
+  gemini: 'Gemini',
+  claude: 'Claude',
+  antigravity: 'Antigravity',
+};
+
 export const isExternalProvider = (provider?: ProviderId) =>
   provider === 'claude' || provider === 'antigravity';
 
