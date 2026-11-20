@@ -135,6 +135,7 @@ function fixture(
     ) as {
       supportsReviewRevision?: true;
       supportsRosterLookup?: true;
+      supportsCapacityWait?: true;
       delivery?: SharedDelivery;
       active: string[];
       revisionHandoff?: true;
@@ -2490,6 +2491,37 @@ test('Shared Sade polls only groups from the desktop grant page', (t) => {
   );
 });
 
+test('the owning desktop reports and clears a Shared Sade capacity wait', (t) => {
+  const f = fixture();
+  t.after(() => f.store.close());
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: randomUUID(),
+    content: 'Nhờ xem lại tài liệu dự án.',
+    sade: { projectKey: key },
+  });
+  const packet = f.poll(0);
+  const job = packet.delivery!;
+  const summary = () => f.view().sadeRuns[0].jobs[0].summary;
+  const heartbeat = (index: number, waitingForCapacity?: string[]) =>
+    f.call(index, {
+      action: 'sade-poll',
+      grants: [f.grants[index]],
+      active: [job.id],
+      waitingForCapacity,
+    });
+
+  heartbeat(1, [job.id]);
+  assert.equal(summary(), undefined);
+  heartbeat(0, [job.id]);
+  assert.match(summary() || '', /waiting.*desktop/i);
+  assert.equal(packet.supportsCapacityWait, true);
+  assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used, 1);
+  heartbeat(0);
+  assert.equal(summary(), undefined);
+});
+
 test('the desktop polls all valid grants across project pages', async (t) => {
   const store = new Store(':memory:');
   const workspace = new Workspace(store, os.tmpdir(), os.tmpdir());
@@ -2893,11 +2925,18 @@ const managedHandoff =
       const snapshot = (await worker.execute({ action: 'snapshot' })) as {
         grants: typeof cloud.grants;
         active: string[];
+        waitingForCapacity?: string[];
         results: { jobId: string; result: SharedFinish; version: number }[];
       };
       assert.doesNotMatch(JSON.stringify(snapshot), /fixture-profile-marker|accessToken|projectId/);
       for (const { jobId, result } of snapshot.results) cloud.finish(index, jobId, result);
-      const packet = cloud.poll(index, snapshot.active, snapshot.grants);
+      const packet = cloud.call(index, {
+        action: 'sade-poll',
+        patchHandoff: true,
+        active: snapshot.active,
+        grants: snapshot.grants,
+        waitingForCapacity: snapshot.waitingForCapacity,
+      }) as ReturnType<typeof cloud.poll>;
       assert.doesNotMatch(JSON.stringify(packet), /fixture-profile-marker|accessToken|projectId/);
       if (packet.delivery) deliveries.push(packet.delivery);
       await worker.execute({
@@ -2935,15 +2974,16 @@ const managedHandoff =
     const reservations = t.mock.method(author.workspace.autonomy, 'reserve');
     await waitFor(
       'the same planner to wait for desktop capacity',
-      () => reservations.mock.callCount() >= 2,
+      () =>
+        reservations.mock.callCount() >= 2 && /waiting.*desktop/i.test(run().jobs[0].summary || ''),
     );
     const waiting = author.store.sessions();
     assert.equal(waiting.length, 1);
     assert.equal(waiting[0].status, 'idle');
     assert.equal(waiting[0].threadId, null);
     assert.deepEqual(
-      reservations.mock.calls.map(({ arguments: [id] }) => id),
-      [waiting[0].id, waiting[0].id],
+      new Set(reservations.mock.calls.map(({ arguments: [id] }) => id)),
+      new Set([waiting[0].id]),
     );
     const planner = deliveries[0];
     assert.equal(planner.phase, 'plan');

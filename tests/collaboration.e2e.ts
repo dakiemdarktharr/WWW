@@ -259,8 +259,19 @@ try {
   await a.page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(b.page.getByRole('log')).toContainText('Cảm ơn, nghe rõ rồi.');
   assert.equal(cloud.all('sharedSadeRun').length, 1);
-  const poll = (active: string[] = [], readUpdates?: { jobId: string; through: number }[]) =>
-    dispatch({ action: 'sade-poll', grants: [grantId], active, taskUpdates: true, readUpdates });
+  const poll = (
+    active: string[] = [],
+    readUpdates?: { jobId: string; through: number }[],
+    waitingForCapacity?: string[],
+  ) =>
+    dispatch({
+      action: 'sade-poll',
+      grants: [grantId],
+      active,
+      taskUpdates: true,
+      readUpdates,
+      waitingForCapacity,
+    });
   const firstPlan = (poll() as { delivery: SharedDelivery }).delivery;
   assert.ok(firstPlan.team.length);
   assert.ok(firstPlan.team.every(({ allowWrites }) => !allowWrites));
@@ -310,6 +321,15 @@ try {
   await expect(
     progress.getByRole('listitem').filter({ hasText: /^Check the current plan\s+·/ }),
   ).toContainText('Alice Codex · Alice');
+  poll([task.id], undefined, [task.id]);
+  await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const capacityStatus = peerProgress.getByText(
+    'Waiting for the teammate’s desktop to finish other work.',
+  );
+  await expect(capacityStatus).toBeVisible();
+  poll([task.id]);
+  await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(capacityStatus).toHaveCount(0);
   await progress.getByRole('button', { name: 'Update task', exact: true }).click();
   await progress.getByLabel('Task update', { exact: true }).fill('Use the revised checklist.');
   await progress.getByRole('button', { name: 'Send update', exact: true }).click();

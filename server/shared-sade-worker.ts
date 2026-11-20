@@ -1379,12 +1379,17 @@ export class SharedSadeWorker {
     const waitingForRevisions = active.filter(
       (jobId) => this.deferred.get(jobId)?.waitingForRevision,
     );
+    const waitingForCapacity = active.filter((jobId) => {
+      const pending = this.deferred.get(jobId);
+      return pending && !pending.waitingForRevision;
+    });
     return {
       grants: [...activeGrants, ...page],
       revocations: this.pendingRevocations(),
       ...(nextGrantCursor ? { nextGrantCursor } : {}),
       active,
       ...(waitingForRevisions.length ? { waitingForRevisions } : {}),
+      ...(waitingForCapacity.length ? { waitingForCapacity } : {}),
       readUpdates: active.flatMap((jobId) => {
         const through = this.receipt(jobId).updatesRead;
         return through ? [{ jobId, through }] : [];

@@ -80,6 +80,8 @@ export const sharedReviewRevision = z
   .strict();
 const syncPrerequisiteSummary =
   'Sync the prerequisite Git revision into this desktop’s linked project. Sade will continue after the revision is available.';
+const capacityWaitSummary = 'Waiting for the teammate’s desktop to finish other work.';
+const reviewRevisionSummary = 'Revising after independent review.';
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
   z
@@ -150,6 +152,7 @@ export const groupSadeCommands = [
       taskUpdates: z.literal(true).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
+      waitingForCapacity: z.array(id).max(4).optional(),
     })
     .strict(),
   z
@@ -1015,7 +1018,8 @@ export class GroupSade {
       .map((row) => JSON.parse(String(row.data)) as Run);
     const supplied = new Set(command.grants);
     const held = new Set(command.active);
-    const waiting = new Set(command.waitingForRevisions);
+    const waitingForRevisions = new Set(command.waitingForRevisions);
+    const waitingForCapacity = new Set(command.waitingForCapacity);
     const awaitingDelivery = (job: Job) =>
       job.state === 'running' && job.awaitingReceipt && !held.has(job.id);
     // Retry an outstanding delivery before considering newly queued work across groups.
@@ -1087,15 +1091,21 @@ export class GroupSade {
             job.awaitingReceipt = undefined;
             job.deadline = this.now() + leaseMs;
             active.push(job.id);
-            if (
-              job.state === 'running' &&
-              waiting.has(job.id) &&
-              prerequisitesOf(run, job).some(
-                (prior) => prior.revision && (!prior.portable || prior.published),
+            if (job.state === 'running') {
+              if (waitingForCapacity.has(job.id)) job.summary = capacityWaitSummary;
+              else if (
+                waitingForRevisions.has(job.id) &&
+                prerequisitesOf(run, job).some(
+                  (prior) => prior.revision && (!prior.portable || prior.published),
+                )
               )
-            )
-              job.summary = syncPrerequisiteSummary;
-            else if (job.summary === syncPrerequisiteSummary) job.summary = undefined;
+                job.summary = syncPrerequisiteSummary;
+              else if (
+                job.summary === syncPrerequisiteSummary ||
+                job.summary === capacityWaitSummary
+              )
+                job.summary = job.reviewRevision ? reviewRevisionSummary : undefined;
+            }
             if (job.reviewedDigest) reviews.push({ jobId: job.id, digest: job.reviewedDigest });
             if (job.acceptsUpdates && command.taskUpdates && job.state === 'running') {
               const read =
@@ -1253,7 +1263,7 @@ export class GroupSade {
           job.awaitingReceipt = true;
           job.canReviseReview = Boolean(command.reviewRevision && writes(job.task));
           job.acceptsUpdates = job.phase === 'task' && Boolean(command.taskUpdates);
-          job.summary = job.reviewRevision ? 'Revising after independent review.' : undefined;
+          job.summary = job.reviewRevision ? reviewRevisionSummary : undefined;
           job.deadline = this.now() + deliveryLeaseMs;
           this.store.put('sharedSadeGrant', { ...grant, used: grant.used + 1 });
           touched = true;
@@ -1312,6 +1322,7 @@ export class GroupSade {
     return {
       supportsReviewRevision: true as const,
       supportsRosterLookup: true as const,
+      supportsCapacityWait: true as const,
       active,
       delivery,
       reviews,
