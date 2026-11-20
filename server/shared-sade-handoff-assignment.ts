@@ -35,7 +35,7 @@ const enProducer = new RegExp(
   'iu',
 );
 const enReceiver = new RegExp(
-  String.raw`^(?:(?:then )?(?:hand(?: it)? off to|send(?: it)? to|pass(?: it)? to|give(?: it)? to|ask|have|let) )?${enActor} (?:(?:to )?use (?:it|the contract) to |to )?(?:implement|build|write|make|work on) (?<work>.+)$`,
+  String.raw`^(?:(?:then )?(?:hand(?: it)? off to|send(?: it)? to|pass(?: it)? to|give(?: it)? to|ask|have|let) )?${enActor} (?:(?:to )?use (?:it|the contract) to |to )?(?:implements?|builds?|writes?|makes?|works? on) (?<work>.+)$`,
   'iu',
 );
 const viTransfer =
@@ -47,22 +47,72 @@ const noTransfer =
 const conflictingClause = /\b(?:khong|hoac|hay la|not|never|or)\b/;
 const architecture =
   /\b(?:cau truc|kien truc|hop dong|quy uoc|contract|architecture|structure|schema)\b/;
-const frontend = /\b(?:frontend|front end|giao dien|man|ui|interface|screen|view)\b/;
+const frontend = /\b(?:frontend|front[ -]end|giao dien|man|ui|interface|screen|view)\b/;
 const frontFile = /\.(?:jsx|tsx|vue|svelte|html|css)$/i;
 const fileToken =
   /(?<=^|[\s`(,])(?:[\p{L}\p{M}\p{N}_.-]+\/)*[\p{L}\p{M}\p{N}_.-]+\.[\p{L}\p{M}\p{N}_-]+(?=$|[\s`),;.!?])/gu;
+const referenceBefore =
+  /\b(?:dua (?:theo|vao|tren)|theo|tham (?:chieu|khao)|doi chieu (?:voi|theo)|lay mau tu|based on|using|from(?! scratch\b)|refer(?:ring)? to|compare (?:to|with)|according to)\b/;
+const referenceAfter =
+  /^(?:chi )?(?:de (?:tham chieu|tham khao|doi chieu)|lam mau|as (?:a )?(?:reference|template)|for reference)\b/;
+const correction =
+  /\b(?:chot lai|doi lai|dinh chinh|thay bang|actually|correction|change of plan)\b/;
+const assignmentAction = /\b(?:giao|nho|chuyen|assign|reassign|give|have)\b/;
+const editAction = /\b(?:lam|viet|handles?|implements?|builds?|writes?)\b/;
+const handoffRole =
+  'frontend|front end|front-end|giao dien|architecture|kien truc|cau truc|contract|hop dong|quy uoc';
+const reassignment = new RegExp(
+  `\\b(?:(?:${handoffRole}) (?:gio |se )?(?:giao(?: cho)?|chuyen(?: cho| sang)?|goes to|will go to|will be handled by)|(?:giao|chuyen|assign|reassign) (?:lai |the )?(?:${handoffRole}) (?:cho|sang|to))\\b`,
+);
+const keepPath =
+  /\b(?:giu nguyen|khong (?:duoc )?(?:sua|ghi|dung vao)|do not (?:edit|change|write)|leave .+ unchanged|for reference only)\b/;
 
 function exactScope(work: string): string | null | undefined {
   if (/\\|(?:^|[\s`])(?:[a-z]:)?\/|:\/\//iu.test(work)) return null;
-  const paths = [...new Set(work.match(fileToken))];
+  const mentions = [...work.matchAll(fileToken)];
+  const paths = [...new Set(mentions.map(([file]) => file))];
   if (paths.length !== 1) return paths.length ? null : undefined;
   const [file] = paths;
+  for (const mention of mentions) {
+    const before = foldSharedSadeName(work.slice(0, mention.index)).replace(/[\s`(]+$/u, '');
+    const after = foldSharedSadeName(work.slice(mention.index + file.length)).replace(
+      /^[\s`)]+/u,
+      '',
+    );
+    if (referenceBefore.test(before) || referenceAfter.test(after)) return null;
+  }
   try {
     if (normalizeScope(file) === file && !isPrivateCredentialPath(file)) return file;
   } catch {
     // Invalid current-message paths must not become unscoped assignments.
   }
   return null;
+}
+
+function revisesHandoff(tail: string[], scopes: (string | undefined)[]) {
+  return tail.some((sentence) => {
+    const text = foldSharedSadeName(sentence);
+    if (reassignment.test(text)) return true;
+    if (
+      correction.test(text) &&
+      (assignmentAction.test(text) ||
+        (editAction.test(text) && (architecture.test(text) || frontend.test(text))))
+    )
+      return true;
+    for (const pattern of [viReceiver, enReceiver, viProducer, enProducer]) {
+      const work = pattern.exec(sentence.trim())?.groups?.work;
+      if (!work) continue;
+      const folded = foldSharedSadeName(work);
+      if (
+        architecture.test(folded) ||
+        frontend.test(folded) ||
+        frontFile.test(exactScope(work) ?? '')
+      )
+        return true;
+    }
+    if (!keepPath.test(text)) return false;
+    return (sentence.match(fileToken) ?? []).some((file) => scopes.includes(file));
+  });
 }
 
 function binding(
@@ -112,12 +162,10 @@ export function resolveSharedSadeHandoffAssignment(
   ] as const) {
     for (const separator of input.matchAll(transfer)) {
       const first = firstClause.exec(input.slice(0, separator.index).trim())?.groups;
-      const second = secondClause.exec(
-        input
-          .slice(separator.index + separator[0].length)
-          .split(sentenceEnd, 1)[0]
-          .trim(),
-      )?.groups;
+      const [receiverClause, ...tail] = input
+        .slice(separator.index + separator[0].length)
+        .split(sentenceEnd);
+      const second = secondClause.exec(receiverClause.trim())?.groups;
       if (!first || !second) continue;
       const firstWork = foldSharedSadeName(first.work);
       const secondWork = foldSharedSadeName(second.work);
@@ -131,6 +179,7 @@ export function resolveSharedSadeHandoffAssignment(
       const firstScope = exactScope(first.work);
       const secondScope = exactScope(second.work);
       if (firstScope === null || secondScope === null) continue;
+      if (revisesHandoff([first.work, second.work, ...tail], [firstScope, secondScope])) continue;
       if (!frontend.test(secondWork) && !(secondScope && frontFile.test(secondScope))) continue;
       if (firstScope && secondScope?.toLowerCase() === firstScope.toLowerCase()) continue;
       const producer = binding(first, firstScope, requesterId, group, language);

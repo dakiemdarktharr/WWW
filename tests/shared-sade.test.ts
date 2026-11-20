@@ -56,6 +56,7 @@ function fixture(
   options: {
     grantB?: boolean;
     grantC?: boolean;
+    ownerNameC?: string;
     turnsA?: number;
     turnsB?: number;
     mac?: boolean;
@@ -77,7 +78,8 @@ function fixture(
     { id: 'owner-A', name: 'An' },
     { id: 'owner-B', name: 'Bình' },
   ];
-  if (options.grantC !== undefined) people.push({ id: 'owner-C', name: 'Chi' });
+  if (options.grantC !== undefined)
+    people.push({ id: 'owner-C', name: options.ownerNameC ?? 'Chi' });
   const devices = people.map(() => randomUUID());
   const members = people.map((_, index) => options.members?.[index] ?? randomUUID());
   const grants = people.map(() => randomUUID());
@@ -4667,6 +4669,49 @@ for (const name of ['parcel-exact-owner-without-grant', 'library-ambiguous-other
   });
 }
 
+test('Shared Sade requires an explicit option when a numeric owner name collides with an ordinal', (t) => {
+  const f = fixture(undefined, {
+    names: ['Gemini', 'Astra'],
+    grantC: true,
+    handoffAssignments: true,
+    ownerNameC: '1',
+  });
+  t.after(() => f.store.close());
+  const { message } = handoffPlanningCases.find(({ id }) =>
+    id.endsWith('/library-ambiguous-other-owner'),
+  )!;
+  const runId = randomUUID();
+  f.call(0, {
+    action: 'message',
+    groupId: f.groupId,
+    id: runId,
+    content: message,
+    sade: { projectKey: key },
+  });
+  const [waiting] = f.view().sadeRuns[0].jobs;
+  assert.equal(waiting.state, 'waiting');
+  assert.match(waiting.summary || '', /1\. Bình, 2\. 1/);
+  const answer = {
+    action: 'sade-answer',
+    groupId: f.groupId,
+    runId,
+    jobId: waiting.id,
+  };
+  assert.throws(() => f.call(0, { ...answer, answer: '1' }), /option|owner/i);
+  for (const [index, id] of f.grants.entries()) {
+    assert.equal(f.poll(index).delivery, undefined);
+    assert.equal(f.store.get<{ used: number }>('sharedSadeGrant', id).used, 0);
+  }
+  f.call(0, { ...answer, answer: 'option 2' });
+  const planner = f.poll(0).delivery!;
+  assert.equal(planner.phase, 'plan');
+  assert.equal(planner.handoffAssignments?.receiver.grantId, f.grants[2]);
+  assert.deepEqual(
+    f.view().sadeRuns.map(({ id }) => id),
+    [runId],
+  );
+});
+
 test('Shared Sade rejects invalid named handoff drafts even from legacy planners', async (t) => {
   const { message, expected } = handoffPlanningCases.find(({ id }) =>
     id.endsWith('/parcel-explicit-owner-and-style'),
@@ -4768,7 +4813,7 @@ test('Shared Sade keeps the selected handoff receiver when the provider is unava
   assert.deepEqual(f.turnsUsed(), [2, 0, 0]);
 });
 
-test('Shared Sade does not turn quoted or conditional handoffs into mandatory pins', async (t) => {
+test('Shared Sade avoids mandatory pins for quoted or conditional handoffs and conflicting instructions', async (t) => {
   const { message, expected } = handoffPlanningCases.find(({ id }) =>
     id.endsWith('/parcel-explicit-owner-and-style'),
   )!;
@@ -4799,6 +4844,33 @@ test('Shared Sade does not turn quoted or conditional handoffs into mandatory pi
     assert.equal(run.jobs.find(({ task }) => task?.key === 'frontend')?.grantId, f.grants[2]);
     assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
   });
+
+  for (const [label, content] of [
+    [
+      'later recipient correction',
+      'Tôi nhờ Gemini của tôi làm cấu trúc chung rồi ông đưa cho Astra của Bình làm frontend. Chốt lại, frontend giao cho Astra của Chi.',
+    ],
+    [
+      'read-only source path',
+      'Tôi nhờ Gemini của tôi làm cấu trúc chung dựa theo docs/legacy-contract.md rồi ông đưa cho Astra của Bình làm frontend. Giữ nguyên docs/legacy-contract.md để đối chiếu.',
+    ],
+  ]) {
+    await t.test(label, (t) => {
+      const f = ownerRoutingFixture(t, true, true);
+      f.send(content);
+      const planner = f.poll(0).delivery!;
+      assert.equal(planner.phase, 'plan');
+      assert.equal(planner.request, content);
+      assert.equal(planner.handoffAssignments, undefined);
+      assert.deepEqual(
+        f.view().sadeRuns[0].jobs.map(({ phase }) => phase),
+        ['plan'],
+      );
+      assert.equal(f.poll(1).delivery, undefined);
+      assert.equal(f.poll(2).delivery, undefined);
+      assert.deepEqual(f.turnsUsed(), [1, 0, 0]);
+    });
+  }
 });
 
 test('Shared Sade holds Astra of Chi before planning until that exact publication grants the project', (t) => {

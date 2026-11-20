@@ -811,7 +811,7 @@ export class GroupSade {
         return {
           state: 'waiting',
           choose: slot,
-          reason: `Which ${harnessName} should handle the ${slot === 'producer' ? 'architecture' : 'frontend'}? Reply with the option number or an unambiguous owner name. ${candidates.map(({ ownerName }, index) => `${index + 1}. ${ownerName}`).join(', ')}`,
+          reason: `Which ${harnessName} should handle the ${slot === 'producer' ? 'architecture' : 'frontend'}? Reply with “option” and its number, or an unambiguous owner name. ${candidates.map(({ ownerName }, index) => `${index + 1}. ${ownerName}`).join(', ')}`,
         } as const;
       if (!this.assignmentPublished(group, target))
         return {
@@ -1145,15 +1145,18 @@ export class GroupSade {
           const answer = foldSharedSadeName(command.answer);
           if (status.state === 'waiting' && status.choose) {
             const choice = run.handoffAssignments[status.choose];
-            const numbered = /^[1-9][0-9]*$/.test(answer)
-              ? choice.candidates[Number(answer) - 1]
-              : undefined;
-            const named = choice.candidates.filter(
-              ({ ownerName }) => answer === foldSharedSadeName(ownerName),
+            const explicitOption = /^(?:option|lua chon) ([1-9][0-9]*)$/.exec(answer)?.[1];
+            const matches = choice.candidates.filter(({ ownerName }, index) =>
+              explicitOption
+                ? explicitOption === String(index + 1)
+                : answer === String(index + 1) || answer === foldSharedSadeName(ownerName),
             );
-            const selected = numbered ?? (named.length === 1 ? named[0] : undefined);
-            if (!selected)
-              throw new DomainError('Reply with a single listed owner or option number.', 409);
+            if (matches.length !== 1)
+              throw new DomainError(
+                'Reply with a single listed owner or “option” and its number.',
+                409,
+              );
+            const [selected] = matches;
             if (!this.assignmentPublished(group, selected))
               throw new DomainError(
                 'That harness publication ended. Choose another listed owner or start a new request.',
