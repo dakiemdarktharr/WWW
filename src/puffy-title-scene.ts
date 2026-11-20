@@ -286,7 +286,7 @@ export async function createTitleScene(
   function tick(time: number) {
     frame = 0;
     if (disposed || !visible || document.hidden) return;
-    const dt = previousTime ? Math.min((time - previousTime) / 1000, 0.25) : 1 / 60;
+    const dt = previousTime ? (time - previousTime) / 1000 : 1 / 60;
     previousTime = time;
     if (reduced.matches) {
       rotationX.value = targetX;
@@ -315,6 +315,7 @@ export async function createTitleScene(
     const surfaceChanging = updateSurfaces(dt);
     paint();
     if (!resting || surfaceChanging) requestPaint();
+    else previousTime = 0;
   }
   function requestPaint() {
     if (!disposed && !frame && visible && !document.hidden) frame = requestAnimationFrame(tick);

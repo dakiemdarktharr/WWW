@@ -3,7 +3,7 @@ import test from 'node:test';
 import { contactDisplacements, stepSpring } from '../src/puffy-title-physics.ts';
 
 test('slow title return takes real time, is frame-rate independent and settles exactly', () => {
-  const samples = [15, 30, 60, 144].map((fps) => {
+  const samples = [1, 2, 15, 30, 60, 144].map((fps) => {
     const state = { value: 1, velocity: 0 };
     for (let frame = 0; frame < fps; frame++) stepSpring(state, 0, 1 / fps, 3.4);
     assert.ok(
