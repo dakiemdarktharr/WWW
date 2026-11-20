@@ -105,7 +105,7 @@ const reviewDirective =
   /^(?:(?:phan|ve phan|please|chi|only|just) )?(?:ra soat|cyber|review|inspect)\b|\b(?:backend|frontend)[ -]only\b/;
 const readOnlyReminder = /^(?:(?:that|the|this) )?review (?:is|must be|stays) read[ -]only\b/;
 const explicitFilePair =
-  /\b(?:hai (?:file|tep)(?: nguon)?(?: do)?|(?:(?:those|the|exactly) two|both) (?:source )?files)\b/;
+  /\b(?:hai (?:file|tep)(?: nguon)?(?: do)?|(?:(?:those|the|exactly(?: (?:those|the))?) two|both) (?:source )?files)\b/;
 const reviewersOfFilePair = new RegExp(
   `\\b(?:khong viet|did not (?:write|author)) ${explicitFilePair.source}`,
 );

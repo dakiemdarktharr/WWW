@@ -5096,17 +5096,28 @@ test('Shared Sade limits explicitly scoped handoff reviews and preserves the req
     ['parcel-explicit-owner-and-style', 'Khi cả giao diện lẫn backend xong'],
     ['booking-unaccented-style-delegation', 'doi frontend va backend xong'],
     ['refill-english-transfer', 'When the frontend and backend are ready'],
-  ];
-  for (const [caseId, reviewStart] of reviewStarts) {
+    [
+      'refill-english-transfer',
+      'When the frontend and backend are ready',
+      'explicit two-file wording',
+    ],
+  ] as const;
+  for (const [caseId, reviewStart, variation] of reviewStarts) {
     const scenario = handoffPlanningCases.find(({ id }) => id.endsWith(`/${caseId}`))!;
-    const { expected, message, reference } = scenario;
+    const { expected, reference } = scenario;
+    const message = variation
+      ? scenario.message.replace(
+          'read those two source files',
+          'read exactly those two source files',
+        )
+      : scenario.message;
     assert.equal(expected.kind, 'plan');
     const reviewOffset = message.indexOf(reviewStart);
     assert.notEqual(reviewOffset, -1);
     const brief = message.slice(reviewOffset).split('. ', 1)[0].replace(/\.$/, '');
     for (const expandScope of [true, false]) {
       await t.test(
-        `${caseId} with ${expandScope ? 'an extra test file' : 'the requested files'}`,
+        `${variation ?? caseId} with ${expandScope ? 'an extra test file' : 'the requested files'}`,
         (t) => {
           const f = fixture(['gemini', 'codex', 'codex', 'antigravity'], {
             names: [
