@@ -343,6 +343,29 @@ Hai cách cùng đạt 0/7 theo toàn bộ tiêu chí. Trong biến thể JSON, 
 
 Windows cục bộ qua 21/21 ca tập trung, 143/143 ca `npm run test:shared-sade` và 230/230 ca `npm run test:sade`. `npm run check` trên `0a14e31` qua 516 ca Windows, 512 Ubuntu và 511 macOS arm64, với lần lượt một, năm và sáu ca bỏ qua theo nền tảng và 0 lỗi. Cả ba chạy corpus 1.000 tin với kế hoạch mô phỏng. macOS qua cả Electron và bài trình duyệt Shared Groups. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44711885375) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44711885267)
 
+#### Giữ yêu cầu rà soát từ tin nhắn hiện tại
+
+Commit `fc39ac92d49e8424afce5ca136250c609690a060` áp dụng giới hạn khi tin nhắn chỉ định rà soát đúng hai đầu ra frontend và backend. Bộ điều phối từ chối phạm vi gộp thêm file test. Desktop nhận biết cùng giới hạn trước khi nộp bản nháp, nhờ đó planner trong bài thử có thể sửa ngay trong lượt đang dùng. Tác vụ được giao giữ nguyên câu yêu cầu rà soát đã che thông tin nhạy cảm, kể cả khi model bỏ chi tiết như số thẻ hoặc địa chỉ email trong mô tả của nó. Tin nhắn được tham chiếu vẫn cung cấp ngữ cảnh cho planner. Bài thử xác nhận nội dung của tin cũ không tự trở thành yêu cầu bắt buộc của reviewer, gửi lại kết quả giữ cùng tác vụ, và câu A dùng từ `cyber` chung vẫn cho phép rà soát các đầu ra khác được yêu cầu.
+
+Đã phát lại 20 artifact của `44711031462` qua `--replay` khi Ollama không mở cổng `11565`. Prompt và dữ liệu model giữ nguyên. Hai kế hoạch của ca tủ nhận hàng và đặt bàn trước đó đã được xếp hàng nay bị chặn trước khi giao vì cả hai thêm file test vào phạm vi rà soát. Ba ca chờ chủ hoặc grant vẫn dùng 0 lượt model ở cả hai chế độ. Báo cáo nằm trong `.local/sade-handoff-review/fc39ac9-check/replay`. [Artifact đầu vào](https://github.com/dakiemdarktharr/WWW/actions/runs/44711031462)
+
+```powershell
+node --import tsx --test --test-name-pattern 'corrects expanded review|limits explicitly scoped handoff reviews|hands Gemini architecture' tests/shared-sade.test.ts
+node --import tsx scripts/eval-shared-sade-planner.ts .local/sade-handoff-review/fc39ac9-check/replay/5-handoff-compact.json --handoff-planning --shard 1/6 --one-planner-call --timeout-ms 180000 --planning-prompt handoff-compact --replay .local/sade-handoff-preflight/44711031462/complete/sade-handoff-planning-5/handoff-planning-handoff-compact.json
+```
+
+Commit thử nghiệm `8a186babfe1d33acdd2c20188b408ad0c37c4d9e` thêm cách biên dịch bản nháp bàn giao thành lời gọi công cụ Shared Sade chuẩn. Bộ biên dịch dùng chủ đã được điều phối xác định và các file có bằng chứng trong tin hiện tại hoặc tin tham chiếu. Model chọn file còn thiếu, phong cách và trọng tâm rà soát còn chưa rõ qua một JSON ngắn. Phần biên dịch điền phụ thuộc, phạm vi review hai file, phân công theo quyền, và giữ lựa chọn máy chạy mở trong tập bàn giao không yêu cầu hệ điều hành. Yêu cầu ngoài phạm vi nhận diện dùng cùng cách lập kế hoạch JSON đối chứng. Cách này chỉ chạy trong phép đo.
+
+```powershell
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=handoff-compiled
+```
+
+Trên cùng input, digest Qwen 4B, seed và hạn 180 giây, bản biên dịch đạt 2/7, còn JSON tự viết cả kế hoạch đạt 0/7. Hai ca đạt là đặt bàn tiếng Việt không dấu và bàn giao bổ sung nước tiếng Anh. Bản biên dịch có trung vị 17,6 giây, khoảng 7,3–24,1 giây, với 277–378 token đầu vào. JSON đối chứng có trung vị 77,1 giây, khoảng 71,2–136,6 giây, với 899–993 token đầu vào. Mỗi ca dùng một lượt model qua Ollama trên runner chuẩn của kho công khai. Ba ca chờ cho mỗi phương án dùng 0 lượt model và 0 lượt grant. Mẫu bộ nhớ Ollama bằng nhau trong từng cặp. Bốn cặp báo 3,19 GB RAM và 0 VRAM, ba cặp báo 1,01 GB RAM và 2,54 GB VRAM. Đây là ước lượng phân bổ sau phản hồi.
+
+Bản biên dịch còn lỗi mất tiêu chí lộ email ở hai ca workshop, mất một hoặc nhiều chi tiết phong cách ở workshop và tủ nhận hàng, và gán nhầm file test cho frontend ở ca thư viện. Commit `107aef1` so sánh kế hoạch biên dịch theo dạng JSON đã lưu. Đã phát lại cả 20 artifact khi Ollama tắt, gồm biên dịch lại bảy phản hồi JSON gốc. Hash, điểm và trạng thái điều phối khớp từng artifact. Tệp tổng hợp và dữ liệu nằm ở `.local/sade-handoff-review/44714143196/complete` và `.local/sade-handoff-review/44714143196/verified-replay`. [CI phép đo và artifact](https://github.com/dakiemdarktharr/WWW/actions/runs/44714143196)
+
+Windows cục bộ trên `fc39ac9` qua 11/11 ca tập trung, 152/152 ca `npm run test:shared-sade` và 239/239 ca `npm run test:sade`. `npm run check` trên cùng SHA qua 525 ca Windows, 521 Ubuntu và 520 macOS arm64, với 0 lỗi. Số ca bỏ qua theo nền tảng lần lượt là một, năm và sáu. Cả ba chạy bộ 1.000 tin với planner mô phỏng. macOS qua thêm kiểm chứng Electron và Shared Groups. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44713863014) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44713863954)
+
 Ca hết quota của A dùng tín hiệu từ fixture trước khi mở lượt model. Gemini, Claude và Antigravity có thể trả trạng thái quota chưa rõ. Nếu chưa biết quota, Sade vẫn giới hạn số lượt theo quyền do chủ harness cấp. Cần lượt tài khoản thật để đo hành vi khi provider hết quota.
 
 Ca hai desktop ở `eb9f686` kiểm tra lại B và C trên hai worktree Git. Khi tác giả đổi `architecture.txt` sau khi nhận verdict độc lập, Sade từ chối tích hợp, giữ cả hai HEAD và chưa giao bước frontend. Khôi phục đúng nội dung đã duyệt cho phép dùng lại commit có sẵn. HEAD trên Git remote thử nghiệm giữ nguyên. Ca này kiểm tra nội dung file và bản vá đã duyệt. Tương đương hành vi vẫn cần phép đo riêng.
