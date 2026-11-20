@@ -521,6 +521,44 @@ Dùng một lượt lập kế hoạch từ harness đã cấp quyền của ng�
 
 ## Huấn luyện Qwen trên máy
 
+### Đối chiếu Qwen 0,6B với bộ phân loại CPU
+
+Bài này đo hai nhãn, yêu cầu làm việc và tin chỉ để trao đổi. Cấu hình CPU được chọn ở commit `b4b9dee` bằng 90 tin hiệu chỉnh, rồi mới viết tập chấm gồm 24 cặp câu với ba cách diễn đạt. Hai câu trong một cặp nói về cùng tình huống nhưng chỉ một câu yêu cầu hành động. Tập chấm có 144 tin, gồm 72 yêu cầu và 72 tin trao đổi. SHA-256 của `final.jsonl` là `a036295b7716cf3a6eb4c4e44df31381548ec08aa97ca822c2337ef754e67a8d`.
+
+Ứng viên CPU dùng hồi quy logistic trên từ và cặp từ sau khi bỏ dấu. Cấu hình được chọn dùng 240 tin từ 40 cặp bối cảnh và có 1.574 trọng số. Nó đạt 83/90 trên tập hiệu chỉnh, so với 72/90 khi thêm 1.000 tin gốc và cân bằng theo câu nguồn. Trên tập chấm mới, tiến trình đánh giá CPU đạt p50 0,009 ms, p95 0,015 ms cho mỗi tin và dùng đỉnh khoảng 109 MiB RSS trong lần chạy ghi báo cáo. Lượt chấm Qwen nạp lại đúng LoRA 0,6B đã lưu trên RTX 5050 Laptop GPU và đọc hai tập gồm tổng cộng 288 tin trong 38,6 giây, tính cả nạp model.
+
+| Phép đo trên 144 tin mới      |   CPU | Qwen 0,6B LoRA |
+| ----------------------------- | ----: | -------------: |
+| Đúng tổng cộng                |   122 |            105 |
+| Yêu cầu làm việc bị bỏ sót    |     6 |             30 |
+| Tin trao đổi bị nhận nhầm     |    16 |              9 |
+| Đúng ở kiểu nói tự nhiên      | 42/48 |          36/48 |
+| Đúng ở kiểu không dấu         | 42/48 |          31/48 |
+| Đúng ở kiểu song ngữ          | 38/48 |          38/48 |
+| Đúng cả hai tin trong một cặp | 51/72 |          34/72 |
+
+Một nguồn lỗi CPU là cụm từ hành động xuất hiện trong lời kể. Ví dụ, câu “tui định tự làm mục lục ngắn tối nay” bị nhầm với yêu cầu giao trợ lý làm mục lục. Ngưỡng chọn để đạt 0 tin trao đổi bị gợi ý sai trên tập hiệu chỉnh vẫn nhầm 8 trong 72 tin trao đổi ở tập mới. Khi mô phỏng gọi Qwen chỉ cho 65 tin CPU vượt ngưỡng và gợi ý nếu cả hai đồng ý, 36 yêu cầu được gợi ý và cả 36 đều đúng. Phương án đó bỏ sót 36 yêu cầu. Cấu hình Shared Groups tiếp tục dùng **Ask Sade** để xác nhận ý định và một lượt lập kế hoạch trên harness đã cấp quyền.
+
+Bộ 1.000 tin gốc vẫn là bài kiểm thử giao thức có 20 câu nguồn. Với các nhãn gộp `work` và `chat`, CPU đúng 781/1.000, bỏ sót 219 yêu cầu và nhận đúng 50 tin trao đổi. Đọc lại kết quả Qwen 4B đã lưu cho riêng hai nhãn này cho 990/1.000, còn kết quả đầy đủ với các trường điều phối là 747/1.000. Số liệu từ hai phép chấm đo hai đầu ra khác nhau. [Kết quả Qwen 4B gốc](https://github.com/dakiemdarktharr/WWW/actions/runs/44542052380)
+
+```powershell
+$dataset = '.local/sade-intent-eval'
+node --import tsx scripts/sade-qwen-dataset.ts $dataset --contrastive --context-pairs
+node --import tsx scripts/eval-shared-sade-intent.ts $dataset
+```
+
+Để chấm lại cùng adapter trên Windows, dùng Python trong môi trường PyTorch CUDA và thư mục model cục bộ có `base-0.6b`. Adapter epoch 2 có SHA-256 `bc9cc3f75a365c044c37027e020b20bc9a840141b3617c521eea6f75e6f3c216`. Script dùng lại bộ đệm CPU 16 MiB để nạp lần lượt các trọng số BF16 vào GPU.
+
+```powershell
+$qwen = '.local/sade-qwen'
+$adapter = "$qwen/action-intent-0.6b-context-pairs-v2-full/epoch-2"
+python scripts/train-sade-qwen.py --root $qwen --data-dir $dataset --adapter $adapter `
+  --action-intent --size 0.6b --batch 1 --acceptance "$dataset/final.jsonl" `
+  --output "$dataset/qwen-replay"
+```
+
+### Phân loại sáu ý định với Qwen 1,7B
+
 Bài thử LoRA chỉ học phân loại một trong sáu ý định. Dữ liệu huấn luyện được lấy mẫu cân bằng từ bộ 1.000 tin nhắn tổng hợp. Tập chấm có 144 tin nhắn từ 48 câu gốc viết riêng. Script giữ nguyên trọng số nền và so sánh model trước và sau train trên cùng prompt, cùng tập chấm. Quyền, quota và lịch của Sade vẫn do bộ điều phối quyết định. [Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) · [PEFT LoRA](https://huggingface.co/docs/peft/main/en/conceptual_guides/lora)
 
 Chạy bằng Python 3.11, PyTorch 2.10.0 CUDA 12.8, Transformers 4.57.6, Accelerate 1.12.0 và PEFT 0.18.1. Lưu bản Qwen3-1.7B revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` ở `.local/sade-qwen/base`. Các lần train dùng thư mục đầu ra khác nhau. [Bản PyTorch cho Windows](https://pytorch.org/get-started/previous-versions/)

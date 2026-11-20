@@ -92,6 +92,7 @@ function train(rows: Row[], configuration: Configuration) {
   }
   return {
     configuration,
+    trainedRows: samples.length,
     coefficients: weights.length,
     trainingMs: performance.now() - started,
     score(message: string) {
@@ -200,10 +201,14 @@ const suggestionThreshold = Math.max(
 const splits = ['holdout', 'acceptance', 'final'].filter((name) =>
   existsSync(path.join(directory, name + '.jsonl')),
 );
+const evaluations: [string, Row[]][] = splits.map((name) => [name, read(name)]);
+if (best.model.configuration.corpusFraction === 0) {
+  evaluations.push(['corpus', training.filter(({ id }) => id.startsWith('team-'))]);
+}
 const results = Object.fromEntries(
-  splits.map((name) => {
+  evaluations.map(([name, rows]) => {
     const times: number[] = [];
-    const scored = read(name).map((row) => {
+    const scored = rows.map((row) => {
       const started = performance.now();
       const score = best.model.score(row.message);
       times.push(performance.now() - started);
@@ -235,6 +240,7 @@ console.log(
         falseWork: result.falseWork.length,
       })),
       chosen: best.model.configuration,
+      trainedRows: best.model.trainedRows,
       coefficients: best.model.coefficients,
       trainingMs: best.model.trainingMs,
       suggestionThreshold,

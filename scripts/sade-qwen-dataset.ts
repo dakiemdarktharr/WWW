@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sharedSadeCorpus } from '../tests/fixtures/shared-sade-corpus.ts';
+import { finalIntentRows } from './sade-intent-final.ts';
 import {
   acceptancePairs,
   challengePairs,
@@ -120,7 +121,8 @@ const pairs = extraContext ? [...trainingPairs, ...contextPairs] : trainingPairs
 const train = contrastive ? [...corpus, ...pairRows(pairs, 'contrastive')] : corpus;
 const challenge = contrastive ? pairRows(challengePairs, 'challenge') : [];
 const acceptance = contrastive ? pairRows(acceptancePairs, 'acceptance') : [];
-const all = [...train, ...holdout, ...challenge, ...acceptance];
+const final = extraContext ? finalIntentRows : [];
+const all = [...train, ...holdout, ...challenge, ...acceptance, ...final];
 if (new Set(all.map((item) => item.message)).size !== all.length)
   throw new Error('Training and evaluation messages must be distinct.');
 await mkdir(target, { recursive: true });
@@ -129,7 +131,12 @@ const splits = [
   ['holdout', holdout],
 ] as const;
 for (const [name, data] of contrastive
-  ? [...splits, ['challenge', challenge] as const, ['acceptance', acceptance] as const]
+  ? [
+      ...splits,
+      ['challenge', challenge] as const,
+      ['acceptance', acceptance] as const,
+      ...(extraContext ? [['final', final] as const] : []),
+    ]
   : splits)
   await writeFile(
     path.join(target, `${name}.jsonl`),
@@ -141,5 +148,6 @@ console.log(
     holdout: holdout.length,
     challenge: challenge.length,
     acceptance: acceptance.length,
+    final: final.length,
   }),
 );
