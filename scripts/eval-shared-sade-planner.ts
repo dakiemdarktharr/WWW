@@ -14,6 +14,7 @@ import {
   parseSharedGroupPlan,
   sharedFinish,
   type SharedDelivery,
+  type SharedFinish,
 } from '../server/group-sade.ts';
 import { sharedGroupPlanningPrompt } from '../server/shared-sade-worker.ts';
 import { Store } from '../server/store.ts';
@@ -160,6 +161,33 @@ const quotaFallbacks = [
       'Claude của Bình để dành lần khác nhé. Hôm nay chỉ Gemini của An đọc và tóm tắt src/menu.ts thôi. Nếu Gemini hết lượt thì báo mình.',
   },
 ] as const;
+type QuotaFollowup = {
+  files: readonly [string, string];
+  secondBackup: boolean;
+};
+const quotaFollowups = [
+  {
+    id: 'quota-followup/casual',
+    scenario: 'quota-followup',
+    message:
+      'Ê nhờ Gemini của tui đọc docs/contract.md, rồi mới ngó src/signup.ts theo kết quả file đầu nha. Nếu Gemini hết lượt thì Claude của Bình đọc file đầu, Antigravity của Chi coi file sau. Chỉ đọc nghen.',
+    quotaFollowup: { files: ['docs/contract.md', 'src/signup.ts'], secondBackup: true },
+  },
+  {
+    id: 'quota-followup/unaccented',
+    scenario: 'quota-followup',
+    message:
+      'gemini cua an doc config/fields.yaml truoc, roi kiem src/profile.ts sau khi co ket qua. het luot thi claude cua binh doc file dau, antigravity cua chi kiem file sau nha. chi doc dung sua.',
+    quotaFollowup: { files: ['config/fields.yaml', 'src/profile.ts'], secondBackup: true },
+  },
+  {
+    id: 'quota-followup/pinned',
+    scenario: 'quota-followup',
+    message:
+      'Assign two dependent read-only tasks to Gemini under An. First read docs/invoice.md. Then inspect src/invoice.ts after the first result. Only the first task may fall back to Claude under Bình on provider quota. The second is exclusive to Gemini. Report it as blocked if Gemini cannot take it.',
+    quotaFollowup: { files: ['docs/invoice.md', 'src/invoice.ts'], secondBackup: false },
+  },
+] as const;
 const referenceFile = 'docs/contract.md';
 const referenceCommit = '4107e5e';
 const referencedRequests = [
@@ -199,6 +227,7 @@ type Case =
   | keyof typeof messages
   | 'full-handoff'
   | 'referenced-read'
+  | 'quota-followup'
   | (typeof ownerHandoffs)[number]['scenario']
   | (typeof intentContrasts)[number]['scenario']
   | (typeof quotaFallbacks)[number]['scenario'];
@@ -281,6 +310,7 @@ const { values, positionals } = parseArgs({
     'owner-handoff': { type: 'boolean' },
     'intent-contrasts': { type: 'boolean' },
     'quota-fallback': { type: 'boolean' },
+    'quota-followup': { type: 'boolean' },
     'referenced-requests': { type: 'boolean' },
     'handoff-holdout': { type: 'boolean' },
     'handoff-varied': { type: 'boolean' },
@@ -310,6 +340,7 @@ assert.ok(
     values['owner-handoff'],
     values['intent-contrasts'],
     values['quota-fallback'],
+    values['quota-followup'],
     values['referenced-requests'],
   ].filter(Boolean).length <= 1,
   'Choose one evaluation suite.',
@@ -374,6 +405,7 @@ async function withGroup<T>(
     ask: (summary: string) => void;
     jobs: () => SharedSadeRun;
     verifyReview: (job: SharedSadeJob) => void;
+    verifyQuotaFollowup: (plan: ReturnType<typeof parseTeamPlan>, expected: QuotaFollowup) => void;
   }) => Promise<T>,
 ) {
   const store = new Store(':memory:');
@@ -381,6 +413,7 @@ async function withGroup<T>(
   try {
     const fullHandoff = scenario === 'full-handoff';
     const quotaFallback = scenario.startsWith('quota-');
+    const quotaFollowup = scenario === 'quota-followup';
     const names =
       scenario === 'owner-relative' || scenario === 'owner-ungranted'
         ? ['Gemini', 'Gemini']
@@ -388,9 +421,11 @@ async function withGroup<T>(
           ? ['Gemini', 'Astra', 'Astra']
           : fullHandoff
             ? ['Gemini', 'Astra', 'Claude', 'Antigravity']
-            : quotaFallback
-              ? ['Gemini', 'Claude']
-              : ['Bếp', 'Mây'];
+            : quotaFollowup
+              ? ['Gemini', 'Claude', 'Antigravity']
+              : quotaFallback
+                ? ['Gemini', 'Claude']
+                : ['Bếp', 'Mây'];
     const roles = fullHandoff
       ? ['engineer', 'designer', 'engineer', 'reviewer']
       : ['engineer', 'reviewer', 'designer'];
@@ -399,9 +434,11 @@ async function withGroup<T>(
         ? ['gemini', 'gemini']
         : scenario === 'owner-named' || scenario === 'owner-ambiguous'
           ? ['gemini', 'codex', 'codex']
-          : quotaFallback
-            ? ['gemini', 'claude']
-            : ['gemini', 'codex', 'claude', 'antigravity'];
+          : quotaFollowup
+            ? ['gemini', 'claude', 'antigravity']
+            : quotaFallback
+              ? ['gemini', 'claude']
+              : ['gemini', 'codex', 'claude', 'antigravity'];
     const groups = new SharedGroups(
       store,
       (value) => people.find((person) => person.id === value) || null,
@@ -413,7 +450,7 @@ async function withGroup<T>(
         id,
         owner: people[index],
         revoked: false,
-        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+        expiresAt: new Date(Date.now() + Math.max(120_000, 2 * timeoutMs + 30_000)).toISOString(),
         tokenHash: 'fixture-private-token-hash',
       });
     call(0, { action: 'create', id: groupId, name: 'Local planner test' });
@@ -477,6 +514,8 @@ async function withGroup<T>(
     heartbeat = setInterval(() => poll(0, [delivery.id]), 10_000);
     const jobs = () =>
       (call(0, { action: 'read', groupId }) as { sadeRuns: SharedSadeRun[] }).sadeRuns[0];
+    const finishJob = (index: number, jobId: string, result: SharedFinish) =>
+      call(index, { action: 'sade-finish', jobId, result });
     return await run({
       delivery,
       finish: (plan) =>
@@ -492,6 +531,48 @@ async function withGroup<T>(
         for (let index = 1; index < names.length; index++) assert.equal(poll(index), undefined);
       },
       jobs,
+      verifyQuotaFollowup(plan, { files, secondBackup }) {
+        const run = jobs();
+        assert.equal(run.state, 'running', run.error || 'the plan should be queued');
+        assert.equal(plan.tasks.length, 2, 'one task for each file');
+        const tasks = files.map((file) => {
+          const task = plan.tasks.find(({ scope }) => scope.length === 1 && scope[0] === file);
+          assert.ok(task, `expected exact scope ${file}`);
+          assert.equal(task.kind, 'research', 'a read-only inspection is a research task');
+          assert.equal(task.preferredMemberId, grants[0], 'Gemini remains the primary');
+          return task;
+        });
+        assert.deepEqual(tasks[0].dependsOn, []);
+        assert.deepEqual(tasks[1].dependsOn, [tasks[0].key]);
+        assert.equal(tasks[0].fallbackMemberId, grants[1], 'Claude backs up only the first file');
+        assert.equal(tasks[1].fallbackMemberId, secondBackup ? grants[2] : undefined);
+        const first = poll(0);
+        assert.equal(first?.task?.key, tasks[0].key);
+        assert.equal(poll(2), undefined, 'the second task waits for its prerequisite');
+        finishJob(0, first!.id, { kind: 'provider-unavailable' });
+        const fallback = poll(1);
+        assert.equal(fallback?.task?.key, tasks[0].key);
+        const summary = 'First file was read by its authorized backup.';
+        finishJob(1, fallback!.id, { kind: 'done', summary });
+        const next = poll(2);
+        if (secondBackup) {
+          assert.equal(next?.task?.key, tasks[1].key);
+          assert.equal(next?.prerequisites[0]?.summary, summary);
+          finishJob(2, next!.id, {
+            kind: 'done',
+            summary: 'Second file was read after the first.',
+          });
+        } else {
+          assert.equal(next, undefined);
+          assert.equal(poll(1), undefined, 'the first backup cannot take the pinned task');
+          assert.match(jobs().error || '', /requested harness.*provider quota/);
+        }
+        assert.equal(jobs().state, secondBackup ? 'done' : 'blocked');
+        for (const id of grants.slice(0, 3)) {
+          const grant = store.get<{ used: number }>('sharedSadeGrant', id);
+          assert.equal(grant.used, id === grants[2] && !secondBackup ? 0 : 1);
+        }
+      },
       verifyReview(job) {
         assert.equal(poll(0)?.id, job.id, 'the implementation must be the first delivery');
         call(0, {
@@ -720,6 +801,7 @@ type PlannerCase = {
   handoff?: typeof defaultHandoff;
   reference?: string;
   reader?: 0 | 1;
+  quotaFollowup?: QuotaFollowup;
 };
 const defaultCases: PlannerCase[] = values['quota-fallback']
   ? [...quotaFallbacks]
@@ -753,7 +835,11 @@ const defaultCases: PlannerCase[] = values['quota-fallback']
                   message,
                 })),
               );
-const cases: PlannerCase[] = values['referenced-requests'] ? [...referencedRequests] : defaultCases;
+const cases: PlannerCase[] = values['referenced-requests']
+  ? [...referencedRequests]
+  : values['quota-followup']
+    ? [...quotaFollowups]
+    : defaultCases;
 const rows = [];
 const savedRows = new Map(saved?.rows.map((row) => [row.id, row]));
 const selection = values.case ? cases.filter(({ id }) => id === values.case) : cases;
@@ -823,7 +909,7 @@ if (exportPrompt) {
   process.exit(0);
 }
 
-for (const { scenario, id, message, handoff, reference, reader } of selectedCases) {
+for (const { scenario, id, message, handoff, reference, reader, quotaFollowup } of selectedCases) {
   const row = await withGroup(scenario, message, reference, async (group) => {
     const prompt = planningPrompt(group.delivery);
     assert.doesNotMatch(prompt, /fixture-private-token-hash/);
@@ -907,8 +993,13 @@ for (const { scenario, id, message, handoff, reference, reader } of selectedCase
         assert.ok(plan);
         group.finish(plan);
         run = group.jobs();
-        const writer = assess(scenario, plan, run, handoff, reader);
-        if (writer) group.verifyReview(writer);
+        if (quotaFollowup) {
+          group.verifyQuotaFollowup(plan, quotaFollowup);
+          run = group.jobs();
+        } else {
+          const writer = assess(scenario, plan, run, handoff, reader);
+          if (writer) group.verifyReview(writer);
+        }
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);

@@ -13,7 +13,7 @@ on:
         description: Sade model benchmark suite
         type: choice
         default: pilot
-        options: [pilot, corpus, contrast, planner-constraints, referenced-requests]
+        options: [pilot, corpus, contrast, planner-constraints, referenced-requests, quota-followup]
       sade_intent_prompt:
         description: Intent prompt for the full Sade corpus
         type: choice
@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.sade_suite == 'referenced-requests' && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints') && '[0,1]' || '[0,1,2,3,4]') }}
+        shard: ${{ fromJSON((inputs.sade_suite == 'referenced-requests' || inputs.sade_suite == 'quota-followup') && '[0]' || (inputs.sade_suite == 'contrast' || inputs.sade_suite == 'planner-constraints') && '[0,1]' || '[0,1,2,3,4]') }}
     env:
       OLLAMA_HOST: 127.0.0.1:11565
       OLLAMA_NO_CLOUD: 'true'
@@ -158,6 +158,9 @@ jobs:
           elif [[ "$SADE_SUITE" == referenced-requests ]]; then
             node --import tsx scripts/eval-shared-sade-planner.ts "$results/referenced-requests.json" \
               --referenced-requests --timeout-ms 120000
+          elif [[ "$SADE_SUITE" == quota-followup ]]; then
+            node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota-followup.json" \
+              --quota-followup --timeout-ms 120000
           elif [[ "$SADE_SUITE" == planner-constraints ]]; then
             if [[ "$SADE_SHARD" == 0 ]]; then
               node --import tsx scripts/eval-shared-sade-planner.ts "$results/quota.json" \
