@@ -136,6 +136,7 @@ function fixture(
     ) as {
       supportsReviewRevision?: true;
       supportsRosterLookup?: true;
+      supportsReviewedRevisionFiles?: true;
       supportsCapacityWait?: true;
       delivery?: SharedDelivery;
       active: string[];
@@ -3324,11 +3325,40 @@ test('Shared Sade balances open implementation work without consuming the only i
           summary: `Integrated ${name}.`,
         });
       }
-      const review = f.poll(0).delivery!;
+      const turnsUsed = () => f.store.get<{ used: number }>('sharedSadeGrant', f.grants[0]).used;
+      const usedBefore = turnsUsed();
+      assert.equal(f.poll(0).delivery, undefined, 'An older desktop cannot skip file validation');
+      assert.equal(turnsUsed(), usedBefore);
+      assert.match(
+        f.view().sadeRuns[0].jobs.find((job) => job.task?.key === 'review')?.summary || '',
+        /verify the files/,
+      );
+      const packet = f.call(0, {
+        action: 'sade-poll',
+        grants: [f.grants[0]],
+        active: [],
+        reviewedRevisionFiles: true,
+      }) as ReturnType<typeof f.poll>;
+      assert.equal(packet.supportsReviewedRevisionFiles, true);
+      const review = packet.delivery!;
       assert.equal(review.task?.key, 'review');
       assert.deepEqual(review.task?.scope, ['src/frontend.ts', 'src/backend.ts']);
+      assert.deepEqual(
+        review.prerequisites.map(({ revision, patch }) => [revision, patch]),
+        [
+          [sha, undefined],
+          [sha, undefined],
+          [sha, undefined],
+        ],
+      );
+      assert.deepEqual(
+        review.prerequisites.map((item) => item.publishedFiles),
+        [undefined, ['src/frontend.ts'], ['src/backend.ts']],
+      );
+      assert.doesNotMatch(JSON.stringify(f.view()), /publishedFiles/);
       f.finish(0, review.id, { kind: 'done', summary: 'Both integrated files checked.' });
       assert.equal(f.view().sadeRuns[0].state, 'done');
+      assert.doesNotMatch(JSON.stringify(f.store.all('sharedSadeRun')), /publishedFiles/);
     } finally {
       f.store.close();
     }

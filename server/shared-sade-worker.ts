@@ -101,7 +101,7 @@ function sharedGroupContext(delivery: SharedDelivery) {
         : delivery.team.map((member, index) => plannerMember(member, index, 60)),
     task: delivery.task,
     clarification: delivery.clarification,
-    prerequisites: delivery.prerequisites.map(({ patch, ...item }) => ({
+    prerequisites: delivery.prerequisites.map(({ patch, publishedFiles, ...item }) => ({
       ...item,
       summary: item.summary?.slice(0, 120),
     })),
@@ -600,10 +600,7 @@ export class SharedSadeWorker {
     taskId: string,
     checkoutRevision?: string,
   ) {
-    const patches = delivery.prerequisites.flatMap((entry) =>
-      entry.patch ? [{ ...entry, patch: entry.patch }] : [],
-    );
-    if (!patches.length && !checkoutRevision) return;
+    if (!checkoutRevision && !delivery.prerequisites.some((entry) => entry.patch)) return;
     const worktree = await createWorktree(
       project.path,
       this.host.dataDir,
@@ -613,25 +610,30 @@ export class SharedSadeWorker {
     this.host.store.updateTask(taskId, worktree);
     const inherited = new Set<string>();
     let baseCommit = worktree.baseCommit;
-    const includedPatches = new Set<(typeof patches)[number]>();
+    const verified = new Set<SharedDelivery['prerequisites'][number]>();
     const checkedFiles = new Set<string>();
     // A later reviewed prerequisite can legitimately replace an earlier version of a file.
-    for (const item of [...patches].reverse()) {
+    for (const item of [...delivery.prerequisites].reverse()) {
       this.assertCurrent(delivery.id);
-      const { change, digest } = item.patch;
+      const { patch, revision } = item;
+      if (patch) {
+        const { change, digest } = patch;
+        if (
+          !change.files.length ||
+          reviewDigest(change) !== digest ||
+          Buffer.byteLength(JSON.stringify(change)) > maxPortableDiff ||
+          change.files.some((file) => file === '.' || normalizeScope(file) !== file)
+        )
+          throw new DomainError('A prerequisite patch failed verification.');
+      }
+      const files = patch?.change.files || item.publishedFiles;
+      if (!files || !revision) continue;
       if (
-        !change.files.length ||
-        reviewDigest(change) !== digest ||
-        Buffer.byteLength(JSON.stringify(change)) > maxPortableDiff ||
-        change.files.some((file) => file === '.' || normalizeScope(file) !== file)
-      )
-        throw new DomainError('A prerequisite patch failed verification.');
-      if (
-        !item.revision ||
+        patch &&
         !(await git(worktree.worktree, [
           'merge-base',
           '--is-ancestor',
-          item.revision,
+          revision,
           worktree.baseCommit,
         ]).then(
           () => true,
@@ -639,20 +641,19 @@ export class SharedSadeWorker {
         ))
       )
         continue;
-      const paths = change.files.filter((file) => !checkedFiles.has(file));
+      const paths = files.filter((file) => !checkedFiles.has(file));
       if (
         paths.length &&
-        (await changedTreeFiles(worktree.worktree, item.revision, worktree.baseCommit, paths))
-          .length
+        (await changedTreeFiles(worktree.worktree, revision, worktree.baseCommit, paths)).length
       )
         throw new DomainError(
           `“${item.title}” changed after it was reviewed. Check the current project files before retrying.`,
         );
       paths.forEach((file) => checkedFiles.add(file));
-      includedPatches.add(item);
+      verified.add(item);
     }
-    for (const item of patches) {
-      if (includedPatches.has(item)) continue;
+    for (const item of delivery.prerequisites) {
+      if (!item.patch || verified.has(item)) continue;
       this.assertCurrent(delivery.id);
       const { change } = item.patch;
       const temp = await mkdtemp(path.join(this.host.dataDir, 'shared-patch-'));

@@ -16,7 +16,8 @@ import {
   permitsPlanAssignee,
   planTool,
 } from './workflow-plan.ts';
-import { redact, scopesOverlap } from './security.ts';
+import { normalizeScope, redact, scopesOverlap } from './security.ts';
+import { isPrivateCredentialPath } from './checkpoint.ts';
 import { DomainError, type Store } from './store.ts';
 import { reviewDigest } from './sade.ts';
 
@@ -54,14 +55,32 @@ export const sharedDiffInput = z
   .strict();
 export const maxPortableDiff = 64 * 1024;
 const revisionInput = z.string().regex(/^[a-f0-9]{40,64}$/);
+const reviewedFilePaths = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .max(500)
+      .refine((file) => {
+        try {
+          return file !== '.' && normalizeScope(file) === file && !isPrivateCredentialPath(file);
+        } catch {
+          return false;
+        }
+      }),
+  )
+  .min(1)
+  .max(100);
 export const sharedPrerequisite = z
   .object({
     title: z.string().max(140),
     summary: z.string().max(4000).optional(),
     revision: revisionInput.optional(),
     patch: z.object({ change: sharedDiffInput, digest: projectKey }).strict().optional(),
+    publishedFiles: reviewedFilePaths.optional(),
   })
-  .strict();
+  .strict()
+  .refine((entry) => !entry.publishedFiles || (!!entry.revision && !entry.patch));
 export const maxTaskUpdates = 8;
 const maxTaskUpdateLength = 1000;
 export const taskUpdateSequence = z.number().int().min(0).max(maxTaskUpdates);
@@ -147,6 +166,7 @@ export const groupSadeCommands = [
       grants: z.array(id).max(sharedSadePollGrantLimit),
       active: z.array(id).max(4),
       patchHandoff: z.literal(true).optional(),
+      reviewedRevisionFiles: z.literal(true).optional(),
       reviewRevision: z.literal(true).optional(),
       rosterLookup: z.literal(true).optional(),
       taskUpdates: z.literal(true).optional(),
@@ -182,6 +202,7 @@ type Job = SharedSadeJob & {
   reviewedDigest?: string;
   portable?: boolean;
   published?: boolean;
+  publishedFiles?: string[];
   clarification?: { question: string; answer: string };
   acceptsUpdates?: boolean;
   updates?: (z.infer<typeof sharedSadeUpdate> & { ownerId: string })[];
@@ -531,6 +552,7 @@ export class GroupSade {
               clarification,
               portable,
               published,
+              publishedFiles,
               acceptsUpdates,
               updates,
               ...job
@@ -781,6 +803,7 @@ export class GroupSade {
             jobs: run.jobs.map((job) => ({
               ...job,
               change: undefined,
+              publishedFiles: undefined,
               updates: undefined,
               reviewGrantId: undefined,
               state: job.state === 'done' ? 'done' : 'cancelled',
@@ -953,6 +976,7 @@ export class GroupSade {
     job.summary = run.error;
     for (const item of run.jobs) {
       item.change = undefined;
+      item.publishedFiles = undefined;
       item.updates = undefined;
       item.reviewGrantId = undefined;
     }
@@ -1242,6 +1266,14 @@ export class GroupSade {
           }
           continue;
         }
+        if (!command.reviewedRevisionFiles && predecessors.some((other) => other.publishedFiles)) {
+          const summary = 'Update this desktop to verify the files from a reviewed Git revision.';
+          if (job.summary !== summary) {
+            job.summary = summary;
+            touched = true;
+          }
+          continue;
+        }
         if (
           job.task &&
           run.jobs.some(
@@ -1361,6 +1393,7 @@ export class GroupSade {
             title: other.task!.title,
             summary: other.summary?.slice(0, 500),
             revision: other.revision,
+            publishedFiles: other.publishedFiles,
             ...(other.portable && !other.published && other.change && other.reviewedDigest
               ? { patch: { change: other.change, digest: other.reviewedDigest } }
               : {}),
@@ -1383,6 +1416,7 @@ export class GroupSade {
     return {
       supportsReviewRevision: true as const,
       supportsRosterLookup: true as const,
+      supportsReviewedRevisionFiles: true as const,
       supportsCapacityWait: true as const,
       active,
       delivery,
@@ -1527,6 +1561,10 @@ export class GroupSade {
         throw new DomainError('The author has not granted reviewed patch handoff.', 403);
       if (result.portable && Buffer.byteLength(JSON.stringify(result.diff)) > maxPortableDiff)
         throw new DomainError('The reviewed patch exceeds the Shared Groups handoff limit.');
+      if (hasDependents(run, job) && !reviewedFilePaths.safeParse(result.diff.files).success) {
+        this.block(run, job, 'A Git handoff needs a complete list of reviewed project files.');
+        return { accepted: true };
+      }
       let digest: string;
       try {
         digest = reviewDigest(result.diff);
@@ -1653,28 +1691,43 @@ export class GroupSade {
       if (hasNextTask) job.revision = result.revision;
       if (run.jobs.every((item) => item.state === 'done')) {
         run.state = 'done';
-        for (const item of run.jobs) item.change = undefined;
+        for (const item of run.jobs) {
+          item.change = undefined;
+          item.publishedFiles = undefined;
+        }
       }
       this.store.put('sharedSadeRun', run);
     } else {
+      const dependent = hasDependents(run, job);
       if (
         job.phase !== 'task' ||
         (writes(job.task) &&
           (!result.revision ||
             !job.reviewedDigest ||
-            (hasDependents(run, job) && !result.published && !job.portable)))
+            (dependent && !result.published && !job.portable)))
       )
         throw new DomainError(
           'A writing task needs independent review and a verified shared Git revision.',
         );
+      if (result.published && dependent && writes(job.task)) {
+        const files = reviewedFilePaths.safeParse(job.change?.files);
+        if (!files.success) {
+          this.block(run, job, 'The reviewed project files are unavailable for Git handoff.');
+          return { accepted: true };
+        }
+        job.publishedFiles = files.data;
+      }
       job.state = 'done';
       job.summary = redact(result.summary);
       job.published = result.published;
       job.revision = result.published || job.portable ? result.revision : undefined;
-      if (!job.portable || job.published || !hasDependents(run, job)) job.change = undefined;
+      if (!job.portable || job.published || !dependent) job.change = undefined;
       if (run.jobs.every((item) => item.state === 'done')) {
         run.state = 'done';
-        for (const item of run.jobs) item.change = undefined;
+        for (const item of run.jobs) {
+          item.change = undefined;
+          item.publishedFiles = undefined;
+        }
       }
       this.store.put('sharedSadeRun', run);
     }

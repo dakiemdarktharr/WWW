@@ -693,6 +693,7 @@ async function sharedSadeLoop(generation, owner) {
     !quitting && !identityTransition && identity === owner && generation === bridgeGeneration;
   let supportsReviewRevision = false;
   let supportsRosterLookup = false;
+  let supportsReviewedRevisionFiles = false;
   let supportsCapacityWait = false;
   let grantCursor;
   let revocationSync;
@@ -752,6 +753,7 @@ async function sharedSadeLoop(generation, owner) {
           patchHandoff: true,
           ...(supportsReviewRevision ? { reviewRevision: true } : {}),
           ...(supportsRosterLookup ? { rosterLookup: true } : {}),
+          ...(supportsReviewedRevisionFiles ? { reviewedRevisionFiles: true } : {}),
           taskUpdates: true,
           readUpdates: snapshot.readUpdates,
           waitingForRevisions: snapshot.waitingForRevisions,
@@ -764,6 +766,7 @@ async function sharedSadeLoop(generation, owner) {
       if (!snapshotCurrent()) continue;
       supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
       supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
+      supportsReviewedRevisionFiles = response.ok && body.supportsReviewedRevisionFiles === true;
       supportsCapacityWait = response.ok && body.supportsCapacityWait === true;
       if (response.ok) {
         await localSharedSade({

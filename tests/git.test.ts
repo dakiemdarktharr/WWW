@@ -387,8 +387,15 @@ for (const remoteChange of [
   });
 }
 
-for (const reverted of [false, true]) {
-  test(`Shared Sade ${reverted ? 'blocks a reverted reviewed prerequisite' : 'keeps a newer reviewed prerequisite for the same file'}`, async (t) => {
+for (const [handoff, reverted] of [
+  ['portable patch', false],
+  ['portable patch', true],
+  ['published revision', false],
+  ['published revision', true],
+  ['patch followed by a published revision', false],
+  ['patch followed by a published revision', true],
+] as const) {
+  test(`Shared Sade ${reverted ? 'blocks a reverted reviewed prerequisite' : 'keeps a newer reviewed prerequisite for the same file'} from a ${handoff}`, async (t) => {
     const f = await fixture(t);
     const origin = 'https://example.test/shared/prerequisite.git';
     await git(f.repo, ['remote', 'add', 'origin', origin]);
@@ -400,10 +407,15 @@ for (const reverted of [false, true]) {
       const title = content.trim();
       await git(f.repo, ['add', 'shared.txt']);
       await git(f.repo, ['commit', '-m', title]);
+      const portable =
+        handoff === 'portable patch' ||
+        (handoff === 'patch followed by a published revision' && !prerequisites.length);
       prerequisites.push({
         title,
         revision: await git(f.repo, ['rev-parse', 'HEAD']),
-        patch: { change, digest: reviewDigest(change) },
+        ...(portable
+          ? { patch: { change, digest: reviewDigest(change) } }
+          : { publishedFiles: change.files }),
       });
     }
     const lastReviewed = prerequisites.at(-1)!.revision!;
@@ -424,7 +436,12 @@ for (const reverted of [false, true]) {
     const groupId = randomUUID();
     const member = store.addMember({ name: 'Recipient', role: 'reviewer', provider: 'codex' });
     store.updateMember(member.id, { status: 'ready', account: { type: 'chatgpt' } });
-    store.put('project', { id: projectId, path: f.repo, name: 'Fixture', memberIds: [member.id] });
+    store.put('project', {
+      id: projectId,
+      path: f.repo,
+      name: 'Fixture',
+      memberIds: [member.id],
+    });
     const grant = (await workspace.sharedSade.execute({
       action: 'grant',
       id: randomUUID(),
@@ -435,7 +452,13 @@ for (const reverted of [false, true]) {
       allowWrites: false,
     })) as { id: string; projectKey: string };
     const jobId = randomUUID();
-    const sent = t.mock.method(workspace.sessions, 'send', async () => undefined);
+    const sent = t.mock.method(
+      workspace.sessions,
+      'send',
+      async (_sessionId: string, prompt: string) => {
+        assert.doesNotMatch(prompt, /publishedFiles/);
+      },
+    );
     await workspace.sharedSade.execute({
       action: 'exchange',
       active: [],

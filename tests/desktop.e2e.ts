@@ -22,6 +22,7 @@ let bridgePolls = 0;
 let bridgeRejectedInvalidMachine = false;
 let sharedPolls = 0;
 const rosterCapabilities: unknown[] = [];
+const revisionFileCapabilities: unknown[] = [];
 const sharedGrantPages: string[][] = [];
 let sharedGrantCursorSentToCloud = false;
 const reportedSharedJobs: string[] = [];
@@ -109,11 +110,18 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-poll') {
     sharedPolls++;
     rosterCapabilities.push(payload.rosterLookup);
+    revisionFileCapabilities.push(payload.reviewedRevisionFiles);
     sharedGrantPages.push(payload.grants);
     sharedGrantCursorSentToCloud ||= 'grantCursor' in payload || 'nextGrantCursor' in payload;
     if (sharedGrantPages.length === 2) response.statusCode = 503;
     response.end(
-      JSON.stringify({ active: [], reviews: [], updates: [], supportsRosterLookup: true }),
+      JSON.stringify({
+        active: [],
+        reviews: [],
+        updates: [],
+        supportsRosterLookup: true,
+        supportsReviewedRevisionFiles: true,
+      }),
     );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-revoke') {
     reportedRevocations.push({ grantId: payload.grantId, groupId: payload.groupId });
@@ -313,6 +321,8 @@ try {
     await expect.poll(() => sharedPolls, { timeout: 15000 }).toBeGreaterThan(pollsBeforeRevoke);
     assert.equal(rosterCapabilities[0], undefined);
     await expect.poll(() => rosterCapabilities.includes(true), { timeout: 15000 }).toBe(true);
+    assert.equal(revisionFileCapabilities[0], undefined);
+    assert.ok(revisionFileCapabilities.includes(true));
     await expect.poll(() => sharedGrantPages.length, { timeout: 18000 }).toBeGreaterThanOrEqual(3);
     assert.equal(sharedGrantPages[0].length, 32);
     assert.ok(!sharedGrantPages[0].includes(lastGrant));
