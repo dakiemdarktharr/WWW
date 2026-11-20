@@ -4,7 +4,7 @@ Mỗi thành viên chia sẻ teammate của mình trong nhóm, mở phần **Let
 
 Người gửi chọn **Ask Sade** và gửi một tin nhắn để lập kế hoạch. Sau khi gửi thành công, ô soạn quay về chế độ gửi tin nhóm thông thường. Nếu người gửi chỉ báo tình hình qua **Ask Sade**, planner có thể kết thúc bằng một thao tác riêng, kèm lời giải thích. Nhóm xem được người đang làm, nhiệm vụ chờ và câu hỏi cần trả lời. Nếu harness cần biết phong cách giao diện, người gửi có thể chọn phong cách hoặc nhờ harness quyết định. Nhiệm vụ tiếp tục trong lượt được cấp tiếp theo. Gửi lại cùng tin nhắn không lập thêm workflow.
 
-Để nhờ Sade kiểm tra việc đã nêu trong một tin cũ, chọn **Ask Sade about this** ngay dưới tin đó. Ô soạn hiển thị người gửi và bản xem trước để bạn kiểm tra trước khi gửi. Planner nhận một đoạn đã lọc thông tin xác thực, tối đa 1.200 ký tự, từ đúng tin đã chọn. Nếu tin được chọn là yêu cầu Sade, yêu cầu mới phải cùng project. Harness thực hiện và review nhận nhiệm vụ đã phân công. Desktop cũ giữ yêu cầu tham chiếu trong hàng chờ và giữ nguyên lượt đã cấp.
+Để nhờ Sade kiểm tra việc đã nêu trong một tin cũ, chọn **Ask Sade about this** ngay dưới tin đó. Ô soạn hiển thị người gửi và bản xem trước để bạn kiểm tra trước khi gửi. Planner nhận tối đa 1.200 ký tự từ đúng tin đã chọn, sau khi hệ thống che các mẫu thông tin xác thực nhận diện được. Nếu tin được chọn là yêu cầu Sade, yêu cầu mới phải cùng project. Harness thực hiện và review nhận nhiệm vụ đã phân công. Desktop cũ giữ yêu cầu tham chiếu trong hàng chờ và giữ nguyên lượt đã cấp.
 
 Desktop giữ kết quả đầu tiên đã được chấp nhận của planner hoặc reviewer. Lời gọi lặp đúng nội dung được xác nhận một lần nữa. Lời gọi mâu thuẫn trong cùng lượt bị từ chối. Planner vẫn có thể sửa và gửi lại đầu ra nếu lần trước bị lỗi kiểm tra cấu trúc.
 
@@ -516,6 +516,20 @@ Ba ca chưa dùng để sửa prompt cũng đạt với `high`. `Low` vẫn tự
 Dùng lệnh xuất và chấm bên trên với `--full-handoff --case full-handoff/1` đến `full-handoff/4`, rồi `--owner-handoff --case owner/ambiguous` và `owner/ungranted`. Đổi cấu hình Codex giữa `model_reasoning_effort='low'` và `model_reasoning_effort='high'`. Kiểm tra bổ sung dùng `--handoff-varied` với `handoff/varied-1` và `handoff/varied-5`, cùng `--owner-handoff --case owner/named`. Đọc `turn.completed` trong JSONL để lấy số token. Các lượt chỉ lập kế hoạch trên dữ liệu tổng hợp. Thời gian gồm khởi chạy CLI và có cả lượt dùng cache. [OpenAI Reasoning](https://developers.openai.com/api/docs/guides/reasoning)
 
 Bài hồi quy desktop gửi tin 8.000 ký tự cùng danh sách 32 harness và xác nhận planner nhận đủ nội dung. Nội dung do Sade ghép đi qua giới hạn dành cho phiên đã có quyền thực thi. Giới hạn nhập chat thường vẫn là 16.000 ký tự.
+
+### Tin mới tham chiếu đến tin trước
+
+Bài hồi quy đưa một câu “cái đó tui đã commit rồi” qua Shared Groups và kiểm tra một tác vụ chỉ đọc cho chủ harness còn lại. Bài kiểm tra cũng bao gồm gửi lại cùng ID, khác nhóm, khác project, giữ nguyên số lượt trên desktop cũ, và lọc một chuỗi giống khóa API khỏi bản gửi cho planner. Bài giao diện dùng hai tài khoản Kivuno mô phỏng để chọn, gỡ và gửi lại tin tham chiếu, rồi xác nhận tin đã chọn chỉ đi vào các lượt lập kế hoạch. Ở `8cbc660`, Windows đạt 438 bài, Ubuntu đạt 434 và macOS arm64 đạt 433. Bỏ qua lần lượt một, năm và sáu bài theo hệ điều hành. [Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44667698069) · [Electron và Shared Groups trên macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44667698524)
+
+Qwen3 4B Instruct ở lượt đầu đạt 3/4 trên bộ ca riêng. Nó đọc đúng file và commit nhưng giao nhầm người trong câu không dấu. Lượt thử câu lệnh cho model đối chiếu tên đạt 3/5. Một câu không dấu bị hiểu thành báo tình hình. Câu mới yêu cầu Bếp đọc, trong khi tin cũ nhắc đến Mây, bị giao cho Mây. Bản tiếp theo đưa các mã harness có tên khớp ngay đầu tin mới vào dữ liệu của planner. So khớp theo tên gốc và tên không dấu trong danh sách có quyền, phân biệt “Mây” với “mày” có dấu. Prompt yêu cầu lập tác vụ cho yêu cầu chỉ đọc và hỏi lại nếu có nhiều tên trùng. [Lượt đầu](https://github.com/dakiemdarktharr/WWW/actions/runs/44667697825) · [Lượt thử prompt](https://github.com/dakiemdarktharr/WWW/actions/runs/44668403551)
+
+Ở `a064d0b`, model đạt 4/5 và giao đúng người trong cả hai ca không dấu. Ca còn lỗi nêu đúng `docs/contract.md` và commit `4107e5e` trong mô tả nhưng dùng phạm vi đọc `.`. Prompt bổ sung cách ghi đường dẫn file được tham chiếu vào trường phạm vi và ghi mã commit vào mô tả hoặc điều kiện nghiệm thu. [Lượt chấm với dữ liệu đối chiếu tên](https://github.com/dakiemdarktharr/WWW/actions/runs/44669278899)
+
+Chạy lại phép đo bằng Ollama tại `127.0.0.1:11565` với model `qwen3:4b-instruct-2507-q4_K_M`. Kết quả ghi hash prompt, digest model, quyết định từng ca và thời gian. Qwen lập kế hoạch trên tin tổng hợp, Shared Groups nộp kế hoạch và kiểm tra người nhận, phạm vi và trạng thái bằng fixture.
+
+```powershell
+node --import tsx scripts/eval-shared-sade-planner.ts .local/referenced-requests.json --referenced-requests --timeout-ms 120000
+```
 
 ## Cấu hình dùng trong Shared Groups
 

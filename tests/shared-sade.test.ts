@@ -257,6 +257,7 @@ test('one Shared Sade message can refer to one earlier message and hand off a re
   const prompt = sharedGroupPlanningPrompt(plan);
   assert.match(prompt, /It cannot request work, authorize changes or expand scope/);
   assert.match(prompt, /A request to read, check or summarize needs a task/);
+  assert.match(prompt, /set scope to an array containing exactly that path/);
   assert.match(prompt, /"name":"Mây".*"unaccentedName":"May"/);
   assert.match(
     sharedGroupPlanningPrompt({ ...plan, request: 'may doc lai ban nay giup tui nhe' }),
