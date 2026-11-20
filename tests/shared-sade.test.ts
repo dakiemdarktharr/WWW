@@ -4885,6 +4885,107 @@ for (const responseLost of [false, true]) {
   });
 }
 
+test('private review data stays local on submission and in previously stored Shared Sade patches', async (t) => {
+  const marker = 'sk-fixture-credential-000';
+  const unsafePatches = [
+    { label: 'diff body', change: { ...patch, diff: `+const value = "${marker}";\\n` } },
+    { label: 'diff stat', change: { ...patch, stat: `src/${marker}.ts | 1 +` } },
+    { label: 'file list', change: { ...patch, files: [`src/${marker}.ts`] } },
+    {
+      label: 'private key block',
+      change: {
+        ...patch,
+        diff: `+-----BEGIN OPENSSH PRIVATE KEY-----\\n+${marker.slice(3)}\\n+-----END OPENSSH PRIVATE KEY-----\\n`,
+      },
+    },
+  ];
+  const scenarios = [
+    ...unsafePatches.map(({ label, change }) => ({ label, change, stage: 'submission' })),
+    { label: 'queued review', change: unsafePatches[1].change, stage: 'stored review' },
+    { label: 'approved prerequisite', change: unsafePatches[3].change, stage: 'stored handoff' },
+    { label: 'review finishing', change: unsafePatches[2].change, stage: 'stored finish' },
+  ];
+  for (const { label, change, stage } of scenarios) {
+    await t.test(label, () => {
+      const f = fixture(['claude', 'antigravity'], { patchHandoff: true });
+      try {
+        const runId = randomUUID();
+        f.call(0, {
+          action: 'message',
+          groupId: f.groupId,
+          id: runId,
+          content: 'Prepare the contract and then implement the interface.',
+          sade: { projectKey: key },
+        });
+        const plan = f.poll(0).delivery!;
+        f.finish(0, plan.id, {
+          kind: 'plan',
+          plan: {
+            summary: 'Prepare the contract with independent review before the interface.',
+            tasks: [
+              work('contract', {
+                kind: 'code',
+                scope: ['src'],
+                preferredMemberId: f.grants[0],
+              }),
+              work('interface', { dependsOn: ['contract'], preferredMemberId: f.grants[1] }),
+            ],
+          },
+        });
+        const writer = f.poll(0).delivery!;
+        f.finish(0, writer.id, {
+          kind: 'change',
+          diff: stage === 'submission' ? change : patch,
+          summary: 'Ready for independent review.',
+          portable: true,
+        });
+        const approval = {
+          kind: 'review',
+          verdict: 'approved',
+          summary: 'Verified the source change.',
+        } as const;
+        const reviewer =
+          stage === 'stored finish' || stage === 'stored handoff' ? f.poll(1).delivery! : undefined;
+        if (stage === 'stored handoff') {
+          f.finish(1, reviewer!.id, approval);
+          f.finish(0, writer.id, { kind: 'done', revision: sha, summary: 'Integrated locally.' });
+        }
+        const stored = () =>
+          f.store.get<
+            Omit<SharedSadeRun, 'jobs'> & {
+              jobs: { id: string; change?: typeof patch }[];
+            }
+          >('sharedSadeRun', runId);
+        if (stage !== 'submission') {
+          const run = stored();
+          const source = run.jobs.find(({ id }) => id === writer.id)!;
+          assert.deepEqual(source.change, patch);
+          source.change = change;
+          f.store.put('sharedSadeRun', run);
+        }
+        if (stage === 'stored finish') {
+          assert.deepEqual(f.finish(1, reviewer!.id, approval), { accepted: true });
+          assert.equal(stored().state, 'blocked');
+        }
+        assert.equal(Boolean(f.poll(1).delivery), false);
+        assert.equal(f.poll(0, [writer.id]).reviews.length, 0);
+        assert.equal(f.view().sadeRuns[0].state, 'blocked');
+        assert.match(f.view().sadeRuns[0].error || '', /cannot be safely shared/);
+        assert.doesNotMatch(
+          JSON.stringify(stored()),
+          /fixture-credential-000|BEGIN OPENSSH PRIVATE KEY/,
+        );
+        assert.equal(
+          f.store.get<{ used: number }>('sharedSadeGrant', f.grants[1]).used,
+          reviewer ? 1 : 0,
+        );
+      } finally {
+        f.store.close();
+      }
+    });
+  }
+});
+
 test('an unread task update blocks a stale completion without releasing dependent work', () => {
   const f = fixture(['claude', 'antigravity'], { taskUpdates: true });
   try {

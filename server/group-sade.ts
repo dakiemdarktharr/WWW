@@ -281,6 +281,8 @@ export const groupReadUpdatesTool = {
 } as const;
 export const needsGroupWrite = writesTask;
 const final = (run: Run) => ['done', 'blocked', 'cancelled'].includes(run.state);
+const unsafeChangeSummary =
+  'The diff cannot be safely shared for review. Inspect the change locally.';
 const unfinishedRuns = "kind='sharedSadeRun' AND json_extract(data,'$.state') IS NOT 'done'";
 function plannedReviews(run: Run, writer: Job) {
   const key = writer.task?.key;
@@ -1043,6 +1045,7 @@ export class GroupSade {
   }
   private stopInvalidJob(run: Run, authorizedGrant: (id: string) => Grant | undefined) {
     if (final(run)) return false;
+    if (this.stopUnsafeChange(run)) return true;
     const now = this.now();
     for (const job of run.jobs) {
       const needsTurn = job.state === 'queued' || job.state === 'waiting';
@@ -1059,6 +1062,18 @@ export class GroupSade {
       if (!reason) continue;
       this.block(run, job, `${reason} Work stays on its owner’s desktop.`);
       return true;
+    }
+    return false;
+  }
+  private stopUnsafeChange(run: Run) {
+    for (const job of run.jobs) {
+      if (!job.change) continue;
+      try {
+        reviewDigest(job.change);
+      } catch {
+        this.block(run, job, unsafeChangeSummary);
+        return true;
+      }
     }
     return false;
   }
@@ -1595,6 +1610,7 @@ export class GroupSade {
       (job.deadline || 0) <= this.now()
     )
       throw new DomainError('This job is no longer running. Recover locally.', 409);
+    if (this.stopUnsafeChange(run)) return { accepted: true };
     job.awaitingReceipt = undefined;
     const result = command.result;
     if (result.kind === 'provider-unavailable') {
@@ -1706,11 +1722,7 @@ export class GroupSade {
       try {
         digest = reviewDigest(result.diff);
       } catch {
-        this.block(
-          run,
-          job,
-          'The diff cannot be safely shared for review. Inspect the change locally.',
-        );
+        this.block(run, job, unsafeChangeSummary);
         return { accepted: true };
       }
       if (job.state === 'reviewing') {

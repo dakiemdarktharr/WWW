@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 
 const exec = promisify(execFile);
+export const privateKeyHeader = /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/;
 export const secret = () => randomBytes(32).toString('hex');
 export function safeEqual(a: string, b: string) {
   const aa = Buffer.from(a),

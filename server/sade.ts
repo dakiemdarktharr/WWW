@@ -4,7 +4,7 @@ import { isExternalMember } from '../shared/providers.ts';
 import { groupMembers } from './groups.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 import { DomainError } from './store.ts';
-import { redact } from './security.ts';
+import { privateKeyHeader, redact } from './security.ts';
 import type { Workspace } from './service.ts';
 
 export interface SadeReview {
@@ -31,7 +31,11 @@ export function reviewDigest(diff: TaskDiff) {
     );
   if (diff.files.some(isPrivateCredentialPath))
     throw new DomainError('Remove private credential files before sharing this change for review.');
-  if (redact(diff.diff) !== diff.diff)
+  if (
+    [diff.diff, diff.stat, ...diff.files].some(
+      (text) => privateKeyHeader.test(text) || redact(text) !== text,
+    )
+  )
     throw new DomainError(
       'The diff contains private or masked content. Inspect it locally before sharing it for review.',
     );

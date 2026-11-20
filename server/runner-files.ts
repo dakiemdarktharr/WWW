@@ -2,7 +2,7 @@ import path from 'node:path';
 import { lstat, readFile, chmod, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { git } from './git.ts';
-import { inside, normalizeScope, scopesOverlap } from './security.ts';
+import { inside, normalizeScope, privateKeyHeader, scopesOverlap } from './security.ts';
 import { DomainError } from './store.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
 
@@ -24,11 +24,8 @@ export const machinePacketBytes = 16 * 1024 * 1024;
 export const machineSnapshotProtocol = 'snapshot-chunks/1';
 const digest = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 function checkCredentials(data: Buffer) {
-  if (
-    /\b(?:sk-|gh[opusr]_)[A-Za-z0-9_-]{10,}|-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/.test(
-      data.toString(),
-    )
-  )
+  const text = data.toString();
+  if (/\b(?:sk-|gh[opusr]_)[A-Za-z0-9_-]{10,}/.test(text) || privateKeyHeader.test(text))
     throw new DomainError(
       'Repository snapshot may contain credentials. Remove secrets before remote execution.',
     );
