@@ -8,7 +8,7 @@ on:
         description: Verification platform
         type: choice
         default: desktop
-        options: [desktop, macos, paired-macos, sade-eval]
+        options: [desktop, macos, paired-macos, paired-files, sade-eval]
       sade_suite:
         description: Sade model benchmark suite
         type: choice
@@ -92,6 +92,92 @@ jobs:
           node --import tsx --input-type=module -e
           "import { runCrossHostMac } from './tests/fixtures/shared-sade-cross-host.ts';
           await runCrossHostMac(process.env.KIVUNO_CROSS_HOST_ORIGIN)"
+  paired_source:
+    if: inputs.platform == 'paired-files'
+    runs-on: windows-latest
+    timeout-minutes: 8
+    outputs:
+      snapshot: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Prepare the scoped Windows snapshot
+        run: node --import tsx scripts/verify-shared-sade-paired-files.ts prepare "$env:RUNNER_TEMP/paired-files"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: paired-source-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paired-files/windows-source.json
+          if-no-files-found: error
+          retention-days: 7
+  paired_target:
+    needs: paired_source
+    runs-on: macos-latest
+    timeout-minutes: 8
+    outputs:
+      results: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.paired_source.outputs.snapshot }}
+          path: ${{ runner.temp }}/paired-files
+      - name: Reproduce and verify the fix on macOS
+        env:
+          OPENAI_API_KEY: test-sentinel-not-a-credential
+        run: node --import tsx scripts/verify-shared-sade-paired-files.ts macos "$RUNNER_TEMP/paired-files"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: paired-results-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paired-files/macos-results.json
+          if-no-files-found: error
+          retention-days: 7
+  paired_verify:
+    needs: [paired_source, paired_target]
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.paired_source.outputs.snapshot }},${{ needs.paired_target.outputs.results }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/paired-files
+      - name: Verify the signed result after the scoped pull on Windows
+        run: node --import tsx scripts/verify-shared-sade-paired-files.ts verify "$env:RUNNER_TEMP/paired-files"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: paired-verification-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paired-files/windows-verification.json
+          if-no-files-found: error
+          retention-days: 7
   sade-eval:
     if: inputs.platform == 'sade-eval' && !github.event.repository.private
     runs-on: ubuntu-24.04

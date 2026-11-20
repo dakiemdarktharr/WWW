@@ -30,6 +30,11 @@ import { generateKeyPairSync } from 'node:crypto';
 import { signMachineResult } from '../server/machine-signature.ts';
 import { MachineExecutor } from '../server/machine-execution.ts';
 import { startCrossHostBridge } from './fixtures/shared-sade-cross-host.ts';
+import {
+  pathProgram,
+  portablePathProgram,
+  smokeProgram,
+} from './fixtures/shared-sade-path-check.ts';
 
 const key = 'a'.repeat(64);
 const sha = 'b'.repeat(40);
@@ -657,16 +662,6 @@ test('1,000 distinct Shared Groups messages pass the admission and routing contr
 });
 
 const crossHostOrigin = process.env.KIVUNO_CROSS_HOST_ORIGIN;
-const pathProgram = 'module.exports = (value) => value.split(require("node:path").sep).at(-1);\n';
-const portablePathProgram = 'module.exports = (value) => value.split(/[\\\\/]/).at(-1);\n';
-const smokeProgram = String.raw`
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-assert.equal(fs.existsSync('.env.local'), process.platform === 'win32');
-if (process.platform === 'darwin') assert.equal(process.env.OPENAI_API_KEY, undefined);
-assert.equal(require('./path-label.cjs')('C:\\kivuno\\registration'), 'registration');
-console.log(process.platform);
-`;
 
 class DesktopPeer extends CodexClient {
   quotaUsedPercent = 10;
