@@ -53,6 +53,11 @@ const accountProfiles = new Map<string, Map<string, FixtureProfile>>();
 let profileReservations = 0;
 let profileCommits = 0;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
+const previewIds = { groupId: randomUUID(), runId: randomUUID(), fileId: 'd'.repeat(64) };
+const previewFixture = Buffer.from(
+  '<main><h1>Project preview fixture</h1><button id="change">Change value</button><output id="value">10</output></main>' +
+    '<script>document.getElementById("change").onclick=()=>document.getElementById("value").textContent="20"</script>',
+);
 const fixture = createServer(async (request, response) => {
   let input = '';
   for await (const chunk of request) input += chunk;
@@ -108,6 +113,20 @@ const fixture = createServer(async (request, response) => {
     );
     if (payload.responses.some((item: { status: number }) => item.status === 401))
       bridgeRejectedInvalidMachine = true;
+  } else if (request.url === '/api/desktop/sade-project-file') {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    assert.deepEqual(payload, { action: 'download', ...previewIds, part: 0 });
+    response.end(
+      JSON.stringify({
+        data: previewFixture.toString('base64'),
+        file: {
+          id: previewIds.fileId,
+          path: 'deliverables/index.html',
+          bytes: previewFixture.length,
+          sha256: createHash('sha256').update(previewFixture).digest('hex'),
+        },
+      }),
+    );
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-finish') {
     reportedSharedJobs.push(payload.jobId);
     if (reportedSharedJobs.length === 1) await firstSharedFinish;
@@ -289,6 +308,16 @@ try {
   const publicStatus = await page.evaluate(() => (window as any).relayDesktop.getStatus());
   assert.equal(publicStatus.owner.id, 'desktop-test-owner');
   assert.equal(JSON.stringify(publicStatus).includes(accessToken), false);
+  const opened = desktop.waitForEvent('window');
+  await page.evaluate((values) => window.relayDesktop!.projectPreview(values), previewIds);
+  const projectPreview = await opened;
+  await expect(
+    projectPreview.getByRole('heading', { name: 'Project preview fixture' }),
+  ).toBeVisible();
+  await projectPreview.getByRole('button', { name: 'Change value' }).click();
+  await expect(projectPreview.locator('output')).toHaveText('20');
+  assert.equal(await projectPreview.evaluate(() => typeof window.relayDesktop), 'undefined');
+  await projectPreview.close();
   const encrypted = await readFile(path.join(directory, 'desktop-session.bin'));
   assert.equal(encrypted.includes(Buffer.from(accessToken)), false);
   await expect.poll(() => bridgePolls, { timeout: 15000 }).toBeGreaterThan(1);

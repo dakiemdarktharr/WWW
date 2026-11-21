@@ -22,6 +22,7 @@ import {
 } from './shared-sade-cloud-route.ts';
 import { sharedSadeCompiledHandoff } from './shared-sade-compiled-handoff.ts';
 import { sharedSadeExplicitHandoffReview } from './shared-sade-handoff-assignment.ts';
+import { sadeHoldOpening } from './shared-sade-project.ts';
 import { sharedSadeEvidencePlanChoices } from './shared-sade-responses-plan.ts';
 import { parseTeamPlan } from './workflow-plan.ts';
 
@@ -39,6 +40,7 @@ type Member = SharedDelivery['team'][number];
 type Expected = {
   decision: 'plan' | 'no-work' | 'question';
   result: SharedSadeCloudResult;
+  locallyVerified?: true;
 };
 type Route = {
   kind: PlanTask['kind'];
@@ -123,6 +125,9 @@ const statusOnlyClause =
 const sharingStatus =
   /(?:^|[.!?;,:])\s*(?:(?:toi|minh|tui|tin nay) )?chi (?:bao|thong bao|cap nhat) (?:voi )?(?:nhom|ca nhom|team|moi nguoi)(?: [^.!?;]{0,50})? de (?:biet|nam(?: tinh hinh)?)(?: thoi)?[.! ]*$/u;
 const contradictory = /\b(?:nhung|tuy nhien|however|but|actually|sau do|then|dong thoi|also)\b/;
+// Keep accents here so an English conjunction such as “but” cannot match “bút”.
+const holdPivot =
+  /(?<![\p{L}\p{M}\p{N}_])(?:nhưng|nhung|tuy nhiên|tuy nhien|however|but|actually|sau đó|sau do|then|đồng thời|dong thoi|also)(?![\p{L}\p{M}\p{N}_])/iu;
 const affirmativeWork =
   /\b(?:hay|please|can you|could you|help me|nho|giao|cho) (?:[\p{L}\p{N}_.’-]+ ){0,7}(?:doc|xem|coi|tra|doi chieu|ra soat|xac minh|sua|viet|xoa|tao|chay|kiem tra|cap nhat|read|inspect|check|summarize|review|edit|write|delete|create|run|assign|verify|update)\b/u;
 const statusOpening =
@@ -139,6 +144,12 @@ const explicitNoAssignment =
   /\b(?:khoi|dung|khong can|chua can) (?:(?:mo|tao|lap|giao|phan cong) (?:viec|task|nhiem vu)(?: moi)?|giao them viec)\b|\b(?:do not|don't|no need to) (?:create|open|assign) (?:a |any )?(?:new )?(?:task|assignment)\b|\bno (?:current|active) (?:task|assignment)\b/;
 const deferProposal =
   /^\s*(?:(?:please|kindly) )?(?:defer|postpone|shelve|pause|cancel|hold off on) (?:the )?(?:(?:currently|previously) )?(?:(?:proposed|planned|pending|earlier) )?(?:edit|change|assignment|task)\b/;
+const currentAction =
+  /^\s*(?:(?:va|and)\s+)?(?:ask|read|review|build|edit|assign|doc|kiem tra|lam|sua|giao)\b/;
+const limitedCopyEdit =
+  /^(?:(?:@?sade[, :]+)?(?:please )?(?:(?:only|just) (?:change|edit|update|replace)|(?:change|edit|update|replace) only) (?:the )?|(?:@?sade[, :]+)?(?:chỉ|chi) (?:đổi|doi|sửa|sua|thay) )(?<label>heading|title|label|caption|tooltip|tiêu đề|tieu de|nhãn|nhan|chú thích|chu thich) (?:in|of|trong) `?(?<file>[\p{L}\p{N}_.-]+(?:\/[\p{L}\p{N}_.-]+)*\.[\p{L}\p{N}_-]+)`?(?<tail>.*)$/iu;
+const untouchedCopy =
+  /^(?:[.!]\s*)?(?:(?:leave (?:everything else|the rest)(?: of [^.?!]{1,75})? (?:unchanged|as is|alone|for the existing owner)|the rest(?: of [^.?!]{1,75})? stays unchanged|no other changes|giu nguyen (?:phan|cac phan) con lai)[.!]?)?$/iu;
 const providerAliases: Readonly<Record<string, string>> = {
   chatgpt: 'codex',
   codex: 'codex',
@@ -180,8 +191,11 @@ function membersFor(actor: string, team: readonly Member[]) {
   const { harness = actor, owner } =
     actorQualifier.exec(actor)?.groups ?? relativeActor.exec(actor)?.groups ?? {};
   const qualifier = owner && folded(owner);
+  const namesOwner =
+    owner && team.some(({ owner: name }) => name.normalize('NFC') === owner.normalize('NFC'));
   const inOwnership = team.filter((member) => {
     if (!qualifier) return true;
+    if (namesOwner) return matchesName(owner, member.owner);
     if (['toi', 'tui', 'minh', 'my'].includes(qualifier)) return member.ownedByRequester;
     if (['ong', 'ban', 'your'].includes(qualifier)) return !member.ownedByRequester;
     return matchesName(owner, member.owner);
@@ -295,6 +309,47 @@ function scopedTask(key: string, route: Route, dependsOn: string[] = [], index?:
     fallbackMemberId: typeof backup === 'string' ? backup : backup?.id,
     ...(backup ? { fallbackOnProviderQuota: true } : {}),
     requiredPlatform: platform,
+  };
+}
+
+function verifiedScopedCopy(delivery: SharedDelivery, request: string): Expected | undefined {
+  if (delivery.referencedMessage) return;
+  const match = limitedCopyEdit.exec(request)?.groups;
+  if (!match || filesIn(match.file)[0] !== match.file) return;
+  const tail = match.tail.trim();
+  const replacement = /^(?:to|with|thành|thanh)\s+["“]([^"”\r\n]{1,160})["”]([\s\S]*)$/iu.exec(
+    tail,
+  );
+  const ending = folded(replacement?.[2] ?? tail).trim();
+  if (
+    !untouchedCopy.test(ending) ||
+    contradictory.test(ending) ||
+    forbiddenAutomatic.test(ending) ||
+    extraAction.test(ending)
+  )
+    return;
+  const ask = (summary: string): Expected => ({ ...question(summary), locallyVerified: true });
+  const answer = delivery.clarification?.answer.trim();
+  const clarified =
+    answer && /^(?:(?:use|to|dùng|thành)\s+)?["“]([^"”\r\n]{1,160})["”][.!]?$/iu.exec(answer)?.[1];
+  const copy = replacement?.[1] || clarified;
+  if (!copy) {
+    const summary = `Bạn muốn đổi ${match.label} trong ${match.file} thành nội dung gì? Hãy đặt nội dung mới trong dấu ngoặc kép.`;
+    return answer
+      ? { decision: 'question', result: { kind: 'blocked', summary }, locallyVerified: true }
+      : ask(summary);
+  }
+  if (!delivery.team.some(({ allowWrites }) => allowWrites))
+    return ask(`Ai đã cấp quyền sửa ${match.file} cho dự án này?`);
+  return {
+    ...plan('Đã giao thay đổi nội dung trong phạm vi một tệp.', [
+      scopedTask('task', {
+        kind: 'code',
+        file: match.file,
+        brief: `Đổi đúng ${match.label} thành ${JSON.stringify(redact(copy))}. Giữ nguyên các nội dung và tệp còn lại. Nếu có nhiều mục khớp, hỏi người gửi trước khi sửa.`,
+      }),
+    ]),
+    locallyVerified: true,
   };
 }
 
@@ -765,6 +820,29 @@ function expectedDecision(delivery: SharedDelivery): Expected {
   }
   const compoundPlan = compound();
   if (compoundPlan?.kind === 'plan') return { decision: 'plan', result: compoundPlan };
+  const visible = activeRequestText(request);
+  const hold = sadeHoldOpening(visible);
+  if (
+    !delivery.clarification &&
+    hold &&
+    !request.includes('?') &&
+    !holdPivot.test(request.replace(quotePair, ' ').replace(pathToken, ' ')) &&
+    !visible
+      .slice(hold.length)
+      .split(/[.!;,\n]+/u)
+      .slice(1)
+      .some((clause) => affirmativeWork.test(clause) || currentAction.test(clause))
+  )
+    return {
+      decision: 'no-work',
+      result: {
+        kind: 'plan',
+        plan: { summary: 'Đã ghi nhận yêu cầu tạm hoãn. Việc này chưa được giao.', tasks: [] },
+      },
+      locallyVerified: true,
+    };
+  const copy = verifiedScopedCopy(delivery, request);
+  if (copy) return copy;
   if (isUpdate(request)) return acknowledgedUpdate();
   const resolvedRevision = existingRevision(request, earlier, team);
   if (resolvedRevision) return resolvedRevision;
@@ -811,6 +889,7 @@ export async function planSharedSadeCloud(
   if (delivery.phase !== 'plan')
     return { kind: 'blocked', summary: 'Sade Cloud chỉ nhận tác vụ lập kế hoạch.' };
   const grounded = expectedDecision(delivery);
+  if (grounded.locallyVerified) return grounded.result;
   const status = grounded.decision === 'no-work' ? activeRequestText(delivery.request) : '';
   const reportingLimit =
     statusOnlyClause.test(status) &&

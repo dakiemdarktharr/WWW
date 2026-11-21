@@ -186,6 +186,13 @@
 .shared-group-compose-controls input {
   width: auto;
 }
+.shared-group-catalogue {
+  min-width: 0;
+}
+.shared-group-catalogue input[type='file'] {
+  min-width: 0;
+  max-width: 100%;
+}
 @media (max-width: 850px) {
   .shared-groups {
     grid-template-columns: 1fr;
@@ -199,5 +206,168 @@
   }
   .locked-group-row {
     align-items: flex-start;
+  }
+}
+
+.shared-groups-with-project {
+  grid-template-columns: minmax(145px, 200px) minmax(0, 1fr) minmax(240px, 340px);
+}
+
+.shared-groups-with-project .shared-group-room {
+  overflow-wrap: anywhere;
+}
+
+.shared-groups-with-project .shared-group-members {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shared-groups-with-project .shared-group-members :is(input, select),
+.shared-groups-with-project .shared-group-compose-controls {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.shared-groups-with-project
+  :is(
+    .shared-group-room header,
+    .shared-group-actions,
+    .shared-group-members form,
+    .shared-group-compose
+  ) {
+  flex-wrap: wrap;
+}
+
+.shared-groups-with-project .shared-group-compose textarea {
+  min-width: min(100%, 180px);
+}
+
+.sade-project-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  padding: 18px;
+  border-left: 1px solid var(--line-soft);
+  overflow-wrap: anywhere;
+}
+
+.sade-project-sidebar h3,
+.sade-project-sidebar h4 {
+  margin: 0 0 8px;
+}
+
+.sade-project-sidebar p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+
+.sade-project-sidebar small,
+.sade-project-sidebar time {
+  color: var(--muted);
+}
+
+.sade-project-roadmap,
+.sade-project-messages,
+.sade-project-session-events,
+.sade-project-files {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sade-project-session-button {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.sade-project-session-button[aria-pressed='true'] {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.sade-project-messages,
+.sade-project-session-events {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.sade-project-messages li,
+.sade-project-session-events li,
+.sade-project-files li {
+  border-top: 1px solid var(--line-soft);
+  padding: 6px 0;
+}
+
+.sade-project-files li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sade-project-preview {
+  position: fixed;
+  inset: 4vh 3vw;
+  z-index: 30;
+  width: min(920px, 94vw);
+  height: min(840px, 92vh);
+  margin: auto;
+  padding: 14px;
+  color: var(--text);
+  background: var(--panel, #232825);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.sade-project-preview header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.sade-project-preview iframe {
+  display: block;
+  width: 100%;
+  height: calc(100% - 42px);
+  margin: 0 auto;
+  border: 0;
+  background: #fff;
+}
+
+.sade-project-preview iframe.mobile {
+  max-width: 390px;
+}
+
+@media (max-width: 1050px) {
+  .shared-groups-with-project {
+    grid-template-columns: minmax(135px, 200px) minmax(0, 1fr);
+  }
+
+  .sade-project-sidebar {
+    grid-column: 2;
+    border-left: 0;
+    border-top: 1px solid var(--line-soft);
+  }
+}
+
+@media (max-width: 660px) {
+  .shared-groups-with-project {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sade-project-sidebar {
+    grid-column: 1;
   }
 }

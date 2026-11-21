@@ -204,7 +204,7 @@ export class SessionManager {
       this.notifying.delete(projectId);
     }
   }
-  async signalSharedUpdate(id: string, jobId: string) {
+  async signalSharedUpdate(id: string, jobId: string, projectMessage = false) {
     const active = this.active.get(id);
     if (!active || active.finished || active.stopping || !active.threadId || !active.turnId)
       return false;
@@ -218,7 +218,9 @@ export class SessionManager {
           threadId: active.threadId,
           expectedTurnId: active.turnId,
           input: input(
-            'A Shared Groups task update is waiting. Call relay_read_shared_updates before continuing in your current granted scope.',
+            projectMessage
+              ? 'A project message is waiting for your task. Call relay_project_status for the latest roadmap and messages. Continue within your granted scope.'
+              : 'A Shared Groups task update is waiting. Call relay_read_shared_updates before continuing in your current granted scope.',
           ),
         })
         .catch(() => {});
@@ -883,8 +885,15 @@ export class SessionManager {
           'command',
           `${item.command || ''}\n${item.aggregatedOutput || ''}\n${item.status || ''}`,
         );
-      else if (item?.type === 'fileChange')
-        this.event(id, 'files', (item.changes || []).map((change: any) => change.path).join('\n'));
+      else if (item?.type === 'fileChange') {
+        const paths = (item.changes || []).flatMap((change: { path?: unknown }) =>
+          typeof change.path === 'string' ? [change.path] : [],
+        );
+        this.event(id, 'files', paths.join('\n'));
+        const task = this.host.store.get<Task>('task', session.taskId);
+        if (task.sharedSadeJobId)
+          this.host.sharedSade.observeProjectWrites(task.sharedSadeJobId, task, paths);
+      }
     } else if (method === 'error')
       this.event(id, 'error', params?.error?.message || 'Codex reported an error.');
     else if (method === 'turn/completed')
@@ -1027,6 +1036,12 @@ export class SessionManager {
           if (active.finished || active.stopping || this.host.closing)
             throw new DomainError('Session stopped.');
         };
+        if (sharedJob && params.tool === 'workspace_write_file')
+          this.host.sharedSade.assertProjectWrite(
+            sharedJob,
+            this.host.store.get<Task>('task', session.taskId),
+            args.path,
+          );
         if (sharedJob && params.tool === 'relay_find_shared_teammates') {
           result = this.host.sharedSade.findTeammates(sharedJob, args);
         } else if (sharedJob && params.tool === 'relay_read_shared_git') {
@@ -1068,6 +1083,14 @@ export class SessionManager {
             if (client.provider !== 'codex')
               this.host.quota.assertCanRun(session.memberId, session.projectId, id);
           });
+        } else if (sharedJob && params.tool?.startsWith('relay_project_')) {
+          result = await this.host.sharedSade.projectTool(
+            sharedJob,
+            session,
+            params.tool,
+            args,
+            assertActiveSession,
+          );
         } else if (sharedJob && params.tool === 'relay_ask_shared_requester') {
           result = this.host.sharedSade.ask(sharedJob, args);
         } else if (sharedJob && params.tool?.startsWith('machine_')) {

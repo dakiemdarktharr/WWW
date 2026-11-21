@@ -260,6 +260,7 @@ export function allocatePlan(
     supports?: (memberId: string, task: PlanTask) => boolean;
     turns?: ReadonlyMap<string, number>;
     ownerByMember?: ReadonlyMap<string, string>;
+    preferParallelTasks?: boolean;
   } = {},
 ): { key: string; memberId: string }[] {
   if (!members.length) throw new DomainError('A workflow needs at least one teammate.', 400);
@@ -269,6 +270,33 @@ export function allocatePlan(
   const assignments = new Map<string, string>();
   const tasksByKey = new Map(plan.tasks.map((task) => [task.key, task]));
   const remaining = options.turns && new Map(options.turns);
+  const parallelPeers = new Map<string, Set<string>>();
+  if (options.preferParallelTasks) {
+    const prerequisites = new Map(
+      plan.tasks.map((task) => [
+        task.key,
+        new Set(
+          collectPrerequisites(task.dependsOn, tasksByKey, (prior) => prior.dependsOn).map(
+            ({ key }) => key,
+          ),
+        ),
+      ]),
+    );
+    for (const { key } of plan.tasks)
+      parallelPeers.set(
+        key,
+        new Set(
+          plan.tasks
+            .filter(
+              (peer) =>
+                peer.key !== key &&
+                !prerequisites.get(key)!.has(peer.key) &&
+                !prerequisites.get(peer.key)!.has(key),
+            )
+            .map((peer) => peer.key),
+        ),
+      );
+  }
   const requested = new Map<string, number>();
   if (remaining)
     for (const task of plan.tasks) {
@@ -341,6 +369,11 @@ export function allocatePlan(
     const { task } = item;
     const eligible = candidates(item);
     if (eligible instanceof DomainError) return eligible;
+    const concurrent = new Map<string, number>();
+    for (const peer of parallelPeers.get(task.key) || []) {
+      const member = assignments.get(peer);
+      if (member) concurrent.set(member, (concurrent.get(member) || 0) + 1);
+    }
     const role = (a: Pick<Member, 'role'>, b: Pick<Member, 'role'>) =>
       Number(b.role === roleForKind[task.kind]) - Number(a.role === roleForKind[task.kind]);
     eligible.sort(
@@ -349,6 +382,7 @@ export function allocatePlan(
         (options.available
           ? Number(options.available.has(b.id)) - Number(options.available.has(a.id))
           : 0) ||
+        (concurrent.get(a.id) || 0) - (concurrent.get(b.id) || 0) ||
         (options.preferSpecialists ? role(a, b) : 0) ||
         load.get(a.id)! - load.get(b.id)! ||
         role(a, b) ||

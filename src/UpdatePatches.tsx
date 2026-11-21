@@ -13,6 +13,14 @@ const patches = [
         vi: 'Khi có phiên bản mới, bấm Cập nhật trên thanh tiêu đề để tải, kiểm tra và cài bản mới. Kivuno mở lại sau khi cài.',
         en: 'When a new version is available, select Update in the title bar to download, verify and install it. Kivuno reopens after installation.',
       },
+      {
+        vi: 'Trên Windows và Linux, Sade lập kế hoạch, điều phối và kiểm tra đầu ra cho bài nghiên cứu kèm slide, trang bán hàng và dashboard. Groups hiển thị tiến độ và các phiên làm việc đã cấp quyền.',
+        en: 'On Windows and Linux, Sade plans, coordinates, and reviews research papers with slides, storefronts, and dashboards. Groups shows progress and sessions shared with permission.',
+      },
+      {
+        vi: 'Sade xác nhận lệnh hoãn rõ ràng và xử lý yêu cầu đổi chữ trong một tệp ngay tại Kivuno. Nếu thiếu nội dung mới, Sade hỏi trước khi giao việc.',
+        en: 'Sade handles clear holds and one-file copy edits directly in Kivuno. If the new wording is missing, Sade asks before dispatching work.',
+      },
     ],
   },
   {

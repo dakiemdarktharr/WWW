@@ -451,6 +451,75 @@ try {
     peerProgress.getByRole('listitem').filter({ hasText: /^Check the current plan\s+·/ }),
   ).toContainText('The assigned desktop lost contact');
 
+  const projectGrant = randomUUID();
+  dispatch({
+    action: 'sade-grant',
+    groupId: group.id,
+    id: projectGrant,
+    teammateId: group.teammates.find((member) => member.ownerId === users[0].id)!.localId,
+    projectKey,
+    projectName: 'Group demo',
+    role: 'researcher',
+    platform: 'win32',
+    allowWrites: true,
+    turns: 6,
+    projectOrchestration: true,
+  });
+  await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(a.page.getByLabel('Ask Sade in this group').locator('option')).toHaveCount(2);
+  await a.page
+    .getByLabel('Message group', { exact: true })
+    .fill(
+      '@Sade dựng giúp tôi một website bán hàng cho nhãn tất vải tre, ưu tiên khách mua theo bộ.',
+    );
+  await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+  const projectSidebar = a.page.getByRole('complementary', { name: 'Sade project sidebar' });
+  await expect(projectSidebar.getByRole('region', { name: 'Project roadmap' })).toContainText(
+    'Research the brief',
+  );
+  const pollProject = (active: string[], projectReports?: object[]) =>
+    dispatch({
+      action: 'sade-poll',
+      active,
+      grants: [projectGrant],
+      projectOrchestration: true,
+      projectReports,
+    }) as { delivery?: SharedDelivery };
+  const research = pollProject([]).delivery!;
+  assert.ok(research.project);
+  pollProject(
+    [research.id],
+    [
+      {
+        jobId: research.id,
+        sessionId: randomUUID(),
+        status: 'running',
+        activity: [
+          {
+            id: randomUUID(),
+            role: 'assistant',
+            text: 'Catalogue review is in progress.',
+            at: new Date().toISOString(),
+          },
+        ],
+        notes: [
+          { id: randomUUID(), kind: 'progress', text: 'Checking the multipack descriptions.' },
+        ],
+      },
+    ],
+  );
+  await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const peerSidebar = b.page.getByRole('complementary', { name: 'Sade project sidebar' });
+  await expect(peerSidebar).toContainText('Checking the multipack descriptions.');
+  await peerSidebar.getByRole('button', { name: /Research the brief/ }).click();
+  await expect(peerSidebar.getByRole('region', { name: 'Harness session' })).toContainText(
+    'Catalogue review is in progress.',
+  );
+  await peerSidebar.getByRole('button', { name: 'Ask for project status' }).click();
+  await expect(peerSidebar.getByRole('region', { name: 'Project messages' })).toContainText(
+    '0/1 tasks complete.',
+  );
+
   await a.page.getByRole('button', { name: 'Members', exact: true }).click();
   await a.page.getByRole('button', { name: 'Remove Bob', exact: true }).click();
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));

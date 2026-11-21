@@ -219,7 +219,7 @@ try {
   await expect(titleStage).toHaveCSS('outline-style', 'none');
   await expect(
     page.locator(
-      '.kp-puffy-reset, .kp-puffy-hint, .kp-hero-meta, .kp-hero-caption, .kp-feature-copy > p',
+      '.kp-puffy-reset, .kp-puffy-hint, .kp-hero-meta, .kp-hero-caption, .kp-feature:not(.sade) .kp-feature-copy > p',
     ),
   ).toHaveCount(0);
   await page.mouse.move(titleBox.x + titleBox.width * 0.29, titleBox.y + titleBox.height * 0.22);
@@ -361,9 +361,25 @@ try {
     );
   }
   await page.locator('.kp-features').scrollIntoViewIfNeeded();
+  const sadeFeature = page.locator('#sade');
+  await expect(page.getByRole('link', { name: 'Cách Sade điều phối' })).toHaveAttribute(
+    'href',
+    '#sade',
+  );
+  await expect(
+    sadeFeature.getByRole('list', { name: 'Các bước Sade điều phối' }).getByRole('listitem'),
+  ).toHaveCount(3);
+  const sadeDownload = sadeFeature.getByRole('button', { name: 'Tải Kivuno để dùng Sade' });
+  await sadeDownload.click();
+  await expect(page.getByRole('dialog', { name: 'Tải Kivuno' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sadeDownload).toBeFocused();
   await page.screenshot({ path: '.local/kivuno-features-desktop.png' });
   await menu.getByRole('button', { name: 'Switch to English' }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(
+    sadeFeature.getByRole('heading', { name: 'Coordinate projects with Sade' }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Read all messages' })).toHaveCount(0);
   await expect(page.getByText('Scroll to follow', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Divide the work', exact: true })).toHaveCount(1);

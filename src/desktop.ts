@@ -91,6 +91,18 @@ declare global {
       }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
+      projectDeliverable(input: {
+        groupId: string;
+        runId: string;
+        fileId: string;
+      }): Promise<string>;
+      projectCatalogue(input: {
+        groupId: string;
+        runId: string;
+        projectKey: string;
+        data: string;
+      }): Promise<void>;
+      projectPreview(input: { groupId: string; runId: string; fileId: string }): Promise<void>;
       profiles<T>(input: DesktopProfileCommand): Promise<T>;
       signOut(): Promise<void>;
       openExternal(url: string): Promise<void>;

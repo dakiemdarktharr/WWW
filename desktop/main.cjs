@@ -37,6 +37,10 @@ const { workspaceDirectory } = require('./workspaces.cjs');
 const { downloadUpdate } = require('./release-download.cjs');
 const { verifyPortableInstall } = require('./portable-install.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
+const sadeProjectFileRoute = '/api/desktop/sade-project-file';
+const sadeProjectChunkBytes = 512 * 1024;
+const projectUid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+const projectDigest = /^[a-f0-9]{64}$/;
 const {
   desktopUpdate,
   cloudOrigin,
@@ -155,6 +159,58 @@ async function cloudRequest(route, body, token, timeoutMs = 25000, cancel) {
     throw new Error('The Kivuno website is not ready. Try again.');
   }
   return { response, body: bodyValue };
+}
+
+async function readProjectDeliverable(input) {
+  const owner = identity;
+  if (!owner || identityTransition) throw new Error('Sign in to Kivuno first.');
+  if (
+    !projectUid.test(input?.groupId) ||
+    !projectUid.test(input?.runId) ||
+    !projectDigest.test(input?.fileId)
+  )
+    throw new Error('Invalid project deliverable.');
+  const chunks = [];
+  let artifact;
+  for (let part = 0; part === 0 || part * sadeProjectChunkBytes < artifact.bytes; part++) {
+    const { response, body } = await cloudRequest(
+      sadeProjectFileRoute,
+      {
+        action: 'download',
+        groupId: input.groupId,
+        runId: input.runId,
+        fileId: input.fileId,
+        part,
+      },
+      owner.accessToken,
+    );
+    if (identity !== owner || identityTransition) throw new Error('The active account changed.');
+    if (!response.ok) throw new Error(body.error || 'Deliverable unavailable.');
+    const file = body.file;
+    if (
+      file?.id !== input.fileId ||
+      !Number.isSafeInteger(file.bytes) ||
+      file.bytes < 1 ||
+      file.bytes > 8 * 1024 * 1024 ||
+      typeof file.path !== 'string' ||
+      !projectDigest.test(file.sha256) ||
+      typeof body.data !== 'string' ||
+      (artifact && (file.bytes !== artifact.bytes || file.sha256 !== artifact.sha256))
+    )
+      throw new Error('Invalid deliverable metadata.');
+    artifact = file;
+    const chunk = Buffer.from(body.data, 'base64');
+    if (
+      chunk.length !==
+      Math.min(sadeProjectChunkBytes, artifact.bytes - part * sadeProjectChunkBytes)
+    )
+      throw new Error('The deliverable is incomplete.');
+    chunks.push(chunk);
+  }
+  const data = Buffer.concat(chunks);
+  if (createHash('sha256').update(data).digest('hex') !== artifact.sha256)
+    throw new Error('The deliverable checksum did not match.');
+  return { data, artifact };
 }
 
 async function localControlRequest(route, body, context = {}) {
@@ -821,6 +877,7 @@ async function sharedSadeLoop(generation, owner) {
   let supportsMachineCheckWait = false;
   let supportsStructuredVerification = false;
   let supportsPairedTestOnly = false;
+  let supportsProjectOrchestration = false;
   const readCapabilities = ({ response, body }) => {
     supportsReviewRevision = response.ok && body.supportsReviewRevision === true;
     supportsRosterLookup = response.ok && body.supportsRosterLookup === true;
@@ -834,6 +891,7 @@ async function sharedSadeLoop(generation, owner) {
     supportsMachineCheckWait = response.ok && body.supportsMachineCheckWait === true;
     supportsStructuredVerification = response.ok && body.supportsStructuredVerification === true;
     supportsPairedTestOnly = response.ok && body.supportsPairedTestOnly === true;
+    supportsProjectOrchestration = response.ok && body.supportsProjectOrchestration === true;
     capabilitiesKnown = response.ok;
   };
   let grantCursor;
@@ -922,6 +980,9 @@ async function sharedSadeLoop(generation, owner) {
             : {}),
           ...(supportsStructuredVerification ? { structuredVerification: true } : {}),
           ...(supportsPairedTestOnly ? { pairedTestOnly: true } : {}),
+          ...(supportsProjectOrchestration
+            ? { projectOrchestration: true, projectReports: snapshot.projectReports }
+            : {}),
           grants: snapshot.grants,
           active: snapshot.active,
         },
@@ -930,6 +991,55 @@ async function sharedSadeLoop(generation, owner) {
       if (!snapshotCurrent()) continue;
       readCapabilities({ response, body });
       if (response.ok) {
+        let projectTransferred;
+        const transfer = snapshot.projectTransfer;
+        if (supportsProjectOrchestration && transfer && body.active?.includes(transfer.jobId)) {
+          if (transfer.action === 'download') {
+            const { response: file, body: chunk } = await cloudRequest(
+              sadeProjectFileRoute,
+              transfer,
+              owner.accessToken,
+            );
+            if (!snapshotCurrent()) continue;
+            if (file.ok)
+              await localSharedSade(
+                {
+                  action: 'project-input-chunk',
+                  jobId: transfer.jobId,
+                  fileId: transfer.fileId,
+                  part: transfer.part,
+                  data: chunk.data,
+                },
+                localContext,
+              );
+          } else {
+            const { jobId, path, part } = transfer;
+            const chunk = await localSharedSade(
+              { action: 'project-output-chunk', jobId, path, part },
+              localContext,
+            );
+            if (!snapshotCurrent()) continue;
+            const { response: uploaded, body: receipt } = await cloudRequest(
+              sadeProjectFileRoute,
+              { ...transfer, data: chunk.data },
+              owner.accessToken,
+            );
+            if (uploaded.ok) projectTransferred = { jobId, path, part };
+            else if (uploaded.status === 400 && snapshotCurrent())
+              await localSharedSade(
+                {
+                  action: 'project-transfer-error',
+                  jobId,
+                  summary:
+                    typeof receipt?.error === 'string'
+                      ? receipt.error
+                      : 'The project deliverable did not pass transfer validation.',
+                },
+                localContext,
+              );
+          }
+          if (!snapshotCurrent()) continue;
+        }
         await localSharedSade({
           action: 'exchange',
           active: body.active,
@@ -943,6 +1053,13 @@ async function sharedSadeLoop(generation, owner) {
           quotaFailover: body.quotaFailover,
           planQuotaFailover: body.planQuotaFailover,
           acknowledged,
+          ...(supportsProjectOrchestration
+            ? {
+                projectContexts: body.projectContexts,
+                projectAcknowledged: body.projectAcknowledged,
+                projectTransferred,
+              }
+            : {}),
         });
         if (snapshotCurrent()) grantCursor = snapshot.nextGrantCursor;
       } else delay = 5000;
@@ -1176,6 +1293,7 @@ function registerIpc() {
         'sade-cancel',
         'sade-answer',
         'sade-update-task',
+        'sade-project-status',
       ].includes(input.action) ||
       Buffer.byteLength(JSON.stringify(input)) > 64 * 1024
     )
@@ -1192,6 +1310,7 @@ function registerIpc() {
         projectId: input.projectId,
         teammateId: input.teammateId,
         allowWrites: input.allowWrites,
+        ...(input.projectOrchestration === true ? { projectOrchestration: true } : {}),
         machineId: input.machineId,
         turns: input.turns,
       };
@@ -1216,7 +1335,7 @@ function registerIpc() {
         type: 'question',
         title: 'Allow Sade to use your teammate?',
         message: `${preview.teammateName} · ${preview.projectName}`,
-        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes, sharing the diff with an independent reviewer, and passing approved patches to assigned teammates after you integrate locally. You control Git publication.' : 'The teammate can read the linked project and share a short result.'}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching request while that owner’s permission is active.${preview.pairedMachineName ? ' Kivuno shares this device name with the group and its planner to route requests.' : ''}` : ''} Your provider sign-in stays on this computer.`,
+        detail: `Members of “${room.body.group.name}” can assign up to ${preview.turns} turns for one hour, even if your provider does not report remaining quota. ${preview.allowWrites ? 'This includes proposing local file changes, sharing the diff with an independent reviewer, and passing approved patches to assigned teammates after you integrate locally. You control Git publication.' : 'The teammate can read the linked project and share a short result.'}${preview.projectOrchestration ? ' Project orchestration shares recent assistant replies from the delegated session, checkpoint messages and declared deliverables with the group.' : ''}${preview.pairedMachine ? ` The harness can send project files and run commands on ${preview.pairedMachine.name} (${preview.pairedMachine.platform}) for a matching request while that owner’s permission is active.${preview.pairedMachineName ? ' Kivuno shares this device name with the group and its planner to route requests.' : ''}` : ''} Your provider sign-in stays on this computer.`,
         buttons: ['Cancel', 'Allow'],
         defaultId: 0,
         cancelId: 0,
@@ -1268,6 +1387,75 @@ function registerIpc() {
     }
     if (!response.ok) throw new Error(body.error || 'Group request failed. Try again.');
     return body;
+  });
+  ipcMain.handle('relay:project-catalogue', async (event, input) => {
+    trusted(event);
+    const owner = identity;
+    if (!owner || identityTransition) throw new Error('Sign in to Kivuno first.');
+    if (
+      !projectUid.test(input?.groupId) ||
+      !projectUid.test(input?.runId) ||
+      !projectDigest.test(input?.projectKey) ||
+      typeof input?.data !== 'string' ||
+      input.data.length > 349_528
+    )
+      throw new Error('Invalid catalogue attachment.');
+    const { response, body } = await cloudRequest(
+      sadeProjectFileRoute,
+      {
+        action: 'catalogue',
+        groupId: input.groupId,
+        runId: input.runId,
+        projectKey: input.projectKey,
+        data: input.data,
+      },
+      owner.accessToken,
+    );
+    if (identity !== owner || identityTransition) throw new Error('The active account changed.');
+    if (!response.ok || !body.accepted) throw new Error(body.error || 'Catalogue upload failed.');
+  });
+  ipcMain.handle('relay:project-deliverable', async (event, input) => {
+    trusted(event);
+    const { data } = await readProjectDeliverable(input);
+    return data.toString('base64');
+  });
+  ipcMain.handle('relay:project-preview', async (event, input) => {
+    trusted(event);
+    const { data, artifact } = await readProjectDeliverable(input);
+    if (!artifact.path.endsWith('.html') || data.length > 1_400_000)
+      throw new Error('Download this deliverable to open it at its full size.');
+    const preview = new BrowserWindow({
+      title: 'Kivuno · Project preview',
+      width: 1100,
+      height: 760,
+      show: false,
+      parent: window,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: 'sade-preview-' + randomUUID(),
+      },
+    });
+    const partition = preview.webContents.session;
+    partition.setPermissionRequestHandler((_contents, _permission, done) => done(false));
+    partition.setPermissionCheckHandler(() => false);
+    partition.webRequest.onBeforeRequest(({ url }, done) =>
+      done({ cancel: !/^(?:data:|blob:)/i.test(url) }),
+    );
+    partition.on('will-download', (event) => event.preventDefault());
+    preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    preview.webContents.on('will-frame-navigate', (event) => event.preventDefault());
+    const html =
+      "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none'\">" +
+      data.toString('utf8');
+    try {
+      await preview.loadURL('data:text/html;base64,' + Buffer.from(html).toString('base64'));
+      if (!preview.isDestroyed()) preview.show();
+    } catch (error) {
+      if (!preview.isDestroyed()) preview.destroy();
+      throw error;
+    }
   });
   ipcMain.handle('relay:profiles', async (event, input) => {
     trusted(event);

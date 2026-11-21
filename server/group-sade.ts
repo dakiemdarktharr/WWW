@@ -10,6 +10,40 @@ import {
 } from '../shared/collaboration.ts';
 import type { PlanTask, TaskDiff, TeamPlan } from '../shared/types.ts';
 import {
+  sharedSadeProjectPreparationBudgetMs,
+  sharedSadeProjectRoadmapBudgetMs,
+} from '../shared/sade-cloud.ts';
+import type {
+  SadeProjectArtifact,
+  SadeProjectContext,
+  SadeProjectDelivery,
+  SadeProjectMessage,
+  SadeProjectView,
+} from '../shared/sade-project.ts';
+import {
+  defaultProjectReply,
+  namedProjectHarnesses,
+  needsAnswerBeforePreparation,
+  preparationTasks,
+  projectAudit,
+  projectBrief,
+  projectPlanReply,
+  projectRoadmap,
+  projectStatusQuestion,
+  projectWorkerReport,
+  requestedSadeProject,
+  type ProjectBrief,
+  type ProjectPlanReply,
+  type ProjectPlanning,
+} from './shared-sade-project.ts';
+import {
+  SadeProjectFiles,
+  sadeCatalogueKind,
+  validateCatalogue,
+  type SadeCatalogue,
+  type SadeProjectFileCommand,
+} from './shared-sade-project-files.ts';
+import {
   allocatePlan,
   collectPrerequisites,
   parseTeamPlan,
@@ -54,6 +88,7 @@ export const groupSadeGrant = z
     pairedPlatform: platform.optional(),
     pairedMachineName: short.refine((name) => redact(name) === name).optional(),
     patchHandoff: z.literal(true).optional(),
+    projectOrchestration: z.literal(true).optional(),
     allowWrites: z.boolean(),
     turns: z.number().int().min(1).max(10),
   })
@@ -156,6 +191,9 @@ export const sharedVerificationFinding = z
   .strict();
 export const sharedFinish = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('plan'), plan: z.unknown() }).strict(),
+  z.strictObject({ kind: z.literal('project-plan'), reply: projectPlanReply }),
+  z.strictObject({ kind: z.literal('project-brief'), brief: projectBrief }),
+  z.strictObject({ kind: z.literal('project-audit'), audit: projectAudit }),
   z
     .object({
       kind: z.literal('done'),
@@ -205,6 +243,7 @@ export const groupSadeCommands = [
   groupSadeGrant,
   z.object({ action: z.literal('sade-revoke'), groupId: id, grantId: id }).strict(),
   z.object({ action: z.literal('sade-cancel'), groupId: id, runId: id }).strict(),
+  z.strictObject({ action: z.literal('sade-project-status'), groupId: id, runId: id }),
   z
     .object({
       action: z.literal('sade-update-task'),
@@ -241,6 +280,8 @@ export const groupSadeCommands = [
       handoffDeliverables: z.literal(true).optional(),
       structuredVerification: z.literal(true).optional(),
       pairedTestOnly: z.literal(true).optional(),
+      projectOrchestration: z.literal(true).optional(),
+      projectReports: z.array(projectWorkerReport).max(4).optional(),
       readUpdates: z.array(taskUpdateAck).max(4).optional(),
       waitingForRevisions: z.array(id).max(4).optional(),
       waitingForCapacity: z.array(id).max(4).optional(),
@@ -261,6 +302,9 @@ export type SharedFinish = z.infer<typeof sharedFinish>;
 export type SharedPrincipal = { ownerId: string; deviceId: string };
 type Grant = SharedHarnessGrant & { deviceId: string; sharingId?: string; revoked?: boolean };
 type Job = SharedSadeJob & {
+  projectBrief?: ProjectBrief;
+  projectArtifacts?: SadeProjectArtifact[];
+  projectResumeJobId?: string;
   cloudClaim?: { id: string; actor: SharedPrincipal };
   awaitingReadAssignment?: true;
   awaitingHandoffAssignments?: true;
@@ -287,7 +331,7 @@ type Job = SharedSadeJob & {
   updates?: (z.infer<typeof sharedSadeUpdate> & { ownerId: string })[];
 };
 type SelectedHandoff = SharedSadeHandoffBinding & { target?: SharedSadeAssignmentCandidate };
-type Run = Omit<SharedSadeRun, 'jobs'> & {
+type Run = Omit<SharedSadeRun, 'jobs' | 'project'> & {
   authorId: string;
   cloudPlanner?: true;
   content: string;
@@ -298,6 +342,11 @@ type Run = Omit<SharedSadeRun, 'jobs'> & {
   readAssignment?: SharedSadeReadAssignment & { target?: SharedSadeAssignmentCandidate };
   handoffAssignments?: { producer: SelectedHandoff; receiver: SelectedHandoff };
   handoffDeliverables?: SharedSadeHandoffDeliverables;
+  project?: SadeProjectView & {
+    auditRounds: number;
+    catalogueId?: string;
+    catalogueObservations?: string;
+  };
   jobs: Job[];
 };
 const referenceAuthorLimit = 100;
@@ -478,10 +527,13 @@ export type SharedDelivery = {
   portableReview?: true;
   acceptsUpdates?: true;
   updates?: z.infer<typeof sharedSadeUpdates>;
+  project?: SadeProjectDelivery;
+  projectPlanning?: ProjectPlanning;
 };
 export type SharedSadeCloudOffer = {
   runId: string;
   claimId: string;
+  projectDeadline?: number;
   delivery: SharedDelivery;
 };
 export const groupReadUpdatesTool = {
@@ -764,10 +816,12 @@ export const groupQuestionTool = {
 
 /** The cloud schedules bounded jobs. It has no provider credential or command-execution API. */
 export class GroupSade {
+  private projectFiles: SadeProjectFiles;
   constructor(
     private store: Store,
     private now: () => number = Date.now,
   ) {
+    this.projectFiles = new SadeProjectFiles(store);
     store.db.exec(`
       CREATE INDEX IF NOT EXISTS shared_sade_grant_group ON records(json_extract(data,'$.groupId')) WHERE kind='sharedSadeGrant';
       CREATE INDEX IF NOT EXISTS shared_sade_run_group ON records(json_extract(data,'$.groupId')) WHERE kind='sharedSadeRun';
@@ -835,9 +889,12 @@ export class GroupSade {
         `SELECT count(*) AS count FROM records INDEXED BY shared_sade_active
         WHERE kind='sharedSadeRun' AND json_extract(data,'$.state') IN ('planning','running')
         AND json_extract(data,'$.state')='planning'
-        AND json_extract(data,'$.jobs[0].cloudClaim.id') IS NOT NULL
-        AND json_extract(data,'$.jobs[0].state')='running'
-        AND CAST(json_extract(data,'$.jobs[0].deadline') AS INTEGER)>?`,
+        AND EXISTS (
+          SELECT 1 FROM json_each(data,'$.jobs') AS job
+          WHERE json_extract(job.value,'$.cloudClaim.id') IS NOT NULL
+            AND json_extract(job.value,'$.state')='running'
+            AND CAST(json_extract(job.value,'$.deadline') AS INTEGER)>?
+        )`,
       )
       .get(now);
     if (Number(inFlight?.count) >= cloudPlannerConcurrency) return false;
@@ -880,7 +937,18 @@ export class GroupSade {
       !run?.cloudPlanner ||
       run.groupId !== group.id ||
       run.state !== 'planning' ||
-      (runId && run.authorId !== actor.ownerId)
+      (runId &&
+        run.authorId !== actor.ownerId &&
+        !(
+          run.project?.stage === 'roadmap' &&
+          this.grants(group).some(
+            (grant) =>
+              this.actorGrant(grant, actor) &&
+              grant.projectOrchestration &&
+              this.usable(grant, group, false) &&
+              run.jobs.some((job) => job.grantId === grant.id && job.projectBrief),
+          )
+        ))
     )
       return;
     const job = run.jobs.find((entry) => entry.phase === 'plan' && entry.state === 'queued');
@@ -888,7 +956,14 @@ export class GroupSade {
     const eligible = this.grants(group).filter(
       (grant) => grant.projectKey === run.projectKey && this.usableForRun(grant, group, run),
     );
-    const lead = eligible.find((grant) => grant.id === job.grantId);
+    const lead = run.project
+      ? this.grants(group).find(
+          (grant) =>
+            grant.id === job.grantId &&
+            grant.projectOrchestration &&
+            this.usable(grant, group, false),
+        )
+      : eligible.find((grant) => grant.id === job.grantId);
     if (!lead) {
       this.block(
         run,
@@ -940,17 +1015,27 @@ export class GroupSade {
     }
     const now = this.now();
     if (!this.reserveCloudPlan(run.authorId, now)) {
-      this.block(run, job, 'Sade đang bận hoặc đã đạt giới hạn lượt. Hãy gửi lại sau.');
+      if (run.project) this.fallbackProjectPlan(run, job, group);
+      else this.block(run, job, 'Sade đang bận hoặc đã đạt giới hạn lượt. Hãy gửi lại sau.');
       return;
     }
     const claimId = randomUUID();
     job.cloudClaim = { id: claimId, actor };
     job.state = 'running';
-    job.deadline = now + (extended ? extendedCloudPlanLeaseMs : cloudPlanLeaseMs);
+    const projectBudget = run.project
+      ? run.project.stage === 'roadmap'
+        ? sharedSadeProjectRoadmapBudgetMs
+        : sharedSadeProjectPreparationBudgetMs
+      : undefined;
+    const projectDeadline = projectBudget ? now + projectBudget : undefined;
+    job.deadline = projectDeadline
+      ? projectDeadline + 500
+      : now + (extended ? extendedCloudPlanLeaseMs : cloudPlanLeaseMs);
     this.store.put('sharedSadeRun', run);
     return {
       runId: run.id,
       claimId,
+      ...(projectDeadline ? { projectDeadline } : {}),
       delivery: {
         id: job.id,
         grantId: job.grantId,
@@ -965,6 +1050,7 @@ export class GroupSade {
         team: this.planTeam(run, group, new Map(eligible.map((grant) => [grant.id, grant]))),
         clarification: job.clarification,
         prerequisites: [],
+        ...(run.project ? { projectPlanning: this.projectPlanning(run) } : {}),
       },
     };
   }
@@ -1004,6 +1090,7 @@ export class GroupSade {
     );
     return {
       supportsReferencedMessage: true as const,
+      supportsProjectOrchestration: true as const,
       sadeGrants: [...grants.values()].map(({ deviceId, sharingId, revoked, ...view }) => view),
       sadeRuns: this.runs(group).map((stored) => {
         // Chat may stay open when all desktops stop polling.
@@ -1021,8 +1108,19 @@ export class GroupSade {
           handoffDeliverables,
           ...run
         } = stored;
+        const { project, ...view } = run;
+        const publicProject = project && {
+          kind: project.kind,
+          title: project.title,
+          stage: project.stage,
+          summary: project.summary,
+          messages: project.messages,
+          sessions: project.sessions,
+          artifacts: project.artifacts,
+        };
         return {
-          ...run,
+          ...view,
+          ...(publicProject ? { project: publicProject } : {}),
           canAnswer: ownerId === authorId && !final(stored),
           jobs: run.jobs.map(
             ({
@@ -1049,6 +1147,9 @@ export class GroupSade {
               updates,
               awaitingReadAssignment,
               awaitingHandoffAssignments,
+              projectBrief,
+              projectArtifacts,
+              projectResumeJobId,
               ...job
             }) => ({
               ...job,
@@ -1229,6 +1330,16 @@ export class GroupSade {
   start(group: SharedGroup, message: SharedMessage, cloudPlanner = false) {
     if (!message.sade) return;
     const { projectKey, readOnly, replyTo } = message.sade;
+    if (projectStatusQuestion(message.content)) {
+      const existing = this.runs(group).findLast(
+        (run) => run.projectKey === projectKey && run.project,
+      );
+      if (existing) {
+        this.projectMessage(existing, 'decision', this.projectStatus(existing));
+        this.store.put('sharedSadeRun', existing);
+        return;
+      }
+    }
     const grants = this.grants(group).filter(
       (grant) => grant.projectKey === projectKey && this.usable(grant, group),
     );
@@ -1289,8 +1400,14 @@ export class GroupSade {
         'The previous Sade request is stopping. Wait for its desktop lease to expire before starting again.',
         409,
       );
-    const lead = grants.find((grant) => grant.ownerId === message.ownerId)!;
     const content = redact(message.content);
+    const projectKind = !readOnly ? requestedSadeProject(content) : undefined;
+    if (message.sade.catalogue && projectKind !== 'storefront')
+      throw new DomainError('Attach a catalogue to a storefront request.', 400);
+    const lead =
+      (projectKind &&
+        grants.find((grant) => grant.ownerId === message.ownerId && grant.projectOrchestration)) ||
+      grants.find((grant) => grant.ownerId === message.ownerId)!;
     const assignment = resolveSharedSadeReadAssignment(content, message.ownerId, group);
     const job: Job = {
       id: randomUUID(),
@@ -1312,6 +1429,46 @@ export class GroupSade {
       state: 'planning',
       jobs: [job],
     };
+    if (projectKind) {
+      const opening = defaultProjectReply(projectKind, content, 'preparation');
+      run.project = {
+        kind: projectKind,
+        stage: 'preparation',
+        title: opening.title,
+        summary: opening.summary,
+        messages: [],
+        sessions: [],
+        artifacts: [],
+        auditRounds: 0,
+      };
+      try {
+        if (!lead.projectOrchestration)
+          throw new DomainError(
+            'Enable project orchestration on a linked teammate grant before starting this project.',
+          );
+        if (message.sade.catalogue) {
+          const image = this.store.lookup<SadeCatalogue>(sadeCatalogueKind, message.id);
+          if (
+            projectKind !== 'storefront' ||
+            !image ||
+            image.groupId !== group.id ||
+            image.projectKey !== projectKey ||
+            image.ownerId !== message.ownerId ||
+            image.expiresAt <= now
+          )
+            throw new DomainError(
+              'Attach the catalogue to a storefront request from the same project.',
+              400,
+            );
+          run.project.catalogueId = image.id;
+        }
+        if (!cloudPlanner) this.applyProjectPlan(run, job, group, opening);
+        this.store.put('sharedSadeRun', run);
+      } catch (error) {
+        this.block(run, job, redact(error instanceof Error ? error.message : error));
+      }
+      return;
+    }
     if (assignment) {
       run.readAssignment = assignment;
       const { candidates, harnessName, ownerQualifier } = assignment;
@@ -1390,6 +1547,7 @@ export class GroupSade {
           existing.pairedPlatform !== command.pairedPlatform ||
           existing.pairedMachineName !== command.pairedMachineName ||
           existing.patchHandoff !== command.patchHandoff ||
+          existing.projectOrchestration !== command.projectOrchestration ||
           existing.allowWrites !== command.allowWrites ||
           existing.turns !== command.turns
         )
@@ -1454,7 +1612,11 @@ export class GroupSade {
       const run = this.store.get<Run>('sharedSadeRun', command.runId);
       if (run.groupId !== group.id)
         throw new DomainError('Shared request is unavailable in this group.', 404);
-      if (command.action === 'sade-update-task') {
+      if (command.action === 'sade-project-status') {
+        if (!run.project) throw new DomainError('No delegated project found.', 404);
+        this.projectMessage(run, 'decision', this.projectStatus(run));
+        this.store.put('sharedSadeRun', run);
+      } else if (command.action === 'sade-update-task') {
         const job = run.jobs.find((item) => item.id === command.jobId);
         const grant = job && this.grants(group).find((item) => item.id === job.grantId);
         if (!this.canUpdate(group, run.authorId, grant, actor.ownerId))
@@ -1583,7 +1745,7 @@ export class GroupSade {
         const grant = grants.find((item) => item.id === job.grantId);
         if (
           !grant ||
-          !this.usable(grant, group) ||
+          !this.usable(grant, group, !(run.project && run.cloudPlanner && job.phase === 'plan')) ||
           (!(run.cloudPlanner && job.phase === 'plan') && unreservedTurns(run, grant, job) < 1)
         )
           throw new DomainError('The harness needs a remaining granted turn to continue.', 409);
@@ -1592,7 +1754,7 @@ export class GroupSade {
             .filter((entry) => entry.projectKey === run.projectKey && this.usable(entry, group))
             .map((entry) => entry.id);
         // Each attempt has its own receipt. The task key still identifies dependencies.
-        run.jobs[run.jobs.indexOf(job)] = {
+        const resumed: Job = {
           ...job,
           id: randomUUID(),
           state: 'queued',
@@ -1600,7 +1762,16 @@ export class GroupSade {
           summary: undefined,
           clarification: { question: job.summary, answer: redact(command.answer) },
           updatesRead: undefined,
+          ...(job.project && job.project.stage !== 'audit' ? { projectResumeJobId: job.id } : {}),
         };
+        run.jobs[run.jobs.indexOf(job)] = resumed;
+        if (run.project && job.phase === 'plan' && !run.cloudPlanner)
+          this.applyProjectPlan(
+            run,
+            resumed,
+            group,
+            defaultProjectReply(run.project.kind, command.answer, this.projectPlanning(run).stage),
+          );
         this.store.put('sharedSadeRun', run);
       } else {
         if (run.authorId !== actor.ownerId && group.ownerId !== actor.ownerId)
@@ -1669,7 +1840,564 @@ export class GroupSade {
       )[0];
   }
   private usableForRun(grant: Grant, group: SharedGroup, run: Run) {
-    return !run.unavailableGrants?.includes(grant.id) && this.usable(grant, group);
+    return (
+      (!run.project || Boolean(grant.projectOrchestration)) &&
+      !run.unavailableGrants?.includes(grant.id) &&
+      this.usable(grant, group)
+    );
+  }
+  private projectMessage(
+    run: Run,
+    kind: SadeProjectMessage['kind'],
+    text: string,
+    fields: Partial<
+      Pick<SadeProjectMessage, 'id' | 'author' | 'taskKey' | 'to' | 'sessionId'>
+    > = {},
+  ) {
+    const project = run.project!;
+    project.messages = [
+      ...project.messages,
+      {
+        id: randomUUID(),
+        createdAt: new Date(this.now()).toISOString(),
+        author: 'Sade',
+        kind,
+        text: redact(text).slice(0, 1600),
+        ...fields,
+      },
+    ].slice(-60);
+  }
+
+  private projectContext(
+    run: Run,
+    group: SharedGroup,
+    grants: Map<string, Grant>,
+  ): SadeProjectContext {
+    const project = run.project!;
+    return {
+      tasks: run.jobs.flatMap((job) => {
+        if (!job.task) return [];
+        const grant = grants.get(job.grantId);
+        const session = project.sessions.find(({ taskKey }) => taskKey === job.task!.key);
+        return [
+          {
+            key: job.task.key,
+            title: job.task.title,
+            harness: grant?.label ?? 'Teammate',
+            owner: group.people.find((person) => person.id === grant?.ownerId)?.name ?? '',
+            state: job.state,
+            scope: job.task.scope,
+            after: job.task.dependsOn,
+            sessionId: session?.id,
+            activity: session?.activity.slice(-2),
+            summary: job.summary?.slice(0, 800),
+          },
+        ];
+      }),
+      messages: project.messages.slice(-16),
+    };
+  }
+
+  private receiveProjectReports(
+    actor: SharedPrincipal,
+    groupIds: string[],
+    reports: z.infer<typeof projectWorkerReport>[],
+  ) {
+    const acknowledged: string[] = [];
+    for (const report of reports) {
+      const run = this.findJobRun(report.jobId);
+      const job = run?.jobs.find(({ id }) => id === report.jobId);
+      if (!run?.project || !job?.project || !job.task || !groupIds.includes(run.groupId)) continue;
+      const group = this.store.get<SharedGroup>('sharedGroup', run.groupId);
+      const grant = this.store.lookup<Grant>('sharedSadeGrant', job.grantId);
+      if (
+        !grant?.projectOrchestration ||
+        !this.actorGrant(grant, actor) ||
+        !this.usable(grant, group, false) ||
+        run.state === 'cancelled' ||
+        (!['done', 'waiting', 'blocked'].includes(job.state) &&
+          (job.state !== 'running' || (job.deadline || 0) <= this.now()))
+      )
+        continue;
+      const key = job.task.key;
+      const old = run.project.sessions.find(({ taskKey }) => taskKey === key);
+      const provider =
+        group.teammates.find(
+          ({ ownerId, localId }) => ownerId === grant.ownerId && localId === grant.teammateId,
+        )?.provider ?? 'teammate';
+      const activity = report.activity.map(({ text, ...event }) => ({
+        ...event,
+        text: redact(text).slice(0, 1200),
+      }));
+      run.project.sessions = [
+        ...run.project.sessions.filter(({ taskKey }) => taskKey !== key),
+        { taskKey: key, id: report.sessionId, provider, status: report.status, activity },
+      ];
+      for (const note of report.notes) {
+        if (note.to && !run.jobs.some(({ task }) => task?.key === note.to)) continue;
+        acknowledged.push(note.id);
+        if (run.project.messages.some(({ id }) => id === note.id)) continue;
+        const name = group.people.find(({ id }) => id === grant.ownerId)?.name ?? 'Teammate';
+        this.projectMessage(run, note.kind, note.text, {
+          id: note.id,
+          author: redact(grant.label + ' · ' + name).slice(0, 200),
+          taskKey: key,
+          to: note.to,
+          sessionId: report.sessionId,
+        });
+        if (note.kind === 'scope') {
+          this.projectMessage(
+            run,
+            'scope',
+            'I stopped a write outside the assigned scope. Continue in your own files and send the requested change to its owner.',
+            { to: key },
+          );
+        }
+      }
+      if (
+        !old ||
+        report.notes.length ||
+        old.status !== report.status ||
+        old.activity.at(-1)?.id !== activity.at(-1)?.id ||
+        old.activity.at(-1)?.text !== activity.at(-1)?.text ||
+        old.id !== report.sessionId
+      )
+        this.store.put('sharedSadeRun', run);
+    }
+    return acknowledged;
+  }
+
+  private projectPlanning(run: Run): ProjectPlanning {
+    const project = run.project!;
+    const image =
+      project.stage === 'preparation' && project.catalogueId && !project.catalogueObservations
+        ? this.store.lookup<SadeCatalogue>(sadeCatalogueKind, project.catalogueId)
+        : undefined;
+    return {
+      stage: project.stage === 'roadmap' ? 'roadmap' : 'preparation',
+      kind: project.kind,
+      title: project.title,
+      briefs: run.jobs.flatMap(({ projectBrief }) => (projectBrief ? [projectBrief] : [])),
+      ...(image ? { catalogueImage: image.data } : {}),
+      ...(project.catalogueObservations
+        ? { catalogueObservations: project.catalogueObservations }
+        : {}),
+    };
+  }
+
+  private applyProjectPlan(run: Run, job: Job, group: SharedGroup, reply: ProjectPlanReply) {
+    const project = run.project!;
+    const preparing = project.stage === 'preparation';
+    if (preparing && project.catalogueId && reply.catalogueObservations)
+      project.catalogueObservations = redact(reply.catalogueObservations).slice(0, 1400);
+    const waitsForInput = preparing && needsAnswerBeforePreparation(run.content);
+    const question = job.clarification
+      ? null
+      : (reply.question ??
+        (waitsForInput
+          ? defaultProjectReply(project.kind, run.content, 'preparation').question
+          : null));
+    if (
+      question &&
+      (!preparing || waitsForInput || (project.catalogueId && !project.catalogueObservations))
+    ) {
+      job.state = 'waiting';
+      job.deadline = undefined;
+      job.summary = redact(question).slice(0, 500);
+      this.projectMessage(run, 'question', job.summary);
+      return;
+    }
+    const eligible = this.grants(group).filter(
+      (grant) =>
+        grant.projectKey === run.projectKey &&
+        this.usableForRun(grant, group, run) &&
+        run.roster.includes(grant.id),
+    );
+    const researchers = [...eligible].sort(
+      (a, b) =>
+        Number(b.role === 'researcher') - Number(a.role === 'researcher') || a.used - b.used,
+    );
+    const first = researchers[0];
+    const second =
+      (first && researchers.find((grant) => grant.deviceId !== first.deviceId)) ??
+      researchers.find((grant) => grant.id !== first?.id);
+    const parallel = preparing && reply.research === 'parallel' && Boolean(second);
+    const compiled = preparing
+      ? preparationTasks(project.kind, reply, parallel, question ?? undefined)
+      : projectRoadmap(
+          project.kind,
+          run.id,
+          reply,
+          run.jobs.flatMap(({ task }) => (task ? [task.key] : [])),
+        );
+    const pinned = new Map<string, string>();
+    for (const task of compiled) {
+      const named = namedProjectHarnesses(task.key, run.content, group, job.clarification?.answer);
+      if (!named) continue;
+      if (named.length > 1) {
+        job.state = 'waiting';
+        job.summary =
+          'Who should take “' +
+          task.title +
+          '”? ' +
+          named
+            .map(
+              (member) =>
+                member.name +
+                ' · ' +
+                (group.people.find(({ id }) => id === member.ownerId)?.name ?? ''),
+            )
+            .join(' or ') +
+          '.';
+        this.projectMessage(run, 'question', job.summary);
+        return;
+      }
+      const member = named[0];
+      const grant = eligible.find(
+        (item) =>
+          item.ownerId === member.ownerId &&
+          item.teammateId === member.localId &&
+          supportsTask(item, task),
+      );
+      if (!grant)
+        throw new DomainError(
+          'The named harness “' +
+            member.name +
+            '” needs matching project access for “' +
+            task.title +
+            '”.',
+        );
+      pinned.set(task.key, grant.id);
+    }
+    const tasks = compiled.map(({ project: _x, ...task }, index) => ({
+      ...task,
+      ...(pinned.has(task.key) || (preparing && (index === 0 ? first : second))
+        ? { preferredMemberId: pinned.get(task.key) ?? (index === 0 ? first : second)!.id }
+        : {}),
+    }));
+    parseTeamPlan({
+      summary: 'Shared project roadmap',
+      tasks: [...run.jobs.flatMap(({ task }) => (task ? [task] : [])), ...tasks],
+    });
+    const writeTasks = tasks.filter(writes);
+    if (
+      writeTasks.some((task, index) =>
+        writeTasks.slice(index + 1).some((peer) => scopesOverlap(task.scope, peer.scope)),
+      )
+    )
+      throw new DomainError('The project roadmap contains overlapping write scopes.');
+    const allocations = allocatePlan(
+      { summary: reply.summary, tasks },
+      eligible.map(({ id, role }) => ({ id, role })),
+      {
+        ownerByMember: new Map(eligible.map(({ id, ownerId }) => [id, ownerId])),
+        turns: new Map(eligible.map((grant) => [grant.id, unreservedTurns(run, grant, job)])),
+        supports: (id, task) =>
+          supportsTask(
+            eligible.find((grant) => grant.id === id)!,
+            task,
+          ),
+        // Share delivery work by available load while still preferring the right role for ties.
+        preferSpecialists: preparing,
+        preferParallelTasks: true,
+      },
+    );
+    project.title = redact(reply.title).slice(0, 140);
+    project.summary = redact(reply.summary).slice(0, 1400);
+    job.state = 'done';
+    job.deadline = undefined;
+    job.summary = project.summary;
+    run.state = 'running';
+    project.stage = preparing ? 'preparation' : 'delivery';
+    run.jobs.push(
+      ...tasks.map((task, index): Job => ({
+        id: randomUUID(),
+        runId: run.id,
+        grantId: allocations[index].memberId,
+        phase: 'task',
+        state: 'queued',
+        task: { ...task, preferredMemberId: pinned.get(task.key) },
+        project: compiled[index].project,
+      })),
+    );
+    this.projectMessage(run, 'decision', project.summary);
+    if (job.clarification)
+      this.projectMessage(
+        run,
+        'handoff',
+        'Requester supplied this answer: ' + job.clarification.answer,
+        { to: preparing ? 'brief' : undefined },
+      );
+    if (preparing && project.catalogueObservations)
+      this.projectMessage(
+        run,
+        'handoff',
+        'Observations from the attached catalogue image: ' + project.catalogueObservations,
+        { to: 'brief' },
+      );
+  }
+
+  private advanceProject(run: Run, group: SharedGroup) {
+    if (!run.project) return;
+    const project = run.project;
+    if (project.stage === 'preparation' && run.jobs.every(({ state }) => state === 'done')) {
+      const lead = run.jobs[0];
+      const plan: Job = {
+        id: randomUUID(),
+        runId: run.id,
+        grantId: lead.grantId,
+        phase: 'plan',
+        state: 'queued',
+      };
+      run.jobs.push(plan);
+      project.stage = 'roadmap';
+      run.state = 'planning';
+      this.projectMessage(
+        run,
+        'handoff',
+        'Preparation is complete. I’m turning the briefs into a delivery roadmap.',
+      );
+      if (!run.cloudPlanner) this.fallbackProjectPlan(run, plan, group);
+    }
+    if (
+      project.stage === 'delivery' &&
+      run.jobs
+        .filter(({ project }) => project?.stage === 'delivery')
+        .every(({ state }) => state === 'done')
+    ) {
+      project.stage = 'audit';
+      this.projectMessage(run, 'decision', 'The required outputs are ready for independent audit.');
+    }
+  }
+  private fallbackProjectPlan(run: Run, job: Job, group: SharedGroup) {
+    const preceding = this.projectPlanning(run);
+    const reply = defaultProjectReply(preceding.kind, run.content, preceding.stage);
+    reply.title = preceding.briefs[0]?.title || preceding.title || reply.title;
+    if (preceding.catalogueImage && !job.clarification)
+      reply.question =
+        'The catalogue could not be read. Which product categories should the storefront feature, and how should a buyer place an order?';
+    try {
+      job.cloudClaim = undefined;
+      this.applyProjectPlan(run, job, group, reply);
+      this.store.put('sharedSadeRun', run);
+    } catch (error) {
+      this.block(run, job, redact(error instanceof Error ? error.message : error));
+    }
+  }
+
+  private projectStatus(run: Run) {
+    const tasks = run.jobs.filter((job) => job.task);
+    const active = tasks.filter(({ state }) => state === 'running');
+    const queued = tasks.filter(({ state }) => state === 'queued');
+    const waiting = tasks.filter(({ state }) => state === 'waiting');
+    const status = [
+      `${run.project!.title} · ${run.project!.stage} · ${tasks.filter(({ state }) => state === 'done').length}/${tasks.length} tasks complete.`,
+    ];
+    const assigned = ({ task, grantId }: Job) => {
+      const label = this.store.lookup<Grant>('sharedSadeGrant', grantId)?.label;
+      return label ? `${task!.title} (${label})` : task!.title;
+    };
+    if (active.length) status.push('In progress: ' + active.map(assigned).join(', ') + '.');
+    if (queued.length) status.push('Queued: ' + queued.map(assigned).join(', ') + '.');
+    if (waiting.length)
+      status.push('Needs an answer: ' + waiting.map(({ summary }) => summary).join(' ') + '.');
+    if (run.error) status.push(run.error);
+    return status.join(' ');
+  }
+  projectFile(group: SharedGroup, actor: SharedPrincipal, input: SadeProjectFileCommand) {
+    if (input.action === 'catalogue') {
+      if (
+        !this.grants(group).some(
+          (grant) =>
+            this.actorGrant(grant, actor) &&
+            grant.projectOrchestration &&
+            grant.projectKey === input.projectKey &&
+            this.usable(grant, group),
+        )
+      )
+        throw new DomainError('Link an authorized project before sharing the catalogue.', 403);
+      validateCatalogue(input.data);
+      const previous = this.store.lookup<SadeCatalogue>(sadeCatalogueKind, input.runId);
+      if (previous) {
+        if (
+          previous.ownerId !== actor.ownerId ||
+          previous.groupId !== group.id ||
+          previous.projectKey !== input.projectKey ||
+          previous.data !== input.data
+        )
+          throw new DomainError('This draft already has a different catalogue.', 409);
+        return { accepted: true };
+      }
+      const pending = this.store.db
+        .prepare(
+          `SELECT count(*) as total FROM records WHERE kind=?
+        AND json_extract(data,'$.ownerId')=? AND json_extract(data,'$.expiresAt')>?
+        AND NOT EXISTS (SELECT 1 FROM records AS message WHERE message.id=records.id AND message.kind='sharedMessage')`,
+        )
+        .get(sadeCatalogueKind, actor.ownerId, this.now());
+      if (Number(pending?.total) >= 6)
+        throw new DomainError('Finish sending one of the prepared catalogue drafts first.', 429);
+      this.store.put(sadeCatalogueKind, {
+        id: input.runId,
+        ownerId: actor.ownerId,
+        groupId: group.id,
+        projectKey: input.projectKey,
+        data: input.data,
+        expiresAt: this.now() + grantMs,
+      } satisfies SadeCatalogue);
+      return { accepted: true };
+    }
+    const run = this.store.lookup<Run>('sharedSadeRun', input.runId);
+    if (!run?.project || run.groupId !== group.id)
+      throw new DomainError('Delegated project unavailable.', 404);
+    if (input.action === 'download' && !input.jobId) {
+      if (run.state !== 'done' || !run.project.artifacts.some(({ id }) => id === input.fileId))
+        throw new DomainError('The audited deliverable is not available.', 404);
+      return this.projectFiles.read(input);
+    }
+    const job = run.jobs.find(({ id }) => id === input.jobId);
+    const grant = job && this.store.lookup<Grant>('sharedSadeGrant', job.grantId);
+    if (
+      final(run) ||
+      !job?.project ||
+      job.state !== 'running' ||
+      (job.deadline || 0) <= this.now() ||
+      !grant?.projectOrchestration ||
+      !this.actorGrant(grant, actor) ||
+      !this.usable(grant, group, false)
+    )
+      throw new DomainError('This project delivery has no active permission.', 403);
+    if (input.action === 'upload') {
+      if (!grant.allowWrites || !job.project.outputs.includes(input.path))
+        throw new DomainError('The file is outside the assigned deliverable.', 403);
+      return this.projectFiles.upload(input);
+    }
+    const producer = prerequisitesOf(run, job).find((prior) =>
+      prior.projectArtifacts?.some(({ id }) => id === input.fileId),
+    );
+    if (!producer) throw new DomainError('This file is not an approved input for the task.', 403);
+    const source = this.store.lookup<Grant>('sharedSadeGrant', producer.grantId);
+    if (!source || !this.usable(source, group, false))
+      throw new DomainError('The source harness withdrew access before handoff.', 403);
+    return this.projectFiles.read(input);
+  }
+
+  private acceptProjectFinish(run: Run, job: Job, group: SharedGroup, result: SharedFinish) {
+    const project = run.project!;
+    if (job.phase === 'plan') {
+      if (result.kind !== 'project-plan')
+        throw new DomainError('Expected the scheduled project planning decision.', 400);
+      this.applyProjectPlan(run, job, group, result.reply);
+      return;
+    }
+    const assignment = job.project!;
+    if (assignment.stage === 'preparation') {
+      if (result.kind !== 'project-brief')
+        throw new DomainError('The preparation harness must submit its research brief.', 400);
+      job.projectBrief = {
+        title: redact(result.brief.title),
+        summary: redact(result.brief.summary),
+        sources: result.brief.sources.map((source) => redact(source)),
+      };
+      job.summary = job.projectBrief.summary;
+      job.state = 'done';
+      this.projectMessage(run, 'handoff', job.summary, { taskKey: job.task!.key });
+    } else if (assignment.stage === 'delivery') {
+      if (result.kind !== 'done') throw new DomainError('Expected a deliverable receipt.', 400);
+      const artifacts = this.projectFiles.outputs(run.id, job.id, assignment.outputs);
+      if (artifacts.length !== assignment.outputs.length)
+        throw new DomainError('The assigned deliverable files have not been verified.', 409);
+      job.projectArtifacts = artifacts;
+      job.summary = redact(result.summary);
+      job.state = 'done';
+      this.projectMessage(run, 'handoff', job.summary, { taskKey: job.task!.key });
+    } else {
+      if (result.kind !== 'project-audit')
+        throw new DomainError('The reviewer must submit an independent verdict.', 400);
+      this.completeProjectAudit(run, job, result.audit, group);
+    }
+    this.advanceProject(run, group);
+  }
+
+  private completeProjectAudit(
+    run: Run,
+    audit: Job,
+    result: z.infer<typeof projectAudit>,
+    group: SharedGroup,
+  ) {
+    const project = run.project!;
+    const feedback = redact(result.summary);
+    this.projectMessage(run, 'audit', feedback, { taskKey: 'audit' });
+    if (!result.revise.length) {
+      audit.state = 'done';
+      audit.summary = feedback;
+      project.stage = 'complete';
+      project.artifacts = run.jobs.flatMap(({ projectArtifacts }) => projectArtifacts ?? []);
+      this.finishCompletedRun(run);
+      this.projectMessage(
+        run,
+        'decision',
+        'The audit passed. The verified deliverables are ready in the project sidebar.',
+      );
+      return;
+    }
+    const affected = new Set(result.revise);
+    if (
+      [...affected].some(
+        (key) =>
+          !run.jobs.some((job) => job.task?.key === key && job.project?.stage === 'delivery'),
+      )
+    )
+      throw new DomainError('Audit feedback must name actual delivery task keys.', 400);
+    if (project.auditRounds >= 1) {
+      this.block(
+        run,
+        audit,
+        'The independent audit still needs changes. The drafts remain with their harnesses.',
+      );
+      return;
+    }
+    // The saved roadmap is in dependency order. Recheck consumers of outdated outputs.
+    for (const job of run.jobs)
+      if (job.task?.dependsOn.some((key) => affected.has(key))) affected.add(job.task.key);
+    const revisions = run.jobs.filter((job) => job.task && affected.has(job.task.key));
+    const required = new Map<string, number>();
+    for (const { grantId } of revisions) required.set(grantId, (required.get(grantId) || 0) + 1);
+    const available = this.grants(group).filter((grant) => this.usableForRun(grant, group, run));
+    if (
+      [...required].some(
+        ([grantId, turns]) =>
+          !available.some((grant) => grant.id === grantId && grant.turns - grant.used >= turns),
+      )
+    ) {
+      this.block(
+        run,
+        audit,
+        'The corrections need additional granted turns on the original harnesses.',
+      );
+      return;
+    }
+    for (const job of revisions) {
+      const index = run.jobs.indexOf(job);
+      run.jobs[index] = {
+        id: randomUUID(),
+        runId: run.id,
+        grantId: job.grantId,
+        phase: 'task',
+        state: 'queued',
+        task: job.task,
+        project: job.project,
+        projectResumeJobId: job.id,
+        clarification: { question: 'Independent audit feedback', answer: feedback.slice(0, 2000) },
+      };
+    }
+    project.auditRounds++;
+    project.stage = 'delivery';
+    this.projectMessage(
+      run,
+      'decision',
+      'I returned the flagged work to its original sessions and scheduled a new audit.',
+    );
   }
   private queueQuotaReplacement(run: Run, job: Job, grant: Grant, summary: string) {
     run.jobs[run.jobs.indexOf(job)] = {
@@ -1711,7 +2439,7 @@ export class GroupSade {
     // A provider receipt on another task can grow stale before this one starts.
     // Only the assigned worker's receipt for this task unlocks a quota-only backup.
     if (job.fallbackOnProviderQuota && evidence !== 'job-receipt') return;
-    if (job.reviewRevision) {
+    if (job.reviewRevision || job.projectResumeJobId) {
       this.block(
         run,
         job,
@@ -1796,7 +2524,11 @@ export class GroupSade {
           supportsTask(entry, job.task) &&
           !authorOwners.has(entry.ownerId) &&
           !reviewerOwners.has(entry.ownerId) &&
-          (!writer || !grant.patchHandoff || entry.patchHandoff || !hasDependents(run, job)),
+          (job.project ||
+            !writer ||
+            !grant.patchHandoff ||
+            entry.patchHandoff ||
+            !hasDependents(run, job)),
       )
       .sort(
         (a, b) =>
@@ -1805,7 +2537,7 @@ export class GroupSade {
           a.used - b.used,
       )
       .find((entry) => {
-        if (!writer) return true;
+        if (!writer || job.project) return true;
         if (planned.length)
           return planned.every((review) => {
             const peer = byId.get(review.grantId);
@@ -1827,6 +2559,17 @@ export class GroupSade {
       replacement,
       'Waiting for another granted teammate after a provider quota check.',
     );
+    if (job.project) {
+      this.projectMessage(
+        run,
+        'decision',
+        'The original harness could not start within its provider quota. I assigned the same work to ' +
+          replacement.label +
+          '.',
+        { taskKey: job.task?.key },
+      );
+      this.store.put('sharedSadeRun', run);
+    }
   }
   private block(run: Run, job: Job, reason: string) {
     run.state = 'blocked';
@@ -1866,6 +2609,17 @@ export class GroupSade {
       const holdsLease = job.state === 'running' || job.state === 'reviewing';
       if (!needsTurn && !holdsLease) continue;
       const grant = authorizedGrant(job.grantId);
+      if (
+        run.project &&
+        run.cloudPlanner &&
+        job.phase === 'plan' &&
+        holdsLease &&
+        grant &&
+        (job.deadline || 0) <= now
+      ) {
+        this.fallbackProjectPlan(run, job, this.store.get<SharedGroup>('sharedGroup', run.groupId));
+        return true;
+      }
       const reason = !grant
         ? 'The assigned teammate’s project grant ended.'
         : needsTurn && grant.used >= grant.turns
@@ -2010,6 +2764,12 @@ export class GroupSade {
     const active: string[] = [];
     const reviews: { jobId: string; digest: string }[] = [];
     const updates: { jobId: string; notes: z.infer<typeof sharedSadeUpdates> }[] = [];
+    const projectContexts: { jobId: string; context: SadeProjectContext }[] = [];
+    const projectAcknowledged = this.receiveProjectReports(
+      actor,
+      groupIds,
+      command.projectReports || [],
+    );
     let delivery: SharedDelivery | undefined;
     const runs = this.store.db
       .prepare(
@@ -2093,7 +2853,11 @@ export class GroupSade {
       );
       const withdrawn = [...dependencies].find(([, predecessors]) =>
         predecessors.some((other) => {
-          if (other.state !== 'done' || !other.portable || other.published) return false;
+          if (
+            other.state !== 'done' ||
+            (!other.projectArtifacts?.length && (!other.portable || other.published))
+          )
+            return false;
           const owner = grants.get(other.grantId);
           return !owner || !this.usable(owner, group, false);
         }),
@@ -2110,6 +2874,7 @@ export class GroupSade {
       for (const job of run.jobs) {
         if (!['queued', 'running', 'reviewing'].includes(job.state)) continue;
         if (run.cloudPlanner && job.phase === 'plan') continue;
+        if (job.project && !command.projectOrchestration) continue;
         const grant = grants.get(job.grantId)!;
         if (!this.actorGrant(grant, actor) || !supplied.has(grant.id)) continue;
         const quotaRetry = job.providerQuotaRetry;
@@ -2192,6 +2957,11 @@ export class GroupSade {
             job.awaitingReceipt = undefined;
             job.deadline = this.now() + leaseMs;
             active.push(job.id);
+            if (job.project)
+              projectContexts.push({
+                jobId: job.id,
+                context: this.projectContext(run, group, grants),
+              });
             if (job.state === 'running') {
               if (waitingForCapacity.has(job.id)) job.summary = capacityWaitSummary;
               else if (
@@ -2292,7 +3062,9 @@ export class GroupSade {
             (other) =>
               other !== job &&
               other.state === 'running' &&
-              grants.get(other.grantId)?.deviceId === actor.deviceId,
+              (job.project
+                ? other.grantId === job.grantId
+                : grants.get(other.grantId)?.deviceId === actor.deviceId),
           )
         )
           continue;
@@ -2357,7 +3129,7 @@ export class GroupSade {
           )
         )
           continue;
-        if (!retry && writes(job.task) && !plannedReviews(run, job).length) {
+        if (!job.project && !retry && writes(job.task) && !plannedReviews(run, job).length) {
           const peers = this.reviewGrants(run, grant, grants.values());
           const reviewer = this.availableReviewer(run, job, group, peers);
           if (!reviewer && peers.length) {
@@ -2494,6 +3266,32 @@ export class GroupSade {
           portableReview:
             writes(job.task) && command.patchHandoff && grant.patchHandoff ? true : undefined,
           ...(reviewedJob ? { review: reviewedJob.change } : {}),
+          ...(job.project
+            ? {
+                project: {
+                  runId: run.id,
+                  kind: run.project!.kind,
+                  stage: job.project.stage,
+                  outputs: job.project.outputs,
+                  inputs: predecessors.flatMap((other) => other.projectArtifacts ?? []),
+                  context: this.projectContext(run, group, grants),
+                  resumeJobId: job.projectResumeJobId,
+                },
+                ...(run.replyTo && this.store.lookup<SharedMessage>('sharedMessage', run.replyTo)
+                  ? {
+                      referencedMessage: (() => {
+                        const ref = this.store.get<SharedMessage>('sharedMessage', run.replyTo!);
+                        return {
+                          author: redact(ref.author).slice(0, referenceAuthorLimit),
+                          content: redact(ref.content).slice(0, referenceContentLimit),
+                        };
+                      })(),
+                    }
+                  : {}),
+                requiresPublication: false,
+                portableReview: undefined,
+              }
+            : {}),
         };
       }
       if (touched) this.store.put('sharedSadeRun', run);
@@ -2511,6 +3309,8 @@ export class GroupSade {
       supportsMachineCheckWait: true as const,
       supportsStructuredVerification: true as const,
       supportsPairedTestOnly: true as const,
+      supportsProjectOrchestration: true as const,
+      ...(command.projectOrchestration ? { projectContexts, projectAcknowledged } : {}),
       active,
       delivery,
       reviews,
@@ -2559,8 +3359,14 @@ export class GroupSade {
     const grant = grants.find((item) => item.id === job.grantId);
     if (!grant || (!hosted && !this.actorGrant(grant, actor)) || !this.usable(grant, group, false))
       throw new DomainError('The harness grant is no longer valid.', 403);
+    const acknowledgement = () => ({
+      accepted: true,
+      ...(command.result.kind === 'project-brief' && run.project?.stage === 'roadmap'
+        ? { roadmap: { runId: run.id, groupId: run.groupId } }
+        : {}),
+    });
     if (job.state === 'done' || (job.state === 'waiting' && command.result.kind === 'question'))
-      return { accepted: true };
+      return acknowledgement();
     if (
       !['running', 'reviewing'].includes(job.state) ||
       final(run) ||
@@ -2598,6 +3404,21 @@ export class GroupSade {
     }
     if (result.kind !== 'question') job.updates = undefined;
     const verification = declaredVerification(run, job);
+    if (run.project && result.kind !== 'blocked' && result.kind !== 'question') {
+      try {
+        this.acceptProjectFinish(run, job, group, result);
+        this.store.put('sharedSadeRun', run);
+      } catch (error) {
+        this.block(run, job, redact(error instanceof Error ? error.message : error));
+      }
+      return acknowledgement();
+    }
+    if (
+      result.kind === 'project-plan' ||
+      result.kind === 'project-brief' ||
+      result.kind === 'project-audit'
+    )
+      throw new DomainError('This request is not a delegated project.', 400);
     if (result.kind === 'blocked') this.block(run, job, result.summary);
     else if (result.kind === 'test-result') {
       if (
@@ -2652,6 +3473,8 @@ export class GroupSade {
         job.state = 'waiting';
         job.deadline = undefined;
         job.summary = redact(result.summary);
+        if (run.project)
+          this.projectMessage(run, 'question', job.summary, { taskKey: job.task?.key });
         this.store.put('sharedSadeRun', run);
       }
     } else if (result.kind === 'plan') {

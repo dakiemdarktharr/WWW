@@ -16,6 +16,8 @@ import { DomainError, type Store } from './store.ts';
 import { type DesktopOwner, DesktopIdentity } from './desktop-auth.ts';
 import { GroupSade, groupSadeCommands, projectKey, sharedFinish } from './group-sade.ts';
 import { effectiveTier } from './billing.ts';
+import { sadeProjectFileRoute } from '../shared/sade-project.ts';
+import { sadeProjectFile } from './shared-sade-project-files.ts';
 
 const groupId = z.string().uuid();
 const hostedFinish = z
@@ -25,7 +27,12 @@ const hostedFinish = z
     jobId: groupId,
     claimId: groupId,
     result: sharedFinish.refine(
-      ({ kind }) => kind === 'plan' || kind === 'question' || kind === 'blocked' || kind === 'done',
+      ({ kind }) =>
+        kind === 'plan' ||
+        kind === 'project-plan' ||
+        kind === 'question' ||
+        kind === 'blocked' ||
+        kind === 'done',
     ),
   })
   .strict();
@@ -69,7 +76,12 @@ const command = z.discriminatedUnion('action', [
       id: groupId,
       content: z.string().trim().min(1).max(8000),
       sade: z
-        .object({ projectKey, readOnly: z.literal(true).optional(), replyTo: groupId.optional() })
+        .object({
+          projectKey,
+          readOnly: z.literal(true).optional(),
+          replyTo: groupId.optional(),
+          catalogue: z.literal(true).optional(),
+        })
         .strict()
         .optional(),
     })
@@ -95,6 +107,26 @@ export class SharedGroups {
     cloudPlanner: boolean | 'extended' = false,
   ): unknown {
     const input = command.parse(raw);
+    if (
+      cloudPlanner &&
+      deviceId &&
+      input.action === 'sade-finish' &&
+      input.result.kind === 'project-brief'
+    )
+      return this.store.transaction(() => {
+        const receipt = this.sade.finish({ ownerId: owner.id, deviceId }, input, (groupId) =>
+          this.assertActiveSeat(owner.id, groupId),
+        );
+        if (!receipt.roadmap) return { accepted: true };
+        const group = this.assertActiveSeat(owner.id, receipt.roadmap.groupId);
+        const offer = this.sade.claimCloudPlan(
+          group,
+          { ownerId: owner.id, deviceId },
+          receipt.roadmap.runId,
+          cloudPlanner === 'extended',
+        );
+        return { accepted: true, ...(offer ? { sadePlanner: offer } : {}) };
+      });
     if (input.action === 'invite') {
       const group = this.store
         .all<SharedGroup>('sharedGroup')
@@ -312,6 +344,7 @@ export class SharedGroups {
         input.action === 'sade-revoke' ||
         input.action === 'sade-cancel' ||
         input.action === 'sade-answer' ||
+        input.action === 'sade-project-status' ||
         input.action === 'sade-update-task'
       ) {
         if (!deviceId) throw new DomainError('Desktop authentication required.', 401);
@@ -381,7 +414,8 @@ export class SharedGroups {
             message.content !== input.content ||
             message.sade?.projectKey !== input.sade?.projectKey ||
             message.sade?.readOnly !== input.sade?.readOnly ||
-            message.sade?.replyTo !== input.sade?.replyTo
+            message.sade?.replyTo !== input.sade?.replyTo ||
+            message.sade?.catalogue !== input.sade?.catalogue
           )
             throw new DomainError('Message ID already used.', 409);
           return message;
@@ -410,6 +444,16 @@ export class SharedGroups {
       }
       return this.saveGroup(group);
     });
+  }
+  projectFile(ownerId: string, deviceId: string, raw: unknown) {
+    const input = sadeProjectFile.parse(raw);
+    return this.store.transaction(() =>
+      this.sade.projectFile(
+        this.assertActiveSeat(ownerId, input.groupId),
+        { ownerId, deviceId },
+        input,
+      ),
+    );
   }
 
   private seatLimit(ownerId: string): number | null {
@@ -486,6 +530,12 @@ export function registerCollaboration(
       deviceId,
       mode === sharedSadeCloudExtended ? 'extended' : mode === '1',
     );
+  });
+  app.post(sadeProjectFileRoute, { bodyLimit: 768 * 1024 }, async (request) => {
+    const { owner, deviceId } = identity.publicDevice(
+      identity.authenticate(request.headers.authorization),
+    );
+    return groups.projectFile(owner.id, deviceId, request.body);
   });
   app.post(sharedSadeCloudFinishPath, async (request) => {
     const { owner, deviceId } = identity.publicDevice(

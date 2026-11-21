@@ -1047,6 +1047,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <SharedGroups
               members={availableMembers}
               projects={state.projects}
+              sessions={state.sessions}
               addTeammate={() => setModal({ type: 'connect' })}
               initialGroupId={selectedShared}
             />

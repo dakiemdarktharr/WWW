@@ -20,7 +20,8 @@ const qualifiedRead =
   /^(?:(?:nhờ|nho)(?: (?:đúng|dung))? )?(?<harness>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:của|cua) (?<owner>[\p{L}\p{N}][\p{L}\p{M}\p{N}_ -]*?) (?:đọc|doc|xem) (?:(?:đúng|dung) )?(?:(?:tệp|tep|file) )?(?<file>`?(?:[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\/)*[\p{L}\p{N}_-][\p{L}\p{M}\p{N}_.-]*\.[\p{L}\p{M}\p{N}_-]+`?)(?<tail>.*)$/iu;
 const readEnding =
   /^(?: (?:nha|nhe|voi|giup (?:minh|toi|tui)))?[.!]?(?:[ ,]+(?:chi (?:doc|xem)(?: thoi)?(?:, dung sua(?: gi)?)?|dung sua(?: gi)?)[.!]?)?$/;
-const explainEnding = /^ (?:roi|va) (?:giai thich|tom tat)((?: [\p{L}\p{M}\p{N}]+)*)(.*)$/u;
+const explainEnding =
+  /^ (?:roi|va) (?:giai thich|tom tat|bao(?: lai)?)((?: [\p{L}\p{M}\p{N}]+)*)(.*)$/u;
 const otherAction =
   /\b(?:neu|khi|hoac|nhung|thay vi|tru khi|sau do|truoc khi|roi|va|giao|nho|chuyen|doc|xem|sua|xoa|ghi|them|tao|lam|khong)\b/;
 
@@ -106,11 +107,17 @@ export function resolveSharedSadeReadAssignment(
   }
 
   const qualifier = foldSharedSadeName(ownerQualifier);
-  const owner: PublicationOwner = ['toi', 'tui', 'minh'].includes(qualifier)
-    ? { relative: 'requester' }
-    : ['ban', 'ong'].includes(qualifier)
-      ? { relative: 'other' }
-      : ownerQualifier;
+  const namesOwner = group.people.some(
+    ({ name, state }) =>
+      state === 'active' && name.normalize('NFC') === ownerQualifier.normalize('NFC'),
+  );
+  const owner: PublicationOwner = namesOwner
+    ? ownerQualifier
+    : ['toi', 'tui', 'minh'].includes(qualifier)
+      ? { relative: 'requester' }
+      : ['ban', 'ong'].includes(qualifier)
+        ? { relative: 'other' }
+        : ownerQualifier;
   const candidates = resolveSharedSadePublishedCandidates(harnessName, owner, requesterId, group);
   if (!candidates) return;
   return { scope, harnessName, ownerQualifier, candidates };

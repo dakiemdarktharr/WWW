@@ -6,6 +6,7 @@ const maxRequestBytes = 64 * 1024;
 const maxResponseBytes = 64 * 1024;
 const defaultOutputTokens = 2_048;
 export const sharedSadeResponsesMaxMs = 4_150;
+export const sharedSadeProjectResponsesMaxMs = 17_500;
 
 const errors = {
   unconfigured: 'The Responses planner is not configured.',
@@ -29,6 +30,7 @@ export class SharedSadeResponsesError extends Error {
 export interface SharedSadeResponsesInput {
   messages: readonly { role: 'system' | 'user'; content: string }[];
   responseSchema: Record<string, unknown>;
+  catalogueJpeg?: string;
 }
 
 export interface SharedSadeResponsesUsage {
@@ -44,6 +46,8 @@ export interface SharedSadeResponsesOptions {
   apiKey?: string;
   timeoutMs?: number;
   maxOutputTokens?: number;
+  reasoningEffort?: 'none' | 'low' | 'medium';
+  background?: boolean;
   fetch?: typeof fetch;
   signal?: AbortSignal;
   onUsage?: (usage: SharedSadeResponsesUsage) => void;
@@ -163,12 +167,15 @@ export async function completeSharedSadeResponses(
 ): Promise<unknown> {
   const apiKey = (options.apiKey ?? process.env.SADE_OPENAI_API_KEY)?.trim();
   const timeoutMs = options.timeoutMs ?? sharedSadeResponsesMaxMs;
+  const maxTimeoutMs = options.background
+    ? sharedSadeProjectResponsesMaxMs
+    : sharedSadeResponsesMaxMs;
   const maxOutputTokens = options.maxOutputTokens ?? defaultOutputTokens;
   if (
     !apiKey ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 1 ||
-    timeoutMs > sharedSadeResponsesMaxMs ||
+    timeoutMs > maxTimeoutMs ||
     !Number.isSafeInteger(maxOutputTokens) ||
     maxOutputTokens < 16 ||
     maxOutputTokens > 128_000
@@ -178,8 +185,22 @@ export async function completeSharedSadeResponses(
 
   const body = JSON.stringify({
     model,
-    input: input.messages.map(({ role, content }) => ({ type: 'message', role, content })),
-    reasoning: { effort: 'medium' },
+    input: input.messages.map(({ role, content }, index) => ({
+      type: 'message',
+      role,
+      content:
+        role === 'user' && index === input.messages.length - 1 && input.catalogueJpeg
+          ? [
+              { type: 'input_text', text: content },
+              {
+                type: 'input_image',
+                image_url: 'data:image/jpeg;base64,' + input.catalogueJpeg,
+                detail: 'high',
+              },
+            ]
+          : content,
+    })),
+    reasoning: { effort: options.reasoningEffort ?? 'medium' },
     service_tier: 'default',
     stream: false,
     store: false,
@@ -193,7 +214,10 @@ export async function completeSharedSadeResponses(
       },
     },
   });
-  if (Buffer.byteLength(body, 'utf8') > maxRequestBytes)
+  if (
+    Buffer.byteLength(body, 'utf8') >
+    (input.catalogueJpeg ? maxRequestBytes + 350_000 : maxRequestBytes)
+  )
     throw new SharedSadeResponsesError('request_too_large');
 
   const controller = new AbortController();

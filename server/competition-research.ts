@@ -59,10 +59,10 @@ const entities = (value: string) =>
     .replace(/&nbsp;/gi, ' ');
 const relevant =
   /rules?|terms|eligib|faq|judg|criteria|prize|winner|previous|past|archive|20\d\d|submission|deadline|track|resource|schedule|challenge|project|quy-dinh|the-le|bai-thi/i;
-export function extractResearchPage(html: string, base: string) {
+export function extractResearchPage(html: string, base: string, includeAllLinks = false) {
   const clean = html.replace(/<(script|style|form|iframe|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
   const links = [...clean.matchAll(/<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)]
-    .filter((match) => relevant.test(match[1] + ' ' + match[2]))
+    .filter((match) => includeAllLinks || relevant.test(match[1] + ' ' + match[2]))
     .flatMap((match) => {
       try {
         return [publicResearchUrl(new URL(entities(match[1]), base).href)];
