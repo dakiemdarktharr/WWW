@@ -15,13 +15,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/${{ github.repository }}/actions/runs/44923703373 > run.json
+          for attempt in {1..60}; do
+            gh api repos/${{ github.repository }}/actions/runs/44924449349 > run.json
+            if [ "$(jq -r .status run.json)" = completed ]; then break; fi
+            sleep 10
+          done
           test "$(jq -r .conclusion run.json)" = success
-          test "$(jq -r .head_sha run.json)" = 166d97b19970300a1764d9d145c056fea64af7f2
+          test "$(jq -r .head_sha run.json)" = b185de975cdb456504eaccfc8d3eae0178c02313
       - name: Download verified artifact
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run download 44923703373 --repo ${{ github.repository }} --name kivuno-macos-arm64 --dir packages
+        run: gh run download 44924449349 --repo ${{ github.repository }} --name kivuno-macos-arm64 --dir packages
       - name: Publish staged package
         env:
           GH_TOKEN: ${{ github.token }}
@@ -29,4 +33,4 @@ jobs:
           cd packages
           sha256sum -c Kivuno-0.9.13-macOS-arm64.dmg.sha256
           sha256sum -c Kivuno-0.9.13-macOS-arm64.zip.sha256
-          gh release create v0.9.13-macos --repo ${{ github.repository }} --target 166d97b19970300a1764d9d145c056fea64af7f2 --prerelease --title 'Kivuno 0.9.13 macOS staging' --notes 'Verified Apple Silicon DMG and update ZIP. Public desktop promotion waits for Windows and Linux.' Kivuno-0.9.13-macOS-arm64.dmg Kivuno-0.9.13-macOS-arm64.dmg.sha256 Kivuno-0.9.13-macOS-arm64.zip Kivuno-0.9.13-macOS-arm64.zip.sha256 macos-arm64.json
+          gh release create v0.9.13-macos-r2 --repo ${{ github.repository }} --target b185de975cdb456504eaccfc8d3eae0178c02313 --prerelease --title 'Kivuno 0.9.13 macOS staging' --notes 'Verified Apple Silicon DMG and update ZIP. Public desktop promotion waits for Windows and Linux.' Kivuno-0.9.13-macOS-arm64.dmg Kivuno-0.9.13-macOS-arm64.dmg.sha256 Kivuno-0.9.13-macOS-arm64.zip Kivuno-0.9.13-macOS-arm64.zip.sha256 macos-arm64.json
