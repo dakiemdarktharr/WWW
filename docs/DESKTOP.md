@@ -12,7 +12,7 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 
 ## Desktop updates
 
-When a newer installable release is available for your platform, the title bar shows **Cập nhật** and the version. Click once to download the package, check its size and SHA-256 against the release manifest, install it and reopen Kivuno. You can continue using the workspace while the package downloads. Updates are optional. Kivuno stops its local agents when it closes to apply an update and asks you to sign in again when it opens.
+Kivuno checks the release feed at startup and every 30 minutes while open. When a newer installable release is available for your platform, **Cập nhật** and the version appear immediately before the minimize button in the title bar. Click once to download the package, check its size and SHA-256 against the release manifest, install it and reopen Kivuno. You can continue using the workspace while the package downloads. Updates are optional. Kivuno stops its local agents when it closes to apply an update and asks you to sign in again when it opens.
 
 - Windows x64 runs the per-user NSIS installer against the current install folder.
 - macOS Apple Silicon replaces `Kivuno.app` using the release ZIP. A protected folder such as `/Applications` can require administrator approval. New installs use the DMG.
