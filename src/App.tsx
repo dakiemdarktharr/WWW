@@ -2161,11 +2161,13 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
       {modal?.type === 'login' && (
         <Modal
           title={
-            modal.result.type === 'claudeSubscription'
-              ? 'Claude sign-in'
-              : /Google/.test(modal.result.type)
-                ? 'Google sign-in'
-                : 'OpenAI sign-in'
+            modal.result.type.startsWith('antigravity')
+              ? 'Antigravity connection'
+              : modal.result.type === 'claudeSubscription'
+                ? 'Claude sign-in'
+                : /Google/.test(modal.result.type)
+                  ? 'Google sign-in'
+                  : 'OpenAI sign-in'
           }
           eyebrow={members.find((m) => m.id === modal.memberId)?.name || 'ACCOUNT SIGN-IN'}
           close={() => void dismissSignIn()}
