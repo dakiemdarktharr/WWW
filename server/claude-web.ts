@@ -145,6 +145,7 @@ const publishedTool = {
     additionalProperties: false,
   },
   annotations: {
+    title: 'Read shared project messages',
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,

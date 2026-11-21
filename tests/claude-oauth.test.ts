@@ -119,6 +119,7 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
   assert.equal((await inspect(r)).statusCode, 401);
   owner = 'Alice';
   const list = (await inspect(r)).json();
+  assert.ok(list.requestRemainingMs > 0 && list.requestRemainingMs <= 5 * 60000);
   assert.deepEqual(
     list.grants.map((g: any) => g.connectionId),
     [a.connectionId],
@@ -130,6 +131,14 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
   assert.equal((await decide(r, b.connectionId)).statusCode, 400);
   owner = 'Alice';
   assert.equal((await decide(r, b.connectionId)).statusCode, 400);
+  const expiredRequest = await request();
+  await inspect(expiredRequest);
+  const expiredRow = store.lookup<any>('claudeOAuthRequest', expiredRequest)!;
+  store.put('claudeOAuthRequest', { ...expiredRow, expiresAt: Date.now() - 1 });
+  assert.equal((await inspect(expiredRequest)).json().code, 'CLAUDE_CONSENT_UNAVAILABLE');
+  const expiredDecision = await decide(expiredRequest, a.connectionId);
+  assert.equal(expiredDecision.statusCode, 400);
+  assert.equal(expiredDecision.json().code, 'CLAUDE_CONSENT_UNAVAILABLE');
   const approved = await decide(r, a.connectionId);
   const redirect = new URL(approved.json().redirectUrl),
     code = redirect.searchParams.get('code')!;

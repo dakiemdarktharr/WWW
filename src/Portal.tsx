@@ -923,7 +923,7 @@ function PortalContent() {
               </div>
               <div className="kp-footer-bottom">
                 <span>© {new Date().getFullYear()} Kivuno · NoSleepClub</span>
-                <span>{release?.version || '0.9.15'}</span>
+                <span>{release?.version || '0.9.17'}</span>
                 <a href="#updates">Update patches</a>
                 <a href="/claude/guide">
                   {locale === 'vi' ? 'Kết nối Claude' : 'Claude connector'}

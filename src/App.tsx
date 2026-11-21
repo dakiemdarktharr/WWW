@@ -643,7 +643,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
   }
   function confirmAntigravity() {
     return window.confirm(
-      'Connect the Antigravity account on this computer to Kivuno? This uses the current Google sign-in in Antigravity, including future account changes there. Only one Kivuno profile can use this connection. Model prompts require a separate project allowance.',
+      'Connect this profile to the Antigravity account on this computer? Other Kivuno profiles and accounts can use it too. They share the current Google sign-in and quota, including future account changes in Antigravity. Disconnecting this profile leaves the others connected. Model prompts require a separate project allowance.',
     );
   }
   async function login(member: Member, method: 'browser' | 'device', deviceConfirmed = false) {

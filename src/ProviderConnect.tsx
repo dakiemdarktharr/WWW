@@ -446,7 +446,9 @@ export function ExternalConnection({
           <p>
             Connect the Antigravity account on this computer. If you are already signed in, Kivuno
             verifies that session. Otherwise, the official CLI opens Google sign-in. Credentials
-            stay with Antigravity; project work requires a separate allowance.
+            stay with Antigravity; project work requires a separate allowance. Multiple Kivuno
+            profiles and accounts can connect. On this Windows/macOS/Linux user, they share the same
+            Google sign-in and quota; they are not separate Google accounts.
           </p>
           <button className="button primary" disabled={busy || googleBusy} onClick={googleSignIn}>
             <ArrowUpRight size={15} /> Connect Antigravity
@@ -511,6 +513,16 @@ export function ExternalConnection({
       )}
       {remoteAccount && (
         <section className="form claude-account-step">
+          <button
+            className="text-button"
+            onClick={() =>
+              void openExternal('https://kivuno.vercel.app/claude/guide').catch((cause) =>
+                setError(cause.message),
+              )
+            }
+          >
+            <ArrowUpRight size={15} /> Hướng dẫn từng bước / Step-by-step guide
+          </button>
           {account?.status !== 'connected' && reusable ? (
             <>
               <strong>Claude is already connected to Kivuno</strong>
@@ -622,21 +634,32 @@ export function ExternalConnection({
                 step={account.authorized ? 2 : 1}
                 labels={['Open Claude', 'Approve connection', 'Verify connection']}
               />
-              <p>
-                {account.authorized ? (
-                  'Approved. Waiting for Claude to verify this connection. Keep Kivuno open.'
-                ) : (
-                  <>
-                    In Claude, connect Kivuno and approve <strong>{member.name}</strong> on the
-                    Kivuno page.
-                  </>
-                )}
-              </p>
-              <p>
-                If Claude already says Connected, that link may belong to an older profile.
-                Disconnect and reconnect it in Claude, then select {member.name} when asked. Use the
-                same Claude account in Desktop and your browser.
-              </p>
+              {account.authorized ? (
+                <p>Approved. Waiting for Claude to verify this connection. Keep Kivuno open.</p>
+              ) : (
+                <ol className="claude-connect-steps">
+                  <li>
+                    Choose <strong>Add Kivuno to Claude</strong> below and sign in to Claude.
+                  </li>
+                  <li>
+                    The name and address are filled in. Choose <strong>Continue</strong>.
+                  </li>
+                  <li>
+                    Keep the detected sign-in settings and choose <strong>Add</strong>.
+                  </li>
+                  <li>
+                    Open Kivuno in Claude and choose <strong>Connect</strong>.
+                  </li>
+                  <li>
+                    On the Kivuno page, select <strong>{member.name}</strong> and choose{' '}
+                    <strong>Link account</strong> before the countdown ends.
+                  </li>
+                  <li>
+                    Return here and wait for <strong>Claude connected</strong>. If needed, choose{' '}
+                    <strong>Check connection</strong>.
+                  </li>
+                </ol>
+              )}
               <button
                 className="button primary"
                 disabled={busy}
@@ -652,14 +675,48 @@ export function ExternalConnection({
                   }
                 }}
               >
-                <ArrowUpRight size={16} /> Open Claude connectors
+                <ArrowUpRight size={16} /> Add Kivuno to Claude
+              </button>
+              <button
+                className="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await beginClaudeAccount(member.id, 'existing');
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Open existing Kivuno connector
               </button>
               <details>
-                <summary>First connection or setup did not open?</summary>
+                <summary>Already added Kivuno to Claude?</summary>
                 <p>
-                  Choose Add → Custom → Web. Name it Kivuno, paste the address below and continue
-                  with the detected sign-in settings. Then choose Connect.
+                  Use Open existing Kivuno connector above. Open Kivuno and choose Connect; you do
+                  not need to add it again. Use the same Claude account in Desktop and your browser.
                 </p>
+                <p>
+                  If it already says Connected, return here and choose Check connection. If offered,
+                  use Use existing Claude connection. If this profile still cannot connect, in
+                  Claude choose the Kivuno menu → Disconnect → Connect, then approve {member.name}.
+                  Disconnecting interrupts the previous link.
+                </p>
+              </details>
+              <details>
+                <summary>The setup form did not open?</summary>
+                <ol className="claude-connect-steps">
+                  <li>In Claude, open Plugins → Your plugins → Connectors.</li>
+                  <li>Choose Add → Custom → Web (or Add custom connector).</li>
+                  <li>
+                    Enter <strong>Kivuno</strong> as the name and paste the address below.
+                  </li>
+                  <li>Choose Continue → Add → Connect, then Link account on the Kivuno page.</li>
+                </ol>
                 <input
                   aria-label="Connector URL"
                   readOnly

@@ -257,9 +257,10 @@ export function registerClaudeOAuth(
       const q = z.object({ request: z.string().uuid() }).strict().safeParse(req.query);
       const row = q.success && ownedRequest(q.data.request, owner);
       if (!row)
-        return reply
-          .code(404)
-          .send({ error: 'This authorization request expired. Reconnect from Claude.' });
+        return reply.code(404).send({
+          code: 'CLAUDE_CONSENT_UNAVAILABLE',
+          error: 'This authorization request expired. Reconnect from Claude.',
+        });
       if (!row.ownerId) store.put('claudeOAuthRequest', { ...row, ownerId: owner });
       const grants = ownerGrants(owner)
         .filter(
@@ -280,6 +281,7 @@ export function registerClaudeOAuth(
           ? latest.connectionId
           : undefined;
       return reply.send({
+        requestRemainingMs: row.expiresAt - Date.now(),
         recommendedConnectionId,
         scope: row.scope || scope,
         account: { name: options.ownerName?.(req) || owner },
@@ -330,9 +332,10 @@ export function registerClaudeOAuth(
       });
       return redirectUrl
         ? reply.send({ redirectUrl })
-        : reply
-            .code(400)
-            .send({ error: 'The request or selected project connector is unavailable.' });
+        : reply.code(400).send({
+            code: 'CLAUDE_CONSENT_UNAVAILABLE',
+            error: 'The request or selected project connector is unavailable.',
+          });
     });
     oauth.post(claudeTokenPath, { bodyLimit: 4096 }, (req, reply) => {
       if (!limit('token', req, 100))

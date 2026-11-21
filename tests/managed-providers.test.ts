@@ -13,8 +13,9 @@ import { isExternalMember } from '../shared/providers.ts';
 import { AntigravityBinding } from '../server/antigravity-binding.ts';
 import { Workspace } from '../server/service.ts';
 import { Store } from '../server/store.ts';
+import { DatabaseSync } from 'node:sqlite';
 
-test('a cached device account needs consent, belongs to one workspace, and disconnects locally', async (t) => {
+test('device consent is independent for each profile and Kivuno workspace', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-device-binding-'));
   const file = path.join(root, 'device.sqlite');
   const binding = new AntigravityBinding(file);
@@ -46,13 +47,41 @@ test('a cached device account needs consent, belongs to one workspace, and disco
   const reopened = new AntigravityBinding(file);
   const other = path.join(root, 'another-workspace', member.id);
   assert.equal(reopened.owns(home), true);
-  assert.throws(() => reopened.claim(other, true), /already has a managed/);
-  reopened.release(other);
+  assert.throws(() => reopened.claim(other), /Confirm use/);
+  assert.equal(reopened.owns(other), false);
+  reopened.claim(other, true);
+  const sameWorkspace = path.join(root, 'profiles', 'second');
+  binding.claim(sameWorkspace, true);
+  assert.equal(reopened.owns(sameWorkspace), true);
   assert.equal(binding.owns(home), true);
   await workspace.logout(member.id);
   assert.equal(binding.owns(home), false);
-  reopened.claim(other, true);
   assert.equal(reopened.owns(other), true);
+  assert.equal(reopened.owns(sameWorkspace), true);
+  reopened.release(other);
+  assert.equal(binding.owns(other), false);
+  assert.equal(binding.owns(sameWorkspace), true);
+});
+
+test('legacy exclusive binding migrates once and cannot resurrect revoked consent', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-binding-migration-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'device.sqlite');
+  const home = path.join(root, 'old', 'profile');
+  const key = process.platform === 'win32' ? home.toLowerCase() : home;
+  const db = new DatabaseSync(file);
+  db.exec('CREATE TABLE binding (slot INTEGER PRIMARY KEY CHECK(slot=1), profile TEXT NOT NULL)');
+  db.prepare('INSERT INTO binding VALUES (1, ?)').run(key);
+  db.close();
+  const first = new AntigravityBinding(file);
+  assert.equal(first.owns(home), true);
+  const second = new AntigravityBinding(file);
+  const other = path.join(root, 'new', 'profile');
+  assert.equal(second.owns(other), false);
+  second.claim(other, true);
+  first.release(home);
+  assert.equal(new AntigravityBinding(file).owns(home), false);
+  assert.equal(first.owns(other), true);
 });
 
 for (const [Client, label] of [
