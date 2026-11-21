@@ -14,6 +14,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { desktopPackageFiles } from './desktop-package-files.mjs';
+import { verifyDesktopModules } from './desktop-package-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -326,6 +327,7 @@ await build({
     },
     async afterPack({ appOutDir }) {
       const resources = path.join(appOutDir, 'Kivuno.app', 'Contents', 'Resources');
+      await verifyDesktopModules(path.join(root, 'desktop'), path.join(resources, 'app.asar'));
       const binaries = [
         'runtime/node',
         'runtime/git/bin/git',

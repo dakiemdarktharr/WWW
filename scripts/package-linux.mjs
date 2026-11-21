@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, writeFile, rm, lstat, chmod, stat, copyFile } from
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { desktopPackageFiles } from './desktop-package-files.mjs';
+import { verifyDesktopModules } from './desktop-package-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -207,6 +208,10 @@ await build({
       category: 'Development',
     },
     async afterPack({ appOutDir }) {
+      await verifyDesktopModules(
+        path.join(root, 'desktop'),
+        path.join(appOutDir, 'resources', 'app.asar'),
+      );
       for (const required of [
         'kivuno',
         'resources/app.asar',

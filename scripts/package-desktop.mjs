@@ -10,6 +10,7 @@ import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 import { configureDestinationStaging } from './nsis-destination-staging.mjs';
 import { desktopPackageFiles } from './desktop-package-files.mjs';
+import { verifyDesktopModules } from './desktop-package-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -191,6 +192,10 @@ await build({
       const { appOutDir } = context;
       configureLinuxNsisExtraction(context);
       await configureDestinationStaging(context);
+      await verifyDesktopModules(
+        path.join(root, 'desktop'),
+        path.join(appOutDir, 'resources', 'app.asar'),
+      );
       // Fail the build before producing a downloadable installer with missing deps.
       for (const required of [
         'runtime/node.exe',
