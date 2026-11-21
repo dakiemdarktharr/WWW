@@ -1,5 +1,7 @@
 # Thiết kế thanh toán Kivuno Plus/Max trên Avalanche
 
+> **Đã thay đổi cho demo cuộc thi:** thực trả 0 USDC, giá 2/6 chỉ mô phỏng, ví dự án trả gas để ghi biên nhận thật trên Fuji. Ví tài khoản tạo ngay khi đăng ký/đăng nhập. [Thiết kế đang áp dụng](KIVUNO-SPONSORED-BILLING.md). Phần dưới lưu thiết kế hợp đồng thu test USDC trước đây, không phải luồng thanh toán trên website hiện tại.
+
 **Trạng thái:** KivunoPlans đã triển khai trên Fuji. Dịch vụ xác minh giao dịch và cấp quyền chạy được trong môi trường demo local. Bằng chứng triển khai contract và tiêu chí nghiệm thu một lần mua nằm trong [runbook Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
 **Ngày kiểm tra nguồn:** 19/11/2026.
 **Phạm vi hiện tại.** Demo mua gói qua ngân hàng mô phỏng và kiểm chứng biên nhận trên EVM cục bộ. Một luồng riêng dùng test USDC trên Fuji C-Chain.

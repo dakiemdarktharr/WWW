@@ -700,6 +700,11 @@ try {
   assert.equal(memberToken.statusCode, 200, memberToken.body);
   assert.equal(memberToken.json().owner.name, 'Ari Test');
   assert.notEqual(memberToken.json().owner.id, 'workspace-owner');
+  assert.match(
+    store.get<{ address: string }>('billingWallet', memberToken.json().owner.id).address,
+    /^0x[\da-f]{40}$/i,
+    'Signup binds a wallet before any billing visit',
+  );
   assert.equal(typeof memberToken.json().accessToken, 'string');
   assert.equal((await exchange(grant.deviceCode)).statusCode, 400);
   await dialog.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
@@ -741,7 +746,12 @@ try {
   });
   assert.equal(ownerStart.statusCode, 200, ownerStart.body);
   const ownerGrant = ownerStart.json();
-  await dialog.getByLabel('Mã từ app desktop').fill(ownerGrant.userCode);
+  await dialog
+    .getByLabel('Mã từ app desktop')
+    .fill(ownerGrant.userCode)
+    .catch(async (error) => {
+      throw new Error(error.message + '\n' + (await dialog.innerText()));
+    });
   await dialog.getByText('Owner desktop', { exact: true }).waitFor();
   assert.equal(approvalRequests, 1, 'Legacy login also requires explicit consent.');
   // Merely visiting the activation URL never authorizes the app.

@@ -90,11 +90,18 @@ export function PlanBanners({
                   )
                 ) : (
                   <>
-                    test USDC<span> / {en ? 'month' : 'tháng'}</span>
+                    USDC<span> / {en ? 'month (simulated)' : 'tháng (mô phỏng)'}</span>
                   </>
                 )}
               </span>
             </span>
+            {tier !== 'free' && (
+              <span>
+                {en
+                  ? 'Actual payment: 0 USDC · Gas sponsored'
+                  : 'Thực trả: 0 USDC · Kivuno trả gas'}
+              </span>
+            )}
             <span className="plan-banner-perks" id={`${id}-${tier}-perks`}>
               {perks.map((perk) => (
                 <span key={perk}>
@@ -122,7 +129,7 @@ export function PlanBanners({
           className: `plan-banner plan-banner--${tier}${selected === tier ? ' is-selected' : ''}`,
           style: { '--plan-light-x': '50%', '--plan-light-y': '0%' } as CSSProperties,
           onPointerMove: tier === 'free' ? undefined : move,
-          'aria-label': `${names[tier]} · ${prices[tier]} ${tier === 'free' ? (en ? 'free forever' : 'miễn phí trọn đời') : en ? 'test USDC per month' : 'test USDC mỗi tháng'} · ${action}`,
+          'aria-label': `${names[tier]} · ${prices[tier]} ${tier === 'free' ? (en ? 'free forever' : 'miễn phí trọn đời') : en ? 'simulated USDC per month, actual payment 0 USDC' : 'USDC mô phỏng mỗi tháng, thực trả 0 USDC'} · ${action}`,
           'aria-describedby': `${id}-${tier}-perks`,
         };
         return onSelect ? (

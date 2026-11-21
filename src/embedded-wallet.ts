@@ -11,6 +11,72 @@ type SealedWallet = {
 
 const format = 'kivuno-fuji-wallet-v1';
 const wallets = 'wallets';
+const provisioning = new Map<string, Promise<string>>();
+
+// Run at authentication, not checkout. A bound account on another browser keeps
+// its original address; only this device's encrypted key material stays local.
+export function ensureAccountWallet(accountId: string): Promise<string> {
+  const existing = provisioning.get(accountId);
+  if (existing) return existing;
+  const pending = (async () => {
+    const summary = await api<{ account: { id: string; email: string }; wallet: string | null }>(
+      '/billing/summary',
+    );
+    if (summary.account.id !== accountId) {
+      // Better Auth keeps the bootstrap owner's UUID; the cloud API deliberately
+      // aliases that same owner to workspace-owner. Verify the live identity before
+      // using the alias, rather than accepting an arbitrary account mismatch.
+      const response = await fetch('/api/auth/get-session', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+      const session = response.ok ? await response.json() : null;
+      if (
+        summary.account.id !== 'workspace-owner' ||
+        session?.user?.id !== accountId ||
+        session.user.email !== summary.account.email
+      )
+        throw new Error('Phiên tài khoản đã thay đổi. Đăng nhập lại.');
+    }
+    const canonicalId = summary.account.id;
+    if (summary.wallet) return summary.wallet;
+    const wallet = await walletForAccount(canonicalId, null, true);
+    if (!wallet) throw new Error('Chưa tạo được ví tài khoản. Hãy thử đăng nhập lại.');
+    const proof = await api<{
+      challengeId: string;
+      message: string;
+      currentWalletMessage?: string;
+    }>('/billing/wallet/challenge', { address: wallet.address });
+    const lines = proof.message.split('\n');
+    if (
+      proof.currentWalletMessage ||
+      lines[0] !== 'Kivuno wallet authorization' ||
+      !lines.includes('Account: ' + canonicalId) ||
+      !lines.includes('New wallet: ' + wallet.address)
+    ) {
+      const latest = await api<{ account: { id: string }; wallet: string | null }>(
+        '/billing/summary',
+      );
+      if (latest.account.id === canonicalId && latest.wallet) return latest.wallet;
+      throw new Error('Liên kết ví đã thay đổi. Đăng nhập lại để kiểm tra.');
+    }
+    try {
+      await api('/billing/wallet/bind', {
+        challengeId: proof.challengeId,
+        signature: await wallet.signMessage(proof.message),
+      });
+    } catch (error) {
+      const latest = await api<{ account: { id: string }; wallet: string | null }>(
+        '/billing/summary',
+      );
+      if (latest.account.id === canonicalId && latest.wallet) return latest.wallet;
+      throw error;
+    }
+    return wallet.address;
+  })().finally(() => provisioning.delete(accountId));
+  provisioning.set(accountId, pending);
+  return pending;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

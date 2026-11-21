@@ -19,7 +19,7 @@ const revisionForBuild = async () => {
 // One normalized source drives both the fingerprint and the actual child process.
 // Explicit empty values clear optional settings inherited from a sandbox environment.
 export function cloudRuntimeEnvironment(env: NodeJS.ProcessEnv = process.env) {
-  const fuji = !!env.KIVUNO_FUJI_PAYMENT_CONTRACT;
+  const fuji = !!env.KIVUNO_FUJI_PAYMENT_CONTRACT || env.KIVUNO_BILLING_MODE === 'sponsored-demo';
   const mongo = !!env.RELAY_MONGODB_URI;
   const mail = !!(env.RELAY_RESEND_API_KEY || env.RELAY_MAIL_FROM);
   return {
@@ -33,6 +33,8 @@ export function cloudRuntimeEnvironment(env: NodeJS.ProcessEnv = process.env) {
     RELAY_MAIL_FROM: mail ? env.RELAY_MAIL_FROM || '' : '',
     RELAY_MAIL_REPLY_TO: mail ? env.RELAY_MAIL_REPLY_TO || '' : '',
     KIVUNO_FUJI_PAYMENT_CONTRACT: env.KIVUNO_FUJI_PAYMENT_CONTRACT || '',
+    KIVUNO_BILLING_MODE: env.KIVUNO_BILLING_MODE || '',
+    KIVUNO_FUJI_RECEIPT_KEY: env.KIVUNO_FUJI_RECEIPT_KEY || '',
     KIVUNO_FUJI_USDC_ADDRESS: fuji ? env.KIVUNO_FUJI_USDC_ADDRESS || '' : '',
     KIVUNO_FUJI_TREASURY_ADDRESS: fuji ? env.KIVUNO_FUJI_TREASURY_ADDRESS || '' : '',
     KIVUNO_FUJI_RPC_URL: fuji ? env.KIVUNO_FUJI_RPC_URL || '' : '',

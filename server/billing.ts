@@ -14,6 +14,7 @@ import type { CloudUser } from './cloud-auth.ts';
 import { DomainError, type Store } from './store.ts';
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { bankEntitlement } from './bank-checkout.ts';
+import { registerSponsoredBilling, sponsoredMode } from './sponsored-billing.ts';
 
 export const FUJI_CHAIN_ID = 43113;
 export const FUJI_RPC_URL = 'https://api.avax-test.network/ext/bc/C/rpc';
@@ -133,6 +134,8 @@ export function registerBillingRoutes(
   currentUser: (request: FastifyRequest) => Promise<CloudUser | null>,
   desktopIdentity?: DesktopIdentity,
 ) {
+  registerSponsoredBilling(app, store, currentUser);
+  const demo = sponsoredMode();
   const contractAddress = process.env.KIVUNO_FUJI_PAYMENT_CONTRACT
     ? safeAddress(process.env.KIVUNO_FUJI_PAYMENT_CONTRACT, '')
     : '';
@@ -192,6 +195,12 @@ export function registerBillingRoutes(
   // Unsubmitted intents can be abandoned. Once Fuji has advanced beyond their
   // expiry, no further transaction can settle them within the accepted window.
   const pendingThrough = (userId: string, payer: string) => {
+    if (
+      store
+        .all<{ ownerId: string; status: string }>('sponsoredOrder')
+        .some((o) => o.ownerId === userId && o.status === 'pending')
+    )
+      throw new DomainError('Chờ biên nhận Fuji hiện tại hoàn tất trước khi đổi ví.', 409);
     const paid = latestEntitlement(store, userId);
     if (paid && paid.paidUntil > Date.now())
       throw new DomainError('Wait until the current paid term ends before changing wallets.', 409);
@@ -303,6 +312,8 @@ export function registerBillingRoutes(
         endsAt: trial ? new Date(trial.paidUntil).toISOString() : null,
       },
       config: {
+        mode: demo ? 'sponsored-demo' : 'usdc',
+        actualUsdc: demo ? 0 : undefined,
         chainId: FUJI_CHAIN_ID,
         chainName: 'Avalanche Fuji',
         tokenAddress,
@@ -312,7 +323,7 @@ export function registerBillingRoutes(
         contractAddress: contractAddress || null,
         treasuryAddress,
         available:
-          (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),
+          demo || (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),
       },
     };
   });
@@ -744,6 +755,7 @@ export function registerBillingRoutes(
   });
 
   app.post('/api/billing/intent', async (request, reply) => {
+    if (demo) throw new DomainError('Chế độ demo chỉ ghi biên nhận 0 USDC. Tải lại trang.', 409);
     const user = await userFor(request);
     limited(paymentAttempts, user.id, 10);
     const input = z
@@ -791,6 +803,11 @@ export function registerBillingRoutes(
   });
 
   app.post('/api/billing/verify', async (request, reply) => {
+    if (demo)
+      throw new DomainError(
+        'Luồng thu test USDC đã tắt. Tải lại trang để dùng biên nhận 0 USDC.',
+        409,
+      );
     const user = await userFor(request);
     limited(paymentAttempts, `${user.id}:verify`, 30);
     const input = z

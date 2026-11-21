@@ -1,5 +1,7 @@
 # Kivuno payments on Avalanche Fuji
 
+**Current public demo:** [Sponsored Fuji billing](KIVUNO-SPONSORED-BILLING.md) collects 0 USDC and pays gas from the project receipt wallet. Account wallets are provisioned on signup/sign-in. The contract flow below is retained for operator/developer testing and historical deployment evidence; it is not the hosted contest checkout.
+
 The existing KivunoPlans contract accepts Plus and Max purchases on Avalanche Fuji C-Chain, chain ID `43113`. Buyers can use a Kivuno account and the wallet created by the billing page. Core is used for the separate contract deployment procedure below.
 
 The default local billing page opens the [bank QR simulator](KIVUNO-BANK-DEMO.md). The following steps exercise the separate Fuji test-token flow.
@@ -7,7 +9,7 @@ The default local billing page opens the [bank QR simulator](KIVUNO-BANK-DEMO.md
 ## Run a Fuji purchase from the local application
 
 1. Install the repository dependencies and start the local application with `npm run dev:fuji-demo`. Open [Fuji wallet checkout](http://127.0.0.1:5173/billing?demo=fuji) in a regular browser window. The command starts the API and Vite on loopback and supplies the deployment addresses below.
-2. Sign in or create a Kivuno account. The first authenticated visit to billing creates an EVM wallet in this browser and binds its public address to the account. Download the encrypted wallet backup before funding the address. Keep the file and retain access to this Kivuno account.
+2. Sign in or create a Kivuno account. Authentication creates an EVM wallet in this browser and binds its public address to the account before checkout. Download the encrypted wallet backup before funding the address in this legacy test-token flow. Keep the file and retain access to this Kivuno account.
 3. Copy the **buyer wallet address** from billing. Select Avalanche Fuji on the [Circle test USDC faucet](https://faucet.circle.com/) and request test USDC for that address. Send the same buyer a small amount of **Fuji C-Chain test AVAX** for gas from a funded test wallet. The operator can refill their test wallet through the [Avalanche Builder Hub faucet](https://build.avax.network/console/primary-network/faucet). A new buyer wallet starts empty. The treasury in the table below receives subscription revenue.
 4. Select Plus for 2 test USDC or Max for 6. Review the amount, recipient, network and 30-day term. Confirm the purchase on the Kivuno page. Each purchase requires a new confirmation.
 5. Open the resulting transaction in the Fuji explorer. Check success, the `PlanPaid` event and the USDC transfer to the treasury. In Kivuno, confirm the new plan, expiration date and quota. Keep the transaction hash as the evidence for this purchase.

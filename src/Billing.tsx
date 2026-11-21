@@ -12,7 +12,8 @@ import {
 import { Contract, Signature, keccak256, getAddress, hexlify, randomBytes } from 'ethers';
 import { api, ApiError, resetApiSession } from './api';
 import { BillingWallet, balance, fuji, legacySigner, type WalletMode } from './BillingWallet';
-import { walletForAccount } from './embedded-wallet';
+import { walletForAccount, ensureAccountWallet } from './embedded-wallet';
+import { SponsoredCheckout } from './SponsoredCheckout';
 import { BankCheckout } from './BankCheckout';
 import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
 import { PlanBanners, type PlanTier } from './PlanBanners';
@@ -31,6 +32,7 @@ type BillingProfile = {
 };
 type BillingProfiles = { limit: number | null; tier: Tier; profiles: BillingProfile[] };
 type WalletConfig = {
+  mode?: 'sponsored-demo' | 'usdc';
   chainId?: number;
   chainName?: string;
   tokenAddress?: string;
@@ -280,6 +282,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
         const account = body.user as AuthUser | null | undefined;
         if (!mounted) return;
         if (account && typeof account.id === 'string') {
+          await ensureAccountWallet(account.id);
           setUser(account);
           await refreshSummary();
         }
@@ -344,6 +347,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       if (!body.user || typeof (body.user as AuthUser).id !== 'string')
         throw new Error('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.');
       resetApiSession();
+      await ensureAccountWallet((body.user as AuthUser).id);
       setUser(body.user as AuthUser);
       setShowSignIn(false);
       setPassword('');
@@ -985,7 +989,15 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                     </section>
                   )}
 
-                {checkout && (
+                {checkout && !bank && config?.mode === 'sponsored-demo' && (
+                  <SponsoredCheckout
+                    account={user.id}
+                    wallet={boundWallet}
+                    plan={selectedPlan}
+                    refresh={refreshSummary}
+                  />
+                )}
+                {checkout && (bank || config?.mode !== 'sponsored-demo') && (
                   <>
                     {!busy && !pending && !preparedIntent && (
                       <a className="billing-switch" href="/billing">

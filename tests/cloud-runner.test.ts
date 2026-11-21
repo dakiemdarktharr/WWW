@@ -49,6 +49,8 @@ test('enabling, changing and removing identity, mail or billing configuration ch
     KIVUNO_FUJI_USDC_ADDRESS: '0x' + '2'.repeat(40),
     KIVUNO_FUJI_TREASURY_ADDRESS: '0x' + '3'.repeat(40),
     KIVUNO_FUJI_RPC_URL: 'https://rpc.example',
+    KIVUNO_BILLING_MODE: 'sponsored-demo',
+    KIVUNO_FUJI_RECEIPT_KEY: 'test-only-receipt-key',
   };
   const revision = cloudRuntimeRevision(payload, active);
   assert.notEqual(revision, cloudRuntimeRevision(payload, environment));

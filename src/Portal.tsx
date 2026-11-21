@@ -32,6 +32,7 @@ import {
   X,
 } from 'lucide-react';
 import PortalAuth from './PortalAuth';
+import { ensureAccountWallet } from './embedded-wallet';
 import UpdatePatches from './UpdatePatches';
 import PortalGroupChat from './PortalGroupChat';
 import { PlanBanners } from './PlanBanners';
@@ -422,6 +423,7 @@ function PortalContent() {
           setAccount(
             user && typeof user.name === 'string' && typeof user.email === 'string' ? user : null,
           );
+          if (typeof user?.id === 'string') await ensureAccountWallet(user.id);
         }
       } catch {
         // Preserve the current account during temporary network failures.
