@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Eye, Monitor } from 'lucide-react';
-import { api, resetApiSession } from './api';
+import { api, ApiError, resetApiSession } from './api';
 import PortalAuth from './PortalAuth';
 import { PortalLanguage, PortalLocaleProvider, usePortalLocale } from './PortalLocale';
 import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
@@ -8,6 +8,7 @@ import './billing.css';
 import './ClaudeConsent.css';
 
 interface Consent {
+  requestRemainingMs?: number;
   recommendedConnectionId?: string;
   account: { name: string };
   scope: string;
@@ -37,12 +38,29 @@ function ConsentForm() {
   const [selected, setSelected] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const [unavailable, setUnavailable] = useState(false);
+  const expired = unavailable || (deadline !== null && now >= deadline);
+  const remainingSeconds = deadline === null ? 0 : Math.ceil(Math.max(0, deadline - now) / 1000);
+  useEffect(() => {
+    if (deadline === null) return;
+    const update = () => setNow(Date.now());
+    const timer = window.setInterval(update, 1000);
+    window.addEventListener('focus', update);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', update);
+    };
+  }, [deadline]);
   useEffect(() => {
     const controller = new AbortController();
     setData(null);
     setSelected('');
     setError('');
     setSignedOut(false);
+    setDeadline(null);
+    setUnavailable(false);
     if (!validRequest) return;
     const signedOut = () => {
       resetApiSession();
@@ -80,6 +98,13 @@ function ConsentForm() {
       )
         throw new Error(vi ? 'Yêu cầu cấp quyền không hợp lệ.' : 'The access request is invalid.');
       setData(consent);
+      if (
+        typeof consent.requestRemainingMs === 'number' &&
+        Number.isFinite(consent.requestRemainingMs)
+      ) {
+        setDeadline(Date.now() + Math.max(0, consent.requestRemainingMs));
+        setNow(Date.now());
+      }
       const recommended = consent.grants.find(
         (g) => g.connectionId === consent.recommendedConnectionId,
       );
@@ -87,7 +112,11 @@ function ConsentForm() {
       else if (consent.grants.length === 1) setSelected(consent.grants[0].connectionId);
     }
     void inspect().catch((cause) => {
-      if (!controller.signal.aborted) setError((cause as Error).message);
+      if (!controller.signal.aborted) {
+        if (cause instanceof ApiError && cause.code === 'CLAUDE_CONSENT_UNAVAILABLE')
+          setUnavailable(true);
+        else setError((cause as Error).message);
+      }
     });
     return () => {
       controller.abort();
@@ -96,7 +125,14 @@ function ConsentForm() {
   }, [reload, vi]);
 
   async function decide(allow: boolean) {
-    if (busy || !data || (allow && !selected)) return;
+    if (
+      busy ||
+      !data ||
+      expired ||
+      (deadline !== null && Date.now() >= deadline) ||
+      (allow && !selected)
+    )
+      return;
     setBusy(true);
     setError('');
     try {
@@ -118,7 +154,9 @@ function ConsentForm() {
         );
       location.replace(callback.href);
     } catch (cause) {
-      setError((cause as Error).message);
+      if (cause instanceof ApiError && cause.code === 'CLAUDE_CONSENT_UNAVAILABLE')
+        setUnavailable(true);
+      else setError((cause as Error).message);
       setBusy(false);
     }
   }
@@ -157,8 +195,33 @@ function ConsentForm() {
               {vi ? 'Đăng nhập Kivuno' : 'Sign in to Kivuno'}
             </button>
           </>
+        ) : expired ? (
+          <div role="alert">
+            <p>
+              {vi
+                ? 'Lời mời xác nhận đã hết hạn hoặc không còn hiệu lực.'
+                : 'This confirmation request expired or is no longer available.'}
+            </p>
+            <p>
+              {vi
+                ? 'Quay lại Claude, mở Kivuno và bấm Kết nối để tạo lời mời mới. Liên kết tài khoản có thời hạn riêng.'
+                : 'Return to Claude, open Kivuno and choose Connect to create a new request. The account link has a separate expiry.'}
+            </p>
+            <a className="billing-primary" href="https://claude.ai/plugins/yours?filter=connectors">
+              {vi ? 'Quay lại Claude' : 'Return to Claude'}
+            </a>
+          </div>
         ) : data ? (
           <>
+            {deadline !== null && (
+              <p>
+                {vi ? 'Xác nhận lời mời trong' : 'Confirm this request within'}{' '}
+                {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, '0')}
+                {vi
+                  ? '. Hết giờ, bạn cần bấm Kết nối lại trong Claude.'
+                  : '. After this, start a new connection in Claude.'}
+              </p>
+            )}
             <p>
               {vi ? 'Tài khoản Kivuno' : 'Kivuno account'} · <strong>{data.account.name}</strong>
             </p>
@@ -209,7 +272,7 @@ function ConsentForm() {
                         </small>
                       )}
                       <small>
-                        {vi ? 'Hết hạn' : 'Expires'}{' '}
+                        {vi ? 'Liên kết có hiệu lực đến' : 'Link valid until'}{' '}
                         <time dateTime={grant.expiresAt}>
                           {new Date(grant.expiresAt).toLocaleString(vi ? 'vi-VN' : 'en-US', {
                             dateStyle: 'medium',

@@ -76,6 +76,7 @@ test('Claude web reads use one device and project, preserve retry results and st
     .tools[0];
   assert.equal(published.title, 'Read shared project messages');
   assert.deepEqual(published.annotations, {
+    title: 'Read shared project messages',
     readOnlyHint: true,
     destructiveHint: false,
     idempotentHint: true,
