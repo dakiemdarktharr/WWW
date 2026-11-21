@@ -680,14 +680,27 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
       setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
       return;
     }
+    if (!window.relayDesktop) {
+      setToast({ text: 'Open Kivuno desktop to connect Antigravity.', error: true });
+      return;
+    }
+    if (!confirmAntigravity()) return;
     setBusy(`antigravity-google-${member.id}`);
     try {
-      if (!window.relayDesktop)
-        throw new Error('Open this workspace in the Kivuno desktop app to sign in with Google.');
-      await window.relayDesktop.signInAntigravityWithGoogle();
-      setToast({
-        text: 'Antigravity sign-in opened in Terminal. Finish the Google flow there, then return to Kivuno.',
-      });
+      await window.relayDesktop.prepareProvider('antigravity');
+      if (isExternalMember(member)) {
+        const managed = await perform<Member>(
+          'enable-managed',
+          `/members/${member.id}/managed-runtime`,
+          {
+            acknowledgeLocalExecution: true,
+            confirmDeviceAccount: true,
+          },
+        );
+        if (!managed) return;
+        member = managed;
+      }
+      await login(member, 'browser', true);
     } catch (error) {
       setToast({ text: (error as Error).message, error: true });
     } finally {
@@ -1728,29 +1741,6 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               projects={state?.projects || []}
               refreshProjects={refresh}
               googleBusy={pending}
-              enableManaged={async () => {
-                const existing = members.find((member) => member.id === modal.memberId);
-                if (existing?.entitlementLocked) {
-                  setToast({
-                    text: 'This profile is locked by your current Kivuno plan.',
-                    error: true,
-                  });
-                  return;
-                }
-                const deviceAccount = existing?.provider === 'antigravity';
-                if (deviceAccount && !confirmAntigravity()) return;
-                if (existing && window.relayDesktop)
-                  await window.relayDesktop.prepareProvider(providerOf(existing));
-                const member = await perform<Member>(
-                  'enable-managed',
-                  `/members/${modal.memberId}/managed-runtime`,
-                  {
-                    acknowledgeLocalExecution: true,
-                    ...(deviceAccount ? { confirmDeviceAccount: true } : {}),
-                  },
-                );
-                if (member) await login(member, 'browser', deviceAccount);
-              }}
               googleSignIn={() =>
                 void antigravityGoogleSignIn(
                   members.find((member) => member.id === modal.memberId)!,
@@ -2743,7 +2733,14 @@ function MemberCard({
         </div>
         <span className={`member-presence ${presence}`}>
           <i />
-          {presence === 'connected' ? 'Claude connected' : presence}
+          {presence === 'connected'
+            ? 'Claude connected'
+            : presence === 'online' &&
+                provider === 'antigravity' &&
+                member.account &&
+                !isExternalMember(member)
+              ? 'Antigravity connected'
+              : presence}
         </span>
       </div>
       <div className="member-account">
@@ -2808,6 +2805,11 @@ function MemberCard({
               dashboard.
             </small>
           </>
+        ) : provider === 'antigravity' ? (
+          <small>
+            Antigravity does not provide quota totals to Kivuno. Check /usage in the official
+            Antigravity CLI. This is separate from sign-in status.
+          </small>
         ) : (
           <span className="quota-unknown">Unavailable</span>
         )}
@@ -2844,7 +2846,7 @@ function MemberCard({
           ) : (
             <>
               {provider === 'antigravity' && !isExternalMember(member) ? (
-                'Skill and plugin inventory unavailable'
+                'Skills and plugins are managed in Antigravity'
               ) : (
                 <>
                   {member.skills.length} skills<span className="divider-dot">·</span>
@@ -2908,9 +2910,9 @@ function MemberCard({
                 primary
                 onClick={googleSignIn}
                 disabled={busy || member.entitlementLocked}
-                title="Opens the official Antigravity Google sign-in in Terminal."
+                title="Verify this computer’s Antigravity account or open official Google sign-in."
               >
-                <ArrowUpRight size={15} /> Sign in with Google
+                <ArrowUpRight size={15} /> Connect Antigravity
               </Button>
               <Button onClick={external} disabled={busy || member.entitlementLocked}>
                 <ExternalLink size={15} /> MESH connection

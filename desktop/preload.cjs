@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld(
     groups: (input) => ipcRenderer.invoke('relay:groups', input),
     beginClaudeWebAccount: (input) => ipcRenderer.invoke('relay:claude-web-begin', input),
     claudeWebAccountStatus: (input) => ipcRenderer.invoke('relay:claude-web-status', input),
+    reuseClaudeWebAccount: (input) => ipcRenderer.invoke('relay:claude-web-reuse', input),
     createClaudeWebConnection: (input) => ipcRenderer.invoke('relay:claude-web-create', input),
     revokeClaudeWebConnection: (id) => ipcRenderer.invoke('relay:claude-web-revoke', id),
     projectDeliverable: (input) => ipcRenderer.invoke('relay:project-deliverable', input),

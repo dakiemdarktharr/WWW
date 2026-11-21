@@ -1306,20 +1306,36 @@ function registerIpc() {
       return;
     }
     if (process.platform === 'win32') {
-      const child = spawn(
-        'powershell.exe',
+      const directory = await mkdtemp(path.join(os.tmpdir(), 'kivuno-antigravity-login-'));
+      const script = path.join(directory, 'sign-in.ps1');
+      await writeFile(
+        script,
         [
-          '-NoProfile',
-          '-Command',
-          `Start-Process -FilePath $env:ComSpec -ArgumentList ${powershellQuote(`/k "${agy}" acp --login`)}`,
-        ],
-        { detached: true, stdio: 'ignore', windowsHide: true },
+          '$ErrorActionPreference = "Stop"',
+          `& ${powershellQuote(agy)} acp --login`,
+          'if ($LASTEXITCODE -ne 0) { Write-Host "Antigravity sign-in did not finish. Check the message above." }',
+          'else { Write-Host "Return to Kivuno and choose Connect Antigravity to verify this account." }',
+        ].join('\n'),
+        { mode: 0o600, flag: 'wx' },
       );
-      await new Promise((resolve, reject) => {
-        child.once('error', reject);
-        child.once('spawn', resolve);
-      });
-      child.unref();
+      try {
+        // Await the launcher result, not merely spawn of the hidden wrapper.
+        // Explicit Normal creates a visible interactive console on Windows.
+        await execFileAsync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            `$ErrorActionPreference = 'Stop'; Start-Process powershell.exe -WindowStyle Normal -ErrorAction Stop -ArgumentList @('-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File',${powershellQuote('"' + script + '"')})`,
+          ],
+          { windowsHide: true, timeout: 15000, maxBuffer: 4096 },
+        );
+      } catch {
+        await unlink(script).catch(() => {});
+        throw new Error(
+          'Could not open the Antigravity sign-in window. Choose Connect Antigravity to use browser sign-in.',
+        );
+      }
       return;
     }
     for (const terminal of ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xterm']) {
@@ -1441,6 +1457,9 @@ function registerIpc() {
   );
   ipcMain.handle('relay:claude-web-status', (event, input) =>
     webConnector(event).accountStatus(input),
+  );
+  ipcMain.handle('relay:claude-web-reuse', (event, input) =>
+    webConnector(event).reuseAccount(input),
   );
   ipcMain.handle('relay:claude-web-revoke', (event, id) => webConnector(event).revoke(id));
   ipcMain.handle('relay:groups', async (event, input) => {

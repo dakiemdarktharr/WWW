@@ -74,6 +74,16 @@ const command = z.discriminatedUnion('action', [
     })
     .strict(),
   z.object({ action: z.literal('revoke'), connectionId: uuid }).strict(),
+  z
+    .object({
+      action: z.literal('reuse-account'),
+      connectionId: uuid,
+      memberId: uuid,
+      profileName: z.string().trim().min(1).max(100),
+      revision: z.number().int().nonnegative(),
+      confirmed: z.literal(true),
+    })
+    .strict(),
 ]);
 const requestId = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const messageSchema = z
@@ -117,6 +127,7 @@ export interface ClaudeWebGrant {
   kind?: 'account';
   accountGrantId?: string;
   requestedAt?: number;
+  bindingRevision?: number;
   verifiedAt?: string;
   verifiedCredential?: string;
   latestCredential?: string;
@@ -305,14 +316,88 @@ export function registerClaudeWeb(
           (g) =>
             g.kind === 'account' && g.deviceId === device.id && g.ownerId === owner.id && valid(g),
         );
-    if (input.action === 'account-status')
-      return accountStatus(
-        deviceAccounts().find(
+    const reusable = (memberId?: string) =>
+      store
+        .all<Grant>('claudeWebGrant')
+        .filter(
           (g) =>
-            (!input.memberId || g.memberId === input.memberId) &&
-            (!input.connectionId || g.connectionId === input.connectionId),
+            g.kind === 'account' &&
+            g.ownerId === owner.id &&
+            valid(g) &&
+            !(g.deviceId === device.id && g.memberId === memberId) &&
+            accountStatus(g).status === 'connected',
+        )
+        .map((g) => ({
+          connectionId: g.connectionId,
+          profileName: g.profileName || 'Claude',
+          revision: g.bindingRevision || 0,
+          expiresAt: new Date(g.expiresAt).toISOString(),
+        }));
+    if (input.action === 'account-status')
+      return {
+        ...accountStatus(
+          deviceAccounts().find(
+            (g) =>
+              (!input.memberId || g.memberId === input.memberId) &&
+              (!input.connectionId || g.connectionId === input.connectionId),
+          ),
         ),
-      );
+        reusable: reusable(input.memberId),
+      };
+    if (input.action === 'reuse-account') {
+      const invalidated = new Set<string>();
+      const result = store.transaction(() => {
+        const source = store
+          .all<Grant>('claudeWebGrant')
+          .find(
+            (g) =>
+              g.kind === 'account' &&
+              g.ownerId === owner.id &&
+              g.connectionId === input.connectionId,
+          );
+        if (!valid(source) || accountStatus(source).status !== 'connected')
+          throw new DomainError(
+            'This Claude connection is no longer available. Check connections again.',
+            409,
+          );
+        if ((source.bindingRevision || 0) !== input.revision)
+          throw new DomainError('This Claude connection changed. Check connections again.', 409);
+        if (source.deviceId === device.id && source.memberId === input.memberId)
+          return accountStatus(source);
+        const target = deviceAccounts().find((g) => g.memberId === input.memberId);
+        if (target && accountStatus(target).status === 'connected')
+          throw new DomainError(
+            'This profile is already connected. Disconnect it before replacing its connection.',
+            409,
+          );
+        // Move only the verified account link, never project consent. Preserve
+        // the token family and original expiry so Claude need not sign in again.
+        for (const grant of store.all<Grant>('claudeWebGrant')) {
+          if (
+            grant.id === target?.id ||
+            grant.accountGrantId === source.id ||
+            (target && grant.accountGrantId === target.id)
+          ) {
+            store.put('claudeWebGrant', { ...grant, revoked: true });
+            invalidated.add(grant.id);
+          }
+        }
+        const moved = store.put<Grant>('claudeWebGrant', {
+          ...source,
+          deviceId: device.id,
+          memberId: input.memberId,
+          profileName: input.profileName,
+          requestedAt: Date.now(),
+          bindingRevision: (source.bindingRevision || 0) + 1,
+        });
+        return accountStatus(moved);
+      });
+      for (const [id, session] of sessions) if (invalidated.has(session.grantId)) closeSession(id);
+      for (const job of jobs.values())
+        if (invalidated.has(job.grantId))
+          settle(job, failure('Project access was revoked when the Claude connection moved.'));
+      return result;
+    }
     if (input.action === 'enroll-account')
       return store.transaction(() => {
         const existing = deviceAccounts().find((g) => g.memberId === input.memberId);
@@ -322,7 +407,11 @@ export function registerClaudeWeb(
             requestedAt: Date.now(),
             profileName: input.profileName,
           });
-          return { enrolled: true, ...accountStatus(requested) };
+          return {
+            enrolled: true,
+            ...accountStatus(requested),
+            reusable: reusable(input.memberId),
+          };
         }
         const now = Date.now(),
           expiry = Date.parse(input.expiresAt);
@@ -347,7 +436,7 @@ export function registerClaudeWeb(
           profileName: input.profileName,
           expiresAt: expiry,
         });
-        return { enrolled: true, ...accountStatus(account) };
+        return { enrolled: true, ...accountStatus(account), reusable: reusable(input.memberId) };
       });
     if (input.action === 'enroll') {
       const expiry = Date.parse(input.expiresAt);

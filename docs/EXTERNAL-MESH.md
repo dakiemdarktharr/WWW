@@ -1,6 +1,6 @@
 # Claude Code và Antigravity cộng tác trong Neralu
 
-Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal. Google và Antigravity xử lý OAuth. Với Claude, thông tin xác thực và quota do ứng dụng hoặc CLI chính thức quản lý. Bạn có thể mở client để dùng thủ công hoặc bật nhận nhiệm vụ từ Sade theo hướng dẫn bên dưới.
+Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Connect Antigravity** yêu cầu xác nhận dùng tài khoản trên máy, rồi kiểm tra phiên bằng CLI chính thức. Nếu chưa đăng nhập, CLI mở luồng Google. Chỉ hiện **Antigravity connected** sau khi nhận được tài khoản hợp lệ; không suy ra trạng thái từ việc mở cửa sổ. Với Claude, thông tin xác thực và quota do ứng dụng hoặc CLI chính thức quản lý. Bạn có thể mở client để dùng thủ công hoặc bật nhận nhiệm vụ từ Sade theo hướng dẫn bên dưới.
 
 ## PowerPoint trong Chat
 
@@ -16,6 +16,10 @@ Trong **Team → Connect Claude**, chọn ứng dụng đang dùng:
 
 Nút **View usage on Claude** mở trang usage chính thức. Trên tài khoản Free đã thử, Claude không cung cấp bảng usage mà chuyển đến trang nâng cấp. Kivuno ghi rõ giới hạn này và không tạo số quota giả. Không cần mua gói để liên kết connector.
 
+Nếu Claude đã kết nối với một hồ sơ khác trong cùng tài khoản Kivuno, chọn **Use existing Claude connection** và xác nhận hồ sơ nguồn/đích. Không cần ngắt plugin trong Claude. Kivuno giữ nguyên thời hạn liên kết, thu hồi quyền chia sẻ project cũ và không cấp quyền project mới. Khi liên kết đã hết hạn hoặc bị thu hồi, vẫn cần đăng nhập lại.
+
+Antigravity chưa trả số quota và danh mục skills/plugins qua các phương thức Kivuno đang dùng. Xem quota bằng `/usage` trong CLI chính thức; thiếu số liệu không đồng nghĩa mất kết nối. Chạy model vẫn cần allowance riêng của project.
+
 ## Claude trong trình duyệt
 
 1. Mở **Team → Add account → Claude** trong Kivuno Desktop. Chọn **Claude in browser** và hồ sơ Claude trên máy, rồi bấm **Connect Claude in browser**. Bạn có thể chọn lại hồ sơ hiện có, chẳng hạn Nova.
@@ -28,7 +32,7 @@ Claude Free hỗ trợ một custom connector. Trong Team hoặc Enterprise, ng�
 
 ## Kết nối cục bộ
 
-1. Trong **Team → Add account**, chọn **Claude** hoặc **Antigravity**. Mỗi profile tương ứng một thành viên; nhiều profile có thể dùng những tài khoản/client riêng do bạn quản lý. Trên profile Antigravity, chọn **Sign in with Google** để mở đăng nhập chính thức trong Terminal. CLI, IDE và Antigravity App dùng chung thông tin đăng nhập cục bộ theo hướng dẫn Google.
+1. Trong **Team → Add account**, chọn **Claude** hoặc **Antigravity**. Mỗi profile tương ứng một thành viên; nhiều profile có thể dùng những tài khoản/client riêng do bạn quản lý. Trên profile Antigravity, chọn **Connect Antigravity** và xác nhận tài khoản trên máy. CLI, IDE và Antigravity App dùng chung thông tin đăng nhập cục bộ theo hướng dẫn Google.
 2. Mở nhóm dự án → **Members** → thêm thành viên vừa tạo. Team toàn cục và nhóm vẫn tách biệt.
 3. Mở **MESH connection** ở profile đó, chọn nhóm và thời hạn. Mặc định chỉ có quyền chat. Chỉ bật nhận task/checkpoint khi muốn cho client làm việc; quyền dùng khi quota chưa biết là một lựa chọn riêng, mặc định tắt.
 4. Tạo và sao chép cấu hình MCP. Thêm entry dưới `mcpServers` vào cấu hình client, giữ lại các entry hiện có. Trong Claude Desktop, mở Settings → Developer → Edit Config, gộp entry vào `mcpServers`, thoát hẳn app rồi mở lại và bật công cụ Kivuno trong chat. Với Claude Code, dùng local/user scope và kiểm tra `claude mcp list` hoặc `/mcp`. Không commit token vào `.mcp.json` của repo. [Hướng dẫn Claude MCP](https://code.claude.com/docs/en/mcp).

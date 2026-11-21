@@ -62,7 +62,8 @@ let recoveredReservation = false;
 const webJob = randomUUID();
 let webGrant:
   { connectionId: string; memberId: string; projectId: string; tokenHash: string } | undefined;
-let webAccount: { connectionId: string; memberId: string; expiresAt: string } | undefined;
+let webAccount:
+  { connectionId: string; memberId: string; expiresAt: string; profileName: string } | undefined;
 let webVerified = false;
 let webAuthorized = false;
 let webStatusFails = false;
@@ -122,7 +123,11 @@ const fixture = createServer(async (request, response) => {
           return;
         }
       }
-      if (payload.action === 'enroll-account' && webAccount?.memberId !== payload.memberId)
+      if (
+        payload.action === 'enroll-account' &&
+        !webVerified &&
+        webAccount?.memberId !== payload.memberId
+      )
         webAccount = payload;
       response.end(
         JSON.stringify(
@@ -134,9 +139,29 @@ const fixture = createServer(async (request, response) => {
                 authorized: webAuthorized || webVerified,
                 ...(webVerified ? { verifiedAt: new Date().toISOString(), canShare: true } : {}),
               }
-            : { status: 'disconnected' },
+            : {
+                status: 'disconnected',
+                reusable:
+                  webVerified && webAccount
+                    ? [
+                        {
+                          connectionId: webAccount.connectionId,
+                          profileName: webAccount.profileName,
+                          expiresAt: webAccount.expiresAt,
+                          revision: 0,
+                        },
+                      ]
+                    : [],
+              },
         ),
       );
+    } else if (payload.action === 'reuse-account') {
+      assert.ok(webAccount && webVerified);
+      assert.equal(payload.confirmed, true);
+      assert.equal(payload.revision, 0);
+      assert.equal(payload.connectionId, webAccount.connectionId);
+      webAccount = { ...webAccount, memberId: payload.memberId, profileName: payload.profileName };
+      response.end('{"status":"connected"}');
     } else if (payload.action === 'enroll') {
       assert.equal(payload.accountConnectionId, webAccount?.connectionId);
       assert.match(payload.tokenHash, /^[0-9a-f]{64}$/);
@@ -940,6 +965,39 @@ try {
       webStatusChecks - checksAfterConnected < 4,
       '30-day link must not overflow into a busy polling loop',
     );
+    // Recover a verified connector attached to a previous profile without
+    // sending the user back through Claude's hidden Connect button.
+    assert.ok(webAccount);
+    webAccount = { ...webAccount, memberId: randomUUID(), profileName: 'Previous Claude profile' };
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    const originalExpiry = webAccount.expiresAt;
+    const openedBeforeReuse = await desktop!.evaluate(
+      () => (globalThis as any).claudeConnectorUrls.length,
+    );
+    await expect(
+      dialog.getByRole('button', { name: 'Use existing Claude connection', exact: true }),
+    ).toBeVisible({ timeout: 12000 });
+    page.once('dialog', (confirmation) => confirmation.dismiss());
+    await dialog
+      .getByRole('button', { name: 'Use existing Claude connection', exact: true })
+      .click();
+    assert.notEqual(webAccount.memberId, member.id);
+    page.once('dialog', async (confirmation) => {
+      assert.match(confirmation.message(), /old project-sharing permissions will be revoked/);
+      await confirmation.accept();
+    });
+    await dialog
+      .getByRole('button', { name: 'Use existing Claude connection', exact: true })
+      .click();
+    await expect(dialog.getByText('Claude connected', { exact: true })).toBeVisible({
+      timeout: 12000,
+    });
+    assert.equal(webAccount.memberId, member.id);
+    assert.equal(webAccount.expiresAt, originalExpiry);
+    assert.equal(
+      await desktop!.evaluate(() => (globalThis as any).claudeConnectorUrls.length),
+      openedBeforeReuse,
+    );
     return member;
   };
   // Both real-client connection types use scoped local MCP, not native model dispatch.
@@ -1038,6 +1096,22 @@ try {
         externalDialog.getByRole('button', { name: 'Open Claude sign-in in browser', exact: true }),
       ).toHaveCount(0);
       await externalDialog.getByText('Share a project (optional)', { exact: true }).click();
+    }
+    if (provider === 'antigravity') {
+      await expect(
+        externalDialog.getByRole('button', { name: 'Enable Sade execution' }),
+      ).toHaveCount(0);
+      page.once('dialog', async (confirmation) => {
+        assert.match(confirmation.message(), /Antigravity/);
+        await confirmation.dismiss();
+      });
+      await externalDialog
+        .getByRole('button', { name: 'Connect Antigravity', exact: true })
+        .click();
+      await expect(externalDialog).toBeVisible();
+      await expect(externalCard.locator('.member-presence')).not.toHaveText(
+        'Antigravity connected',
+      );
     }
     await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
     await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();

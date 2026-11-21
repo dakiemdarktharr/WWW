@@ -173,6 +173,25 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
       verifiedAt: state.verifiedAt,
       canShare: state.canShare,
       authorized: state.authorized === true,
+      reusable: Array.isArray(state.reusable)
+        ? state.reusable
+            .filter(
+              (entry) =>
+                entry &&
+                uuid.test(entry.connectionId) &&
+                typeof entry.profileName === 'string' &&
+                entry.profileName.length <= 100 &&
+                Number.isSafeInteger(entry.revision) &&
+                entry.revision >= 0 &&
+                Date.parse(entry.expiresAt) > Date.now(),
+            )
+            .map((entry) => ({
+              connectionId: entry.connectionId,
+              profileName: entry.profileName,
+              revision: entry.revision,
+              expiresAt: entry.expiresAt,
+            }))
+        : [],
       url: origin + '/api/claude/mcp',
     };
   }
@@ -180,6 +199,29 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
     current: active,
     beginAccount: (input) => account(input, true),
     accountStatus: (input) => account(input, false),
+    async reuseAccount(input) {
+      check();
+      if (
+        !uuid.test(input?.memberId) ||
+        !uuid.test(input?.connectionId) ||
+        input.confirmed !== true ||
+        !Number.isSafeInteger(input.revision) ||
+        input.revision < 0
+      )
+        throw new Error('Select and confirm an existing Claude connection.');
+      const profile = await local({ action: 'account-profile', memberId: input.memberId });
+      check();
+      await cloud({
+        action: 'reuse-account',
+        memberId: input.memberId,
+        connectionId: input.connectionId,
+        revision: input.revision,
+        confirmed: true,
+        profileName: profile.profileName,
+      });
+      check();
+      return account({ memberId: input.memberId }, false);
+    },
     async enroll(input) {
       check();
       if (

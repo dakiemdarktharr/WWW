@@ -50,6 +50,57 @@ test('account setup verifies a local profile without creating a project connecti
   relay.stop();
 });
 
+test('reusing an account validates the local profile and confirms status without sharing projects', async () => {
+  const memberId = randomUUID(),
+    connectionId = randomUUID();
+  const input = { memberId, connectionId, revision: 2, confirmed: true };
+  const calls: string[] = [];
+  let current = true,
+    validProfile = true,
+    switchDuringLookup = false;
+  const relay = createRelay({
+    origin: 'https://example.test',
+    current: () => current,
+    local: async (value: any) => {
+      assert.deepEqual(value, { action: 'account-profile', memberId });
+      if (!validProfile) throw new Error('Not a local Claude profile.');
+      if (switchDuringLookup) current = false;
+      return { profileName: 'Verified local name' };
+    },
+    cloud: async (value: any) => {
+      calls.push(value.action);
+      if (value.action === 'reuse-account') {
+        assert.deepEqual(value, {
+          action: 'reuse-account',
+          ...input,
+          profileName: 'Verified local name',
+        });
+        return { status: 'connected' };
+      }
+      assert.deepEqual(value, { action: 'account-status', memberId });
+      // A successful mutation alone must never be treated as verified status.
+      return { status: 'disconnected', reusable: [null, { connectionId: 'invalid' }] };
+    },
+    pause: () => {
+      throw new Error('Account transfer must not poll project work.');
+    },
+  });
+  await assert.rejects(relay.reuseAccount({ ...input, confirmed: false }), /confirm/);
+  validProfile = false;
+  await assert.rejects(relay.reuseAccount(input), /local Claude profile/);
+  validProfile = true;
+  switchDuringLookup = true;
+  await assert.rejects(relay.reuseAccount(input), /workspace changed/);
+  assert.deepEqual(calls, []);
+  current = true;
+  switchDuringLookup = false;
+  const status = await relay.reuseAccount({ ...input, profileName: 'untrusted renderer name' });
+  assert.equal(status.status, 'disconnected');
+  assert.deepEqual(status.reusable, []);
+  assert.deepEqual(calls, ['reuse-account', 'account-status']);
+  relay.stop();
+});
+
 test('desktop polls only for an enrolled grant and fences a replay after membership changes', async () => {
   const connectionId = randomUUID(),
     projectId = randomUUID(),
