@@ -104,7 +104,8 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/claude-web') {
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
     if (payload.action === 'account-status' || payload.action === 'enroll-account') {
-      if (payload.action === 'enroll-account' && webAccount?.memberId !== payload.memberId) webAccount = payload;
+      if (payload.action === 'enroll-account' && webAccount?.memberId !== payload.memberId)
+        webAccount = payload;
       response.end(
         JSON.stringify(
           webAccount?.memberId === payload.memberId && webAccount
@@ -898,6 +899,9 @@ try {
       await page
         .getByRole('navigation', { name: 'Main navigation' })
         .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await page
+        .getByRole('button', { name: 'Open project Browser test project', exact: true })
         .click();
       await page.getByRole('button', { name: 'Group team', exact: true }).click();
       const group = page.locator('.group-member').filter({ hasText: external.name });
