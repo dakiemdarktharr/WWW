@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import releaseDownload from '../desktop/release-download.cjs';
+import desktopSecurity from '../desktop/security.cjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const npmCli = process.env.npm_execpath;
@@ -35,8 +37,36 @@ for (const [script, args] of steps) {
     );
   });
 }
+const downloads = path.join(root, 'dist', 'downloads');
+const releaseFile = path.join(downloads, 'release.json');
+const release = JSON.parse(await readFile(releaseFile, 'utf8'));
+const macos = release.platforms?.macos;
+if (
+  macos?.autoUpdate &&
+  !buildEnv.KIVUNO_MACOS_URL?.trim() &&
+  !buildEnv.KIVUNO_MACOS_UPDATE_URL?.trim()
+) {
+  const metadata = JSON.parse(
+    await readFile(path.join(root, 'release-artifacts', `macos-${macos.version}.json`), 'utf8'),
+  );
+  const source = metadata.autoUpdate?.assetSource;
+  if (source) {
+    const filename = `Kivuno-${macos.version}-macOS-arm64.zip`;
+    if (
+      !desktopSecurity.githubMacReleaseAsset(source, '.zip') ||
+      !new URL(source).pathname.endsWith(`/${filename}`) ||
+      macos.autoUpdate.url !== `https://kivuno.vercel.app/downloads/${filename}`
+    )
+      throw new Error('Invalid mirror for the macOS in-app update.');
+    // Copy the verified ZIP into the same deployment as its checksum. Older Mac apps
+    // already trust this first-party download path and expect a direct response.
+    await releaseDownload.downloadUpdate(
+      { ...macos.autoUpdate, url: source },
+      path.join(downloads, filename),
+      () => {},
+    );
+    console.log(`Mirrored the verified macOS update ZIP: ${filename}`);
+  }
+}
 await mkdir(path.join(root, '.cloud'), { recursive: true });
-await copyFile(
-  path.join(root, 'dist', 'downloads', 'release.json'),
-  path.join(root, '.cloud', 'release.json'),
-);
+await copyFile(releaseFile, path.join(root, '.cloud', 'release.json'));
