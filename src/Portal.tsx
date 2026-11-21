@@ -28,6 +28,7 @@ import {
   Sparkles,
   Workflow,
   UserPlus,
+  UserRound,
   X,
 } from 'lucide-react';
 import PortalAuth from './PortalAuth';
@@ -397,12 +398,46 @@ function PortalContent() {
   const { t, locale } = usePortalLocale();
   const [release, setRelease] = useState<Release | null>(null);
   const [releaseError, setReleaseError] = useState('');
+  const [account, setAccount] = useState<{ name: string; email: string } | null>(null);
+  const [accountChecked, setAccountChecked] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup' | null>(
     initialCode || new URLSearchParams(location.search).has('login') ? 'login' : null,
   );
   const [downloadsOpen, setDownloadsOpen] = useState(() =>
     new URLSearchParams(location.search).has('download'),
   );
+  useEffect(() => {
+    const controller = new AbortController();
+    async function refreshAccount() {
+      try {
+        const response = await fetch('/api/auth/get-session', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const session = await response.json();
+        if (!controller.signal.aborted) {
+          const user = session?.user;
+          setAccount(
+            user && typeof user.name === 'string' && typeof user.email === 'string' ? user : null,
+          );
+        }
+      } catch {
+        // Preserve the current account during temporary network failures.
+      } finally {
+        if (!controller.signal.aborted) setAccountChecked(true);
+      }
+    }
+    void refreshAccount();
+    window.addEventListener('focus', refreshAccount);
+    window.addEventListener('pageshow', refreshAccount);
+    return () => {
+      controller.abort();
+      window.removeEventListener('focus', refreshAccount);
+      window.removeEventListener('pageshow', refreshAccount);
+    };
+  }, [authMode]);
   const [docked, setDocked] = useState(false);
   const [curtain, setCurtain] = useState<'cover' | 'reveal' | null>(null);
   const [titleReset, setTitleReset] = useState(0);
@@ -619,26 +654,43 @@ function PortalContent() {
                 <Sparkles size={19} />
                 <span>{t('Gói Kivuno')}</span>
               </a>
-              <motion.button
-                {...gestures}
-                className="kp-nav-button"
-                aria-label={t('Đăng nhập')}
-                title={t('Đăng nhập')}
-                onClick={() => setAuthMode('login')}
-              >
-                <LogIn size={19} />
-                <span>{t('Đăng nhập')}</span>
-              </motion.button>
-              <motion.button
-                {...gestures}
-                className="kp-nav-button kp-nav-signup"
-                aria-label={t('Đăng ký')}
-                title={t('Đăng ký')}
-                onClick={() => setAuthMode('signup')}
-              >
-                <UserPlus size={19} />
-                <span>{t('Đăng ký')}</span>
-              </motion.button>
+              {account ? (
+                <motion.button
+                  {...gestures}
+                  className="kp-nav-button kp-account-button"
+                  aria-label={`${locale === 'vi' ? 'Tài khoản' : 'Account'} ${account.name || account.email}`}
+                  title={account.email}
+                  onClick={() => setAuthMode('login')}
+                >
+                  <UserRound size={19} />
+                  <span>{account.name || account.email}</span>
+                </motion.button>
+              ) : (
+                accountChecked && (
+                  <>
+                    <motion.button
+                      {...gestures}
+                      className="kp-nav-button"
+                      aria-label={t('Đăng nhập')}
+                      title={t('Đăng nhập')}
+                      onClick={() => setAuthMode('login')}
+                    >
+                      <LogIn size={19} />
+                      <span>{t('Đăng nhập')}</span>
+                    </motion.button>
+                    <motion.button
+                      {...gestures}
+                      className="kp-nav-button kp-nav-signup"
+                      aria-label={t('Đăng ký')}
+                      title={t('Đăng ký')}
+                      onClick={() => setAuthMode('signup')}
+                    >
+                      <UserPlus size={19} />
+                      <span>{t('Đăng ký')}</span>
+                    </motion.button>
+                  </>
+                )
+              )}
             </motion.div>
           </motion.nav>
           <main className="kp-content">
