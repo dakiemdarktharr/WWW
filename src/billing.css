@@ -1282,6 +1282,46 @@
 .billing-transaction-details summary {
   cursor: pointer;
 }
+.billing-sponsored {
+  display: grid;
+  gap: 16px;
+}
+.billing-sponsored h2 {
+  font-size: 24px;
+  line-height: 1.3;
+}
+.billing-sponsored h3 {
+  font-size: 28px;
+  margin: 8px 0;
+}
+.billing-sponsored p {
+  line-height: 1.6;
+}
+.billing-sponsored > .billing-primary {
+  width: 100%;
+}
+.billing-transfer-parties {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+.billing-transfer-parties dt {
+  font-size: 13px;
+  color: var(--bill-muted);
+}
+.billing-transfer-parties dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.billing-restore {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.billing-restore input {
+  max-width: 100%;
+}
 .billing-page .billing-panel > p,
 .billing-plan-actions > p {
   line-height: 1.6;

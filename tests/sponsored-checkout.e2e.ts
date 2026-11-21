@@ -4,12 +4,13 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { chromium, expect } from '@playwright/test';
 import { build } from 'esbuild';
 import { Contract, ContractFactory, JsonRpcProvider, parseEther, Wallet } from 'ethers';
+import { authorizationInterface } from '../shared/sponsored-authorization.ts';
 import plans from '../shared/kivuno-plans-artifact.json' with { type: 'json' };
 import token from '../shared/mock-usdc-test-shanghai-artifact.json' with { type: 'json' };
 import { Store } from '../server/store.ts';
@@ -215,7 +216,40 @@ test('sponsored checkout provisions the account wallet at signup and grants a re
       );
     }
   }
-  await page.getByRole('button', { name: 'Xác nhận · 0 USDC', exact: true }).click();
+  await page.getByText('Ví riêng của tài khoản', { exact: true }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Tải bản sao lưu mã hóa' }).click();
+  const backupPath = await (await downloadPromise).path();
+  assert.ok(backupPath);
+  const backup = await readFile(backupPath);
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('kivuno-fuji-wallets', 1);
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction('wallets', 'readwrite');
+        tx.objectStore('wallets').clear();
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+  });
+  await page.getByRole('button', { name: 'Ký mua gói · 0 USDC', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('chưa có khóa ví');
+  assert.equal(
+    store.all<any>('sponsoredOrder').filter((o) => o.hash).length,
+    0,
+    'Missing private key cannot submit',
+  );
+  await page
+    .getByLabel('Khôi phục ví từ bản sao lưu')
+    .setInputFiles({ name: 'wallet.json', mimeType: 'application/json', buffer: backup });
+  await expect(page.getByRole('alert')).toContainText('Đã khôi phục ví');
+  await page.getByRole('button', { name: 'Ký mua gói · 0 USDC', exact: true }).click();
   const receipt = page.getByRole('heading', { name: 'Đã ghi biên nhận Fuji' });
   await expect
     .poll(
@@ -239,9 +273,13 @@ test('sponsored checkout provisions the account wallet at signup and grants a re
   )[0];
   const tx = await rpc.getTransaction(order.hash);
   assert.equal(tx?.from, sponsor.address);
-  assert.equal(tx?.to, sponsor.address);
+  assert.equal(tx?.to, tokenAddress);
   assert.equal(tx?.value, 0n);
-  assert.equal(tx?.data, order.commitment);
+  const decoded = authorizationInterface.decodeFunctionData('transferWithAuthorization', tx!.data);
+  assert.equal(decoded.from, binding.address);
+  assert.equal(decoded.to, treasury.address);
+  assert.equal(decoded.value, 0n);
+  assert.equal(decoded.nonce, order.commitment);
   assert.equal(await rpc.getBalance(binding.address), 0n);
   assert.equal(await rpc.getTransactionCount(binding.address), 0);
   assert.equal(await new Contract(tokenAddress, token.abi, owner).balanceOf(treasury.address), 0n);

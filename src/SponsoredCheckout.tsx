@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import { backupWallet } from './embedded-wallet';
+import { backupWallet, restoreWallet, walletForAccount } from './embedded-wallet';
+import {
+  AUTHORIZATION_TYPES,
+  SPONSORED_PROTOCOL,
+  purchaseAuthorization,
+} from '../shared/sponsored-authorization';
+import { getAddress } from 'ethers';
 
 type Receipt = {
   id: string;
@@ -10,17 +16,26 @@ type Receipt = {
   simulatedUsdc: number;
   txHash: string | null;
   paidUntil: string | null;
+  protocol: string;
+  wallet: string;
+  token: string | null;
+  treasury: string | null;
+  createdAt: number;
 };
 export function SponsoredCheckout({
   account,
   wallet,
   plan,
   refresh,
+  token,
+  treasury,
 }: {
   account: string;
   wallet: string | null;
   plan: 'plus' | 'max';
   refresh: () => Promise<unknown>;
+  token: string | undefined;
+  treasury: string | undefined;
 }) {
   const [order, setOrder] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,7 +49,13 @@ export function SponsoredCheckout({
       if (!id) return;
       const restored = await api<Receipt>('/billing/demo/status?id=' + encodeURIComponent(id));
       if (active) {
-        if (restored.status !== 'pending' && restored.plan !== plan) {
+        if (
+          (restored.status !== 'pending' &&
+            (restored.plan !== plan || restored.protocol !== SPONSORED_PROTOCOL)) ||
+          (restored.status === 'quoted' &&
+            (restored.protocol !== SPONSORED_PROTOCOL ||
+              Date.now() - restored.createdAt >= 900_000))
+        ) {
           localStorage.removeItem(storageKey);
           return;
         }
@@ -84,7 +105,9 @@ export function SponsoredCheckout({
     setBusy(true);
     setError('');
     try {
-      const quote = order || (await api<Receipt>('/billing/demo/order', { plan }));
+      const quote =
+        (order?.status === 'quoted' && Date.now() - order.createdAt >= 900_000 ? null : order) ||
+        (await api<Receipt>('/billing/demo/order', { plan }));
       setOrder(quote);
       // Persistence is optional: the server also deduplicates open orders per account.
       try {
@@ -92,10 +115,44 @@ export function SponsoredCheckout({
       } catch {
         /* Private browsing. */
       }
+      let signature: string | undefined;
+      if (quote.status === 'quoted') {
+        if (
+          !wallet ||
+          !token ||
+          !treasury ||
+          quote.protocol !== SPONSORED_PROTOCOL ||
+          quote.plan !== plan ||
+          quote.actualUsdc !== 0 ||
+          quote.simulatedUsdc !== (plan === 'plus' ? 2 : 6) ||
+          getAddress(quote.wallet) !== getAddress(wallet) ||
+          !quote.token ||
+          getAddress(quote.token) !== getAddress(token) ||
+          !quote.treasury ||
+          getAddress(quote.treasury) !== getAddress(treasury) ||
+          !Number.isSafeInteger(quote.createdAt) ||
+          quote.createdAt > Date.now() + 60_000 ||
+          Date.now() - quote.createdAt >= 900_000
+        )
+          throw new Error(
+            'Nội dung mua gói hoặc ví nhận không khớp. Chưa ký. Tải lại trang để kiểm tra.',
+          );
+        const signer = await walletForAccount(account, wallet, false);
+        if (!signer)
+          throw new Error(
+            'Trình duyệt này chưa có khóa ví của bạn. Dùng trình duyệt đã tạo ví hoặc khôi phục bản sao lưu bên dưới; không tạo ví thay thế.',
+          );
+        const auth = purchaseAuthorization({
+          ...quote,
+          token: quote.token,
+          treasury: quote.treasury,
+        });
+        signature = await signer.signTypedData(auth.domain, AUTHORIZATION_TYPES, auth.message);
+      }
       const result =
         quote.status === 'pending'
           ? await api<Receipt>('/billing/demo/status?id=' + encodeURIComponent(quote.id))
-          : await api<Receipt>('/billing/demo/confirm', { id: quote.id });
+          : await api<Receipt>('/billing/demo/confirm', { id: quote.id, signature });
       setOrder(result);
       if (result.status === 'confirmed') await refresh();
     } catch (cause) {
@@ -107,7 +164,7 @@ export function SponsoredCheckout({
   const confirmed = order?.status === 'confirmed';
   const pending = order?.status === 'pending';
   return (
-    <section aria-label="Thanh toán demo miễn phí">
+    <section className="billing-sponsored" aria-label="Thanh toán demo miễn phí">
       <a
         className="billing-switch"
         href="/billing"
@@ -137,11 +194,25 @@ export function SponsoredCheckout({
           <strong>{order?.simulatedUsdc ?? (plan === 'plus' ? 2 : 6)} USDC / 30 ngày</strong>
         </p>
         <h3>Thực trả: 0 USDC</h3>
-        <p>Phí mạng do Kivuno trả. Bạn không cần nạp USDC hoặc AVAX.</p>
+        <p>
+          Phí mạng do Kivuno trả bằng test AVAX miễn phí trên Fuji. Bạn không cần nạp USDC hoặc
+          AVAX.
+        </p>
+        <p>Ví của bạn ký chuyển 0 USDC đến ví chủ Kivuno. Kivuno gửi hộ giao dịch và trả gas.</p>
+        <dl className="billing-transfer-parties">
+          <dt>Ví của bạn</dt>
+          <dd>
+            <code>{wallet}</code>
+          </dd>
+          <dt>Ví chủ nhận 0 USDC</dt>
+          <dd>
+            <code>{treasury}</code>
+          </dd>
+        </dl>
       </div>
       <details className="billing-wallet-box">
         <summary>Ví riêng của tài khoản</summary>
-        <p>Ví được tạo khi đăng ký hoặc đăng nhập, dùng để gắn biên nhận với tài khoản của bạn.</p>
+        <p>Ví được tạo khi đăng ký hoặc đăng nhập. Chỉ ví này ký yêu cầu mua gói của tài khoản.</p>
         <code className="billing-wallet-address">
           {wallet || 'Ví tài khoản chưa sẵn sàng. Hãy đăng nhập lại.'}
         </code>
@@ -157,6 +228,24 @@ export function SponsoredCheckout({
           >
             Tải bản sao lưu mã hóa
           </button>
+        )}
+        {wallet && (
+          <label className="billing-restore">
+            Khôi phục ví từ bản sao lưu
+            <input
+              type="file"
+              accept=".json,application/json"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file)
+                  void restoreWallet(account, wallet, file)
+                    .then(() => setError('Đã khôi phục ví. Bấm ký mua gói để tiếp tục.'))
+                    .catch((e) => setError(e.message));
+              }}
+            />
+          </label>
         )}
       </details>
       {error && (
@@ -195,7 +284,11 @@ export function SponsoredCheckout({
           disabled={busy || restoring || !wallet}
           onClick={() => void confirm()}
         >
-          {busy || restoring ? 'Đang xử lý…' : pending ? 'Kiểm tra biên nhận' : 'Xác nhận · 0 USDC'}
+          {busy || restoring
+            ? 'Đang xử lý…'
+            : pending
+              ? 'Kiểm tra biên nhận'
+              : 'Ký mua gói · 0 USDC'}
         </button>
       )}
       {(confirmed || order?.status === 'failed') && (
@@ -214,6 +307,10 @@ export function SponsoredCheckout({
           Về danh sách gói
         </button>
       )}
+      <p>
+        Trên Explorer, giao dịch được gửi bởi ví trả gas của Kivuno đến hợp đồng USDC. Mục Transfer
+        ghi ví của bạn → ví chủ, số tiền 0 USDC.
+      </p>
       <p>
         Không tự gia hạn. Gia hạn cùng gói nối thêm 30 ngày; đổi gói bắt đầu kỳ mới ngay. Giá 2 và 6
         USDC chỉ để minh họa.

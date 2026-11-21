@@ -6,7 +6,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Fastify from 'fastify';
-import { Wallet, JsonRpcProvider, parseEther, keccak256, toUtf8Bytes } from 'ethers';
+import { Wallet, JsonRpcProvider, parseEther, ContractFactory, Signature } from 'ethers';
+import tokenArtifact from '../shared/mock-usdc-test-shanghai-artifact.json' with { type: 'json' };
+import {
+  AUTHORIZATION_TYPES,
+  purchaseAuthorization,
+  authorizationInterface,
+} from '../shared/sponsored-authorization.ts';
 import { Store, DomainError } from '../server/store.ts';
 import { registerBillingRoutes, effectiveTier } from '../server/billing.ts';
 
@@ -29,12 +35,18 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
   const sponsor = Wallet.createRandom();
   const buyer = Wallet.createRandom();
   const [fund] = await rpc.listAccounts();
+  const usdc = await new ContractFactory(tokenArtifact.abi, tokenArtifact.bytecode, fund).deploy();
+  await usdc.waitForDeployment();
+  const token = await usdc.getAddress();
+  const treasury = fund.address;
   await (await fund.sendTransaction({ to: sponsor.address, value: parseEther('1') })).wait();
   const before = { ...process.env };
   Object.assign(process.env, {
     KIVUNO_BILLING_MODE: 'sponsored-demo',
     KIVUNO_FUJI_RECEIPT_KEY: sponsor.privateKey,
     KIVUNO_FUJI_RPC_URL: 'http://127.0.0.1:' + port,
+    KIVUNO_FUJI_USDC_ADDRESS: token,
+    KIVUNO_FUJI_TREASURY_ADDRESS: treasury,
   });
   let store = new Store(path.join(directory, 'test.db'));
   let user: { id: string; name: string; email: string } | null = {
@@ -57,7 +69,13 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
     await app.close();
     store.close();
     rpc.destroy();
-    for (const name of ['KIVUNO_BILLING_MODE', 'KIVUNO_FUJI_RECEIPT_KEY', 'KIVUNO_FUJI_RPC_URL']) {
+    for (const name of [
+      'KIVUNO_BILLING_MODE',
+      'KIVUNO_FUJI_RECEIPT_KEY',
+      'KIVUNO_FUJI_RPC_URL',
+      'KIVUNO_FUJI_USDC_ADDRESS',
+      'KIVUNO_FUJI_TREASURY_ADDRESS',
+    ]) {
       if (before[name] === undefined) delete process.env[name];
       else process.env[name] = before[name];
     }
@@ -73,6 +91,12 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
     assert.equal(response.statusCode, 200, response.body);
     return response.json();
   };
+  const sign = async (id: string) => {
+    const order = store.get<any>('sponsoredOrder', id);
+    const auth = purchaseAuthorization(order);
+    return buyer.signTypedData(auth.domain, AUTHORIZATION_TYPES, auth.message);
+  };
+  const confirm = async (id: string) => post('demo/confirm', { id, signature: await sign(id) });
   assert.equal(
     (await post('demo/order', { plan: 'plus' })).statusCode,
     409,
@@ -94,6 +118,32 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
   assert.equal(quote.simulatedUsdc, 2);
   assert.equal((await create()).id, quote.id, 'Repeated order creation reuses quote');
   assert.equal(
+    (await post('demo/confirm', { id: quote.id })).statusCode,
+    400,
+    'No unsigned purchases',
+  );
+  const auth = quote.authorization;
+  const wrongBuyer = await Wallet.createRandom().signTypedData(
+    auth.domain,
+    AUTHORIZATION_TYPES,
+    auth.message,
+  );
+  assert.equal(
+    (await post('demo/confirm', { id: quote.id, signature: wrongBuyer })).statusCode,
+    403,
+  );
+  for (const changed of [
+    { value: '1' },
+    { to: buyer.address },
+    { nonce: '0x' + '11'.repeat(32) },
+  ]) {
+    const signature = await buyer.signTypedData(auth.domain, AUTHORIZATION_TYPES, {
+      ...auth.message,
+      ...changed,
+    });
+    assert.equal((await post('demo/confirm', { id: quote.id, signature })).statusCode, 403);
+  }
+  assert.equal(
     (await post('demo/confirm', { id: quote.id, to: fund.address })).statusCode,
     400,
     'No caller-controlled destination',
@@ -105,10 +155,7 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
   assert.equal((await post('demo/confirm', { id: quote.id })).statusCode, 401);
   user = savedUser;
   await rpc.send('miner_stop', []);
-  const confirms = await Promise.all([
-    post('demo/confirm', { id: quote.id }),
-    post('demo/confirm', { id: quote.id }),
-  ]);
+  const confirms = await Promise.all([confirm(quote.id), confirm(quote.id)]);
   assert.deepEqual(confirms.map((r) => r.statusCode).sort(), [200, 409]);
   const pending = confirms.find((r) => r.statusCode === 200)!.json();
   assert.equal(pending.status, 'pending');
@@ -136,28 +183,29 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
   assert.equal(await rpc.getTransactionCount(sponsor.address), 1);
   assert.equal(await rpc.getBalance(buyer.address), 0n);
   const tx = await rpc.getTransaction(pending.txHash);
-  assert.equal(tx?.to, sponsor.address);
+  assert.equal(tx?.to, token);
   assert.equal(tx?.from, sponsor.address);
   assert.equal(tx?.value, 0n);
-  assert.equal(
-    tx?.data,
-    keccak256(
-      toUtf8Bytes(
-        JSON.stringify([
-          'kivuno-sponsored-receipt-v1',
-          43113,
-          quote.id,
-          buyer.address,
-          'plus',
-          0,
-          2,
-          quote.createdAt,
-        ]),
-      ),
-    ),
-  );
+  const decoded = authorizationInterface.decodeFunctionData('transferWithAuthorization', tx!.data);
+  assert.equal(decoded.from, buyer.address);
+  assert.equal(decoded.to, treasury);
+  assert.equal(decoded.value, 0n);
+  assert.equal(decoded.nonce, quote.authorization.message.nonce);
+  const chainReceipt = await rpc.getTransactionReceipt(pending.txHash);
+  const transfers = chainReceipt!.logs
+    .flatMap((log) => {
+      try {
+        return [authorizationInterface.parseLog(log)];
+      } catch {
+        return [];
+      }
+    })
+    .filter((e) => e?.name === 'Transfer');
+  assert.equal(transfers[0]!.args.from, buyer.address);
+  assert.equal(transfers[0]!.args.to, treasury);
+  assert.equal(transfers[0]!.args.value, 0n);
   const renewal = await create();
-  await post('demo/confirm', { id: renewal.id });
+  await confirm(renewal.id);
   await app.inject({ url: '/api/billing/demo/status?id=' + renewal.id });
   assert.equal(
     store.get<{ paidUntil: number }>('billingEntitlement', 'buyer').paidUntil,
@@ -165,17 +213,87 @@ test('sponsored receipts survive restart, deduplicate confirmations and only gra
   );
   const max = await create('max');
   assert.equal(max.simulatedUsdc, 6);
-  await post('demo/confirm', { id: max.id });
+  const maxResult = await confirm(max.id);
+  assert.equal(maxResult.statusCode, 200, maxResult.body);
   await app.inject({ url: '/api/billing/demo/status?id=' + max.id });
   assert.equal(effectiveTier(store, 'buyer'), 'max');
   assert.ok(
     store.get<{ paidUntil: number }>('billingEntitlement', 'buyer').paidUntil <
       firstUntil + 86400_000,
   );
+  // A third party can submit the exact EIP-3009 authorization. Its zero transfer
+  // still belongs to this order, and a reverted sponsor relay must reconcile it.
+  const frontRun = await create('max');
+  const signature = Signature.from(await sign(frontRun.id));
+  const msg = frontRun.authorization.message;
+  const external = await usdc.getFunction('transferWithAuthorization')(
+    msg.from,
+    msg.to,
+    0,
+    msg.validAfter,
+    msg.validBefore,
+    msg.nonce,
+    signature.v,
+    signature.r,
+    signature.s,
+  );
+  await external.wait();
+  const externalResult = await confirm(frontRun.id);
+  assert.equal(externalResult.statusCode, 200, externalResult.body);
+  const externalStatus = await app.inject({ url: '/api/billing/demo/status?id=' + frontRun.id });
+  assert.equal(externalStatus.json().status, 'confirmed');
+  assert.equal(externalStatus.json().txHash, external.hash);
+  const expiry = store.get<{ paidUntil: number }>('billingEntitlement', 'buyer').paidUntil;
+  await confirm(frontRun.id);
+  assert.equal(store.get<{ paidUntil: number }>('billingEntitlement', 'buyer').paidUntil, expiry);
+  // An old unsigned quote cannot create another self-transfer after migration.
+  store.put('sponsoredOrder', {
+    id: 'b98e2030-4425-4b77-b120-c6670625e45c',
+    ownerId: 'buyer',
+    wallet: buyer.address,
+    plan: 'plus',
+    status: 'quoted',
+    createdAt: Date.now(),
+  });
+  assert.equal(
+    (await post('demo/confirm', { id: 'b98e2030-4425-4b77-b120-c6670625e45c' })).statusCode,
+    409,
+  );
+  const expired = await create('plus');
+  store.put('sponsoredOrder', {
+    ...store.get<any>('sponsoredOrder', expired.id),
+    createdAt: Date.now() - 901_000,
+  });
+  assert.equal((await confirm(expired.id)).statusCode, 409);
+  const secondBuyer = Wallet.createRandom();
+  store.put('billingWallet', { id: 'second', ownerId: 'second', address: secondBuyer.address });
+  user = { ...savedUser!, id: 'second' };
+  const secondOrder = await create('max');
+  assert.notEqual(secondOrder.wallet, quote.wallet, 'Separate accounts keep distinct wallets');
+  assert.equal(
+    (await confirm(secondOrder.id)).statusCode,
+    403,
+    'First wallet cannot sign for second account',
+  );
+  const secondAuth = secondOrder.authorization;
+  const secondSignature = await secondBuyer.signTypedData(
+    secondAuth.domain,
+    AUTHORIZATION_TYPES,
+    secondAuth.message,
+  );
+  assert.equal(
+    (await post('demo/confirm', { id: secondOrder.id, signature: secondSignature })).statusCode,
+    200,
+  );
+  await app.inject({ url: '/api/billing/demo/status?id=' + secondOrder.id });
+  assert.equal(effectiveTier(store, 'second'), 'max');
+  assert.equal(await rpc.getBalance(secondBuyer.address), 0n);
+  assert.equal(await rpc.getTransactionCount(secondBuyer.address), 0);
+  user = savedUser;
   await rpc.send('evm_setAccountBalance', [sponsor.address, '0x0']);
   const unfunded = await create();
   assert.equal(
-    (await post('demo/confirm', { id: unfunded.id })).statusCode,
+    (await confirm(unfunded.id)).statusCode,
     503,
     'Sponsor gas failure is not charged to buyer',
   );

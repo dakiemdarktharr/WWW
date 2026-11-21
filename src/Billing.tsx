@@ -995,6 +995,8 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                     wallet={boundWallet}
                     plan={selectedPlan}
                     refresh={refreshSummary}
+                    token={config.tokenAddress || undefined}
+                    treasury={config.treasuryAddress || undefined}
                   />
                 )}
                 {checkout && (bank || config?.mode !== 'sponsored-demo') && (

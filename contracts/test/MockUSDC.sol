@@ -19,6 +19,22 @@ contract MockUSDC {
     error InsufficientBalance();
 
     event Transfer(address indexed from, address indexed to, uint256 value);
+    event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce);
+
+    function DOMAIN_SEPARATOR() public view returns (bytes32) {
+        return keccak256(abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this)));
+    }
+
+    function transferWithAuthorization(address from, address to, uint256 value, uint256 validAfter, uint256 validBefore, bytes32 nonce, uint8 v, bytes32 r, bytes32 s) external {
+        if (block.timestamp <= validAfter || block.timestamp >= validBefore || authorizationState[from][nonce]) revert InvalidAuthorization();
+        bytes32 hash = keccak256(abi.encode(keccak256('TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)'), from, to, value, validAfter, validBefore, nonce));
+        if (from == address(0) || ecrecover(keccak256(abi.encodePacked('\x19\x01', DOMAIN_SEPARATOR(), hash)), v, r, s) != from || balances[from] < value) revert InvalidAuthorization();
+        authorizationState[from][nonce] = true;
+        balances[from] -= value;
+        balances[to] += value;
+        emit AuthorizationUsed(from, nonce);
+        emit Transfer(from, to, value);
+    }
 
     function name() external pure returns (string memory) {
         return 'USD Coin';
