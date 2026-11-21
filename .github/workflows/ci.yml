@@ -87,10 +87,13 @@ jobs:
     if: inputs.platform == 'macos-package'
     runs-on: macos-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 2
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
@@ -111,6 +114,22 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - name: Stage verified Kivuno 0.9.11 macOS assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          test "$version" = '0.9.11'
+          source="$(git rev-parse HEAD^)"
+          test "$source" = 'def9bdcda75ef894c5183288760c6d0301ecce63'
+          printf '%s\n' 'Kivuno 0.9.11 for macOS Apple Silicon with dynamic Sade PowerPoint assignment and the latest updater fixes.' > release/public-notes.txt
+          basename="Kivuno-$version-macOS-arm64"
+          gh release create "v$version-macos" \
+            "release/$basename.dmg" "release/$basename.dmg.sha256" \
+            "release/$basename.zip" "release/$basename.zip.sha256" "release/macos-arm64.json" \
+            --repo "$GITHUB_REPOSITORY" --target "$source" --latest=false \
+            --title "Kivuno $version for macOS Apple Silicon" --notes-file release/public-notes.txt
   paired-macos:
     if: inputs.platform == 'paired-macos' || inputs.platform == 'paired-macos-desktop'
     runs-on: macos-latest
