@@ -4,7 +4,24 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
-import gateway, { gatewayTarget } from '../api/gateway.ts';
+import gateway, { gatewayTarget, isClaudeWebPoll } from '../api/gateway.ts';
+
+test('only the exact Claude desktop poll takes the dormant-runner path', () => {
+  const route = '/api/desktop/claude-web';
+  const poll = Buffer.from('{ "action": "poll" }');
+  assert.equal(isClaudeWebPoll(route, 'POST', poll), true);
+  assert.equal(isClaudeWebPoll(route, 'GET', poll), false);
+  assert.equal(isClaudeWebPoll(route + '/other', 'POST', poll), false);
+  for (const body of [
+    'null',
+    '[]',
+    '{}',
+    '{"action":"complete"}',
+    '{"action":"poll","other":true}',
+    'invalid',
+  ])
+    assert.equal(isClaudeWebPoll(route, 'POST', Buffer.from(body)), false);
+});
 
 test('Vercel rewrite metadata never reaches strict desktop lookup and bridge query schemas', () => {
   for (const [route, query] of [
@@ -93,6 +110,23 @@ test('private cloud drain refuses merge/checkpoint work, then fences new request
       payload: '{}',
     });
   try {
+    const connector = (headers: Record<string, string>, url = '/api/claude/mcp') =>
+      app.inject({
+        method: 'POST',
+        url,
+        headers: { 'x-relay-gateway': gatewaySecret, ...headers },
+        payload: {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-11-25' },
+        },
+      });
+    assert.equal((await connector({ 'x-relay-gateway': 'wrong' })).statusCode, 403);
+    assert.equal((await connector({ origin: 'https://other.example' })).statusCode, 403);
+    assert.equal((await connector({ cookie: 'relay_session=example' })).statusCode, 403);
+    assert.equal((await connector({}, '/api/claude/mcp?project=other')).statusCode, 403);
+    assert.equal((await connector({})).statusCode, 401);
     assert.equal((await drain('untrusted')).statusCode, 403);
     workspace.mergeBusy.add('review');
     assert.equal((await drain()).statusCode, 409);

@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld(
     prepareProvider: (provider) => ipcRenderer.invoke('relay:prepare-provider', provider),
     signInAntigravityWithGoogle: () => ipcRenderer.invoke('relay:antigravity-google-sign-in'),
     groups: (input) => ipcRenderer.invoke('relay:groups', input),
+    createClaudeWebConnection: (input) => ipcRenderer.invoke('relay:claude-web-create', input),
+    revokeClaudeWebConnection: (id) => ipcRenderer.invoke('relay:claude-web-revoke', id),
     projectDeliverable: (input) => ipcRenderer.invoke('relay:project-deliverable', input),
     projectCatalogue: (input) => ipcRenderer.invoke('relay:project-catalogue', input),
     projectPreview: (input) => ipcRenderer.invoke('relay:project-preview', input),

@@ -54,6 +54,11 @@ let profileReservations = 0;
 let profileCommits = 0;
 let lostReservationResponseId: string | undefined;
 let recoveredReservation = false;
+const webJob = randomUUID();
+let webGrant:
+  { connectionId: string; memberId: string; projectId: string; tokenHash: string } | undefined;
+let webRead = false;
+let webRevoked = false;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
 const previewIds = { groupId: randomUUID(), runId: randomUUID(), fileId: 'd'.repeat(64) };
 const previewFixture = Buffer.from(
@@ -94,6 +99,45 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/me') {
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
     response.end(JSON.stringify(identity));
+  } else if (request.url === '/api/desktop/claude-web') {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    if (payload.action === 'enroll') {
+      assert.match(payload.tokenHash, /^[0-9a-f]{64}$/);
+      assert.doesNotMatch(input, /kwc_|KIVUNO_MCP_TOKEN/);
+      webGrant = payload;
+      response.end('{"enrolled":true}');
+    } else if (payload.action === 'poll') {
+      assert.ok(webGrant);
+      response.end(
+        JSON.stringify({
+          jobs:
+            webRead || webRevoked
+              ? []
+              : [
+                  {
+                    jobId: webJob,
+                    connectionId: webGrant.connectionId,
+                    memberId: webGrant.memberId,
+                    projectId: webGrant.projectId,
+                  },
+                ],
+        }),
+      );
+    } else if (payload.action === 'complete') {
+      assert.equal(payload.jobId, webJob);
+      assert.equal(payload.connectionId, webGrant?.connectionId);
+      assert.ok(!payload.result.isError);
+      const data = JSON.parse(payload.result.content[0].text);
+      assert.deepEqual(Object.keys(data.project), ['name']);
+      assert.ok(Array.isArray(data.messages));
+      webRead = true;
+      response.end('{"completed":true}');
+    } else {
+      assert.equal(payload.action, 'revoke');
+      assert.equal(payload.connectionId, webGrant?.connectionId);
+      webRevoked = true;
+      response.end('{"revoked":true}');
+    }
   } else if (request.url === '/api/desktop/bridge/poll') {
     bridgePolls++;
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
@@ -798,6 +842,27 @@ try {
       .filter({ has: page.getByRole('heading', { name: external.name, exact: true }) });
     await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
     const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
+    if (provider === 'claude') {
+      await expect(
+        externalDialog.getByRole('button', { name: 'Open Claude sign-in in browser' }),
+      ).toBeVisible();
+      await expect(externalDialog.getByRole('checkbox')).toHaveCount(0);
+      await externalDialog.getByRole('button', { name: 'Create read-only web connector' }).click();
+      const header = externalDialog.getByLabel('Private header value');
+      await expect(header).toBeVisible();
+      assert.equal(
+        await externalDialog.getByLabel('Connector URL').inputValue(),
+        fixtureOrigin + '/api/claude/mcp',
+      );
+      const value = await header.inputValue();
+      assert.ok(/^Bearer kwc_[A-Za-z0-9_-]{43}$/.test(value));
+      assert.ok(createHash('sha256').update(value.slice(7)).digest('hex') === webGrant?.tokenHash);
+      await expect.poll(() => webRead).toBe(true);
+      await externalDialog.getByRole('button', { name: 'Revoke connection' }).click();
+      await expect.poll(() => webRevoked).toBe(true);
+      await externalDialog.getByRole('combobox', { name: 'Claude client' }).click();
+      await externalDialog.getByRole('option', { name: 'Claude Desktop · Free or paid' }).click();
+    }
     await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
     await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();
     await externalDialog.getByRole('button', { name: 'Generate MCP config', exact: true }).click();
@@ -831,7 +896,10 @@ try {
     await expect(externalDialog.getByRole('progressbar')).toHaveAttribute('value', '3', {
       timeout: 5000,
     });
-    await externalDialog.getByRole('button', { name: 'Revoke connection', exact: true }).click();
+    await externalDialog
+      .getByRole('button', { name: 'Revoke connection', exact: true })
+      .and(page.locator(':enabled'))
+      .click();
     await expect(configInput).toHaveCount(0);
     await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   }

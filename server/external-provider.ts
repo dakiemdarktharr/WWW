@@ -78,6 +78,7 @@ const tools = [
 
 export interface ExternalConnection {
   id: string;
+  transport?: 'claude-web';
   provider: 'claude' | 'antigravity';
   memberId: string;
   projectId: string;
@@ -127,9 +128,11 @@ export class ExternalProviders {
     this.sweep();
     return [...this.connections.values()].map((c) => this.public(c));
   }
-  create(input: unknown) {
+  private register(input: unknown, digest: string, transport?: 'claude-web') {
     const values = configuration.parse(input);
     const member = this.host.store.get<Member>('member', values.memberId);
+    if (transport && (member.provider !== 'claude' || member.entitlementLocked))
+      throw new DomainError('Select an unlocked Claude profile for this connector.', 403);
     if (member.managedRuntime)
       throw new DomainError(
         'This profile uses managed Sade execution; an external connection would duplicate its authority.',
@@ -143,16 +146,16 @@ export class ExternalProviders {
       if ((c.revokedAt || Date.parse(c.expiresAt) <= Date.now()) && !this.ownsActive(c))
         this.connections.delete(key);
     if (this.connections.size >= 64) throw new DomainError('Revoke an unused connection first.');
-    const token = randomBytes(32).toString('base64url');
     const connection: PrivateConnection = {
       ...values,
+      ...(transport ? { transport } : {}),
       provider: member.provider,
       id: randomUUID(),
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + values.durationMinutes * 60000).toISOString(),
       lastSeen: null,
       revokedAt: null,
-      digest: hash(token),
+      digest,
       requests: 0,
       window: Date.now(),
     };
@@ -164,8 +167,13 @@ export class ExternalProviders {
       'provider',
       values.projectId,
     );
+    return this.public(connection);
+  }
+  create(input: unknown) {
+    const token = randomBytes(32).toString('base64url');
+    const connection = this.register(input, hash(token));
     return {
-      ...this.public(connection),
+      ...connection,
       config: {
         mcpServers: {
           [`kivuno-${connection.id.slice(0, 8)}`]: {
@@ -185,6 +193,10 @@ export class ExternalProviders {
       throw new DomainError('Invalid external connection.', 401);
     const digest = hash(header.slice(7));
     const connection = [...this.connections.values()].find((c) => safeEqual(c.digest, digest));
+    if (connection?.transport) throw new DomainError('Invalid external connection.', 401);
+    return this.authorized(connection);
+  }
+  private authorized(connection: PrivateConnection | undefined) {
     if (
       !connection ||
       connection.revokedAt ||
@@ -194,6 +206,8 @@ export class ExternalProviders {
       throw new DomainError('External connection expired or revoked. Reconnect in Team.', 401);
     assertGroupMember(this.host.store, connection.projectId, connection.memberId);
     const member = this.host.store.get<Member>('member', connection.memberId);
+    if (member.entitlementLocked)
+      throw new DomainError('This profile is locked by your plan.', 403);
     if (member.managedRuntime)
       throw new DomainError('This profile now uses managed Sade execution.', 403);
     if (member.provider !== connection.provider)
@@ -488,7 +502,59 @@ export class ExternalProviders {
     }
   }
   async rpc(header: unknown, input: unknown) {
-    const c = this.authenticate(header);
+    return this.receive(this.authenticate(header), input);
+  }
+
+  async claudeWeb(input: unknown) {
+    const command = z
+      .discriminatedUnion('action', [
+        z
+          .object({
+            action: z.literal('create'),
+            memberId: id,
+            projectId: id,
+            durationMinutes: z.number().int().min(1).max(480),
+          })
+          .strict(),
+        z.object({ action: z.literal('revoke'), connectionId: id }).strict(),
+        z
+          .object({
+            action: z.literal('read'),
+            connectionId: id,
+            memberId: id,
+            projectId: id,
+            after: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+        z
+          .object({ action: z.literal('check'), connectionId: id, memberId: id, projectId: id })
+          .strict(),
+      ])
+      .parse(input);
+    if (command.action === 'create') {
+      const { memberId, projectId, durationMinutes } = command;
+      return this.register({ memberId, projectId, durationMinutes }, '', 'claude-web');
+    }
+    const connection = this.connections.get(command.connectionId);
+    if (connection?.transport !== 'claude-web')
+      throw new DomainError('Claude web connection not found.', 404);
+    if (command.action === 'revoke') return this.revoke(command.connectionId);
+    if (command.memberId !== connection.memberId || command.projectId !== connection.projectId)
+      throw new DomainError('The connector belongs to another project or profile.', 403);
+    const c = this.authorized(connection);
+    if (command.action === 'check') return { active: true };
+    const response = await this.receive(c, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'mesh_read', arguments: { after: command.after ?? 0 } },
+    });
+    if (!response || !('result' in response))
+      throw new DomainError('Project read unavailable.', 503);
+    return response.result;
+  }
+
+  private async receive(c: PrivateConnection, input: unknown) {
     if (Date.now() - c.window > 60000) {
       c.window = Date.now();
       c.requests = 0;
@@ -550,7 +616,7 @@ export class ExternalProviders {
         case 'competition_fetch':
         case 'competition_note':
           result = await this.host.research.tool(c.projectId, c.memberId, call.name, args, () => {
-            this.authenticate(header);
+            this.authorized(c);
           });
           break;
         case 'portfolio_read': {
@@ -574,7 +640,35 @@ export class ExternalProviders {
             if (after === undefined)
               throw new DomainError('Provide the latest message sequence.', 400);
             await this.waitForMessage(c, after);
-            this.authenticate(header);
+            this.authorized(c);
+          }
+          if (c.transport === 'claude-web') {
+            const room = this.host.mesh.readRoom(c.projectId, c.memberId, { after, limit: 12 });
+            // Allowlist shared fields. Project paths, user accounts, session metadata and
+            // the local MCP bearer are never part of the web connector response.
+            const clean = (value: string, max: number) =>
+              redact(
+                value
+                  .replace(
+                    /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z0-9]+)* PRIVATE KEY-----|$)/g,
+                    '[REDACTED]',
+                  )
+                  .replace(/\b(?:kwc_[A-Za-z0-9_-]{43}|github_pat_[A-Za-z0-9_]+)\b/g, '[REDACTED]')
+                  .replace(
+                    /(\b[A-Z][A-Z0-9_]*_TOKEN["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,}]+)/gi,
+                    '$1[REDACTED]',
+                  ),
+              ).slice(0, max);
+            result = {
+              project: { name: clean(room.project.name, 100) },
+              messages: room.messages.map(({ sequence, kind, content }) => ({
+                sequence,
+                kind,
+                content: clean(content, 550),
+              })),
+              nextAfter: room.messages.at(-1)?.sequence ?? after ?? 0,
+            };
+            break;
           }
           result = {
             ...this.host.mesh.readRoom(c.projectId, c.memberId, { after, limit: 50 }),

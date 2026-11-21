@@ -8,7 +8,7 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
-import { openExternal } from './desktop';
+import { openExternal, type ClaudeWebConnection } from './desktop';
 import { activeProviderIds, isExternalProvider, providerLabels } from '../shared/providers';
 import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
@@ -93,8 +93,8 @@ export default function ProviderConnect({
 
       {provider === 'claude' && (
         <p className="provider-summary">
-          Connect Claude Desktop through MCP, or use Claude Code with an eligible paid plan. Start
-          tasks in your Claude client.
+          Use your signed-in Claude browser or desktop app. Claude Code is also available with an
+          eligible plan. Start tasks in your Claude client.
         </p>
       )}
       <HelpDetails title="Connection help">
@@ -138,6 +138,7 @@ export default function ProviderConnect({
 }
 
 interface ExternalMetadata {
+  transport?: 'claude-web' | 'stdio';
   id: string;
   memberId: string;
   projectId: string;
@@ -151,20 +152,26 @@ interface ExternalMetadata {
 export function ExternalConnection({
   member,
   projects,
+  refreshProjects,
   googleSignIn,
   googleBusy,
   enableManaged,
 }: {
   member: Member;
   projects: Project[];
+  refreshProjects: () => Promise<void>;
   googleSignIn: () => void;
   googleBusy: boolean;
   enableManaged?: () => void;
 }) {
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
   const [projectId, setProjectId] = useState(eligible[0]?.id || '');
+  const [joinId, setJoinId] = useState('');
+  const joinProject = projects.find((project) => project.id === joinId) || projects[0];
   const [minutes, setMinutes] = useState('60');
-  const [claudeClient, setClaudeClient] = useState('desktop');
+  const [claudeClient, setClaudeClient] = useState('web');
+  const web = member.provider === 'claude' && claudeClient === 'web';
+  const [webConnection, setWebConnection] = useState<ClaudeWebConnection | null>(null);
   const [claims, setClaims] = useState(false);
   const [quota, setQuota] = useState(false);
   const [connections, setConnections] = useState<ExternalMetadata[]>([]);
@@ -201,7 +208,7 @@ export function ExternalConnection({
       () => {
         if (!document.hidden) void refresh().catch((cause) => setError(cause.message));
       },
-      created ? 1500 : 10000,
+      created || webConnection ? 1500 : 10000,
     );
     const focus = () => void refresh().catch((cause) => setError(cause.message));
     window.addEventListener('focus', focus);
@@ -209,11 +216,12 @@ export function ExternalConnection({
       clearInterval(timer);
       window.removeEventListener('focus', focus);
     };
-  }, [member.id, created?.id]);
+  }, [member.id, created?.id, webConnection?.id]);
   useEffect(() => {
     if (!eligible.some((project) => project.id === projectId)) {
       setProjectId(eligible[0]?.id || '');
       setCreated(null);
+      setWebConnection(null);
     }
   }, [eligible.map((project) => project.id).join(',')]);
   async function create() {
@@ -221,16 +229,29 @@ export function ExternalConnection({
     setError('');
     setCopied(false);
     setCreated(null);
+    setWebConnection(null);
     try {
-      setCreated(
-        await api('/external-connections', {
-          memberId: member.id,
-          projectId,
-          durationMinutes: Number(minutes),
-          allowTaskClaims: claims,
-          allowUnknownQuota: quota,
-        }),
-      );
+      if (web) {
+        const desktop = window.relayDesktop;
+        if (!desktop?.createClaudeWebConnection)
+          throw new Error('Open the Kivuno desktop app to connect Claude on the web.');
+        setWebConnection(
+          await desktop.createClaudeWebConnection({
+            memberId: member.id,
+            projectId,
+            durationMinutes: Number(minutes),
+          }),
+        );
+      } else
+        setCreated(
+          await api('/external-connections', {
+            memberId: member.id,
+            projectId,
+            durationMinutes: Number(minutes),
+            allowTaskClaims: claims,
+            allowUnknownQuota: quota,
+          }),
+        );
       await refresh();
     } catch (cause) {
       setError((cause as Error).message);
@@ -274,8 +295,16 @@ export function ExternalConnection({
           <GlassSelect
             label="Claude client"
             value={claudeClient}
-            onChange={setClaudeClient}
+            disabled={busy}
+            onChange={(value) => {
+              setClaudeClient(value);
+              setCreated(null);
+              setWebConnection(null);
+              setCopied(false);
+              setError('');
+            }}
             options={[
+              { value: 'web', label: 'Claude in browser · Free or paid' },
               { value: 'desktop', label: 'Claude Desktop · Free or paid' },
               { value: 'code', label: 'Claude Code · eligible paid plan' },
             ]}
@@ -305,9 +334,11 @@ export function ExternalConnection({
             )}
           </div>
           <p>
-            {claudeClient === 'desktop'
-              ? 'After signing in, open Claude Desktop with the same account and connect the project below.'
-              : 'Start Claude Code and use /login to authorize the CLI in your browser. Connect the project below.'}
+            {web
+              ? 'Keep Kivuno open. Your browser account can read messages from the selected project through a private connector. Claude Free allows one custom connector.'
+              : claudeClient === 'desktop'
+                ? 'After signing in, open Claude Desktop with the same account and connect the project below.'
+                : 'Start Claude Code and use /login to authorize the CLI in your browser. Connect the project below.'}
           </p>
         </>
       )}
@@ -319,6 +350,7 @@ export function ExternalConnection({
             onChange={(value) => {
               setProjectId(value);
               setCreated(null);
+              setWebConnection(null);
             }}
             options={eligible.map((project) => ({ value: project.id, label: project.name }))}
           />
@@ -331,34 +363,67 @@ export function ExternalConnection({
               label: `${minutes} minutes`,
             }))}
           />
-          <label className="foundation-checkbox">
-            <input
-              type="checkbox"
-              checked={claims}
-              onChange={(event) => setClaims(event.target.checked)}
-            />
-            Allow task claims, isolated worktrees and checkpoint pushes
-          </label>
-          <label className="foundation-checkbox">
-            <input
-              type="checkbox"
-              checked={quota}
-              onChange={(event) => setQuota(event.target.checked)}
-            />
-            I will monitor {providerLabels[providerOf(member)]} usage in my client
-          </label>
+          {!web && (
+            <>
+              <label className="foundation-checkbox">
+                <input
+                  type="checkbox"
+                  checked={claims}
+                  onChange={(event) => setClaims(event.target.checked)}
+                />
+                Allow task claims, isolated worktrees and checkpoint pushes
+              </label>
+              <label className="foundation-checkbox">
+                <input
+                  type="checkbox"
+                  checked={quota}
+                  onChange={(event) => setQuota(event.target.checked)}
+                />
+                I will monitor {providerLabels[providerOf(member)]} usage in my client
+              </label>
+            </>
+          )}
           <button
             className="button primary"
             disabled={busy || !projectId}
             onClick={() => void create()}
           >
             <Link2 size={15} />
-            Generate MCP config
+            {web ? 'Create read-only web connector' : 'Generate MCP config'}
           </button>
         </>
       ) : available ? (
         <div>
-          <span>No project membership</span>
+          {member.provider === 'claude' && joinProject ? (
+            <>
+              <GlassSelect
+                label="Project to join"
+                value={joinProject.id}
+                onChange={setJoinId}
+                options={projects.map((project) => ({ value: project.id, label: project.name }))}
+              />
+              <button
+                className="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await api(`/projects/${joinProject.id}/member`, { memberId: member.id });
+                    await refreshProjects();
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Add {member.name} to this project
+              </button>
+            </>
+          ) : (
+            <span>No project membership</span>
+          )}
           <HelpDetails title="Add to a group">
             <p>Chat → Group team → select {member.name}, then reopen this connection.</p>
           </HelpDetails>
@@ -368,6 +433,51 @@ export function ExternalConnection({
         <p className="error-text" role="alert">
           {error}
         </p>
+      )}
+      {web && webConnection && (
+        <section className="provider-secret">
+          <strong>Connect in Claude</strong>
+          <p>
+            In Claude, open Customize → Connectors → Add → Custom → Web. Name the connector Kivuno
+            and enter this URL.
+          </p>
+          <input
+            aria-label="Connector URL"
+            readOnly
+            value={webConnection.url}
+            onFocus={(event) => event.target.select()}
+          />
+          <p>
+            Choose the option to connect without signing in to the server. Under Request headers,
+            add <code>Authorization</code>. Paste the private value below into that header, then add
+            the connector.
+          </p>
+          <button
+            className="button"
+            onClick={() =>
+              void navigator.clipboard
+                .writeText(webConnection.headerValue)
+                .then(() => setCopied(true))
+                .catch(() =>
+                  setError('Clipboard unavailable. Select the private header value and copy it.'),
+                )
+            }
+          >
+            <Copy size={14} />
+            {copied ? 'Copied' : 'Copy private header value'}
+          </button>
+          <input
+            aria-label="Private header value"
+            type="password"
+            readOnly
+            value={webConnection.headerValue}
+            onFocus={(event) => event.target.select()}
+          />
+          <p>
+            Enable Kivuno in a Claude chat and ask it to read the project group. Access expires at{' '}
+            {new Date(webConnection.expiresAt).toLocaleTimeString()}.
+          </p>
+        </section>
       )}
       {created && (
         <section className="provider-secret">
@@ -463,7 +573,12 @@ export function ExternalConnection({
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      await api(`/external-connections/${connection.id}/revoke`, {});
+                      if (connection.transport === 'claude-web') {
+                        if (!window.relayDesktop)
+                          throw new Error('Revoke this connector from Kivuno desktop.');
+                        await window.relayDesktop.revokeClaudeWebConnection(connection.id);
+                        if (webConnection?.id === connection.id) setWebConnection(null);
+                      } else await api(`/external-connections/${connection.id}/revoke`, {});
                       if (created?.id === connection.id) setCreated(null);
                       await refresh();
                     } catch (cause) {

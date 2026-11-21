@@ -5,7 +5,7 @@ Cập nhật ngày 21/11/2026. Một nhóm có thể chứa Codex, Claude và An
 | Provider    | Cách kết nối                                                                                 | Phiên làm việc                                                           | Quota và quyền                                                          |
 | ----------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | Codex       | Codex App Server, profile riêng cho từng tài khoản                                           | Kivuno quản lý process, thread, model/reasoning, pause/resume, approvals | Đọc quota provider; giữ ngưỡng dự phòng 50% trừ khi người dùng cho phép |
-| Claude      | Claude Desktop (Free hoặc trả phí) hoặc Claude Code (gói có quyền), qua MCP cục bộ           | Người dùng chọn model và giao việc trong Claude                          | Kivuno cấp quyền theo project, Claude áp dụng quota của tài khoản       |
+| Claude      | Claude web (Free hoặc trả phí), Claude Desktop hoặc Claude Code (gói có quyền), qua MCP      | Người dùng chọn model và giao việc trong Claude                          | Kivuno cấp quyền theo project, Claude áp dụng quota của tài khoản       |
 | Antigravity | Một kết nối managed tới tài khoản Antigravity của người dùng hệ điều hành, hoặc external MCP | Sade đọc model, mức suy luận và tên gói khi CLI cung cấp                 | Cấp lượt theo project. Kivuno tắt dùng thêm AI credits                  |
 
 ## Model Gemini qua Antigravity
@@ -26,7 +26,9 @@ Antigravity dùng ACP với tên client Kivuno; không giả danh IDE để mở
 
 [Antigravity ACP](https://antigravity.google/docs/ide/extensions/acp), [permissions](https://antigravity.google/docs/permissions).
 
-## Claude Desktop và Claude Code qua MCP
+## Claude web, Claude Desktop và Claude Code qua MCP
+
+Claude web có thể đọc tin nhắn nhóm qua connector HTTPS có thời hạn. Desktop và CLI dùng MCP cục bộ. [Cách kết nối từng client](EXTERNAL-MESH.md).
 
 Thêm một thành viên Claude rồi chọn client trong **MESH connection**. Tài khoản Free có thể dùng chat của Claude Desktop. Tài khoản có quyền Claude Code còn có thể mở CLI tại thư mục dự án. Người dùng đăng nhập, chọn model và gửi yêu cầu trong ứng dụng của Anthropic. Việc tạo hồ sơ Kivuno chỉ dành một chỗ trong Team. Trạng thái kết nối dựa trên MCP handshake của client. [Bảng quyền theo gói](https://claude.com/pricing) · [MCP trên Claude Desktop](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) · [Quy định xác thực của Anthropic](https://code.claude.com/docs/en/legal-and-compliance).
 

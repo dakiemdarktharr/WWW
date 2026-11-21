@@ -33,6 +33,7 @@ const path = require('node:path');
 const os = require('node:os');
 const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
+const createClaudeWebRelay = require('./claude-web.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const { downloadUpdate } = require('./release-download.cjs');
 const { verifyPortableInstall } = require('./portable-install.cjs');
@@ -93,6 +94,7 @@ let bridgeGeneration = 0;
 let sharedSadeConsentVersion = 0;
 let pendingSharedSadeRevocations = 0;
 let profileSyncQueue = Promise.resolve();
+let claudeWeb;
 let identityTransition = false;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const projectBrowser = new ProjectBrowser({
@@ -554,6 +556,8 @@ async function readIdentity() {
 }
 
 async function clearIdentity() {
+  claudeWeb?.stop();
+  claudeWeb = undefined;
   projectBrowser.close();
   identity = null;
   pending = null;
@@ -1268,6 +1272,55 @@ function registerIpc() {
     trusted(event);
     return beginSignIn();
   });
+  const webConnector = (event) => {
+    trusted(event);
+    const owner = identity;
+    if (
+      !owner ||
+      identityTransition ||
+      !backendOrigin ||
+      runtime !== 'ready' ||
+      Date.parse(owner.expiresAt) <= Date.now()
+    )
+      throw new Error('Open your signed-in Kivuno workspace first.');
+    if (claudeWeb?.current()) return claudeWeb;
+    claudeWeb?.stop();
+    const context = { origin: backendOrigin, secret: desktopSecret };
+    const generation = signInGeneration;
+    const current = () =>
+      !quitting &&
+      !identityTransition &&
+      owner === identity &&
+      generation === signInGeneration &&
+      context.origin === backendOrigin &&
+      context.secret === desktopSecret &&
+      Date.parse(owner.expiresAt) > Date.now();
+    claudeWeb = createClaudeWebRelay({
+      origin: identityOrigin,
+      current,
+      pause,
+      local: (input) => localControlRequest('/api/desktop/claude-web-local', input, context),
+      cloud: async (input) => {
+        if (!current()) throw new Error('The active workspace changed.');
+        const { response, body } = await cloudRequest(
+          '/api/desktop/claude-web',
+          input,
+          owner.accessToken,
+        );
+        if (!current()) throw new Error('The active workspace changed.');
+        if (!response.ok)
+          throw new Error(
+            response.status === 401
+              ? 'Sign in to Kivuno again.'
+              : 'The Kivuno web connector service is unavailable.',
+          );
+        return body;
+      },
+    });
+    return claudeWeb;
+  };
+  ipcMain.handle('relay:claude-web-create', (event, input) => webConnector(event).enroll(input));
+  ipcMain.handle('relay:claude-web-revoke', (event, id) => webConnector(event).revoke(id));
   ipcMain.handle('relay:groups', async (event, input) => {
     trusted(event);
     const owner = identity;

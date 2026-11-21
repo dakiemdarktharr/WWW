@@ -1590,6 +1590,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <ExternalConnection
               member={members.find((member) => member.id === modal.memberId)!}
               projects={state?.projects || []}
+              refreshProjects={refresh}
               googleBusy={pending}
               enableManaged={async () => {
                 const existing = members.find((member) => member.id === modal.memberId);

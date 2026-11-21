@@ -21,7 +21,7 @@ Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có th�
 
 ## Bắt đầu trong bốn bước
 
-1. **Team → Add account:** chọn provider. Desktop kiểm tra thành phần cần thiết và cài/khôi phục nếu thiếu trước khi tạo account. Codex đăng nhập bằng ChatGPT. Với Antigravity, xác nhận tài khoản Google của máy hoặc dùng MESH MCP. Claude Desktop (Free hoặc trả phí) và Claude Code (gói có quyền) dùng MESH MCP trong client của bạn. Xem [cách kết nối](docs/EXTERNAL-MESH.md).
+1. **Team → Add account:** chọn provider. Desktop kiểm tra thành phần cần thiết và cài/khôi phục nếu thiếu trước khi tạo account. Codex đăng nhập bằng ChatGPT. Với Antigravity, xác nhận tài khoản Google của máy hoặc dùng MESH MCP. Claude Free và các gói trả phí có thể dùng Claude trong trình duyệt hoặc Claude Desktop. Người có quyền Claude Code còn có thể kết nối CLI qua MCP. Xem [cách kết nối](docs/EXTERNAL-MESH.md).
 2. **Neralu:** tạo dự án và chọn thành viên nhóm; bạn không cần đưa toàn bộ Team vào mỗi nhóm.
 3. **Chat:** nhập yêu cầu nghiên cứu/trao đổi, hoặc dùng **Plan project** để lập kế hoạch triển khai và duyệt workflow. Chat thường tạo session read-only. `/goal`, `/model`, `/reasoning`, `/skills` và `/tên-skill` cấu hình yêu cầu; lệnh không hợp lệ được báo lỗi.
 4. **Sessions / Reviews:** graph hiển thị từng conversation, kể cả nhiều conversation của cùng một Codex. Chọn node để xem tiến độ, react để phản hồi và vào Reviews để duyệt thay đổi.

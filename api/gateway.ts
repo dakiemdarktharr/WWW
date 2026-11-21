@@ -6,6 +6,12 @@ import { isIP } from 'node:net';
 import { waitUntil } from '@vercel/functions';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
 import {
+  claudeMcpPath,
+  claudeWebControlPath,
+  claudeConnectorOrigin,
+  claudeWebBearer,
+} from '../shared/claude-web.ts';
+import {
   sharedSadeCloudExtended,
   sharedSadeCloudFinishPath,
   sharedSadeCloudHeader,
@@ -32,6 +38,16 @@ export function gatewayTarget(requestUrl: string) {
 }
 
 class HostedSadeDeadline extends Error {}
+
+export function isClaudeWebPoll(pathname: string, method: string, body: Buffer): boolean {
+  if (pathname !== claudeWebControlPath || method !== 'POST') return false;
+  try {
+    const input = JSON.parse(body.toString('utf8'));
+    return input?.action === 'poll' && Object.keys(input).length === 1;
+  } catch {
+    return false;
+  }
+}
 
 async function beforeSadeDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -110,9 +126,27 @@ export default async function handler(
       return;
     }
     const incomingOrigin = request.headers.origin;
+    const connector = url.pathname === claudeMcpPath;
+    if (connector) {
+      if (
+        url.search ||
+        !claudeConnectorOrigin(incomingOrigin) ||
+        !['GET', 'POST', 'DELETE'].includes(method)
+      ) {
+        response.writeHead(403).end(JSON.stringify({ error: 'Invalid Claude connector request.' }));
+        return;
+      }
+      if (!claudeWebBearer.test(request.headers.authorization || '')) {
+        response
+          .writeHead(401)
+          .end(JSON.stringify({ error: 'A Claude connector credential is required.' }));
+        return;
+      }
+    }
     if (
-      (incomingOrigin && incomingOrigin !== publicOrigin) ||
-      (!['GET', 'HEAD'].includes(method) && incomingOrigin !== publicOrigin)
+      !connector &&
+      ((incomingOrigin && incomingOrigin !== publicOrigin) ||
+        (!['GET', 'HEAD'].includes(method) && incomingOrigin !== publicOrigin))
     ) {
       response
         .writeHead(403)
@@ -123,14 +157,17 @@ export default async function handler(
     const machine =
       url.pathname === '/api/runner/exchange' || url.pathname.startsWith('/api/desktop/bridge/');
     const desktop = url.pathname.startsWith('/api/desktop/');
-    const bodyLimit =
-      machine ||
-      url.pathname === '/api/desktop/profiles' ||
-      url.pathname === '/api/billing/profiles/select'
-        ? 4 * 1024 * 1024
-        : url.pathname === sadeProjectFileRoute
-          ? 768 * 1024
-          : 128 * 1024;
+    const bodyLimit = connector
+      ? 16384
+      : url.pathname === claudeWebControlPath
+        ? 450000
+        : machine ||
+            url.pathname === '/api/desktop/profiles' ||
+            url.pathname === '/api/billing/profiles/select'
+          ? 4 * 1024 * 1024
+          : url.pathname === sadeProjectFileRoute
+            ? 768 * 1024
+            : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
       if (request.body !== undefined) {
@@ -157,10 +194,15 @@ export default async function handler(
     hosted = url.pathname === '/api/desktop/groups' && method === 'POST' && usesHostedSade(body);
     const planningBudget = hostedSadeBudgetMs(body);
     const deadline = requestStarted + planningBudget;
-    const opening = cloudRunner(!machine);
+    const pollingClaude = isClaudeWebPoll(url.pathname, method, body);
+    const opening = cloudRunner(!machine && !connector && !pollingClaude);
     const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
     if (!runner) {
-      response.writeHead(204).end();
+      if (pollingClaude) {
+        response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"jobs":[]}');
+        return;
+      }
+      response.writeHead(connector ? 503 : 204).end();
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
@@ -173,11 +215,13 @@ export default async function handler(
       : request.socket.remoteAddress;
     if (typeof platformIp === 'string' && isIP(platformIp))
       headers.set('x-relay-client-ip', platformIp);
-    for (const key of ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
+    for (const key of connector
+      ? ['content-type', 'accept', 'origin', 'mcp-session-id', 'mcp-protocol-version']
+      : ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
-    if ((machine || desktop) && typeof request.headers.authorization === 'string')
+    if ((machine || desktop || connector) && typeof request.headers.authorization === 'string')
       headers.set('authorization', request.headers.authorization);
     // No automatic retry: a failed mutation may already have reached the runner.
     const upstream = await fetch(`${runner.origin}${url.pathname}${url.search}`, {
@@ -219,12 +263,17 @@ export default async function handler(
       response.end(JSON.stringify(decision));
       return;
     }
-    for (const key of ['content-type', 'cache-control', 'x-content-type-options']) {
+    for (const key of [
+      'content-type',
+      'cache-control',
+      'x-content-type-options',
+      ...(connector ? ['mcp-session-id', 'allow'] : []),
+    ]) {
       const value = upstream.headers.get(key);
       if (value) response.setHeader(key, value);
     }
     const cookies = upstream.headers.getSetCookie();
-    if (cookies.length) response.setHeader('Set-Cookie', cookies);
+    if (!connector && cookies.length) response.setHeader('Set-Cookie', cookies);
     if (!upstream.body || method === 'HEAD') {
       response.end();
       return;

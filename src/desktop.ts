@@ -89,6 +89,12 @@ declare global {
         provider: import('../shared/types').ProviderId;
         installed: boolean;
       }>;
+      createClaudeWebConnection(input: {
+        projectId: string;
+        memberId: string;
+        durationMinutes: number;
+      }): Promise<ClaudeWebConnection>;
+      revokeClaudeWebConnection(connectionId: string): Promise<{ revoked: true }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
       projectDeliverable(input: {
@@ -131,6 +137,14 @@ declare global {
       };
     };
   }
+}
+
+export interface ClaudeWebConnection {
+  id: string;
+  expiresAt: string;
+  url: string;
+  headerName: 'Authorization';
+  headerValue: string;
 }
 
 export async function openExternal(url: string) {

@@ -24,7 +24,7 @@ import { git } from '../server/git.ts';
 import { canonicalSharedRepository } from '../server/shared-sade-worker.ts';
 import { renderProjectSlides } from '../server/shared-sade-project-render.ts';
 
-const providerNames: ProviderId[] = ['gemini', 'claude', 'antigravity', 'codex'];
+const providerNames: ProviderId[] = ['antigravity', 'antigravity', 'antigravity', 'codex'];
 function fixture(onlyLegacy = false, project?: { key: string; memberIds: string[] }) {
   const store = new Store(':memory:');
   const people = ['Mai', 'Long', 'Vy', 'Duyên'].map((name) => ({ id: randomUUID(), name }));

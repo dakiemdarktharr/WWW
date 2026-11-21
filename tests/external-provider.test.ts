@@ -114,6 +114,57 @@ async function fixture(t: TestContext, provider: 'claude' | 'antigravity' = 'cla
   };
 }
 
+test('Claude web reads one active project and excludes accounts, paths and secrets', async (t) => {
+  const { external, member, project, store, workspace, connect } = await fixture(t);
+  const issue = {
+    action: 'create',
+    memberId: member.id,
+    projectId: project.id,
+    durationMinutes: 15,
+  };
+  const grant: any = await external.claudeWeb(issue);
+  assert.equal(grant.transport, 'claude-web');
+  assert.equal(grant.config, undefined);
+  assert.equal(grant.allowTaskClaims, false);
+  const token = 'kwc_' + 'b'.repeat(43);
+  workspace.mesh.post({
+    projectId: project.id,
+    authorId: null,
+    kind: 'message',
+    content: 'Project progress. Bearer ' + token,
+  });
+  const read = {
+    action: 'read',
+    connectionId: grant.id,
+    projectId: project.id,
+    memberId: member.id,
+  };
+  const reply: any = await external.claudeWeb(read);
+  const data = reply.content[0].text;
+  assert.match(data, /Project progress/);
+  assert.match(data, /REDACTED/);
+  assert.ok(
+    !data.includes(token) && !data.includes(project.path) && !data.includes('owner@example.test'),
+  );
+  assert.deepEqual(Object.keys(JSON.parse(data)).sort(), ['messages', 'nextAfter', 'project']);
+  await assert.rejects(external.claudeWeb({ ...read, projectId: randomUUID() }), /another project/);
+  await assert.rejects(
+    external.claudeWeb({ ...read, connectionId: connect().result.id }),
+    /not found/,
+  );
+  await assert.rejects(
+    external.claudeWeb({ ...read, method: 'tools/call', arguments: { name: 'task_claim' } }),
+  );
+  store.updateMember(member.id, { entitlementLocked: true });
+  await assert.rejects(external.claudeWeb(read), /locked/);
+  store.updateMember(member.id, { entitlementLocked: false });
+  store.put('project', { ...project, memberIds: [] });
+  await assert.rejects(external.claudeWeb(read), /group first/);
+  store.put('project', project);
+  await external.claudeWeb({ action: 'revoke', connectionId: grant.id });
+  await assert.rejects(external.claudeWeb(read), /expired or revoked/);
+});
+
 test('external connections expose only scoped config and cannot impersonate a human or escape a group', async (t) => {
   const f = await fixture(t),
     a = f.connect();

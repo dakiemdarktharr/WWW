@@ -22,6 +22,13 @@ import { providerCapabilities } from './providers.ts';
 import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
+import { registerClaudeWeb } from './claude-web.ts';
+import {
+  claudeMcpPath,
+  claudeWebControlPath,
+  claudeConnectorOrigin,
+  claudeWebBearer,
+} from '../shared/claude-web.ts';
 import { sharedSadeCloudFinishPath } from '../shared/sade-cloud.ts';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
 import { registerBillingRoutes } from './billing.ts';
@@ -170,6 +177,13 @@ export async function buildApp(
       const gateway = request.headers['x-relay-gateway'];
       if (typeof gateway !== 'string' || !safeEqual(gateway, cloud.gatewaySecret))
         return reply.code(403).send({ error: 'Use the authenticated workspace gateway.' });
+      if (pathname === claudeMcpPath) {
+        if (request.url !== pathname || !claudeConnectorOrigin(origin) || request.headers.cookie)
+          return reply.code(403).send({ error: 'Invalid connector request.' });
+        if (!claudeWebBearer.test(request.headers.authorization || ''))
+          return reply.code(401).send({ error: 'A Claude connector credential is required.' });
+        return;
+      }
       if (origin && origin !== cloud.origin)
         return reply.code(403).send({ error: 'Cross-origin requests are not allowed.' });
       if (!['GET', 'HEAD'].includes(request.method) && origin !== cloud.origin)
@@ -194,6 +208,7 @@ export async function buildApp(
           sadeProjectFileRoute,
           sharedSadeCloudFinishPath,
           '/api/desktop/profiles',
+          claudeWebControlPath,
         ].includes(pathname)
       ) {
         desktopIdentity!.authenticate(request.headers.authorization);
@@ -251,6 +266,7 @@ export async function buildApp(
         '/api/desktop/shared-sade',
         '/api/desktop/profile-reservation',
         '/api/desktop/profile-locks',
+        '/api/desktop/claude-web-local',
       ].includes(pathname)
     ) {
       if (!safeEqual(String(request.headers['x-relay-control'] || ''), options.desktopSecret))
@@ -301,6 +317,7 @@ export async function buildApp(
       const user = await options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
+  if (desktopIdentity) registerClaudeWeb(app, workspace.store, desktopIdentity);
   if (options.cloud) {
     const auth = options.cloud.auth;
     const currentUser = (request: FastifyRequest) => auth.currentUser(request.headers);
@@ -486,6 +503,7 @@ export async function buildApp(
     workspace.store.remove('localProfileReservation', profileId);
   };
   if (!options.cloud && options.desktopSecret) {
+    app.post('/api/desktop/claude-web-local', (request) => external.claudeWeb(request.body));
     app.post('/api/desktop/profile-reservation', async (request) => {
       const input = z
         .object({ action: z.enum(['store', 'release']), profileId: id })
@@ -935,6 +953,13 @@ export async function buildApp(
       .prepare(projectId)
       .catch((error) => workspace.log(redact(error), null, null, 'error', projectId));
     return item;
+  });
+  app.post('/api/projects/:id/member', async (request) => {
+    const { memberId } = z.object({ memberId: id }).strict().parse(request.body);
+    workspace.assertProfileUnlocked(memberId);
+    const projectId = params(request);
+    const current = groupMembers(workspace.store, projectId).map((member) => member.id);
+    return workspace.mesh.setMembers(projectId, [...new Set([...current, memberId])]);
   });
   app.patch('/api/projects/:id/members', async (request) => {
     const input = z

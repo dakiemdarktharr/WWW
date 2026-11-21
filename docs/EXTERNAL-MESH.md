@@ -2,7 +2,13 @@
 
 Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal; Google và Antigravity xử lý OAuth, Kivuno không nhận thông tin đăng nhập. Bạn vẫn tự mở client; Kivuno không gọi API trả phí và không khởi chạy model thay bạn. Đây là kết nối công cụ vào client, không phải một bản nhúng toàn bộ ứng dụng của provider. Antigravity là profile riêng, không phải tên khác của Gemini CLI.
 
-## Kết nối
+## Claude trong trình duyệt
+
+Trong **Team → Add account → Claude**, chọn **Claude in browser**, chọn một project và thời hạn, rồi tạo web connector. Trong tab Claude đang đăng nhập, mở **Customize → Connectors → Add → Custom → Web**. Dán URL HTTPS Kivuno cung cấp. Chọn **No sign-in**, thêm request header có tên `Authorization` và dán nguyên giá trị riêng tư đã sao chép, gồm cả tiền tố `Bearer`. Bật connector trong cuộc trò chuyện, rồi yêu cầu Claude đọc nhóm dự án. Với tài khoản Free, Anthropic cho một custom connector. Trong Team hoặc Enterprise, người được cấp quyền dùng chung connector cũng có thể dùng thông tin xác thực đã cấu hình. [Hướng dẫn của Anthropic](https://claude.com/docs/connectors/custom/add-unlisted).
+
+Kivuno Desktop trên máy chủ dự án phải đang chạy. Mỗi quyền chỉ áp dụng cho một profile và một project, tối đa 8 giờ. Công cụ `mesh_read` trả tên project và các đoạn tin nhắn của nhóm. Có thể thu hồi trong **MESH connection**. Trình duyệt dùng hạn mức của tài khoản Claude. Dịch vụ HTTPS của Kivuno cần chạy phiên bản có hỗ trợ connector. Máy dùng Claude Desktop hoặc Claude Code có thể dùng cầu nối cục bộ ở phần dưới.
+
+## Kết nối cục bộ
 
 1. Trong **Team → Add account**, chọn **Claude** hoặc **Antigravity**. Mỗi profile tương ứng một thành viên; nhiều profile có thể dùng những tài khoản/client riêng do bạn quản lý. Trên profile Antigravity, chọn **Sign in with Google** để mở đăng nhập chính thức trong Terminal. CLI, IDE và Antigravity App dùng chung thông tin đăng nhập cục bộ theo hướng dẫn Google.
 2. Mở nhóm dự án → **Members** → thêm thành viên vừa tạo. Team toàn cục và nhóm vẫn tách biệt.
