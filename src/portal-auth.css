@@ -160,6 +160,17 @@
   outline: 2px solid var(--ka-violet);
   outline-offset: 4px;
 }
+.ka-overlay a:focus-visible {
+  outline: 2px solid var(--ka-violet);
+  outline-offset: 4px;
+}
+.ka-overlay a.ka-primary {
+  text-decoration: none;
+}
+.ka-account-email {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
 .ka-text {
   display: inline-flex;
   justify-content: center;

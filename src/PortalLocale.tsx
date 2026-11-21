@@ -170,6 +170,9 @@ const english: Record<string, string> = {
   'Kivuno đang mở lại trên máy của bạn. Chờ vài giây để hoàn tất kết nối.':
     'Kivuno is reopening on your computer. Allow a few seconds to finish connecting.',
   'Đóng đăng nhập': 'Close sign-in',
+  'Đóng tài khoản': 'Close account',
+  'Tài khoản': 'Account',
+  'Gói & thanh toán': 'Plans & billing',
   'Tên của bạn': 'Your name',
   'Gói Kivuno': 'Kivuno plans',
   'Tài khoản workspace hiện tại': 'Existing workspace account',

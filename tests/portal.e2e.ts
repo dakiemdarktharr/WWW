@@ -82,7 +82,10 @@ const start = await app.inject({
 });
 assert.equal(start.statusCode, 200, start.body);
 const grant = start.json();
+let portalClient = 0;
 async function routePortal(context: BrowserContext, available = false) {
+  // Separate simulated devices must not share one fallback IP's auth rate budget.
+  const clientIp = `192.0.2.${++portalClient}`;
   context.setDefaultTimeout(15000);
   context.on('page', (page) => page.on('pageerror', (error) => errors.push(error.message)));
   await context.route(`${origin}/**`, async (route) => {
@@ -132,9 +135,10 @@ async function routePortal(context: BrowserContext, available = false) {
       const response = await app.inject({
         method: request.method() as 'GET' | 'POST',
         url: target.pathname + target.search,
-        headers: { ...headers, 'x-relay-gateway': gatewaySecret },
+        headers: { ...headers, 'x-relay-gateway': gatewaySecret, 'x-relay-client-ip': clientIp },
         ...(request.postData() ? { payload: request.postData()! } : {}),
       });
+      if (response.statusCode === 429) console.error('Portal fixture rate limit:', url.pathname);
       await route.fulfill({
         status: response.statusCode,
         body: response.body,
@@ -732,10 +736,21 @@ try {
   await expect(accountMenu.getByRole('button', { name: 'Đăng nhập', exact: true })).toHaveCount(0);
   await expect(accountMenu.getByRole('button', { name: 'Đăng ký', exact: true })).toHaveCount(0);
   await signedInHome.reload();
+  await expect(signedInHome.getByRole('dialog')).toHaveCount(0);
   await accountMenu.getByRole('button', { name: 'Tài khoản Ari Test' }).click();
+  await expect(signedInHome.getByRole('dialog')).toHaveAccessibleName('Tài khoản');
+  await expect(signedInHome.getByLabel('Mã từ app desktop')).toHaveCount(0);
+  await expect(signedInHome.getByRole('link', { name: 'Gói & thanh toán' })).toHaveAttribute(
+    'href',
+    '/billing',
+  );
   await expect(
     signedInHome.getByRole('dialog').getByText('Ari Test', { exact: true }),
   ).toBeVisible();
+  await signedInHome.getByRole('button', { name: 'Đóng tài khoản' }).click();
+  await signedInHome.goto(`${origin}/?login`);
+  await expect(signedInHome.getByRole('dialog')).toHaveCount(0);
+  await expect(signedInHome).toHaveURL(origin + '/');
   await signedInHome.close();
   assert.equal(approvalRequests, 1);
   await dialog.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
@@ -908,7 +923,35 @@ try {
   await recoveredLogin.getByRole('button', { name: 'Tiếp tục', exact: true }).click();
   await recoveredLogin.getByLabel('Mật khẩu', { exact: true }).fill(newPassword);
   await recoveredLogin.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
-  await expect(recoveredLogin.getByText('Ari Test', { exact: true })).toBeVisible();
+  await expect(recoveredLogin).toHaveCount(0);
+  await expect(accountPage).toHaveURL(origin + '/');
+  await expect(accountPage.getByRole('button', { name: 'Tài khoản Ari Test' })).toBeVisible();
+  await accountPage.reload();
+  await expect(accountPage.getByRole('dialog')).toHaveCount(0);
+  const normalApprovalCount = approvalRequests;
+  await accountPage.getByRole('button', { name: 'Tài khoản Ari Test' }).click();
+  await expect(accountPage.getByRole('dialog')).toHaveAccessibleName('Tài khoản');
+  await accountPage.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await expect(accountPage.getByRole('dialog')).toHaveCount(0);
+  await accountPage.getByRole('button', { name: 'Đăng ký', exact: true }).click();
+  await dialog.getByLabel('Tên của bạn').fill('Web Only');
+  await dialog
+    .getByLabel('Email', { exact: true })
+    .fill(`web-${randomBytes(5).toString('hex')}@example.com`);
+  await dialog.getByRole('button', { name: 'Tiếp tục', exact: true }).click();
+  await dialog.getByLabel('Mật khẩu', { exact: true }).fill(randomBytes(24).toString('hex'));
+  await dialog.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(accountPage.getByRole('button', { name: 'Tài khoản Web Only' })).toBeVisible();
+  const webSession = await accountPage.evaluate(async () =>
+    (await fetch('/api/auth/get-session')).json(),
+  );
+  assert.match(
+    store.get<{ address: string }>('billingWallet', webSession.user.id).address,
+    /^0x[\da-f]{40}$/i,
+    'Normal web signup also provisions its wallet before closing',
+  );
+  assert.equal(approvalRequests, normalApprovalCount, 'Normal web auth never approves a desktop');
   // A device without WebGL retains real artwork and usable download/credits controls.
   await page.close();
   await accountPage.close();
@@ -958,7 +1001,7 @@ try {
   ).toBeVisible();
   await expect(connectorPage.getByRole('heading', { name: 'Share one project' })).toBeVisible();
   await expect(
-    connectorPage.getByRole('link', { name: 'Claude’s Connectors settings' }),
+    connectorPage.getByRole('link', { name: 'Open your connectors' }),
   ).toHaveAttribute('href', 'https://claude.ai/customize/connectors/yours');
   await expect(connectorPage.locator('code')).toHaveText(
     'https://kivuno.vercel.app/api/claude/mcp',

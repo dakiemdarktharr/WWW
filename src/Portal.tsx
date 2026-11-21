@@ -401,13 +401,24 @@ function PortalContent() {
   const [releaseError, setReleaseError] = useState('');
   const [account, setAccount] = useState<{ name: string; email: string } | null>(null);
   const [accountChecked, setAccountChecked] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | null>(
+  const [activationCode, setActivationCode] = useState(initialCode);
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'account' | null>(
     initialCode || new URLSearchParams(location.search).has('login') ? 'login' : null,
   );
+  function closeAuth() {
+    setAuthMode(null);
+    setActivationCode('');
+    const url = new URL(location.href);
+    url.searchParams.delete('login');
+    url.searchParams.delete('activate');
+    history.replaceState(history.state, '', url);
+  }
   const [downloadsOpen, setDownloadsOpen] = useState(() =>
     new URLSearchParams(location.search).has('download'),
   );
   useEffect(() => {
+    // The dialog owns session checks while open; refresh the header when it closes.
+    if (authMode) return;
     const controller = new AbortController();
     async function refreshAccount() {
       try {
@@ -662,7 +673,7 @@ function PortalContent() {
                   className="kp-nav-button kp-account-button"
                   aria-label={`${locale === 'vi' ? 'Tài khoản' : 'Account'} ${account.name || account.email}`}
                   title={account.email}
-                  onClick={() => setAuthMode('login')}
+                  onClick={() => setAuthMode('account')}
                 >
                   <UserRound size={19} />
                   <span>{account.name || account.email}</span>
@@ -942,8 +953,13 @@ function PortalContent() {
             <PortalAuth
               key="auth"
               mode={authMode}
-              activationCode={initialCode}
-              onClose={() => setAuthMode(null)}
+              activationCode={activationCode}
+              onClose={closeAuth}
+              onSignedIn={(user) => {
+                setAccount(user);
+                setAccountChecked(true);
+              }}
+              onSignedOut={() => setAccount(null)}
             />
           )}
         </AnimatePresence>

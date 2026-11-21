@@ -10,6 +10,8 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 4. Return to Kivuno. The short-lived activation request is bound to a random proof verifier held only by the app. A consumed activation cannot issue another session.
 5. Add accounts in **Team**, then select group members. Codex uses OpenAI sign-in and its bundled App Server. For Gemini models on a personal Google account, select Antigravity and confirm the account used by the official CLI on this computer. Claude Desktop (Free or paid), Claude Code (eligible plans) and Antigravity support the scoped [MESH MCP configuration](EXTERNAL-MESH.md).
 
+Normal website signup and sign-in return to the homepage. The account button opens account details, billing and sign-out; it does not ask for a desktop code. A desktop connection dialog appears only when opening the activation link from the app. Approval remains explicit, and closing the dialog removes the activation parameter so it does not reopen on refresh.
+
 ## Desktop updates
 
 Kivuno checks the release feed at startup and every 30 minutes while open. When a newer installable release is available for your platform, **Cập nhật** and the version appear immediately before the minimize button in the title bar. Click once to download the package, check its size and SHA-256 against the release manifest, install it and reopen Kivuno. You can continue using the workspace while the package downloads. Updates are optional. Kivuno stops its local agents when it closes to apply an update and asks you to sign in again when it opens.

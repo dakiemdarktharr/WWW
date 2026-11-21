@@ -18,10 +18,11 @@ import PasswordRecovery from './PasswordRecovery';
 import { ensureAccountWallet } from './embedded-wallet';
 
 interface PortalAuthProps {
-  mode: 'login' | 'signup';
+  mode: 'login' | 'signup' | 'account';
   activationCode: string;
   onClose: () => void;
-  onSignedIn?: () => void;
+  onSignedIn?: (user: AuthUser) => void;
+  onSignedOut?: () => void;
 }
 interface AuthUser {
   id: string;
@@ -49,11 +50,18 @@ const isUser = (value: unknown): value is AuthUser =>
     (key) => typeof (value as Record<string, unknown>)[key] === 'string',
   );
 
-export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }: PortalAuthProps) {
+export default function PortalAuth({
+  mode,
+  activationCode,
+  onClose,
+  onSignedIn,
+  onSignedOut,
+}: PortalAuthProps) {
   const { t } = usePortalLocale();
   const reducedMotion = useReducedMotion();
   const titleId = useId();
-  const [flow, setFlow] = useState(mode);
+  const [flow, setFlow] = useState<'login' | 'signup'>(mode === 'signup' ? 'signup' : 'login');
+  const desktopRequested = mode !== 'account' && !!activationCode;
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [details, setDetails] = useState(false);
@@ -150,7 +158,10 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
         if (isUser(result?.user)) await ensureAccountWallet(result.user.id, result.user.email);
         if (alive.current && !abort.signal.aborted) {
           setUser(isUser(result?.user) ? result.user : null);
-          if (isUser(result?.user)) onSignedIn?.();
+          if (isUser(result?.user)) {
+            onSignedIn?.(result.user);
+            if (!desktopRequested && mode !== 'account') closeRef.current();
+          }
         }
       })
       .catch(() => {
@@ -176,7 +187,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
   }, []);
 
   useEffect(() => {
-    setFlow(mode);
+    setFlow(mode === 'signup' ? 'signup' : 'login');
     setRecovering(false);
     setLegacy(false);
     setDetails(false);
@@ -185,7 +196,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
   }, [mode]);
 
   useEffect(() => {
-    if (!user || !codePattern.test(code) || approved) return;
+    if (!desktopRequested || !user || !codePattern.test(code) || approved) return;
     let current = true;
     setDevice(null);
     setLookingUp(true);
@@ -206,7 +217,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
       current = false;
       clearTimeout(timer);
     };
-  }, [user, code, approved]);
+  }, [desktopRequested, user, code, approved]);
 
   useEffect(() => {
     if (!device) return;
@@ -268,7 +279,8 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
         setPassword('');
         setUser(result.user);
         setError('');
-        onSignedIn?.();
+        onSignedIn?.(result.user);
+        if (!desktopRequested) closeRef.current();
       }
     } catch (cause) {
       if (alive.current && !controller.current?.signal.aborted) setError((cause as Error).message);
@@ -315,6 +327,8 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
         setLegacy(false);
         setFlow('login');
         if (email === ownerEmail) setEmail('');
+        onSignedOut?.();
+        if (!desktopRequested) closeRef.current();
       }
     } catch (cause) {
       if (alive.current && !controller.current?.signal.aborted) setError((cause as Error).message);
@@ -329,15 +343,25 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
   const title = loading
     ? 'Kivuno'
     : user
-      ? approved
-        ? t('Đã kết nối')
-        : t('Kết nối desktop')
+      ? !desktopRequested
+        ? t('Tài khoản')
+        : approved
+          ? t('Đã kết nối')
+          : t('Kết nối desktop')
       : legacy
         ? t('Chủ workspace cũ')
         : flow === 'signup'
           ? t('Tạo tài khoản')
           : t('Đăng nhập');
-  const phase = loading ? 'loading' : user ? (approved ? 'approved' : 'activation') : 'credentials';
+  const phase = loading
+    ? 'loading'
+    : user
+      ? !desktopRequested
+        ? 'account'
+        : approved
+          ? 'approved'
+          : 'activation'
+      : 'credentials';
 
   return createPortal(
     <MotionConfig reducedMotion="user">
@@ -381,7 +405,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
                   className="ka-icon"
                   type="button"
                   onClick={onClose}
-                  aria-label={t('Đóng đăng nhập')}
+                  aria-label={t(mode === 'account' ? 'Đóng tài khoản' : 'Đóng đăng nhập')}
                   whileHover={reducedMotion ? undefined : { scale: 1.08 }}
                   whileTap={reducedMotion ? undefined : { scale: 0.92 }}
                 >
@@ -416,7 +440,20 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
                     {t('Đang kết nối')}
                   </div>
                 ) : user ? (
-                  approved ? (
+                  !desktopRequested ? (
+                    <div className="ka-form">
+                      <div className="ka-account">
+                        <span className="ka-account-avatar">
+                          {user.name.slice(0, 1).toUpperCase()}
+                        </span>
+                        <span>{user.email === ownerEmail ? t('Chủ workspace cũ') : user.name}</span>
+                      </div>
+                      <p className="ka-note ka-account-email">{user.email}</p>
+                      <a className="ka-primary" href="/billing">
+                        {t('Gói & thanh toán')} <ArrowRight size={17} />
+                      </a>
+                    </div>
+                  ) : approved ? (
                     <div className="ka-success">
                       <span className="ka-success-icon">
                         <CheckCheck size={32} />
