@@ -1,3 +1,4 @@
+import { AntigravityBinding } from './antigravity-binding.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { CompetitionResearcher, researchTools } from './competition-research.ts';
 import { portfolio, portfolioContext, portfolioTool } from './portfolio.ts';
@@ -118,7 +119,22 @@ export class Workspace {
     public store: Store,
     public dataDir: string,
     public defaultCwd: string,
+    readonly antigravityBinding = new AntigravityBinding(),
   ) {
+    for (const member of store.members()) {
+      if (member.provider !== 'antigravity' || isExternalMember(member)) continue;
+      const deviceAccountLinked = this.antigravityBinding.owns(
+        path.join(dataDir, 'profiles', member.id),
+      );
+      store.updateMember(member.id, {
+        deviceAccountLinked,
+        account: null,
+        status: 'offline',
+        signIn: undefined,
+        rateLimits: null,
+        ...(!deviceAccountLinked ? { connectedAt: undefined } : {}),
+      });
+    }
     this.runtime.dataDir = dataDir;
     this.runtime.recoveryRequired = store.orphanAll() > 0;
     this.research = new CompetitionResearcher(store);
@@ -397,7 +413,7 @@ export class Workspace {
       if (this.closing) throw new DomainError('The coordinator is shutting down.');
       const client = this.store.get<Member>('member', id).runnerId
         ? this.runners.create(id)
-        : nativeProviderClient(this.store.get<Member>('member', id), home, this.defaultCwd);
+        : this.localClient(this.store.get<Member>('member', id), this.defaultCwd);
       client.on('notification', (method: string, params: any) => {
         void this.notification(id, method, params).catch((error) =>
           this.log(redact(error), null, id, 'error'),
@@ -419,7 +435,7 @@ export class Workspace {
       client.on('exit', () => {
         this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
         this.clients.delete(id);
-        if (this.loginOwner === id) {
+        if (this.loginOwner === id && !this.loginCancelling) {
           this.loginOwner = null;
           this.loginId = null;
         }
@@ -458,6 +474,16 @@ export class Workspace {
       this.connecting.delete(id);
     }
   }
+  localClient(member: Member, cwd: string) {
+    const home = this.home(member.id);
+    if (
+      member.provider === 'antigravity' &&
+      !isExternalMember(member) &&
+      !this.antigravityBinding.owns(home)
+    )
+      throw new DomainError('Connect the Antigravity account on this computer first.', 409);
+    return nativeProviderClient(member, home, cwd);
+  }
   async refresh(id: string) {
     const epoch = this.accountEpoch.get(id) || 0;
     const profile = this.store.get<Member>('member', id);
@@ -465,7 +491,17 @@ export class Workspace {
     this.assertProfileUnlocked(id);
     if (isExternalMember(profile)) return profile;
     const client = await this.client(id);
-    const account = await readAccount(client);
+    const account = await readAccount(client).catch((error) => {
+      if (profile.provider === 'antigravity' && epoch === (this.accountEpoch.get(id) || 0)) {
+        this.store.updateMember(id, {
+          account: null,
+          status: 'offline',
+          rateLimits: null,
+          error: redact(error),
+        });
+      }
+      throw error;
+    });
     // Publish identity first. Slow marketplace/quota calls must never hold the
     // sign-in dialog open after the provider has confirmed authentication.
     const current = this.store.get<Member>('member', id);
@@ -566,8 +602,9 @@ export class Workspace {
       const result = await loginAccount(await this.client(id), method);
       if (this.loginOwner === id && generation === this.loginGeneration) {
         this.loginId = result.loginId || null;
-        this.setSignIn(id, 'waiting');
+        this.setSignIn(id, result.type === 'antigravityDevice' ? 'verifying' : 'waiting');
         this.scheduleLoginCheck(id, generation);
+        if (result.type === 'antigravityDevice') await this.checkLogin(id);
       }
       return result;
     } catch (error) {
@@ -583,11 +620,16 @@ export class Workspace {
     if (this.running.has(id) || this.sessions.hasLive(id))
       throw new DomainError('Stop this teammate’s task before signing out.');
     const profile = this.store.get<Member>('member', id);
-    const client = profile.entitlementLocked ? this.clients.get(id) : await this.client(id);
+    const deviceAccount = profile.provider === 'antigravity' && !isExternalMember(profile);
+    const client =
+      profile.entitlementLocked || deviceAccount ? this.clients.get(id) : await this.client(id);
     // Invalidate reads that were started before logout.
     this.accountEpoch.set(id, (this.accountEpoch.get(id) || 0) + 1);
     if (this.loginOwner === id) this.loginGeneration++;
-    if (client) await client.request('account/logout');
+    if (deviceAccount) {
+      await client?.stop();
+      this.antigravityBinding.release(path.join(this.dataDir, 'profiles', id));
+    } else if (client) await client.request('account/logout');
     if (this.loginOwner === id) {
       this.loginOwner = null;
       this.loginId = null;
@@ -595,6 +637,7 @@ export class Workspace {
     this.store.remove('quota', id);
     this.store.remove('quotaSource', id);
     return this.store.updateMember(id, {
+      ...(deviceAccount ? { deviceAccountLinked: false, connectedAt: undefined } : {}),
       status: 'offline',
       account: null,
       rateLimits: null,
@@ -786,6 +829,8 @@ export class Workspace {
           'member',
         );
       });
+      if (member.provider === 'antigravity' && !isExternalMember(member))
+        this.antigravityBinding.release(path.join(this.dataDir, 'profiles', id));
       return { removed: true };
     } catch (error) {
       this.store.updateMember(id, { removedAt: undefined });

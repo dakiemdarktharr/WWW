@@ -1,15 +1,17 @@
 # Providers trong Kivuno
 
-Cập nhật nhánh Sade chưa phát hành, ngày 2026-11-17. Một nhóm có thể chứa Codex, Gemini CLI, Claude Code và Antigravity, nhưng khả năng chạy của từng provider khác nhau. Nhóm dùng chung MESH, nhiệm vụ, worktree, quyền của người dùng và quy trình review; không chia sẻ credential giữa tài khoản.
+Cập nhật ngày 21/11/2026. Một nhóm có thể chứa Codex, Gemini CLI, Claude Code và Antigravity. Mỗi provider quản lý đăng nhập và model theo cách riêng.
 
-| Provider    | Cách kết nối                                                            | Phiên làm việc                                                             | Quota và quyền                                                                              |
-| ----------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Codex       | Codex App Server, profile riêng cho từng tài khoản                      | Kivuno quản lý process, thread, model/reasoning, pause/resume, approvals   | Đọc quota provider; giữ ngưỡng dự phòng 50% trừ khi người dùng cho phép                     |
-| Gemini      | Gemini CLI **0.66.0**, ACP stdio, Google sign-in                        | Kivuno quản lý process và ACP session; model từ catalog thực               | ACP chưa cung cấp phần trăm quota. Cần cấp số prompt có giới hạn; không fallback API/Vertex |
-| Claude      | CLI chính thức, stream-json, profile đăng nhập riêng; hoặc external MCP | Sade quản lý phiên khi người dùng bật managed runtime; model/effort từ CLI | Quota chưa biết: cần cấp prompt giới hạn; ghi file cần duyệt                                |
-| Antigravity | CLI chính thức qua ACP; hoặc external MCP                               | Sade quản lý phiên và config options do CLI quảng cáo                      | Google sign-in riêng; không API-key/credit fallback                                         |
+| Provider    | Cách kết nối                                                                                 | Phiên làm việc                                                             | Quota và quyền                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Codex       | Codex App Server, profile riêng cho từng tài khoản                                           | Kivuno quản lý process, thread, model/reasoning, pause/resume, approvals   | Đọc quota provider; giữ ngưỡng dự phòng 50% trừ khi người dùng cho phép                     |
+| Gemini      | Gemini CLI **0.66.0**, ACP stdio, Google sign-in                                             | Kivuno quản lý process và ACP session; model từ catalog thực               | ACP chưa cung cấp phần trăm quota. Cần cấp số prompt có giới hạn; không fallback API/Vertex |
+| Claude      | CLI chính thức, stream-json, profile đăng nhập riêng; hoặc external MCP                      | Sade quản lý phiên khi người dùng bật managed runtime; model/effort từ CLI | Quota chưa biết: cần cấp prompt giới hạn; ghi file cần duyệt                                |
+| Antigravity | Một kết nối managed tới tài khoản Antigravity của người dùng hệ điều hành, hoặc external MCP | Sade đọc model, mức suy luận và tên gói khi CLI cung cấp                   | Cấp lượt theo project. Kivuno tắt dùng thêm AI credits                                      |
 
 ## Gemini: đăng nhập và sử dụng
+
+Từ 18/06/2026, Google ngừng phục vụ Gemini CLI cho tài khoản cá nhân, Google AI Pro và Ultra. Thử lại OAuth trên cùng gói vẫn gặp giới hạn này. Quyền Code Assist của tổ chức phụ thuộc thuê bao và thời hạn hợp đồng hiện có. [Thông báo cho tài khoản cá nhân](https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals) · [Lịch hỗ trợ thuê bao tổ chức](https://docs.cloud.google.com/gemini/docs/codeassist/sunset).
 
 1. Thêm Gemini trong Team và chọn đăng nhập Google. CLI mở trình duyệt sau thao tác đăng nhập rõ ràng này. Mỗi profile dùng `GEMINI_CLI_HOME` riêng trong dữ liệu Kivuno; không dùng tài khoản trong `~/.gemini` cá nhân.
 2. Thêm profile vào nhóm dự án. Một tài khoản có thể có nhiều conversation nhưng mỗi conversation vẫn chịu giới hạn process, task lease và scope.
@@ -31,7 +33,9 @@ ACP hiện không hỗ trợ steer prompt đang chạy theo contract đã kiểm
 
 ## Claude/Antigravity: để Sade điều phối
 
-Trong Team → Add account, chọn provider và tùy chọn để Sade chạy CLI chính thức với profile riêng. Bản desktop kiểm tra/cài CLI khi thiếu; sau đó người dùng đăng nhập trên trình duyệt chính thức. Profile external cũ giữ nguyên chế độ cho tới khi bấm **Enable Sade execution**. Chuyển chế độ thu hồi các kết nối MCP cũ và yêu cầu dừng/recover công việc đang có.
+Trong Team → Add account, chọn provider và chế độ chạy CLI. Với Antigravity, xác nhận dùng tài khoản Google hiện tại của Antigravity trên máy. Google lưu đăng nhập trong kho thông tin xác thực của hệ điều hành. Nếu đổi tài khoản trong Antigravity, kết nối này sẽ dùng tài khoản mới. Một hồ sơ Kivuno được giữ kết nối cho mỗi người dùng hệ điều hành, kể cả khi có nhiều workspace. Hồ sơ managed từ 0.9.0 cần xác nhận một lần. **Settings → Disconnect device account** giải phóng kết nối để hồ sơ khác có thể dùng. Dữ liệu đăng nhập của Antigravity vẫn do Google quản lý. [Xác thực Antigravity](https://antigravity.google/docs/install?tab=cli).
+
+Hồ sơ external có thể chuyển chế độ bằng **Enable Sade execution**. Kivuno thu hồi kết nối MCP cũ sau khi người dùng xác nhận và đã dừng hoặc khôi phục công việc đang có.
 
 Cấp số prompt có giới hạn cho project trước khi chạy. Claude dùng model/effort từ control initialize; Antigravity dùng catalog/config options ACP. Không suy đoán rằng mọi model đều có high reasoning. Native file/shell tools bị tắt; MCP Kivuno kiểm tra lease, quota, scope và duyệt ghi file. Đây là chính sách công cụ, không phải sandbox hệ điều hành. Chế độ read-only không có tool ghi. Các request xin quyền native bất ngờ đều bị từ chối.
 
@@ -54,7 +58,7 @@ Tham khảo: [Claude headless](https://code.claude.com/docs/en/headless), [CLI r
 
 Thu hồi/hết hạn/mất kết nối không tự giải phóng một task đang ghi. Người dùng phải dừng client thật rồi xác nhận recovery. Recovery từ chối session lịch sử, task đã review/done, session đã bị thay thế và checkpoint/claim đang chạy. Bridge chỉ nhận loopback, không có browser Origin, token ràng buộc một thành viên/một dự án; không được publish qua web/cloud. Khởi động lại coordinator làm token cũ hết hiệu lực, vẫn giữ lease cần phục hồi.
 
-Claude và Antigravity không nằm trong đội native tự dispatch brainstorm/workflow. Chúng có thể tham gia thảo luận và nhận task đã chuẩn bị qua bridge. Kivuno không điều khiển model/reasoning hay tự tạo conversation bên trong client ngoài; client đó quyết định và báo tiến độ về nhóm.
+Ở chế độ external, Claude và Antigravity có thể tham gia thảo luận và nhận task đã chuẩn bị qua bridge. Client ngoài chọn model và báo tiến độ về nhóm.
 
 ## Contract phục vụ UI và tích hợp
 
@@ -62,11 +66,11 @@ Claude và Antigravity không nằm trong đội native tự dispatch brainstorm
 
 Trong desktop, nút **Add account** quét provider vừa chọn trước khi tạo hồ sơ. Nếu thiếu Claude Code hoặc Antigravity CLI, Kivuno tải và chạy [installer chính thức của Anthropic](https://code.claude.com/docs/en/getting-started) hoặc [hướng dẫn cài Antigravity CLI của Google](https://antigravity.google/docs/getting-started?tab=cli) cho tài khoản hệ điều hành hiện tại, không yêu cầu quyền quản trị; chỉ tạo account sau khi lệnh `--version` chạy được. Codex CLI `0.166.0` và Gemini CLI `0.66.0` được đóng gói sẵn. Nếu một trong hai runtime đóng gói bị thiếu/hỏng, Kivuno tự khôi phục đúng phiên bản vào `provider-runtimes` trong dữ liệu riêng của Kivuno bằng npm CLI đã đóng gói, chỉ từ npm registry qua HTTPS và tắt lifecycle scripts.
 
-Kivuno chỉ cài phần mềm khi người dùng bấm **Add account** hoặc mở bước kết nối cho account external đã có. Việc cài CLI không đăng nhập hoặc gửi prompt; Antigravity Google sign-in vẫn là thao tác riêng của người dùng. Claude và Antigravity vẫn là client external do người dùng khởi chạy, còn Kivuno cung cấp MESH MCP. Bản web không cài phần mềm trên máy.
+Kivuno kiểm tra hoặc cài CLI khi người dùng bấm **Add account** hoặc mở bước kết nối cho hồ sơ đã có trên desktop. Người dùng chọn managed hoặc external MESH khi thêm Claude hay Antigravity.
 
 - `Member.provider`: `codex | gemini | claude | antigravity`; dữ liệu cũ được migrate thành `codex`. Session lưu provider; external session còn có `external` và `externalConnectionId`.
 - `GET /api/providers`: capability thực gồm `mode`, `available`, `login`, `quota`, `models`, `reasoning`, lý do nếu có. External không khả dụng trên cloud. `available` của external chỉ nói bridge sẵn sàng, không chứng minh client đã được cài hoặc đăng nhập.
-- `POST /api/accounts/connect {provider,runnerId?}`: Codex/Gemini trả profile và login instructions; Claude/Antigravity tạo external profile, không OAuth. Gemini/Claude/Antigravity trong bản này chỉ kết nối cục bộ; remote runner hiện vẫn dành cho Codex.
+- `POST /api/accounts/connect` nhận `provider`, `runnerId?` và `managedRuntime?`. Antigravity managed yêu cầu thêm `confirmDeviceAccount: true` sau bước xác nhận. Với phiên Google có sẵn, CLI có thể xác minh qua ACP mà không mở trình duyệt. External trả hướng dẫn MESH. Remote runner hiện dành cho Codex.
 - `POST /api/members/:id/quota/turn-grants {projectId,maxTurns,expiresAt,acknowledgeUnknownQuota:true}` và `POST /api/quota/turn-grants/:id/revoke {}`: quyền prompt cho provider managed ngoài Codex do người dùng cấp, không phải quota provider.
 - `POST /api/external-connections {memberId,projectId,durationMinutes,allowTaskClaims,allowUnknownQuota}`: tạo cấu hình MCP, tối đa 480 phút. `GET /api/external-connections` không trả token; `POST /api/external-connections/:id/revoke {}` thu hồi.
 - `POST /api/external-agent/rpc`: MCP transport cho bridge cục bộ với bearer token theo phạm vi; không dùng cookie web hay desktop bearer tổng.
@@ -77,7 +81,7 @@ Handoff khác provider dùng checkpoint Git + trạng thái/task/test/việc cò
 
 Các hướng dẫn Markdown độc lập với công cụ có thể chuyển đổi sau khi đọc license, đường dẫn, tên tool và quyền. Codex skill gọi `functions.exec`, `apply_patch` hoặc một plugin riêng không tự nhiên hoạt động trên Gemini hay Claude. Các connector OAuth, binary, hooks và MCP config là quyền thực thi; group chỉ chia sẻ inventory và tài liệu đã lọc, không chia sẻ token hoặc tự cài/chạy gói từ tin nhắn.
 
-Antigravity trong 0.8.4 vẫn là **external MCP**, không phải adapter native hoặc tên khác của Gemini CLI. Kivuno có nút mở luồng Google OAuth chính thức bằng `agy acp --login`; model và phiên vẫn do Antigravity quản lý. MESH MCP kết nối client với workspace. Xem [cấu hình và kiểm chứng client thật](EXTERNAL-MESH.md).
+Antigravity managed đọc tên gói từ metadata của phiên ACP khi có. CLI 1.5.14 trên Windows đã trả catalog model và mức suy luận. Adapter chưa nhận inventory skill/plugin hoặc phần trăm quota. Trong chế độ external, nút đăng nhập mở `agy acp --login` và client kết nối qua MESH. [Cấu hình external MCP](EXTERNAL-MESH.md).
 
 ## Bằng chứng kiểm thử và phần cần người dùng kiểm chứng
 

@@ -16,6 +16,7 @@ import {
 import { planSharedSadeCloud } from '../server/shared-sade-cloud-planner.ts';
 import { reviewDigest } from '../server/sade.ts';
 import { Store } from '../server/store.ts';
+import { AntigravityBinding } from '../server/antigravity-binding.ts';
 import { parsePlanTask, parseTeamPlan } from '../server/workflow-plan.ts';
 import { sharedSadeCorpus } from './fixtures/shared-sade-corpus.ts';
 import {
@@ -4728,7 +4729,12 @@ const managedHandoff =
       await git(repo, ['config', 'remote.origin.url', origin]);
       const dataDir = path.join(root, provider);
       const store = new Store(':memory:');
-      const workspace = new Workspace(store, dataDir, repo);
+      const workspace = new Workspace(
+        store,
+        dataDir,
+        repo,
+        new AntigravityBinding(path.join(root, 'device.sqlite')),
+      );
       const member = store.addMember({
         name: provider,
         provider,
@@ -4746,6 +4752,7 @@ const managedHandoff =
       });
       desktops.push({ workspace, store, memberId: member.id, projectId, repo });
       const home = workspace.home(member.id);
+      if (provider === 'antigravity') workspace.antigravityBinding.claim(home, true);
       await mkdir(home, { recursive: true });
       await writeFile(
         path.join(home, 'managed-fixture-account.json'),

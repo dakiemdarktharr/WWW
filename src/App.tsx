@@ -604,12 +604,19 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           : result.skipped[0]?.reason || 'No ready tasks and available agents to dispatch.',
       });
   }
-  async function login(member: Member, method: 'browser' | 'device') {
+  function confirmAntigravity() {
+    return window.confirm(
+      'Connect the Antigravity account on this computer to Kivuno? This uses the current Google sign-in in Antigravity, including future account changes there. Only one Kivuno profile can use this connection. Model prompts require a separate project allowance.',
+    );
+  }
+  async function login(member: Member, method: 'browser' | 'device', deviceConfirmed = false) {
     if (member.entitlementLocked) {
       setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
       return;
     }
     const provider = providerOf(member);
+    const deviceAccount = provider === 'antigravity' && !isExternalMember(member);
+    if (deviceAccount && !deviceConfirmed && !confirmAntigravity()) return;
     if (window.relayDesktop && !member.runnerId) {
       setBusy(`prepare-${provider}`);
       try {
@@ -627,6 +634,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     }
     const result = await perform<LoginResult>(`login-${member.id}`, `/members/${member.id}/login`, {
       method,
+      ...(deviceAccount ? { confirmDeviceAccount: true } : {}),
     });
     if (result) setModal({ type: 'login', memberId: member.id, result });
   }
@@ -651,6 +659,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   }
   async function connectAccount(provider: ProviderId, managedRuntime = false) {
     const runnerId = selectedMachine && !isExternalProvider(provider) ? selectedMachine : '';
+    const deviceAccount = provider === 'antigravity' && managedRuntime;
+    if (deviceAccount && !confirmAntigravity()) return;
     const profileId = crypto.randomUUID();
     let reserved = false;
     let created = false;
@@ -669,7 +679,13 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       const result = await perform<{ member: Member; login: LoginResult }>(
         'connect-account',
         '/accounts/connect',
-        { profileId, provider, managedRuntime, ...(runnerId ? { runnerId } : {}) },
+        {
+          profileId,
+          provider,
+          managedRuntime,
+          ...(deviceAccount ? { confirmDeviceAccount: true } : {}),
+          ...(runnerId ? { runnerId } : {}),
+        },
       );
       if (result) {
         created = true;
@@ -1552,7 +1568,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           <ProviderConnect
             busy={pending}
             runnerId={selectedMachine || undefined}
-            connect={(provider) => void connectAccount(provider)}
+            connect={connectAccount}
             profile={() => setModal({ type: 'member' })}
           />
         </Modal>
@@ -1576,14 +1592,19 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                   });
                   return;
                 }
+                const deviceAccount = existing?.provider === 'antigravity';
+                if (deviceAccount && !confirmAntigravity()) return;
                 if (existing && window.relayDesktop)
                   await window.relayDesktop.prepareProvider(providerOf(existing));
                 const member = await perform<Member>(
                   'enable-managed',
                   `/members/${modal.memberId}/managed-runtime`,
-                  { acknowledgeLocalExecution: true },
+                  {
+                    acknowledgeLocalExecution: true,
+                    ...(deviceAccount ? { confirmDeviceAccount: true } : {}),
+                  },
                 );
-                if (member) await login(member, 'browser');
+                if (member) await login(member, 'browser', deviceAccount);
               }}
               googleSignIn={() =>
                 void antigravityGoogleSignIn(
@@ -2558,10 +2579,16 @@ function MemberCard({
       <div className="member-account">
         <span>
           {provider === 'antigravity'
-            ? 'Google sign-in is managed by Antigravity'
+            ? isExternalMember(member)
+              ? 'Google sign-in is managed by Antigravity'
+              : member.account
+                ? 'Connected to Antigravity on this computer'
+                : 'Device account disconnected'
             : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>
-        {member.account?.planType && <span className="plan-tag">{member.account.planType}</span>}
+        {member.account?.planType && member.account.planType !== 'unknown' && (
+          <span className="plan-tag">{member.account.planType}</span>
+        )}
       </div>
       <div className="member-quota" aria-label={`${member.name} usage`}>
         <div className="member-quota-title">
@@ -2617,8 +2644,14 @@ function MemberCard({
             </>
           ) : (
             <>
-              {member.skills.length} skills<span className="divider-dot">·</span>
-              {member.plugins.length} plugins
+              {provider === 'antigravity' && !isExternalMember(member) ? (
+                'Skill and plugin inventory unavailable'
+              ) : (
+                <>
+                  {member.skills.length} skills<span className="divider-dot">·</span>
+                  {member.plugins.length} plugins
+                </>
+              )}
             </>
           )}
         </span>
@@ -2707,8 +2740,10 @@ function MemberCard({
                 cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
               }
             >
-              <ArrowUpRight size={15} /> Sign in with{' '}
-              {provider === 'claude' ? 'Claude' : provider === 'codex' ? 'OpenAI' : 'Google'}
+              <ArrowUpRight size={15} />{' '}
+              {provider === 'antigravity'
+                ? 'Connect device account'
+                : `Sign in with ${provider === 'claude' ? 'Claude' : provider === 'codex' ? 'OpenAI' : 'Google'}`}
             </Button>
             {provider === 'codex' && (
               <button
@@ -2740,15 +2775,23 @@ function MemberCard({
         ) : (
           children
         )}
-        {member.account && !isExternalMember(member) && (
+        {(member.account || member.deviceAccountLinked) && !isExternalMember(member) && (
           <button
             className="text-button"
             disabled={busy || (!member.entitlementLocked && member.status === 'working')}
             onClick={() => {
-              if (window.confirm(`Sign ${member.name} out?`)) logout();
+              if (
+                window.confirm(
+                  provider === 'antigravity'
+                    ? 'Disconnect the Antigravity device account from Kivuno?'
+                    : `Sign ${member.name} out?`,
+                )
+              )
+                logout();
             }}
           >
-            <LogOut size={14} /> Sign out
+            <LogOut size={14} />{' '}
+            {provider === 'antigravity' ? 'Disconnect device account' : 'Sign out'}
           </button>
         )}
       </details>

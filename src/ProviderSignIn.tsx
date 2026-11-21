@@ -38,7 +38,8 @@ export default function ProviderSignIn({
   const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
   const opened = useRef(false);
-  const google = result.type === 'geminiGoogle' || result.type === 'antigravityGoogle';
+  const device = result.type === 'antigravityDevice';
+  const google = device || result.type === 'geminiGoogle' || result.type === 'antigravityGoogle';
   const claude = result.type === 'claudeSubscription';
   const provider = google ? 'Google' : claude ? 'Claude' : 'OpenAI';
   const url = authUrl(result);
@@ -88,7 +89,11 @@ export default function ProviderSignIn({
     <div className="login-content">
       <ConnectionProgress
         step={connected ? 3 : live?.signIn?.state === 'verifying' ? 2 : 1}
-        labels={['Open sign-in', `Confirm on ${provider}`, 'Verify account']}
+        labels={
+          device
+            ? ['Confirm device account', 'Read Antigravity session', 'Verify connection']
+            : ['Open sign-in', `Confirm on ${provider}`, 'Verify account']
+        }
         error={
           error ||
           live?.signIn?.error ||
@@ -99,11 +104,13 @@ export default function ProviderSignIn({
         <>
           <strong>
             {live?.account?.email ||
-              (google
-                ? 'Google account connected'
-                : claude
-                  ? 'Claude account connected'
-                  : 'ChatGPT account connected')}
+              (device || result.type === 'antigravityGoogle'
+                ? 'Antigravity device account connected'
+                : google
+                  ? 'Google account connected'
+                  : claude
+                    ? 'Claude account connected'
+                    : 'ChatGPT account connected')}
           </strong>
           <button className="button primary" onClick={close}>
             Done
@@ -130,7 +137,9 @@ export default function ProviderSignIn({
             </div>
           )}
           {!failed &&
-            (google || claude ? (
+            (device ? (
+              <p>Checking the Antigravity session on this computer.</p>
+            ) : google || claude ? (
               <p>
                 Complete {provider} sign-in in the browser opened by the official CLI. This window
                 updates automatically.

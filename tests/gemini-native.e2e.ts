@@ -27,5 +27,5 @@ try {
     temp = await realpath(os.tmpdir());
   assert.equal(path.dirname(actual), temp);
   assert.ok(path.basename(actual).startsWith('kivuno-gemini-native-'));
-  await rm(actual, { recursive: true, force: true });
+  await rm(actual, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
 }

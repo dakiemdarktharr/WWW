@@ -323,6 +323,37 @@ try {
   await checks.getByRole('button', { name: 'Rerun on Test Mac' }).click();
   await expect(checks).toContainText('darwin/arm64 · passed');
   await expect(accept).toBeEnabled();
+  // Exercise the Team callback, including both checkbox states and the device prompt.
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await page.evaluate(
+    'Object.assign(window.relayDesktop, {profiles: async () => ({}), prepareProvider: async () => ({})})',
+  );
+  await page.route('**/api/providers', (route) =>
+    route.fulfill({ json: [{ id: 'antigravity', available: true, managed: { available: true } }] }),
+  );
+  await page.route('**/api/accounts/connect', (route) =>
+    route.fulfill({ status: 409, json: { error: 'Fixture stopped before creating a profile.' } }),
+  );
+  await page.getByRole('button', { name: 'Team', exact: true }).click();
+  await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+  const addAccount = page.getByRole('dialog', { name: 'Add account' });
+  await addAccount.getByRole('combobox', { name: 'AI provider' }).click();
+  await addAccount.getByRole('option', { name: 'Antigravity' }).click();
+  const add = addAccount.getByRole('button', { name: 'Add Antigravity connection' });
+  const request = () =>
+    page.waitForRequest((r) => new URL(r.url()).pathname === '/api/accounts/connect');
+  const managed = request();
+  page.once('dialog', (dialog) => dialog.accept());
+  await add.click();
+  const selected = (await managed).postDataJSON();
+  assert.equal(selected.managedRuntime, true);
+  assert.equal(selected.confirmDeviceAccount, true);
+  await addAccount.getByRole('checkbox').uncheck();
+  const external = request();
+  await add.click();
+  const custom = (await external).postDataJSON();
+  assert.equal(custom.managedRuntime, false);
+  assert.equal(custom.confirmDeviceAccount, undefined);
   assert.deepEqual(errors, []);
   console.log(
     'Chat UI passed: mention keyboard, quota allowance, pending prompt, activity, auto Sessions, live model settings, reaction, reply, search; no model turns.',

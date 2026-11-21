@@ -25,7 +25,6 @@ import type { SharedDelivery } from './group-sade.ts';
 import { redact, safeDetails } from './security.ts';
 import type { Workspace } from './service.ts';
 import { assertGroupMember } from './groups.ts';
-import { nativeProviderClient } from './providers.ts';
 import { providerFileTool } from './provider-files.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 
@@ -154,11 +153,7 @@ export class SessionManager {
   createClient = (session: CodexSession, cwd: string) =>
     this.host.store.get<Member>('member', session.memberId).runnerId
       ? this.host.runners.create(session.memberId, session.taskId)
-      : nativeProviderClient(
-          this.host.store.get<Member>('member', session.memberId),
-          this.host.home(session.memberId),
-          cwd,
-        );
+      : this.host.localClient(this.host.store.get<Member>('member', session.memberId), cwd);
   constructor(private host: Workspace) {
     for (const session of this.all())
       if (['running', 'starting'].includes(session.status))

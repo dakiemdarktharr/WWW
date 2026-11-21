@@ -10,6 +10,50 @@ import { chooseModel } from '../server/autonomy.ts';
 import { providerFileTool } from '../server/provider-files.ts';
 import { groupReadUpdatesTool } from '../server/group-sade.ts';
 import { isExternalMember } from '../shared/providers.ts';
+import { AntigravityBinding } from '../server/antigravity-binding.ts';
+import { Workspace } from '../server/service.ts';
+import { Store } from '../server/store.ts';
+
+test('a cached device account needs consent, belongs to one workspace, and disconnects locally', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-device-binding-'));
+  const file = path.join(root, 'device.sqlite');
+  const binding = new AntigravityBinding(file);
+  const store = new Store(':memory:');
+  const member = store.addMember({ name: 'Legacy', role: 'engineer', provider: 'antigravity' });
+  store.updateMember(member.id, {
+    integration: 'native',
+    managedRuntime: true,
+    account: { type: 'antigravity-google' },
+    status: 'ready',
+    connectedAt: new Date().toISOString(),
+  });
+  const workspace = new Workspace(store, root, root, binding);
+  t.after(async () => {
+    await workspace.close();
+    store.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const home = workspace.home(member.id);
+  assert.equal(store.members()[0].account, null);
+  assert.equal(store.members()[0].status, 'offline');
+  assert.throws(
+    () => workspace.localClient(store.members()[0], root),
+    /Connect the Antigravity account/,
+  );
+  assert.throws(() => binding.claim(home), /Confirm use/);
+  assert.equal(binding.owns(home), false);
+  binding.claim(home, true);
+  const reopened = new AntigravityBinding(file);
+  const other = path.join(root, 'another-workspace', member.id);
+  assert.equal(reopened.owns(home), true);
+  assert.throws(() => reopened.claim(other, true), /already has a managed/);
+  reopened.release(other);
+  assert.equal(binding.owns(home), true);
+  await workspace.logout(member.id);
+  assert.equal(binding.owns(home), false);
+  reopened.claim(other, true);
+  assert.equal(reopened.owns(other), true);
+});
 
 for (const [Client, label] of [
   [ClaudeClient, 'Claude'],

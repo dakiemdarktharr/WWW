@@ -4,7 +4,7 @@ import { isExternalProvider, isExternalMember } from '../shared/providers.ts';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Activity, CodexModel, Member, Project, Task, Workflow } from '../shared/types.ts';
 import { DomainError } from './store.ts';
 import { Workspace } from './service.ts';
@@ -577,6 +577,7 @@ export async function buildApp(
         profileId: id.optional(),
         provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
         managedRuntime: z.boolean().default(false),
+        confirmDeviceAccount: z.literal(true).optional(),
       })
       .strict()
       .parse(request.body);
@@ -592,11 +593,24 @@ export async function buildApp(
     if (input.managedRuntime && isExternalProvider(input.provider)) {
       await resolveManagedCommand(input.provider as 'claude' | 'antigravity');
     }
-    let member = workspace.autonomy.addAccount(input.provider, input.profileId);
+    const profileId = input.profileId || randomUUID();
+    const deviceAccount = input.provider === 'antigravity' && input.managedRuntime;
+    const profilePath = path.join(workspace.dataDir, 'profiles', profileId);
+    if (workspace.store.lookup('member', profileId))
+      throw new DomainError('Profile already exists.', 409);
+    if (deviceAccount) workspace.antigravityBinding.claim(profilePath, input.confirmDeviceAccount);
+    let member: Member;
+    try {
+      member = workspace.autonomy.addAccount(input.provider, profileId);
+    } catch (error) {
+      if (deviceAccount) workspace.antigravityBinding.release(profilePath);
+      throw error;
+    }
     if (input.managedRuntime && isExternalProvider(input.provider)) {
       member = workspace.store.updateMember(member.id, {
         integration: 'native',
         managedRuntime: true,
+        ...(deviceAccount ? { deviceAccountLinked: true } : {}),
       });
     }
     if (isExternalMember(member))
@@ -612,10 +626,16 @@ export async function buildApp(
       };
     if (input.runnerId)
       member = workspace.store.updateMember(member.id, { runnerId: input.runnerId });
-    const login = await workspace.login(
-      member.id,
-      !options.cloud && !input.runnerId && input.provider === 'codex' ? 'browser' : 'device',
-    );
+    const login = await workspace
+      .login(
+        member.id,
+        !options.cloud && !input.runnerId && input.provider === 'codex' ? 'browser' : 'device',
+      )
+      .catch((error) => {
+        // The local profile exists. Keep its plan reservation and show the failed login for retry.
+        if (!deviceAccount) throw error;
+        return { type: 'antigravityGoogle' };
+      });
     return { member, login };
   });
   app.post('/api/members', async (request) => {
@@ -668,7 +688,11 @@ export async function buildApp(
   });
   app.delete('/api/members/:id', async (request) => workspace.removeMember(params(request)));
   app.post('/api/members/:id/managed-runtime', async (request) => {
-    z.object({ acknowledgeLocalExecution: z.literal(true) })
+    const consent = z
+      .object({
+        acknowledgeLocalExecution: z.literal(true),
+        confirmDeviceAccount: z.literal(true).optional(),
+      })
       .strict()
       .parse(request.body);
     if (options.cloud)
@@ -697,6 +721,8 @@ export async function buildApp(
         'Stop and recover this profile’s existing work before switching runtimes.',
       );
     await resolveManagedCommand(member.provider as 'claude' | 'antigravity');
+    if (member.provider === 'antigravity')
+      workspace.antigravityBinding.claim(workspace.home(memberId), consent.confirmDeviceAccount);
     for (const connection of external.list())
       if (connection.memberId === memberId && !connection.revokedAt) external.revoke(connection.id);
     const updated = workspace.store.updateMember(memberId, {
@@ -705,6 +731,7 @@ export async function buildApp(
       account: null,
       status: 'offline',
       externalLastSeen: undefined,
+      ...(member.provider === 'antigravity' ? { deviceAccountLinked: true } : {}),
     });
     workspace.log(
       'Human enabled Sade execution through the official local CLI.',
@@ -1042,8 +1069,11 @@ export async function buildApp(
     workspace.handoffs.cancel(params(request)),
   );
   app.post('/api/members/:id/login', async (request) => {
-    const { method } = z
-      .object({ method: z.enum(['browser', 'device']).default('browser') })
+    const { method, confirmDeviceAccount } = z
+      .object({
+        method: z.enum(['browser', 'device']).default('browser'),
+        confirmDeviceAccount: z.literal(true).optional(),
+      })
       .strict()
       .parse(request.body);
     if (
@@ -1053,7 +1083,18 @@ export async function buildApp(
       throw new DomainError(
         'Connect this provider from your desktop workspace. Cloud provider sign-in is not supported.',
       );
-    return workspace.login(params(request), options.cloud ? 'device' : method);
+    const member = unlockedMember(request);
+    if (member.provider === 'antigravity' && !isExternalMember(member)) {
+      if (
+        workspace.loginOwner ||
+        workspace.running.has(member.id) ||
+        workspace.sessions.hasLive(member.id)
+      )
+        throw new DomainError('Finish the active operation before connecting this account.');
+      workspace.antigravityBinding.claim(workspace.home(member.id), confirmDeviceAccount);
+      workspace.store.updateMember(member.id, { deviceAccountLinked: true });
+    }
+    return workspace.login(member.id, options.cloud ? 'device' : method);
   });
   app.post('/api/members/:id/login/cancel', async (request) => {
     const memberId = params(request);

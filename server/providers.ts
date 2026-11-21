@@ -75,7 +75,7 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       models: false,
       reasoning: false,
       reason:
-        'Enable Sade to run the official Antigravity CLI through ACP with a separate Google sign-in, or keep an external MESH connection. Models and thinking levels must be advertised by the CLI. No API-key or credit fallback.',
+        'Confirm the Antigravity account on this computer to let Sade use the official CLI through ACP, or keep an external MESH connection. Models and thinking levels must be advertised by the CLI. No API-key or credit fallback.',
     },
   ];
 }

@@ -85,8 +85,16 @@ export default function ProviderConnect({
             checked={managedRuntime}
             onChange={(event) => setManagedRuntime(event.target.checked)}
           />
-          Let Sade run the official local CLI using a separate sign-in profile
+          {provider === 'antigravity'
+            ? 'Let Sade use the Antigravity account on this computer'
+            : 'Let Sade run the official local CLI using a separate sign-in profile'}
         </label>
+      )}
+      {provider === 'gemini' && (
+        <p className="provider-summary">
+          Google ended Gemini CLI access for personal, Google AI Pro and Ultra accounts. An eligible
+          existing Code Assist business subscription is required.
+        </p>
       )}
       <HelpDetails title="Connection help">
         <p>
@@ -95,7 +103,7 @@ export default function ProviderConnect({
             : provider === 'gemini'
               ? 'Google sign-in on this computer. File tools and limited prompts; no shell or reasoning controls.'
               : managedRuntime
-                ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Sign in separately, then choose a project and a limited number of prompts.`
+                ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Connect the account, then choose a project and a limited number of prompts.`
                 : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
@@ -244,9 +252,18 @@ export function ExternalConnection({
         <section>
           <p>
             Let Sade start and stop the official CLI, assign work and request independent reviews.
-            This uses a separate local sign-in and a bounded prompt allowance.
+            {providerOf(member) === 'antigravity'
+              ? 'Kivuno will ask you to confirm use of this computer’s Antigravity account.'
+              : 'This uses a separate local sign-in.'}{' '}
+            Project prompts require an allowance.
           </p>
-          <button className="button" disabled={busy || googleBusy} onClick={enableManaged}>
+          <button
+            className="button"
+            disabled={busy || googleBusy}
+            onClick={() =>
+              void Promise.resolve(enableManaged()).catch((cause) => setError(cause.message))
+            }
+          >
             Enable Sade execution
           </button>
         </section>

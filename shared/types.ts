@@ -61,6 +61,7 @@ export interface Member {
   integration?: 'native' | 'external';
   /** Explicit human opt-in to Kivuno starting the official local CLI. */
   managedRuntime?: boolean;
+  deviceAccountLinked?: boolean;
   externalLastSeen?: string;
   presence?: 'online' | 'offline' | 'busy';
   activeSessions?: number;

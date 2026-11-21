@@ -1,4 +1,4 @@
-import { mkdir, writeFile, realpath, lstat, rm } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CodexModel } from '../shared/types.ts';
@@ -10,7 +10,7 @@ import {
   resolveManagedCommand,
 } from './managed-process.ts';
 
-/** ACP credentials remain in a dedicated local profile; no editor impersonation. */
+/** The CLI uses the device account. Project settings and sessions use the Kivuno profile. */
 export class AntigravityClient extends ScopedCliClient {
   override readonly provider = 'antigravity' as const;
   private transport = new ManagedProcess(
@@ -252,17 +252,24 @@ export class AntigravityClient extends ScopedCliClient {
         })),
       }));
   }
-  private async account() {
+  private async account(refresh = false) {
     await this.start();
-    if (!this.modelSession) {
+    if (this.loginId) return null;
+    let session = refresh ? null : this.modelSession;
+    if (!session) {
       try {
         // session/new uses cached credentials; unlike authenticate, it cannot start OAuth.
-        this.modelSession = await this.rpc('session/new', {
+        session = await this.rpc('session/new', {
           cwd: path.join(this.settings.home, 'controlled-workspace'),
           mcpServers: [],
         });
-        this.catalog(this.modelSession);
+        if (!session?.sessionId) throw new Error('Antigravity did not confirm a session.');
+        if (this.capabilities.sessionCapabilities?.close)
+          await this.rpc('session/close', { sessionId: session.sessionId });
+        this.catalog(session);
+        this.modelSession = session;
       } catch (error: any) {
+        this.modelSession = null;
         if (
           error.code === -32000 ||
           /authentication required|not logged in|sign.in/i.test(error.message)
@@ -271,15 +278,20 @@ export class AntigravityClient extends ScopedCliClient {
         throw error;
       }
     }
-    return { type: 'antigravity-google', planType: 'unknown' };
+    const tier = session._meta?.antigravity?.tier?.name;
+    return {
+      type: 'antigravity-google',
+      ...(typeof tier === 'string' && tier.length <= 80 ? { planType: tier } : {}),
+    };
   }
   override async request<T = any>(method: string, raw: any = {}): Promise<T> {
     await this.start();
     let result: any;
-    if (method === 'account/read') result = { account: await this.account() };
+    if (method === 'account/read') result = { account: await this.account(true) };
     else if (method === 'account/login/start') {
       if (this.turn || this.loginId)
         throw new Error('Stop the active operation before signing in.');
+      if (await this.account(true)) return { type: 'antigravityDevice' } as T;
       const loginId = randomUUID();
       this.loginId = loginId;
       void this.rpc('authenticate', { methodId: 'oauth-personal' }, 360000).then(
@@ -303,7 +315,7 @@ export class AntigravityClient extends ScopedCliClient {
         type: 'antigravityGoogle',
         loginId,
         instructions:
-          'Complete Google sign-in in the browser opened by the official Antigravity CLI. This is a private Kivuno profile; extra AI credits are disabled.',
+          'Complete Google sign-in in the browser opened by the official Antigravity CLI. Kivuno will use the Antigravity account on this computer.',
       };
     } else if (method === 'account/login/cancel') {
       this.loginId = null;
@@ -311,22 +323,6 @@ export class AntigravityClient extends ScopedCliClient {
       result = {};
     } else if (method === 'account/logout') {
       await this.stop();
-      const home = await realpath(this.settings.home),
-        credentials = path.resolve(home, '.gemini');
-      const info = await lstat(credentials).catch((error: NodeJS.ErrnoException) => {
-        if (error.code === 'ENOENT') return null;
-        throw error;
-      });
-      if (info) {
-        if (
-          path.dirname(credentials) !== home ||
-          info.isSymbolicLink() ||
-          (await realpath(credentials)) !== credentials
-        )
-          throw new Error('Private profile path changed; inspect it before signing out.');
-        // Only the dedicated Kivuno profile's CLI data; never the OS user's ~/.gemini.
-        await rm(credentials, { recursive: true, force: true });
-      }
       this.modelSession = null;
       result = {};
     } else if (method === 'account/rateLimits/read')
