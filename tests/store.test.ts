@@ -85,6 +85,63 @@ if (!isMainThread && (workerData as ClaimWorkerData).operation === 'claim') {
     };
   }
 
+  test('reopening a workspace retires standalone Gemini while preserving its project history', async (t) => {
+    const f = await fixture(t);
+    const retired = f.store.addMember({ name: 'Nova', role: 'engineer', provider: 'gemini' });
+    f.store.put('sharedSadeLocalGrant', {
+      id: 'shared-grant',
+      teammateId: retired.id,
+      expiresAt: Date.now() + 3600000,
+    });
+    f.store.put('providerTurnGrant', { id: 'old-allowance', memberId: retired.id });
+    const active = f.store.addMember({ name: 'Vega', role: 'engineer', provider: 'antigravity' });
+    f.store.put('project', {
+      ...f.project,
+      memberIds: [retired.id, active.id],
+      ownerMemberId: retired.id,
+    });
+    f.store.put('session', {
+      id: 'old-session',
+      memberId: retired.id,
+      provider: 'gemini',
+      model: 'old-model',
+      status: 'completed',
+    });
+    f.store.put('message', {
+      id: 'old-message',
+      sequence: 1,
+      projectId: f.project.id,
+      authorId: retired.id,
+      content: 'Original result',
+    });
+
+    f.reopen();
+    assert.deepEqual(
+      f.store.members().map((member) => member.id),
+      [active.id],
+    );
+    const archived = f.store.get<Member>('member', retired.id);
+    assert.ok(archived.removedAt);
+    assert.equal(
+      f.store.get<{ revokedAt: string }>('providerTurnGrant', 'old-allowance').revokedAt,
+      archived.removedAt,
+    );
+    assert.equal(
+      f.store.get<{ expiresAt: number }>('sharedSadeLocalGrant', 'shared-grant').expiresAt,
+      Date.parse(archived.removedAt),
+    );
+    assert.equal(archived.name, 'Nova');
+    assert.deepEqual(f.store.projects()[0].memberIds, [active.id]);
+    assert.equal(f.store.projects()[0].ownerMemberId, undefined);
+    assert.equal(f.store.sessions()[0].memberId, retired.id);
+    assert.equal(
+      f.store.get<{ content: string }>('message', 'old-message').content,
+      'Original result',
+    );
+    f.reopen();
+    assert.equal(f.store.get<Member>('member', retired.id).removedAt, archived.removedAt);
+  });
+
   async function concurrentClaims(
     t: TestContext,
     filename: string,

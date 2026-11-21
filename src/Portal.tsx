@@ -88,7 +88,7 @@ const scenarios = {
       who: 'Sol',
       color: 'peach',
       text: 'Đã đọc đề và gửi nguồn vào knowledge của nhóm.',
-      tag: 'Gemini',
+      tag: 'Antigravity',
     },
     {
       who: 'Ari',
@@ -115,7 +115,7 @@ const scenarios = {
       who: 'Sol',
       color: 'peach',
       text: 'Mình giữ phần research, không nhận trùng scope của Nova.',
-      tag: 'Gemini',
+      tag: 'Antigravity',
     },
   ],
   review: [

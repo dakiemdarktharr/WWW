@@ -1,4 +1,4 @@
-import { isExternalMember } from '../shared/providers.ts';
+import { isExternalMember, providerLabels } from '../shared/providers.ts';
 import { randomUUID } from 'node:crypto';
 import type {
   AccountQuota,
@@ -261,7 +261,7 @@ export class QuotaManager {
       )
         return quota;
       throw new DomainError(
-        'Gemini does not report remaining subscription quota. Grant a bounded number of Google-login prompts for this project before continuing.',
+        `${providerLabels[member.provider]} does not report remaining subscription quota. Grant a bounded number of prompts for this project before continuing.`,
       );
     }
     if (['unknown', 'stale', 'blocked'].includes(quota.status))

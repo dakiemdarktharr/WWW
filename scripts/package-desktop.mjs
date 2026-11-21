@@ -210,7 +210,6 @@ await build({
         'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/@esbuild/win32-x64/esbuild.exe',
         'workspace/node_modules/@openai/codex/bin/codex.js',
-        'workspace/node_modules/@google/gemini-cli/bundle/gemini.js',
         'workspace/scripts/mesh-mcp.mjs',
         'workspace/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe',
       ]) {

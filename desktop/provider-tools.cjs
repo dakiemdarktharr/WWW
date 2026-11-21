@@ -12,12 +12,6 @@ const definitions = Object.freeze({
     entry: path.join('@openai', 'codex', 'bin', 'codex.js'),
     officialName: 'Codex',
   },
-  gemini: {
-    package: '@google/gemini-cli',
-    version: '0.66.0',
-    entry: path.join('@google', 'gemini-cli', 'bundle', 'gemini.js'),
-    officialName: 'Gemini CLI',
-  },
   claude: {
     command: 'claude',
     officialName: 'Claude Code',

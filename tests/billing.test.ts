@@ -44,6 +44,25 @@ test('re-authentication preserves selected profiles from retired devices within 
     return result.json().lockedIds;
   };
   const old = signIn();
+  const retired = { name: 'Retired', profileId: randomUUID(), provider: 'gemini' };
+  store.put('billingProfile', {
+    id: old.deviceId + ':' + retired.profileId,
+    ...retired,
+    ownerId: owner.id,
+    deviceId: old.deviceId,
+    state: 'active',
+    selected: true,
+    createdAt: new Date().toISOString(),
+  });
+  assert.deepEqual(await sync(old.accessToken, [retired, ...profiles.slice(0, 3)]), [
+    retired.profileId,
+  ]);
+  const visible = (await app.inject({ method: 'GET', url: '/api/billing/profiles' })).json()
+    .profiles;
+  assert.deepEqual(
+    new Set(visible.map((entry: { profileId: string }) => entry.profileId)),
+    new Set(profiles.slice(0, 3).map((entry) => entry.profileId)),
+  );
   assert.deepEqual(await sync(old.accessToken), [profiles[3].profileId]);
   const other = signIn();
   assert.deepEqual(await sync(other.accessToken, [profiles[2]]), [profiles[2].profileId]);

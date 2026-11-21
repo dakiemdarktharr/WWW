@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { _electron as electron, expect } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -89,19 +89,10 @@ const codex = await execute(
   { windowsHide: true, env: gitEnvironment },
 );
 assert.match(codex.stdout, /codex-cli\s+0\.166\.0/);
-const gemini = await execute(
-  path.join(root, 'resources/runtime/node.exe'),
-  [
-    path.join(root, 'resources/workspace/node_modules/@google/gemini-cli/bundle/gemini.js'),
-    '--version',
-  ],
-  {
-    windowsHide: true,
-    env: { ...gitEnvironment, GEMINI_CLI_NO_RELAUNCH: '1', NO_BROWSER: '1' },
-    timeout: 30000,
-  },
+await assert.rejects(
+  access(path.join(root, 'resources/workspace/node_modules/@google/gemini-cli')),
+  { code: 'ENOENT' },
 );
-assert.match(gemini.stdout, /0\.66\.0/);
 assert.match(
   await readFile(path.join(root, 'resources/workspace/scripts/mesh-mcp.mjs'), 'utf8'),
   /Local stdio MCP proxy/,
@@ -246,7 +237,6 @@ try {
       version: metadata.version,
       bundledNode: node.stdout.trim(),
       bundledCodex: codex.stdout.trim(),
-      bundledGemini: gemini.stdout.trim(),
       externalMcpBundled: true,
       bundledGit: git.stdout.trim(),
       bundledGitCommit: true,

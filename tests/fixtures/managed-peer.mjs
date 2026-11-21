@@ -108,7 +108,7 @@ async function sharedTurn(bridge, prompt, authorize) {
     return JSON.parse(response.result.content[0].text);
   };
   if (tools.includes('relay_submit_plan')) {
-    assert.match(prompt, /(?:Claude|Antigravity) viết hợp đồng/);
+    assert.match(prompt, /Atlas viết hợp đồng/);
     assert.ok(!tools.includes('workspace_write_file'));
     assert.ok(tools.includes('relay_read_shared_git'));
     const evidence = await checkedTool('relay_read_shared_git', { path: 'contract.txt' });

@@ -1,5 +1,7 @@
 import type { Member, ProviderId } from './types.ts';
 
+export const activeProviderIds = ['codex', 'claude', 'antigravity'] as const;
+
 export const providerLabels: Record<ProviderId, string> = {
   codex: 'Codex',
   gemini: 'Gemini',
@@ -14,6 +16,7 @@ export const isExternalMember = (
   member?: Pick<Member, 'provider' | 'integration' | 'managedRuntime'>,
 ) =>
   !member ||
+  member.provider === 'claude' ||
   member.integration === 'external' ||
   (isExternalProvider(member.provider) && !member.managedRuntime);
 

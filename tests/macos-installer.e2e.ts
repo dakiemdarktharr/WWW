@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -64,15 +64,7 @@ try {
     timeout: 30000,
   });
   assert.match(codex.stdout, /codex-cli\s+0\.166\.0/);
-  const gemini = await exec(
-    node,
-    [path.join(modules, '@google/gemini-cli/bundle/gemini.js'), '--version'],
-    {
-      env: { ...env, GEMINI_CLI_NO_RELAUNCH: '1', NO_BROWSER: '1' },
-      timeout: 30000,
-    },
-  );
-  assert.match(gemini.stdout, /0\.66\.0/);
+  await assert.rejects(access(path.join(modules, '@google/gemini-cli')), { code: 'ENOENT' });
 
   const project = path.join(temp, 'Git project');
   await mkdir(project);
@@ -153,7 +145,7 @@ try {
     await desktop.close();
   }
   console.log(
-    `Kivuno ${release.version} DMG verified. Packaged app, Git worktree, Node, Codex and Gemini passed.`,
+    `Kivuno ${release.version} DMG verified. Packaged app, Git worktree, Node and Codex passed.`,
   );
 } finally {
   if (mounted) await exec('/usr/bin/hdiutil', ['detach', mount]);

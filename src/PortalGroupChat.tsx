@@ -29,7 +29,7 @@ const participants: { id: Actor; name: string; role: string }[] = [
   { id: 'sade', name: 'Sade', role: 'Coordinator' },
   { id: 'ari', name: 'Ari', role: 'Codex' },
   { id: 'nova', name: 'Nova', role: 'Claude' },
-  { id: 'sol', name: 'Sol', role: 'Gemini' },
+  { id: 'sol', name: 'Sol', role: 'Antigravity' },
 ];
 
 const conversation: ChatMessage[] = [

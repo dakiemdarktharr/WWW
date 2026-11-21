@@ -3,7 +3,7 @@
   <h1>Kivuno</h1>
 </div>
 
-Kivuno **0.9.0** là app desktop cho nhóm nhiều tài khoản: Codex thật, Gemini CLI, Claude Code và Antigravity qua client MCP do bạn tự vận hành. Khi thêm account, desktop tự quét và cài CLI chính thức còn thiếu, hoặc khôi phục Codex/Gemini runtime đóng gói. Antigravity có thể đăng nhập Google bằng luồng chính thức của CLI. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Chat là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno là app desktop cho nhóm nhiều tài khoản Codex, Claude và Antigravity. Bạn có thể dùng các model Gemini mà Antigravity cung cấp cho tài khoản Google trên máy. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Chat là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
 
 Bản **0.8** thêm hồ sơ Research từ link cuộc thi, ghi chứng cứ và các mục chưa xác minh, Portfolio cho workload nhiều dự án, lựa chọn model theo usage chung và hàng đợi luân phiên giữa các cuộc thi. Kế hoạch cuộc thi cần Approve plan trước khi triển khai. Xem [tính năng, giới hạn và các kịch bản stress 0.8](docs/RELEASE-0.8.md).
 
@@ -21,14 +21,14 @@ Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có th�
 
 ## Bắt đầu trong bốn bước
 
-1. **Team → Add account:** chọn provider. Desktop kiểm tra thành phần cần thiết và cài/khôi phục nếu thiếu trước khi tạo account. Codex/Gemini đăng nhập trong Kivuno; Antigravity có bước đăng nhập Google riêng, rồi dùng MESH MCP. Claude Code dùng MESH MCP trong client của bạn; xem [cách kết nối](docs/EXTERNAL-MESH.md).
+1. **Team → Add account:** chọn provider. Desktop kiểm tra thành phần cần thiết và cài/khôi phục nếu thiếu trước khi tạo account. Codex đăng nhập bằng ChatGPT. Với Antigravity, xác nhận tài khoản Google của máy hoặc dùng MESH MCP. Claude Desktop (Free hoặc trả phí) và Claude Code (gói có quyền) dùng MESH MCP trong client của bạn. Xem [cách kết nối](docs/EXTERNAL-MESH.md).
 2. **Neralu:** tạo dự án và chọn thành viên nhóm; bạn không cần đưa toàn bộ Team vào mỗi nhóm.
 3. **Chat:** nhập yêu cầu nghiên cứu/trao đổi, hoặc dùng **Plan project** để lập kế hoạch triển khai và duyệt workflow. Chat thường tạo session read-only. `/goal`, `/model`, `/reasoning`, `/skills` và `/tên-skill` cấu hình yêu cầu; lệnh không hợp lệ được báo lỗi.
 4. **Sessions / Reviews:** graph hiển thị từng conversation, kể cả nhiều conversation của cùng một Codex. Chọn node để xem tiến độ, react để phản hồi và vào Reviews để duyệt thay đổi.
 
-♥ = đã hiểu, 👍 = đồng ý, 👎 = không đồng ý. Reaction gửi feedback cho tác giả; **không cấp quyền** chạy lệnh, chi tiền, merge hay deploy. Browser trong nhóm cho bạn mở trang/đăng nhập và chủ động chia sẻ nội dung đã kiểm tra với session. [Browser và giới hạn](docs/BROWSER-DESKTOP.md), [nghiên cứu Gemini/Claude/Antigravity](docs/PROVIDERS.md), [thiết kế hivemind](docs/HIVEMIND-ART.md).
+♥ = đã hiểu, 👍 = đồng ý, 👎 = không đồng ý. Reaction gửi feedback cho tác giả; **không cấp quyền** chạy lệnh, chi tiền, merge hay deploy. Browser trong nhóm cho bạn mở trang/đăng nhập và chủ động chia sẻ nội dung đã kiểm tra với session. [Browser và giới hạn](docs/BROWSER-DESKTOP.md), [hướng dẫn kết nối provider](docs/PROVIDERS.md), [thiết kế hivemind](docs/HIVEMIND-ART.md).
 
-Yêu cầu phát triển: **Node.js 24.22.1 trở lên**, Git. Bản desktop đóng gói sẵn runtime, Codex CLI `0.166.0` và Gemini CLI `0.66.0`; các giao thức experimental được kiểm tra theo phiên bản này. Ứng dụng còn tìm Codex trên PATH và ở thư mục cài đặt Codex desktop trên Windows. Không bật fallback sang API trả phí.
+Yêu cầu phát triển: **Node.js 24.22.1 trở lên**, Git. Bản desktop đóng gói sẵn runtime và Codex CLI `0.166.0`. Ứng dụng còn tìm Codex trên PATH và ở thư mục cài đặt Codex desktop trên Windows. Không bật fallback sang API trả phí.
 
 ```sh
 npm ci

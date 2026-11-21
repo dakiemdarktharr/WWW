@@ -36,6 +36,23 @@ const hostedFinish = z
     ),
   })
   .strict();
+const publishTeammates = z
+  .object({
+    action: z.literal('teammates'),
+    groupId,
+    teammates: z
+      .array(
+        z
+          .object({
+            localId: groupId,
+            name: z.string().trim().min(1).max(100),
+            provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']),
+          })
+          .strict(),
+      )
+      .max(sharedTeammatesPerOwnerLimit),
+  })
+  .strict();
 const command = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }).strict(),
   z
@@ -52,23 +69,7 @@ const command = z.discriminatedUnion('action', [
   z
     .object({ action: z.literal('seats'), groupId, userIds: z.array(z.string().min(1).max(128)) })
     .strict(),
-  z
-    .object({
-      action: z.literal('teammates'),
-      groupId,
-      teammates: z
-        .array(
-          z
-            .object({
-              localId: groupId,
-              name: z.string().trim().min(1).max(100),
-              provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']),
-            })
-            .strict(),
-        )
-        .max(sharedTeammatesPerOwnerLimit),
-    })
-    .strict(),
+  publishTeammates,
   z
     .object({
       action: z.literal('message'),
@@ -99,6 +100,26 @@ export class SharedGroups {
     store.db.exec(
       "CREATE INDEX IF NOT EXISTS shared_message_group_sequence ON records(json_extract(data,'$.groupId'),json_extract(data,'$.sequence')) WHERE kind='sharedMessage'",
     );
+  }
+  retireGeminiShares() {
+    this.store.transaction(() => {
+      for (const group of this.store.all<SharedGroup>('sharedGroup')) {
+        const retired = group.teammates.filter((member) => member.provider === 'gemini');
+        if (!retired.length) continue;
+        for (const ownerId of new Set(retired.map((member) => member.ownerId)))
+          this.sade.endTeammateSharing(
+            group,
+            ownerId,
+            new Set(
+              retired
+                .filter((member) => member.ownerId === ownerId)
+                .map((member) => member.localId),
+            ),
+          );
+        group.teammates = group.teammates.filter((member) => member.provider !== 'gemini');
+        this.saveGroup(group);
+      }
+    });
   }
   execute(
     owner: DesktopOwner,
@@ -512,6 +533,7 @@ export function registerCollaboration(
   findUser: (account: string) => DesktopOwner | null | Promise<DesktopOwner | null>,
 ) {
   const groups = new SharedGroups(store, findUser);
+  groups.retireGeminiShares();
   const limits = new Map<string, { count: number; at: number }>();
   app.post('/api/desktop/groups', async (request) => {
     const { owner, deviceId } = identity.publicDevice(
@@ -524,9 +546,18 @@ export function registerCollaboration(
       throw new DomainError('Too many group requests. Retry in a minute.', 429);
     limits.set(owner.id, window);
     const mode = request.headers[sharedSadeCloudHeader];
+    let body = request.body;
+    // Older desktops can publish mixed rosters. Keep the other teammates and withdraw retired grants.
+    if ((body as { action?: string } | null)?.action === 'teammates') {
+      const published = publishTeammates.parse(body);
+      body = {
+        ...published,
+        teammates: published.teammates.filter((member) => member.provider !== 'gemini'),
+      };
+    }
     return groups.execute(
       owner,
-      request.body,
+      body,
       deviceId,
       mode === sharedSadeCloudExtended ? 'extended' : mode === '1',
     );

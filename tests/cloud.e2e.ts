@@ -339,34 +339,14 @@ try {
   assert.equal(antigravity.integration, 'external');
   await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
   await page.getByRole('combobox', { name: 'AI provider' }).click();
-  await page.getByRole('option', { name: 'Gemini', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Connect Gemini', exact: true })).toBeDisabled();
-  await expect(page.getByText('Google sign-in on this computer.', { exact: false })).toBeHidden();
-  await page.getByText('Connection help', { exact: true }).focus();
-  await page.keyboard.press('Space');
-  await expect(page.getByText('Google sign-in on this computer.', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Create a profile first', exact: true }).click();
-  await page.getByRole('combobox', { name: 'AI provider' }).click();
-  await page.getByRole('option', { name: 'Gemini', exact: true }).click();
-  await page.getByLabel('Agent name').fill('Gemini test');
-  await page.getByRole('button', { name: 'Create profile', exact: true }).click();
-  await page.getByRole('heading', { name: 'Gemini test', exact: true }).waitFor();
-  const gemini = store.members().find((member) => member.name === 'Gemini test')!;
-  assert.equal(gemini.provider, 'gemini');
-  const geminiCard = page
-    .locator('.account-card-group')
-    .filter({ has: page.getByRole('heading', { name: 'Gemini test', exact: true }) });
-  await expect(
-    geminiCard.getByRole('button', { name: 'Sign in with Google', exact: true }),
-  ).toBeDisabled();
-  await expect(
-    geminiCard.getByRole('button', { name: 'Sign in with OpenAI', exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('option', { name: 'Gemini', exact: true })).toHaveCount(0);
+  await page.getByRole('option', { name: 'Codex', exact: true }).click();
+  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await nav('Chat').click();
   await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByRole('button', { name: 'Group team', exact: true }).click();
   await page.getByRole('button', { name: /Edit group members/ }).click();
-  for (const name of [claude.name, gemini.name, antigravity.name])
+  for (const name of [claude.name, antigravity.name])
     await page
       .locator('.roster-option')
       .filter({ has: page.getByText(name, { exact: true }) })
@@ -374,14 +354,6 @@ try {
       .check();
   await page.getByRole('button', { name: 'Save members', exact: true }).click();
   await nav('Team').click();
-  await geminiCard.locator('.member-settings > summary').click();
-  await geminiCard
-    .getByRole('checkbox', { name: 'I understand remaining quota cannot be checked' })
-    .check();
-  await geminiCard.getByRole('button', { name: 'Allow prompts', exact: true }).click();
-  await expect(geminiCard.getByRole('button', { name: 'Revoke', exact: true })).toBeVisible();
-  assert.equal(workspace.snapshot().providerTurnGrants?.[0].usedTurns, 0);
-  await geminiCard.getByRole('button', { name: 'Revoke', exact: true }).click();
   const claudeCard = page
     .locator('.account-card-group')
     .filter({ has: page.getByRole('heading', { name: claude.name, exact: true }) });
@@ -398,9 +370,6 @@ try {
   const providerSession = page.getByRole('dialog', { name: 'New agent session' });
   assert.equal(await providerSession.locator(`option[value="${claude.id}"]`).count(), 0);
   assert.equal(await providerSession.locator(`option[value="${antigravity.id}"]`).count(), 0);
-  await providerSession.getByLabel('Account', { exact: true }).selectOption(gemini.id);
-  await providerSession.getByRole('checkbox', { name: 'Automatic model', exact: true }).uncheck();
-  await expect(providerSession.getByLabel('Reasoning', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await nav('Team').click();
   for (let i = 0; i < 3; i++) {
@@ -540,7 +509,7 @@ try {
       noPopup: true,
       noModelUsage: true,
       providerSelection: true,
-      geminiBoundedAllowance: true,
+      retiredGeminiAbsent: true,
       claudeCloudBoundary: true,
       explicitNoDeadline: true,
       collapsedSetupHelp: true,

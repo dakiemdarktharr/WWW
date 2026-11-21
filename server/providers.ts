@@ -1,28 +1,26 @@
 import type { Member, ProviderCapability } from '../shared/types.ts';
 import { isExternalMember } from '../shared/providers.ts';
 import { CodexClient, resolveCodexCommand, localSkillRoots } from './codex.ts';
-import { GeminiClient, resolveGeminiCommand } from './gemini.ts';
 import { DomainError } from './store.ts';
-import { ClaudeClient } from './claude.ts';
 import { AntigravityClient } from './antigravity.ts';
 import { resolveManagedCommand } from './managed-process.ts';
 
 export function nativeProviderClient(member: Member, home: string, cwd: string): CodexClient {
+  if (member.provider === 'gemini')
+    throw new DomainError(
+      'Standalone Gemini CLI profiles are retired. Connect Antigravity to use Gemini models.',
+      410,
+    );
   if (isExternalMember(member))
     throw new DomainError(
       'This teammate uses the external MESH bridge. Kivuno does not manage its subscription sign-in or start its process.',
     );
-  if (member.provider === 'claude') return new ClaudeClient({ home, cwd });
   if (member.provider === 'antigravity') return new AntigravityClient({ home, cwd });
-  return member.provider === 'gemini'
-    ? new GeminiClient({ home, cwd })
-    : new CodexClient({ home, cwd, skillRoots: localSkillRoots() });
+  return new CodexClient({ home, cwd, skillRoots: localSkillRoots() });
 }
 export async function providerCapabilities(): Promise<ProviderCapability[]> {
-  const [codex, gemini, claude, antigravity] = await Promise.allSettled([
+  const [codex, antigravity] = await Promise.allSettled([
     resolveCodexCommand(),
-    resolveGeminiCommand(),
-    resolveManagedCommand('claude'),
     resolveManagedCommand('antigravity'),
   ]);
   return [
@@ -38,23 +36,8 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       ...(codex.status === 'rejected' ? { reason: 'The Codex runtime is unavailable.' } : {}),
     },
     {
-      id: 'gemini',
-      label: 'Gemini',
-      mode: 'native',
-      available: gemini.status === 'fulfilled',
-      login: 'google',
-      quota: 'unknown',
-      models: true,
-      reasoning: false,
-      reason:
-        gemini.status === 'fulfilled'
-          ? 'Google login only. ACP exposes models but not remaining subscription quota or reasoning controls. Scoped file tools; no shell execution. Explicit bounded turn allowance is required.'
-          : 'Install the Kivuno build containing Gemini CLI 0.66.0.',
-    },
-    {
       id: 'claude',
-      managed: { available: claude.status === 'fulfilled', models: true, reasoning: true },
-      label: 'Claude Code',
+      label: 'Claude',
       mode: 'external',
       available: true,
       login: 'external',
@@ -62,7 +45,7 @@ export async function providerCapabilities(): Promise<ProviderCapability[]> {
       models: false,
       reasoning: false,
       reason:
-        'Enable Sade to run the official Claude CLI with a separate subscription sign-in, scoped tools and bounded prompts, or keep an external MESH connection. Models and effort come from the installed CLI. No paid API fallback.',
+        'Connect Claude Desktop or Claude Code to a project through local MCP. Start work and choose models in your Claude client.',
     },
     {
       id: 'antigravity',

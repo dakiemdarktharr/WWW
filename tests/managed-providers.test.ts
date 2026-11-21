@@ -218,7 +218,7 @@ test('existing external profiles require an explicit opt-in before Sade may star
   );
   assert.equal(
     isExternalMember({ provider: 'claude', integration: 'native', managedRuntime: true }),
-    false,
+    true,
   );
 });
 

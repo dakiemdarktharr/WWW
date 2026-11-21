@@ -15,17 +15,12 @@ import type { SharedDelivery } from '../server/group-sade.ts';
 import type { SharedGroup } from '../shared/collaboration.ts';
 
 class LoginClient extends CodexClient {
-  override readonly provider: 'codex' | 'gemini';
   signedIn = false;
   loginId = randomUUID();
   release!: () => void;
   catalog = new Promise<void>((resolve) => {
     this.release = resolve;
   });
-  constructor(provider: 'codex' | 'gemini', home: string) {
-    super({ home, cwd: home });
-    this.provider = provider;
-  }
   override async start() {}
   override async stop() {
     this.release();
@@ -37,15 +32,15 @@ class LoginClient extends CodexClient {
     }
     if (method === 'account/login/start')
       return {
-        type: this.provider === 'codex' ? 'chatgpt' : 'geminiGoogle',
+        type: 'chatgpt',
         loginId: this.loginId,
-        ...(this.provider === 'codex' ? { authUrl: 'https://auth.openai.com/test-fixture' } : {}),
+        authUrl: 'https://auth.openai.com/test-fixture',
       } as T;
     if (method === 'account/read')
       return {
         account: this.signedIn
           ? {
-              type: this.provider === 'codex' ? 'chatgpt' : 'gemini-google',
+              type: 'chatgpt',
               email: `${this.provider}@example.test`,
             }
           : null,
@@ -91,12 +86,7 @@ const fixture = async (index: number) => {
   workspace.client = async (id) => {
     let client = workspace.clients.get(id);
     if (!client) {
-      client = new LoginClient(
-        store.members().find((member) => member.id === id)?.provider === 'gemini'
-          ? 'gemini'
-          : 'codex',
-        directory,
-      );
+      client = new LoginClient({ home: directory, cwd: directory });
       workspace.clients.set(id, client);
     }
     return client;
@@ -528,21 +518,10 @@ try {
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Team', exact: true })
     .click();
-  for (const provider of ['codex', 'gemini'] as const) {
+  {
     await a.page.getByRole('button', { name: 'Add account', exact: true }).first().click();
-    if (provider === 'gemini') {
-      await a.page.getByRole('combobox', { name: 'AI provider' }).click();
-      await a.page.getByRole('option', { name: 'Gemini', exact: true }).click();
-    }
-    await a.page
-      .getByRole('button', {
-        name: provider === 'codex' ? 'Connect Codex' : 'Connect Gemini',
-        exact: true,
-      })
-      .click();
-    const dialog = a.page.getByRole('dialog', {
-      name: provider === 'codex' ? 'OpenAI sign-in' : 'Google sign-in',
-    });
+    await a.page.getByRole('button', { name: 'Connect Codex', exact: true }).click();
+    const dialog = a.page.getByRole('dialog', { name: 'OpenAI sign-in' });
     await expect(dialog.getByRole('progressbar')).toHaveAttribute('value', '1');
     const memberId = a.workspace.loginOwner!;
     const client = a.workspace.clients.get(memberId) as LoginClient;
@@ -569,7 +548,7 @@ try {
   }
   assert.deepEqual(errors, []);
   console.log(
-    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, messages, task updates and read receipts, offline Sade status, reload persistence, membership revocation, Codex/Gemini login and skills loading. No model turns.',
+    'Group and sign-in UI passed: two isolated Kivuno accounts, create/invite/accept, messages, task updates and read receipts, offline Sade status, reload persistence, membership revocation, Codex login and skills loading. No model turns.',
   );
 } finally {
   await browser.close();

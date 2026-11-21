@@ -343,7 +343,6 @@ await build({
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
         'workspace/node_modules/pptxgenjs/package.json',
-        'workspace/node_modules/@google/gemini-cli/bundle/gemini.js',
         'mac-update-helper.sh',
         ...binaries,
       ]) {

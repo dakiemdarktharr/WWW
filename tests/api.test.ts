@@ -57,51 +57,46 @@ async function fixture() {
   };
 }
 
-test(
-  'managed CLI opt-in requires explicit acknowledgement and retires external authority',
-  { timeout: 20000 },
-  async (t) => {
-    const f = await fixture();
-    t.after(() => f.close());
-    const previous = process.env.RELAY_CLAUDE_COMMAND;
-    process.env.RELAY_CLAUDE_COMMAND = path.resolve('tests/fixtures/managed-peer.mjs');
-    t.after(() => {
-      if (previous === undefined) delete process.env.RELAY_CLAUDE_COMMAND;
-      else process.env.RELAY_CLAUDE_COMMAND = previous;
-    });
-    const member = f.workspace.autonomy.addAccount('claude');
-    const project = f.store.put('project', {
-      id: randomUUID(),
-      name: 'Managed scope',
-      path: f.dir,
-      goal: 'Test',
-      createdAt: new Date().toISOString(),
-      memberIds: [member.id],
-    });
-    const body = {
-      memberId: member.id,
-      projectId: project.id,
-      durationMinutes: 30,
-      allowTaskClaims: false,
-      allowUnknownQuota: false,
-    };
-    const before = await f.request('POST', '/api/external-connections', body);
-    assert.equal(before.statusCode, 200, before.body);
-    assert.equal(
-      (await f.request('POST', `/api/members/${member.id}/managed-runtime`, {})).statusCode,
-      400,
-    );
-    const enabled = await f.request('POST', `/api/members/${member.id}/managed-runtime`, {
-      acknowledgeLocalExecution: true,
-    });
-    assert.equal(enabled.statusCode, 200, enabled.body);
-    assert.equal(enabled.json().managedRuntime, true);
-    assert.equal(enabled.json().account, null);
-    const connections = await f.request('GET', '/api/external-connections');
-    assert.ok(connections.json().find((entry: any) => entry.id === before.json().id).revokedAt);
-    assert.equal((await f.request('POST', '/api/external-connections', body)).statusCode, 403);
-  },
-);
+test('Claude connects through the external MCP client without a local CLI', async (t) => {
+  const f = await fixture();
+  t.after(() => f.close());
+  const result = await f.request('POST', '/api/accounts/connect', { provider: 'claude' });
+  assert.equal(result.statusCode, 200, result.body);
+  const { member, login } = result.json();
+  assert.equal(login.type, 'external');
+  assert.equal(member.account, null);
+  assert.equal(
+    (
+      await f.request('POST', '/api/accounts/connect', {
+        provider: 'claude',
+        managedRuntime: true,
+      })
+    ).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await f.request('POST', '/api/members/' + member.id + '/managed-runtime', {
+        acknowledgeLocalExecution: true,
+      })
+    ).statusCode,
+    400,
+  );
+  const project = f.store.put('project', {
+    id: randomUUID(),
+    name: 'Client project',
+    path: f.dir,
+    goal: 'Test',
+    memberIds: [member.id],
+    createdAt: new Date().toISOString(),
+  });
+  const connection = await f.request('POST', '/api/external-connections', {
+    memberId: member.id,
+    projectId: project.id,
+  });
+  assert.equal(connection.statusCode, 200, connection.body);
+  assert.equal(connection.json().lastSeen, null);
+});
 
 test('project endpoint initializes a selected plain folder only when explicitly requested', async (t) => {
   const f = await fixture();

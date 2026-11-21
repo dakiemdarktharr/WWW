@@ -81,12 +81,63 @@ export class Store extends EventEmitter {
       });
     for (const member of this.members())
       if (!member.provider) this.put('member', { ...member, provider: 'codex' });
+    // A Claude teammate now connects from the user's own MCP client. Keep its roster and history.
+    for (const member of this.members()) {
+      if (
+        member.provider === 'claude' &&
+        (member.managedRuntime || member.integration === 'native')
+      )
+        this.updateMember(member.id, {
+          managedRuntime: false,
+          integration: 'external',
+          account: null,
+          rateLimits: null,
+          signIn: undefined,
+          connectedAt: undefined,
+          externalLastSeen: undefined,
+          status: 'offline',
+          error: null,
+        });
+    }
+    this.retireGeminiProfiles();
     for (const session of this.sessions())
       if (!session.provider)
         this.put('session', {
           ...session,
           provider: this.get<Member>('member', session.memberId).provider || 'codex',
         });
+  }
+  private retireGeminiProfiles() {
+    const retired = this.members().filter((member) => member.provider === 'gemini');
+    if (!retired.length) return;
+    const ids = new Set(retired.map((member) => member.id));
+    const retiredAt = new Date().toISOString();
+    this.transaction(() => {
+      for (const member of retired)
+        this.updateMember(member.id, {
+          removedAt: retiredAt,
+          status: 'offline',
+          account: null,
+          rateLimits: null,
+        });
+      for (const grant of this.all<{ id: string; teammateId: string; expiresAt: number }>(
+        'sharedSadeLocalGrant',
+      ))
+        if (ids.has(grant.teammateId) && grant.expiresAt > Date.now())
+          this.put('sharedSadeLocalGrant', { ...grant, expiresAt: Date.parse(retiredAt) });
+      for (const grant of this.all<{ id: string; memberId: string; revokedAt?: string }>(
+        'providerTurnGrant',
+      ))
+        if (ids.has(grant.memberId) && !grant.revokedAt)
+          this.put('providerTurnGrant', { ...grant, revokedAt: retiredAt });
+      for (const project of this.projects())
+        if (project.memberIds?.some((id) => ids.has(id)) || ids.has(project.ownerMemberId || ''))
+          this.put('project', {
+            ...project,
+            memberIds: project.memberIds?.filter((id) => !ids.has(id)),
+            ownerMemberId: ids.has(project.ownerMemberId || '') ? undefined : project.ownerMemberId,
+          });
+    });
   }
   all<T>(kind: string): T[] {
     return (

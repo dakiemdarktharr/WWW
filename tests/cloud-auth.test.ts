@@ -151,7 +151,21 @@ test('cloud gateway retains legacy owner access, blocks reserved signup/foreign 
     );
     assert.equal(store.members()[0].name, 'Cloud profile');
     const providers = (await request('GET', '/api/providers', undefined, { cookie })).json();
-    for (const provider of ['gemini', 'claude', 'antigravity']) {
+    assert.equal(
+      providers.some((entry: any) => entry.id === 'gemini'),
+      false,
+    );
+    for (const [url, body] of [
+      ['/api/accounts/connect', { provider: 'gemini' }],
+      ['/api/members', { provider: 'gemini', name: 'Retired', role: 'researcher' }],
+    ] as const) {
+      assert.equal(
+        (await request('POST', url, body, { cookie, 'x-relay-token': bootstrap.json().token }))
+          .statusCode,
+        400,
+      );
+    }
+    for (const provider of ['claude', 'antigravity']) {
       assert.equal(providers.find((entry: any) => entry.id === provider).available, false);
       assert.equal(
         (

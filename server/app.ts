@@ -1,6 +1,6 @@
 import Fastify, { type FastifyRequest } from 'fastify';
 import { postHumanChat } from './human-chat.ts';
-import { isExternalProvider, isExternalMember } from '../shared/providers.ts';
+import { activeProviderIds, isExternalProvider, isExternalMember } from '../shared/providers.ts';
 import { z } from 'zod';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -577,7 +577,7 @@ export async function buildApp(
       .object({
         runnerId: id.optional(),
         profileId: id.optional(),
-        provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
+        provider: z.enum(activeProviderIds).default('codex'),
         managedRuntime: z.boolean().default(false),
         confirmDeviceAccount: z.literal(true).optional(),
       })
@@ -592,9 +592,10 @@ export async function buildApp(
       );
     if (input.runnerId) workspace.runners.assertReady(input.runnerId);
     if (workspace.loginOwner) throw new DomainError('Finish or cancel the pending sign-in first.');
-    if (input.managedRuntime && isExternalProvider(input.provider)) {
-      await resolveManagedCommand(input.provider as 'claude' | 'antigravity');
-    }
+    if (input.provider === 'claude' && input.managedRuntime)
+      throw new DomainError('Connect your official Claude client through MESH MCP.', 400);
+    if (input.managedRuntime && input.provider === 'antigravity')
+      await resolveManagedCommand('antigravity');
     const profileId = input.profileId || randomUUID();
     const deviceAccount = input.provider === 'antigravity' && input.managedRuntime;
     const profilePath = path.join(workspace.dataDir, 'profiles', profileId);
@@ -623,7 +624,7 @@ export async function buildApp(
           instructions:
             input.provider === 'antigravity'
               ? 'Use Sign in with Google to start the official Antigravity CLI login in Terminal, then connect the client through local MESH MCP.'
-              : 'Connect your own client through the local MESH MCP bridge. Sign in directly in Claude Code.',
+              : 'Sign in to Claude Desktop or Claude Code, then connect it to this project through MESH MCP.',
         },
       };
     if (input.runnerId)
@@ -645,7 +646,7 @@ export async function buildApp(
       .object({
         profileId: id.optional(),
         name: text,
-        provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).default('codex'),
+        provider: z.enum(activeProviderIds).default('codex'),
         role: z.enum(['engineer', 'researcher', 'designer', 'reviewer']),
         color: z
           .string()
@@ -705,8 +706,8 @@ export async function buildApp(
     const memberId = params(request);
     workspace.assertProfileUnlocked(memberId);
     const member = workspace.store.get<Member>('member', memberId);
-    if (!isExternalProvider(member.provider) || member.removedAt || member.runnerId)
-      throw new DomainError('Choose a local Claude or Antigravity profile.');
+    if (member.provider !== 'antigravity' || member.removedAt || member.runnerId)
+      throw new DomainError('Managed execution requires a local Antigravity profile.', 400);
     if (
       workspace.running.has(memberId) ||
       workspace.sessions.hasLive(memberId) ||

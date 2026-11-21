@@ -9,6 +9,7 @@ import {
   verifyMessage,
 } from 'ethers';
 import { z } from 'zod';
+import { activeProviderIds } from '../shared/providers.ts';
 import type { CloudUser } from './cloud-auth.ts';
 import { DomainError, type Store } from './store.ts';
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
@@ -218,7 +219,12 @@ export function registerBillingRoutes(
   const profileRows = (userId: string) =>
     store
       .all<BillingProfile>('billingProfile')
-      .filter((profile) => profile.ownerId === userId && profile.state !== 'released');
+      .filter(
+        (profile) =>
+          profile.ownerId === userId &&
+          profile.state !== 'released' &&
+          profile.provider !== 'gemini',
+      );
   const reservationId = (deviceId: string, profileId: string) => `${deviceId}:${profileId}`;
   const normalizeProfileSelection = (userId: string) => {
     const profiles = profileRows(userId).filter(
@@ -377,7 +383,7 @@ export function registerBillingRoutes(
         .object({
           profileId: z.string().uuid(),
           name: z.string().trim().min(1).max(100).optional(),
-          provider: z.enum(['codex', 'gemini', 'claude', 'antigravity']).optional(),
+          provider: z.enum(activeProviderIds).optional(),
         })
         .strict();
       const command = z.discriminatedUnion('action', [
@@ -488,7 +494,9 @@ export function registerBillingRoutes(
           new Set(input.profiles.map((profile) => profile.profileId)).size !== input.profiles.length
         )
           throw new DomainError('Duplicate provider profile IDs were supplied.', 400);
-        const ids = new Set(input.profiles.map((profile) => profile.profileId));
+        // Older desktops can still send retired profiles alongside current ones.
+        const activeProfiles = input.profiles.filter((profile) => profile.provider !== 'gemini');
+        const ids = new Set(activeProfiles.map((profile) => profile.profileId));
         // Desktop consent rotates device leases. Carry over the owner's selection
         // for the same local profile only after the former lease has retired.
         const activeDevices = new Set(
@@ -522,7 +530,7 @@ export function registerBillingRoutes(
             updatedAt: new Date().toISOString(),
           });
         }
-        for (const supplied of input.profiles) {
+        for (const supplied of activeProfiles) {
           const key = reservationId(deviceId, supplied.profileId);
           const existing = store.lookup<BillingProfile>('billingProfile', key);
           if (existing && existing.ownerId === owner.id && existing.state !== 'released') {
@@ -555,9 +563,14 @@ export function registerBillingRoutes(
         }
         normalizeProfileSelection(owner.id);
         return {
-          lockedIds: profileRows(owner.id)
-            .filter((profile) => profile.deviceId === deviceId && !profile.selected)
-            .map((profile) => profile.profileId),
+          lockedIds: input.profiles
+            .filter((profile) => profile.provider === 'gemini')
+            .map((profile) => profile.profileId)
+            .concat(
+              profileRows(owner.id)
+                .filter((profile) => profile.deviceId === deviceId && !profile.selected)
+                .map((profile) => profile.profileId),
+            ),
         };
       });
     });

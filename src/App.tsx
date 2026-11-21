@@ -362,19 +362,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [profileProvider, setProfileProvider] = useState<ProviderId>('codex');
   const profileSyncQueue = useRef<Promise<void>>(Promise.resolve());
   const profileSyncSequence = useRef(0);
+  const pendingProfileSync = useRef('');
 
   const syncProfileEntitlements = useCallback((profiles: Member[]) => {
     const desktop = window.relayDesktop;
     if (!desktop) return;
-    const sequence = ++profileSyncSequence.current;
     const payload = profiles.map((member) => ({
       profileId: member.id,
       name: member.name,
       provider: member.provider || 'codex',
     }));
+    const signature = JSON.stringify(payload);
+    if (pendingProfileSync.current === signature) return;
+    pendingProfileSync.current = signature;
+    const sequence = ++profileSyncSequence.current;
     profileSyncQueue.current = profileSyncQueue.current
       .catch(() => {})
       .then(async () => {
+        if (sequence !== profileSyncSequence.current) return;
         try {
           const result = await desktop.profiles<{ lockedIds: string[] }>({
             action: 'sync',
@@ -395,6 +400,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           );
         } catch {
           // Keep the last server-provided lock state when the cloud is temporarily unavailable.
+        } finally {
+          if (sequence === profileSyncSequence.current) pendingProfileSync.current = '';
         }
       });
   }, []);
@@ -617,7 +624,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     const provider = providerOf(member);
     const deviceAccount = provider === 'antigravity' && !isExternalMember(member);
     if (deviceAccount && !deviceConfirmed && !confirmAntigravity()) return;
-    if (window.relayDesktop && !member.runnerId) {
+    if (window.relayDesktop && !member.runnerId && provider !== 'claude') {
       setBusy(`prepare-${provider}`);
       try {
         await window.relayDesktop.prepareProvider(provider);
@@ -675,7 +682,8 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         });
         reserved = true;
       }
-      if (window.relayDesktop && !runnerId) await window.relayDesktop.prepareProvider(provider);
+      if (window.relayDesktop && !runnerId && provider !== 'claude')
+        await window.relayDesktop.prepareProvider(provider);
       const result = await perform<{ member: Member; login: LoginResult }>(
         'connect-account',
         '/accounts/connect',
@@ -1157,7 +1165,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                           t.assignedTo === member.id && ['running', 'review'].includes(t.status),
                       )}
                       busy={pending}
-                      cloud={cloud || state?.runtime.deployment === 'cloud'}
                       login={(method) => void login(member, method)}
                       refresh={() =>
                         void perform(
@@ -2535,7 +2542,6 @@ function MemberCard({
   setup,
   external,
   googleSignIn,
-  cloud,
   remove,
   children,
 }: {
@@ -2551,7 +2557,6 @@ function MemberCard({
   setup: () => void;
   external: () => void;
   googleSignIn: () => void;
-  cloud: boolean;
   remove: () => void;
   children: ReactNode;
 }) {
@@ -2696,11 +2701,7 @@ function MemberCard({
             </button>
           ) : (
             <HelpDetails title="Skill setup">
-              <p>
-                {provider === 'gemini'
-                  ? 'Configure Gemini skills in its own CLI profile. Codex plugins are not imported.'
-                  : `Configure skills and plugins in your ${providerLabels[provider]} client.`}
-              </p>
+              <p>Configure skills and plugins in your {providerLabels[provider]} client.</p>
             </HelpDetails>
           )}
         </div>
@@ -2736,15 +2737,10 @@ function MemberCard({
             <Button
               primary
               onClick={() => login(member.runnerId ? 'device' : 'browser')}
-              disabled={busy || member.entitlementLocked || (cloud && provider === 'gemini')}
-              title={
-                cloud && provider === 'gemini' ? 'Use the desktop app to connect Gemini' : undefined
-              }
+              disabled={busy || member.entitlementLocked}
             >
               <ArrowUpRight size={15} />{' '}
-              {provider === 'antigravity'
-                ? 'Connect device account'
-                : `Sign in with ${provider === 'claude' ? 'Claude' : provider === 'codex' ? 'OpenAI' : 'Google'}`}
+              {provider === 'antigravity' ? 'Connect device account' : 'Sign in with OpenAI'}
             </Button>
             {provider === 'codex' && (
               <button

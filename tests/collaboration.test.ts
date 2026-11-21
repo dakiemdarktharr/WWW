@@ -64,6 +64,19 @@ test('groups isolate accounts, require invitation acceptance and protect teammat
   assert.equal(fullLastPage.messages.length, 100);
   assert.equal(fullLastPage.hasMore, false);
   assert.equal(call(alice, 'read', { after: 100 }).messages.length, 6);
+  store.put('sharedSadeGrant', {
+    id: 'old-grant',
+    groupId: group.id,
+    ownerId: bob.id,
+    teammateId: other.localId,
+    revoked: false,
+  });
+  groups.retireGeminiShares();
+  assert.deepEqual(
+    call(alice, 'read').group.teammates.map((member: { ownerId: string }) => member.ownerId),
+    [alice.id],
+  );
+  assert.equal(store.get<{ revoked: boolean }>('sharedSadeGrant', 'old-grant').revoked, true);
   assert.throws(() => call(stranger, 'read'));
   call(alice, 'remove', { userId: bob.id });
   assert.throws(() => call(bob, 'read'));
@@ -299,6 +312,23 @@ test('real account login and PKCE tokens authenticate group API; cookies and rev
   assert.equal(
     (await request('/api/desktop/groups', { action: 'read', groupId: id }, bob.bearer)).statusCode,
     403,
+  );
+  const publication = await request(
+    '/api/desktop/groups',
+    {
+      action: 'teammates',
+      groupId: id,
+      teammates: [
+        { localId: randomUUID(), name: 'Old Gemini', provider: 'gemini' },
+        { localId: randomUUID(), name: 'Vega', provider: 'antigravity' },
+      ],
+    },
+    alice.bearer,
+  );
+  assert.equal(publication.statusCode, 200);
+  assert.deepEqual(
+    publication.json().teammates.map((member: { name: string }) => member.name),
+    ['Vega'],
   );
   assert.equal(
     (

@@ -4658,9 +4658,11 @@ test('the desktop replaces an unsafe queued patch with a versioned block before 
   }
 });
 
-const managedHandoff =
-  (providers: readonly ['claude', 'antigravity'] | readonly ['antigravity', 'claude']) =>
-  async (t: TestContext) => {
+test(
+  'two Antigravity desktops plan, write and review with scoped grants',
+  { timeout: 55000 },
+  async (t) => {
+    const providers = ['antigravity', 'antigravity'] as const;
     const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'sade-managed-handoff-')));
     const desktops: {
       workspace: Workspace;
@@ -4670,7 +4672,7 @@ const managedHandoff =
       repo: string;
     }[] = [];
     const command = path.resolve('tests/fixtures/managed-peer.mjs');
-    const overrides = ['RELAY_CLAUDE_COMMAND', 'RELAY_ANTIGRAVITY_COMMAND'];
+    const overrides = ['RELAY_ANTIGRAVITY_COMMAND'];
     const previous = overrides.map((name) => process.env[name]);
     for (const name of overrides) process.env[name] = command;
     t.after(async () => {
@@ -4687,7 +4689,7 @@ const managedHandoff =
       await rm(root, { recursive: true, force: true, maxRetries: 5 });
     });
 
-    const names = providers.map((provider) => (provider === 'claude' ? 'Claude' : 'Antigravity'));
+    const names: [string, string] = ['Atlas', 'Vega'];
     const origin = 'https://example.test/shared/managed-fixture.git';
     const fingerprint = canonicalSharedRepository(origin, 'main');
     const plan = {
@@ -4727,16 +4729,16 @@ const managedHandoff =
     for (const [index, provider] of providers.entries()) {
       const repo = index ? reviewRepo : originRepo;
       await git(repo, ['config', 'remote.origin.url', origin]);
-      const dataDir = path.join(root, provider);
+      const dataDir = path.join(root, names[index]);
       const store = new Store(':memory:');
       const workspace = new Workspace(
         store,
         dataDir,
         repo,
-        new AntigravityBinding(path.join(root, 'device.sqlite')),
+        new AntigravityBinding(path.join(root, names[index] + '-device.sqlite')),
       );
       const member = store.addMember({
-        name: provider,
+        name: names[index],
         provider,
         role: index ? 'reviewer' : 'engineer',
       });
@@ -4752,7 +4754,7 @@ const managedHandoff =
       });
       desktops.push({ workspace, store, memberId: member.id, projectId, repo });
       const home = workspace.home(member.id);
-      if (provider === 'antigravity') workspace.antigravityBinding.claim(home, true);
+      workspace.antigravityBinding.claim(home, true);
       await mkdir(home, { recursive: true });
       await writeFile(
         path.join(home, 'managed-fixture-account.json'),
@@ -4760,13 +4762,11 @@ const managedHandoff =
       );
       await writeFile(path.join(home, 'managed-fixture-shared-plan.json'), JSON.stringify(plan));
       const signedIn = await workspace.refresh(member.id);
-      assert.equal(
-        signedIn.account?.type,
-        provider === 'antigravity' ? 'antigravity-google' : 'claude-subscription',
-      );
+      assert.equal(signedIn.account?.type, 'antigravity-google');
     }
 
     const cloud = fixture(providers, {
+      names,
       key: fingerprint,
       members: desktops.map(({ memberId }) => memberId),
       patchHandoff: true,
@@ -4946,28 +4946,13 @@ const managedHandoff =
       );
       assert.deepEqual(
         store.sessions().map(({ model, reasoningEffort }) => [model, reasoningEffort]),
-        providers[index] === 'antigravity'
-          ? [
-              [index ? 'agy-flash' : 'agy-controlled', 'high'],
-              ['agy-controlled', 'medium'],
-            ]
-          : [
-              [index ? 'sonnet' : 'default', 'high'],
-              ['default', 'medium'],
-            ],
+        [
+          [index ? 'agy-flash' : 'agy-controlled', 'high'],
+          ['agy-controlled', 'medium'],
+        ],
       );
     }
-  };
-
-test(
-  'one group message hands off through the actual Claude and Antigravity adapters',
-  { timeout: 55000 },
-  managedHandoff(['claude', 'antigravity']),
-);
-test(
-  'one group message lets Antigravity plan and write with one file approval',
-  { timeout: 55000 },
-  managedHandoff(['antigravity', 'claude']),
+  },
 );
 test('matching owner on a different device cannot receive a granted job; another owner cannot revoke it', () => {
   const f = fixture();

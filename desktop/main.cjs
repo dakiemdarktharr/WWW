@@ -13,7 +13,7 @@ const {
 } = require('electron');
 const { spawn, spawnSync, execFile } = require('node:child_process');
 const { createServer } = require('node:net');
-const { randomBytes, randomUUID } = require('node:crypto');
+const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const { constants: fsConstants } = require('node:fs');
 const { promisify } = require('node:util');
 const {
@@ -1467,7 +1467,7 @@ function registerIpc() {
       throw new Error('Invalid profile request.');
     const profileIdPattern =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    const providers = new Set(['codex', 'gemini', 'claude', 'antigravity']);
+    const providers = new Set(['codex', 'claude', 'antigravity']);
     const validProfile = (profile) =>
       profile &&
       typeof profile === 'object' &&
@@ -1504,13 +1504,33 @@ function registerIpc() {
     const generation = signInGeneration;
     const current = () =>
       identity === owner && generation === signInGeneration && !identityTransition;
-    const send = async () => {
-      if (!current()) throw new Error('Account changed. Open your current workspace.');
-      const { response, body } = await cloudRequest(
-        '/api/desktop/profiles',
-        input,
-        owner.accessToken,
+    const cloudProfiles = async () => {
+      // Resuming the cloud workspace can outlast the first response window.
+      // Only replay reserve/commit, both idempotent for this device/profile ID.
+      const replayable = input.action === 'reserve' || input.action === 'commit';
+      const timeouts = replayable ? [25_000, 90_000] : [25_000];
+      for (const [attempt, timeout] of timeouts.entries()) {
+        if (!current()) throw new Error('Account changed. Open your current workspace.');
+        try {
+          const result = await cloudRequest(
+            '/api/desktop/profiles',
+            input,
+            owner.accessToken,
+            timeout,
+          );
+          if (attempt + 1 === timeouts.length || result.body?.code !== 'CLOUD_UNAVAILABLE')
+            return result;
+          await pause(1000);
+        } catch (error) {
+          if (error?.name !== 'TimeoutError' && !(error instanceof TypeError)) throw error;
+        }
+      }
+      throw new Error(
+        'Could not reach the Kivuno profile service. Check your connection and retry.',
       );
+    };
+    const send = async () => {
+      const { response, body } = await cloudProfiles();
       if (identity !== owner || generation !== signInGeneration)
         throw new Error('Account changed. Open your current workspace.');
       if (response.status === 401) {
@@ -1520,6 +1540,12 @@ function registerIpc() {
       if (!response.ok) throw new Error(body.error || 'Profile request failed. Try again.');
       if (!current()) throw new Error('Account changed. Open your current workspace.');
       if (input.action === 'reserve') {
+        if (body?.locked === true)
+          throw new Error(
+            'This profile is locked by your Kivuno plan. Choose an available profile in billing.',
+          );
+        if (body?.reserved !== true)
+          throw new Error('Kivuno could not confirm the profile reservation. Try again.');
         try {
           await localControlRequest(
             '/api/desktop/profile-reservation',

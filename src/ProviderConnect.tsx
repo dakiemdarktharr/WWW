@@ -8,7 +8,8 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
-import { isExternalProvider, providerLabels } from '../shared/providers';
+import { openExternal } from './desktop';
+import { activeProviderIds, isExternalProvider, providerLabels } from '../shared/providers';
 import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
 import type { FoundationRequest } from './Foundation';
@@ -30,7 +31,7 @@ export function ProviderPicker({
       label="AI provider"
       value={value}
       onChange={(value) => change(value as ProviderId)}
-      options={Object.entries(providerLabels).map(([value, label]) => ({ value, label }))}
+      options={activeProviderIds.map((value) => ({ value, label: providerLabels[value] }))}
     />
   );
 }
@@ -68,43 +69,41 @@ export default function ProviderConnect({
     };
   }, []);
   const capability = capabilities.find((entry) => entry.id === provider);
-  const remoteGemini = Boolean(runnerId && provider === 'gemini');
-  const available =
-    isExternalProvider(provider) && managedRuntime
-      ? capability?.managed?.available
-      : capability?.available || (provider === 'codex' && runnerId);
+  const useManaged = provider === 'antigravity' && managedRuntime;
+  const available = useManaged
+    ? capability?.managed?.available
+    : capability?.available || (provider === 'codex' && runnerId);
   const canPrepare =
-    typeof window.relayDesktop?.prepareProvider === 'function' && capability?.installable !== false;
+    provider !== 'claude' &&
+    typeof window.relayDesktop?.prepareProvider === 'function' &&
+    capability?.installable !== false;
   return (
     <div className="provider-connect form">
       <ProviderPicker value={provider} change={setProvider} />
-      {isExternalProvider(provider) && (
+      {provider === 'antigravity' && (
         <label className="foundation-checkbox">
           <input
             type="checkbox"
             checked={managedRuntime}
             onChange={(event) => setManagedRuntime(event.target.checked)}
           />
-          {provider === 'antigravity'
-            ? 'Let Sade use the Antigravity account on this computer'
-            : 'Let Sade run the official local CLI using a separate sign-in profile'}
+          Let Sade use the Antigravity account on this computer
         </label>
       )}
-      {provider === 'gemini' && (
+
+      {provider === 'claude' && (
         <p className="provider-summary">
-          Google ended Gemini CLI access for personal, Google AI Pro and Ultra accounts. An eligible
-          existing Code Assist business subscription is required.
+          Connect Claude Desktop through MCP, or use Claude Code with an eligible paid plan. Start
+          tasks in your Claude client.
         </p>
       )}
       <HelpDetails title="Connection help">
         <p>
           {provider === 'codex'
             ? 'Add each ChatGPT account separately on this computer. Each has its own sign-in, usage, skills and plugins. Finish one sign-in before adding the next; choose the intended account on OpenAI.'
-            : provider === 'gemini'
-              ? 'Google sign-in on this computer. File tools and limited prompts; no shell or reasoning controls.'
-              : managedRuntime
-                ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Connect the account, then choose a project and a limited number of prompts.`
-                : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
+            : useManaged
+              ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Connect the account, then choose a project and a limited number of prompts.`
+              : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
       {canPrepare && (
@@ -114,27 +113,19 @@ export default function ProviderConnect({
             : `Kivuno checks its bundled ${providerLabels[provider]} runtime and repairs it in Kivuno's private storage if needed.`}
         </p>
       )}
-      {remoteGemini ? (
+      {!loading && !canPrepare && !available && (
         <p className="error-text">
-          Choose This computer for Gemini. Remote Gemini sessions are not supported yet.
+          {capability?.reason || error || 'This provider is unavailable on this machine.'}
         </p>
-      ) : (
-        !loading &&
-        !canPrepare &&
-        !available && (
-          <p className="error-text">
-            {capability?.reason || error || 'This provider is unavailable on this machine.'}
-          </p>
-        )
       )}
       <button
         className="button primary"
-        disabled={busy || loading || (!available && !canPrepare) || remoteGemini}
-        onClick={() => connect(provider, isExternalProvider(provider) && managedRuntime)}
+        disabled={busy || loading || (!available && !canPrepare)}
+        onClick={() => connect(provider, useManaged)}
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
         {busy
-          ? `Preparing ${providerLabels[provider]}…`
+          ? `Connecting ${providerLabels[provider]}…`
           : isExternalProvider(provider)
             ? `Add ${providerLabels[provider]} connection`
             : `Connect ${providerLabels[provider]}`}
@@ -173,6 +164,7 @@ export function ExternalConnection({
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
   const [projectId, setProjectId] = useState(eligible[0]?.id || '');
   const [minutes, setMinutes] = useState('60');
+  const [claudeClient, setClaudeClient] = useState('desktop');
   const [claims, setClaims] = useState(false);
   const [quota, setQuota] = useState(false);
   const [connections, setConnections] = useState<ExternalMetadata[]>([]);
@@ -248,14 +240,12 @@ export function ExternalConnection({
   }
   return (
     <div className="external-connection form">
-      {enableManaged && (
+      {enableManaged && member.provider === 'antigravity' && (
         <section>
           <p>
             Let Sade start and stop the official CLI, assign work and request independent reviews.
-            {providerOf(member) === 'antigravity'
-              ? 'Kivuno will ask you to confirm use of this computer’s Antigravity account.'
-              : 'This uses a separate local sign-in.'}{' '}
-            Project prompts require an allowance.
+            Kivuno will ask you to confirm use of this computer’s Antigravity account. Project
+            prompts require an allowance.
           </p>
           <button
             className="button"
@@ -277,6 +267,48 @@ export function ExternalConnection({
           <button className="button primary" disabled={busy || googleBusy} onClick={googleSignIn}>
             <ArrowUpRight size={15} /> Sign in with Google
           </button>
+        </>
+      )}
+      {member.provider === 'claude' && (
+        <>
+          <GlassSelect
+            label="Claude client"
+            value={claudeClient}
+            onChange={setClaudeClient}
+            options={[
+              { value: 'desktop', label: 'Claude Desktop · Free or paid' },
+              { value: 'code', label: 'Claude Code · eligible paid plan' },
+            ]}
+          />
+          <div className="member-provider-actions">
+            <button
+              className="button"
+              onClick={() =>
+                void openExternal('https://claude.ai/login').catch((cause) =>
+                  setError(cause.message),
+                )
+              }
+            >
+              <ArrowUpRight size={15} /> Open Claude sign-in in browser
+            </button>
+            {claudeClient === 'desktop' && (
+              <button
+                className="text-button"
+                onClick={() =>
+                  void openExternal('https://claude.com/download').catch((cause) =>
+                    setError(cause.message),
+                  )
+                }
+              >
+                Get Claude Desktop
+              </button>
+            )}
+          </div>
+          <p>
+            {claudeClient === 'desktop'
+              ? 'After signing in, open Claude Desktop with the same account and connect the project below.'
+              : 'Start Claude Code and use /login to authorize the CLI in your browser. Connect the project below.'}
+          </p>
         </>
       )}
       {available && eligible.length ? (
@@ -362,6 +394,13 @@ export function ExternalConnection({
               ? 'Confirm you are signed into your Google account in Antigravity, add this configuration, then ask it to read the group. Kivuno confirms the MESH connection automatically.'
               : `Sign in inside your ${providerLabels[providerOf(member)]} client, add this configuration, then ask it to read the group. Kivuno confirms the connection automatically.`}
           </p>
+          {member.provider === 'claude' && (
+            <p>
+              {claudeClient === 'desktop'
+                ? 'In Claude Desktop, open Settings → Developer → Edit Config. Merge the server below into mcpServers, save, then fully quit and reopen Claude. In a new chat, enable the Kivuno tools and ask Claude to read your project group.'
+                : 'Save this JSON as kivuno-mcp.json outside the repository. In the project folder, start Claude Code with claude --mcp-config "<absolute path to kivuno-mcp.json>". Run /mcp to check the connection, then ask Claude to read your project group.'}
+            </p>
+          )}
           <strong>MCP configuration</strong>
           <textarea
             aria-label="MCP configuration"
@@ -386,7 +425,7 @@ export function ExternalConnection({
               <li>
                 {providerOf(member) === 'antigravity'
                   ? 'In Antigravity, open MCP Servers → Manage MCP Servers → View raw config. Add this entry under mcpServers without replacing existing servers.'
-                  : 'Add this private entry under mcpServers in your Claude Code local/user MCP configuration. Keep existing servers.'}
+                  : 'In Claude Desktop, open Settings → Developer → Edit Config. Merge this entry under mcpServers and fully quit and reopen Claude. For Claude Code, use your local or user MCP configuration.'}
               </li>
               <li>Restart that client and ask it to read this project's MESH group.</li>
               <li>

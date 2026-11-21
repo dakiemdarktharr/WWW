@@ -52,6 +52,8 @@ type FixtureProfile = {
 const accountProfiles = new Map<string, Map<string, FixtureProfile>>();
 let profileReservations = 0;
 let profileCommits = 0;
+let lostReservationResponseId: string | undefined;
+let recoveredReservation = false;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
 const previewIds = { groupId: randomUUID(), runId: randomUUID(), fileId: 'd'.repeat(64) };
 const previewFixture = Buffer.from(
@@ -199,8 +201,13 @@ const fixture = createServer(async (request, response) => {
     accountProfiles.set(accountId, profiles);
     const selectedCount = () => [...profiles.values()].filter((p) => p.selected).length;
     if (payload.action === 'reserve') {
+      if (payload.name === 'Locked reservation fixture') {
+        response.end(JSON.stringify({ reserved: false, locked: true }));
+        return;
+      }
       const existing = profiles.get(payload.profileId);
       if (existing && existing.state !== 'released') {
+        if (payload.profileId === lostReservationResponseId) recoveredReservation = true;
         response.end(JSON.stringify({ reserved: existing.selected, locked: !existing.selected }));
       } else if (selectedCount() >= 3) {
         response.statusCode = 429;
@@ -210,6 +217,11 @@ const fixture = createServer(async (request, response) => {
       } else {
         profiles.set(payload.profileId, { ...payload, state: 'reserved', selected: true });
         profileReservations++;
+        if (!lostReservationResponseId && payload.name === 'Browser fixture') {
+          lostReservationResponseId = payload.profileId;
+          response.destroy();
+          return;
+        }
         response.end(JSON.stringify({ reserved: true, locked: false }));
       }
     } else if (payload.action === 'commit') {
@@ -568,7 +580,27 @@ try {
     post('/members', { name: 'Unreserved fixture', role: 'researcher' }),
     /Reserve this profile/,
   );
+  const lockedProfile = {
+    profileId: randomUUID(),
+    name: 'Locked reservation fixture',
+    provider: 'claude',
+  };
+  await assert.rejects(
+    page.evaluate(
+      (profile) => (window as any).relayDesktop.profiles({ action: 'reserve', ...profile }),
+      lockedProfile,
+    ),
+    /locked by your Kivuno plan/,
+  );
+  await assert.rejects(
+    post('/members', { ...lockedProfile, role: 'researcher' }),
+    /reservation is missing/,
+  );
   const member = await addProfile({ name: 'Browser fixture', role: 'researcher' });
+  assert.ok(
+    recoveredReservation,
+    'A lost reservation response is retried with the original profile ID.',
+  );
   sharedTeammateId = member.id;
   const project = await post('/hackathons', {
     memberId: member.id,
@@ -708,14 +740,38 @@ try {
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
   await expect.poll(rendererCount).toBe(baselineRenderers);
 
+  const addClaudeFromTeam = async (): Promise<Member> => {
+    await page
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('button', { name: 'Team', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+    const picker = page.getByRole('dialog', { name: 'Add account' });
+    await picker.getByRole('combobox', { name: 'AI provider' }).click();
+    await picker.getByRole('option', { name: 'Claude', exact: true }).click();
+    await expect(picker.getByRole('checkbox')).toHaveCount(0);
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (response) => new URL(response.url()).pathname === '/api/accounts/connect',
+      ),
+      picker.getByRole('button', { name: 'Add Claude connection', exact: true }).click(),
+    ]);
+    assert.ok(response.ok(), 'Team should create the external Claude profile.');
+    const { member } = await response.json();
+    await expect(page.getByRole('dialog', { name: 'Claude · MESH connection' })).toBeVisible();
+    return member;
+  };
   // Both real-client connection types use scoped local MCP, not native model dispatch.
   for (const provider of ['claude', 'antigravity'] as const) {
     const label = provider === 'claude' ? 'Claude' : 'Antigravity';
-    const external = await addProfile({
-      name: `${label} local`,
-      role: 'engineer',
-      provider,
-    });
+    const external =
+      provider === 'claude'
+        ? await addClaudeFromTeam()
+        : await addProfile({
+            name: `${label} local`,
+            role: 'engineer',
+            provider,
+          });
     await page.evaluate(
       async ({ projectId, memberId }) => {
         const { token } = await (await fetch('/api/session')).json();
@@ -739,7 +795,7 @@ try {
       .click();
     const externalCard = page
       .locator('.account-card-group')
-      .filter({ has: page.getByRole('heading', { name: `${label} local`, exact: true }) });
+      .filter({ has: page.getByRole('heading', { name: external.name, exact: true }) });
     await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
     const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
     await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
