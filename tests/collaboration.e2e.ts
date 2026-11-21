@@ -138,7 +138,7 @@ const fixture = async (index: number) => {
         if (action === 'commit' && reservedProfiles.delete(profileId)) return { committed: true };
         throw new Error('Missing profile reservation in the desktop fixture');
       },
-      onStatus: () => () => {}, getWindowState: async () => ({ maximized: false, fullscreen: false }), onWindowState: () => () => {}, controlWindow: async () => ({}),
+      onStatus: () => () => {}, getWindowState: async () => ({ maximized: false, fullscreen: false }), onWindowState: () => () => {}, onUpdateProgress: () => () => {}, checkForUpdates: async () => ({hasUpdate:false, downloadAvailable:false}), controlWindow: async () => ({}),
       groups: async (input) => {
         const response = await fetch('/__groups', { method: 'POST', body: JSON.stringify(input) });
         const result = await response.json(); if (!response.ok) throw new Error(result.error); return result;

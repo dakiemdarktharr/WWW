@@ -13,10 +13,8 @@ const {
 } = require('electron');
 const { spawn, spawnSync, execFile } = require('node:child_process');
 const { createServer } = require('node:net');
-const { createHash, randomBytes, randomUUID } = require('node:crypto');
-const { constants: fsConstants, createWriteStream } = require('node:fs');
-const { Readable, Transform } = require('node:stream');
-const { pipeline } = require('node:stream/promises');
+const { randomBytes, randomUUID } = require('node:crypto');
+const { constants: fsConstants } = require('node:fs');
 const { promisify } = require('node:util');
 const {
   access,
@@ -26,6 +24,7 @@ const {
   writeFile,
   unlink,
   rename,
+  realpath,
   lstat,
   rm,
 } = require('node:fs/promises');
@@ -35,7 +34,8 @@ const os = require('node:os');
 const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
-const { fetchMacUpdate } = require('./release-download.cjs');
+const { downloadUpdate } = require('./release-download.cjs');
+const { verifyPortableInstall } = require('./portable-install.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
 const {
   desktopUpdate,
@@ -67,6 +67,7 @@ const identityOrigin = cloudOrigin(
 const dataDirectory = app.getPath('userData');
 const identityFile = path.join(dataDirectory, 'desktop-session.bin');
 const ownerFile = path.join(dataDirectory, 'workspace-owner.json');
+const updateFailureFile = path.join(dataDirectory, 'desktop-update-failed');
 let machinesDirectory = '';
 let machinesIndex = '';
 const machines = new Map();
@@ -82,6 +83,7 @@ let pinnedOwner = '';
 let pending = null;
 let lastError = '';
 let quitting = false;
+let pendingUpdate = null;
 let signInGeneration = 0;
 let bridgeGeneration = 0;
 let sharedSadeConsentVersion = 0;
@@ -131,7 +133,8 @@ function publishStatus() {
   if (window && !window.isDestroyed()) window.webContents.send('relay:status-changed', status());
 }
 
-async function cloudRequest(route, body, token, timeoutMs = 25000) {
+async function cloudRequest(route, body, token, timeoutMs = 25000, cancel) {
+  const deadline = AbortSignal.timeout(timeoutMs);
   const response = await fetch(identityOrigin + route, {
     method: body === undefined ? 'GET' : 'POST',
     headers: {
@@ -141,7 +144,7 @@ async function cloudRequest(route, body, token, timeoutMs = 25000) {
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: 'error',
-    signal: AbortSignal.timeout(timeoutMs),
+    signal: cancel ? AbortSignal.any([cancel, deadline]) : deadline,
   });
   const raw = await response.text();
   if (Buffer.byteLength(raw) > 5 * 1024 * 1024) throw new Error('Identity response is too large.');
@@ -182,8 +185,14 @@ async function localControlRequest(route, body, context = {}) {
   return value;
 }
 
-async function inspectDesktopUpdate() {
-  const { response, body } = await cloudRequest('/api/desktop/release');
+async function inspectDesktopUpdate(cancel) {
+  const { response, body } = await cloudRequest(
+    '/api/desktop/release',
+    undefined,
+    undefined,
+    undefined,
+    cancel,
+  );
   if (!response.ok || !body || typeof body.version !== 'string')
     throw new Error('Could not check for Kivuno updates. Try again later.');
   return desktopUpdate(body, app.getVersion(), process.platform, process.arch, identityOrigin);
@@ -212,42 +221,42 @@ async function canWriteDirectory(directory) {
   }
 }
 
-async function prepareMacUpdate(artifact, latestVersion) {
+function publishUpdateProgress(progress) {
+  if (window && !window.isDestroyed()) window.webContents.send('relay:update-progress', progress);
+}
+
+function downloadDesktopArtifact(artifact, filename, cancel) {
+  return downloadUpdate(
+    artifact,
+    filename,
+    (percent) => publishUpdateProgress({ phase: 'downloading', percent }),
+    { cancel },
+  );
+}
+
+async function launchUpdateHelper(command, args, options = {}) {
+  const child = spawn(command, args, { detached: true, stdio: 'ignore', ...options });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  child.unref();
+  return child;
+}
+
+async function prepareMacUpdate(artifact, latestVersion, cancel) {
   if (!app.isPackaged || process.platform !== 'darwin' || process.arch !== 'arm64')
     throw new Error('In-app updates are available only in the installed Kivuno macOS app.');
   const updateDirectory = await mkdtemp(path.join(os.tmpdir(), 'kivuno-update-'));
   const archive = path.join(updateDirectory, 'Kivuno-update.zip');
   const extractDirectory = path.join(updateDirectory, 'unpacked');
   try {
-    const signal = AbortSignal.timeout(30 * 60 * 1000);
-    const response = await fetchMacUpdate(artifact.url, { signal });
-    if (!response.ok || !response.body)
-      throw new Error(`Could not download the Kivuno update (${response.status}).`);
-    const contentLength = response.headers.get('content-length');
-    if (contentLength && Number(contentLength) !== artifact.size)
-      throw new Error('The Kivuno update size does not match its release metadata.');
-    const digest = createHash('sha256');
-    let bytes = 0;
-    const meter = new Transform({
-      transform(chunk, _encoding, callback) {
-        bytes += chunk.length;
-        if (bytes > artifact.size)
-          return callback(new Error('The Kivuno update is larger than expected.'));
-        digest.update(chunk);
-        callback(null, chunk);
-      },
-    });
-    await pipeline(
-      Readable.fromWeb(response.body),
-      meter,
-      createWriteStream(archive, { flags: 'wx', mode: 0o600 }),
-    );
-    if (bytes !== artifact.size || digest.digest('hex') !== artifact.sha256)
-      throw new Error('The downloaded Kivuno update failed its SHA-256 check.');
-
+    await downloadDesktopArtifact(artifact, archive, cancel);
+    publishUpdateProgress({ phase: 'installing' });
     await mkdir(extractDirectory, { mode: 0o700 });
     await execFileAsync('/usr/bin/ditto', ['-x', '-k', archive, extractDirectory], {
       timeout: 10 * 60 * 1000,
+      signal: cancel,
       maxBuffer: 1024 * 1024,
     });
     const candidate = path.join(extractDirectory, 'Kivuno.app');
@@ -275,7 +284,7 @@ async function prepareMacUpdate(artifact, latestVersion) {
   }
 }
 
-async function startMacUpdateHelper(artifact, latestVersion, updateDirectory, archive) {
+async function startMacUpdateHelper(artifact, latestVersion, updateDirectory, archive, cancel) {
   const appPath = path.resolve(path.dirname(process.execPath), '..', '..');
   const appInfo = await lstat(appPath);
   if (path.basename(appPath) !== 'Kivuno.app' || !appInfo.isDirectory() || appInfo.isSymbolicLink())
@@ -299,18 +308,12 @@ async function startMacUpdateHelper(artifact, latestVersion, updateDirectory, ar
     latestVersion,
     artifact.sha256,
     String(artifact.size),
+    path.isAbsolute(explicitProfile) ? dataDirectory : '',
   ];
   const writable = await canWriteDirectory(path.dirname(appPath));
   if (writable) {
-    const child = spawn('/bin/sh', [helperPath, ...args], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    await new Promise((resolve, reject) => {
-      child.once('spawn', resolve);
-      child.once('error', reject);
-    });
-    child.unref();
+    cancel.throwIfAborted();
+    await launchUpdateHelper('/bin/sh', [helperPath, ...args]);
     return;
   }
 
@@ -328,20 +331,134 @@ async function startMacUpdateHelper(artifact, latestVersion, updateDirectory, ar
   const appleScript = `do shell script ${appleScriptQuote(launchCommand)} with administrator privileges`;
   const { stdout } = await execFileAsync('/usr/bin/osascript', ['-e', appleScript], {
     timeout: 120000,
+    signal: cancel,
     maxBuffer: 4096,
   });
   if (!/^\d+\s*$/.test(stdout)) throw new Error('Could not start the macOS update helper.');
 }
 
-async function installMacUpdate(artifact, latestVersion) {
-  const prepared = await prepareMacUpdate(artifact, latestVersion);
+async function installMacUpdate(artifact, latestVersion, cancel) {
+  const prepared = await prepareMacUpdate(artifact, latestVersion, cancel);
   try {
-    await startMacUpdateHelper(artifact, latestVersion, prepared.updateDirectory, prepared.archive);
+    await startMacUpdateHelper(
+      artifact,
+      latestVersion,
+      prepared.updateDirectory,
+      prepared.archive,
+      cancel,
+    );
   } catch (error) {
     await rm(prepared.updateDirectory, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
-  app.quit();
+}
+
+async function installWindowsOrLinuxUpdate(artifact, latestVersion, cancel) {
+  const executable = await realpath(process.execPath);
+  const installDirectory = path.dirname(executable);
+  const dataPath = path.relative(installDirectory, await realpath(dataDirectory));
+  if (!dataPath || (!path.isAbsolute(dataPath) && !dataPath.startsWith(`..${path.sep}`)))
+    throw new Error('Hãy chuyển dữ liệu Kivuno ra ngoài thư mục cài đặt trước khi cập nhật.');
+
+  const windows = process.platform === 'win32';
+  if (windows) {
+    if (
+      path.basename(executable).toLowerCase() !== 'kivuno.exe' ||
+      !(
+        await lstat(path.join(installDirectory, 'Uninstall Kivuno.exe')).catch(() => null)
+      )?.isFile()
+    )
+      throw new Error('Hãy cài Kivuno bằng bộ cài Windows để dùng cập nhật trong ứng dụng.');
+  } else {
+    await verifyPortableInstall(installDirectory, app.getVersion());
+  }
+
+  const directory = await mkdtemp(path.join(path.dirname(installDirectory), '.kivuno-update-'));
+  const file = path.join(directory, windows ? 'Kivuno-Setup.exe' : 'kivuno.tar.gz');
+  const profile = path.isAbsolute(explicitProfile) ? dataDirectory : '';
+  try {
+    await downloadDesktopArtifact(artifact, file, cancel);
+    publishUpdateProgress({ phase: 'installing' });
+    if (windows) {
+      const script = await readFile(path.join(__dirname, 'windows-update-helper.ps1'), 'utf8');
+      const launcher = path.join(directory, 'launch-update.js');
+      await writeFile(
+        launcher,
+        await readFile(path.join(__dirname, 'windows-update-launcher.js')),
+        { flag: 'wx' },
+      );
+      const system = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+      const readyFile = path.join(directory, 'ready');
+      cancel.throwIfAborted();
+      const helper = await launchUpdateHelper(
+        path.join(system, 'wscript.exe'),
+        ['//B', '//NoLogo', launcher],
+        {
+          cwd: path.dirname(directory),
+          windowsHide: true,
+          env: {
+            ...process.env,
+            KIVUNO_UPDATE_POWERSHELL: path.join(
+              system,
+              'WindowsPowerShell',
+              'v1.0',
+              'powershell.exe',
+            ),
+            KIVUNO_UPDATE_COMMAND: Buffer.from(script, 'utf16le').toString('base64'),
+            KIVUNO_UPDATE_PID: String(process.pid),
+            KIVUNO_UPDATE_APP: executable,
+            KIVUNO_UPDATE_FILE: file,
+            KIVUNO_UPDATE_SHA: artifact.sha256,
+            KIVUNO_UPDATE_VERSION: latestVersion,
+            KIVUNO_UPDATE_FAILURE: updateFailureFile,
+            KIVUNO_UPDATE_PROFILE: profile,
+            KIVUNO_UPDATE_READY: readyFile,
+          },
+        },
+      );
+      try {
+        const deadline = Date.now() + 15000;
+        while (!existsSync(readyFile)) {
+          cancel.throwIfAborted();
+          if (helper.exitCode !== null || helper.signalCode !== null || Date.now() >= deadline)
+            throw new Error('Không khởi động được trình cài Kivuno. Hãy thử lại.');
+          await pause(100);
+        }
+      } catch (error) {
+        helper.kill();
+        throw error;
+      }
+    } else {
+      await execFileAsync('/usr/bin/tar', ['-xzf', file, '-C', directory, '--no-same-owner'], {
+        timeout: 10 * 60 * 1000,
+        signal: cancel,
+        maxBuffer: 1024 * 1024,
+      });
+      await verifyPortableInstall(path.join(directory, 'Kivuno'), latestVersion);
+      await access(path.join(directory, 'Kivuno', 'kivuno'), fsConstants.X_OK);
+      await verifyPortableInstall(installDirectory, app.getVersion());
+      await unlink(file);
+      const script = await readFile(path.join(__dirname, 'linux-update-helper.sh'), 'utf8');
+      cancel.throwIfAborted();
+      await launchUpdateHelper(
+        '/bin/sh',
+        [
+          '-c',
+          script,
+          'kivuno-update',
+          installDirectory,
+          directory,
+          String(process.pid),
+          updateFailureFile,
+          profile,
+        ],
+        { cwd: path.dirname(installDirectory) },
+      );
+    }
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 async function persistIdentity(value) {
@@ -861,20 +978,34 @@ function registerIpc() {
   ipcMain.handle('relay:update-status', async (event) => {
     trusted(event);
     const { status: update } = await inspectDesktopUpdate();
-    return update;
+    return {
+      ...update,
+      downloadAvailable: app.isPackaged && update.downloadAvailable,
+      lastInstallFailed: existsSync(updateFailureFile),
+    };
   });
-  ipcMain.handle('relay:update-install', async (event) => {
+  ipcMain.handle('relay:update-install', async (event, expectedVersion) => {
     trusted(event);
-    const { status: update, downloadUrl, updateArtifact } = await inspectDesktopUpdate();
-    if (!update.hasUpdate || !downloadUrl)
-      throw new Error('No Kivuno update is available for this computer.');
-    if (process.platform === 'darwin') {
-      if (!updateArtifact)
-        throw new Error('This Kivuno release has no in-app macOS update package.');
-      await installMacUpdate(updateArtifact, update.latestVersion);
-      return;
+    if (!app.isPackaged || quitting || pendingUpdate)
+      throw new Error('Kivuno chưa thể cập nhật lúc này.');
+    const controller = new AbortController();
+    const operation = (async () => {
+      const { status: update, updateArtifact } = await inspectDesktopUpdate(controller.signal);
+      if (!updateArtifact || update.latestVersion !== expectedVersion)
+        throw new Error('Bản cập nhật đã thay đổi. Hãy bấm lại sau khi phiên bản mới xuất hiện.');
+      await rm(updateFailureFile, { force: true });
+      if (process.platform === 'darwin')
+        await installMacUpdate(updateArtifact, expectedVersion, controller.signal);
+      else await installWindowsOrLinuxUpdate(updateArtifact, expectedVersion, controller.signal);
+    })();
+    pendingUpdate = { controller, operation };
+    try {
+      await operation;
+      setImmediate(() => app.quit());
+    } catch (error) {
+      pendingUpdate = null;
+      throw error;
     }
-    await shell.openExternal(downloadUrl);
   });
   ipcMain.handle('relay:prepare-provider', async (event, provider) => {
     trusted(event);
@@ -1805,7 +1936,12 @@ else {
     projectBrowser.close();
     signInGeneration++;
     bridgeGeneration++;
-    void Promise.all([stopBackend(), stopMachines()]).finally(() => {
+    pendingUpdate?.controller.abort();
+    void Promise.all([
+      stopBackend(),
+      stopMachines(),
+      pendingUpdate?.operation.catch(() => {}),
+    ]).finally(() => {
       tray?.destroy();
       app.quit();
     });

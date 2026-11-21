@@ -1,121 +1,72 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Download, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowUpRight, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import App from './App';
 import { resetApiSession } from './api';
-import type { DesktopStatus, DesktopUpdateStatus } from './desktop';
+import type { DesktopStatus, DesktopUpdateProgress, DesktopUpdateStatus } from './desktop';
 import DesktopTitleBar from './TitleBar';
 import './portal.css';
 import ConnectionProgress from './ConnectionProgress';
 
 export default function DesktopGate() {
   const [update, setUpdate] = useState<DesktopUpdateStatus | null>(null);
-  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  const [progress, setProgress] = useState<DesktopUpdateProgress | null>(null);
   const [updateError, setUpdateError] = useState('');
-  const updateActionButton = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
+    const desktop = window.relayDesktop!;
     let current = true;
     const check = async () => {
       try {
-        const next = await window.relayDesktop!.checkForUpdates();
+        const next = await desktop.checkForUpdates();
         if (current) setUpdate(next);
       } catch {
-        // Update checks are best-effort; keep the last successful result.
+        // Update checks are best-effort. Keep the last successful result.
       }
     };
+    const unsubscribe = desktop.onUpdateProgress(setProgress);
     void check();
     const timer = window.setInterval(check, 30 * 60 * 1000);
     return () => {
       current = false;
       window.clearInterval(timer);
+      unsubscribe();
     };
   }, []);
-  useEffect(() => {
-    if (update?.required) updateActionButton.current?.focus();
-  }, [update?.required]);
+
   const installUpdate = async () => {
-    setDownloadingUpdate(true);
+    if (!update?.downloadAvailable || progress) return;
+    const desktop = window.relayDesktop!;
+    setProgress({ phase: 'downloading', percent: 0 });
     setUpdateError('');
+    setUpdate({ ...update, lastInstallFailed: false });
     try {
-      await window.relayDesktop!.installUpdate();
+      await desktop.installUpdate(update.latestVersion);
     } catch (cause) {
-      setUpdateError((cause as Error).message || 'Không thể tải bản cập nhật. Hãy thử lại.');
-    } finally {
-      setDownloadingUpdate(false);
+      const message =
+        cause instanceof Error
+          ? cause.message.replace(/^Error invoking remote method '[^']+': Error: /, '')
+          : '';
+      setUpdateError(message || 'Không thể cập nhật Kivuno. Hãy thử lại.');
+      setProgress(null);
+      void desktop
+        .checkForUpdates()
+        .then(setUpdate)
+        .catch(() => {});
     }
   };
+  const error =
+    updateError ||
+    (update?.lastInstallFailed ? 'Bản cập nhật trước chưa được cài. Hãy thử lại.' : '');
+
   return (
     <div className="desktop-frame">
-      <DesktopTitleBar
-        update={update}
-        downloading={downloadingUpdate}
-        onUpdate={() => void installUpdate()}
-      />
+      <DesktopTitleBar update={update} progress={progress} onUpdate={() => void installUpdate()} />
       <div className="desktop-frame-content">
-        <div className="desktop-workspace-layer" inert={Boolean(update?.required)}>
-          <DesktopWorkspace />
-        </div>
-        {update?.required && (
-          <div className="desktop-update-backdrop">
-            <section
-              className="desktop-update-dialog"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="desktop-update-title"
-              aria-describedby="desktop-update-description"
-              onKeyDown={(event) => {
-                if (event.key === 'Tab') {
-                  event.preventDefault();
-                  updateActionButton.current?.focus();
-                }
-              }}
-            >
-              <span className="desktop-update-icon">
-                {window.relayDesktop?.platform === 'darwin' ? (
-                  <RefreshCw size={22} />
-                ) : (
-                  <Download size={22} />
-                )}
-              </span>
-              <h2 id="desktop-update-title">Cần cập nhật Kivuno để tiếp tục</h2>
-              <p id="desktop-update-description">
-                {window.relayDesktop?.platform === 'darwin'
-                  ? 'Kivuno sẽ tải gói đã xác minh, thay ứng dụng hiện tại và tự mở lại sau khi cập nhật.'
-                  : `Đã có ${update.newerReleaseCount} phiên bản mới hơn. Hãy tải và cài đặt phiên bản mới nhất, sau đó mở lại Kivuno.`}
-              </p>
-              <span className="desktop-update-version">v{update.latestVersion}</span>
-              <button
-                ref={updateActionButton}
-                className="desktop-update-download"
-                disabled={downloadingUpdate}
-                onClick={() => void installUpdate()}
-              >
-                {downloadingUpdate ? (
-                  <Loader2 className="spin" size={17} />
-                ) : window.relayDesktop?.platform === 'darwin' ? (
-                  <RefreshCw size={17} />
-                ) : (
-                  <Download size={17} />
-                )}
-                {downloadingUpdate
-                  ? window.relayDesktop?.platform === 'darwin'
-                    ? 'Đang tải bản cập nhật…'
-                    : 'Đang mở bộ cài…'
-                  : window.relayDesktop?.platform === 'darwin'
-                    ? 'Cập nhật trong Kivuno'
-                    : 'Tải và cập nhật'}
-              </button>
-              {updateError && (
-                <p className="desktop-update-error" role="alert">
-                  {updateError}
-                </p>
-              )}
-            </section>
-          </div>
-        )}
+        <DesktopWorkspace />
       </div>
-      {updateError && !update?.required && (
+      {error && !progress && (
         <div className="desktop-update-error-toast" role="alert">
-          {updateError}
+          {error}
         </div>
       )}
     </div>

@@ -184,6 +184,47 @@ try {
   assert.equal(response.status, 403);
   await mkdir('.local', { recursive: true });
   await page.screenshot({ path: '.local/relay-windows-packaged.png' });
+  // Exercise the packaged preload, native release check, and renderer together.
+  // Keep both the release feed and its installer inside this isolated test process.
+  const nextVersion = metadata.version.replace(/\d+$/, (patch) => String(Number(patch) + 1));
+  const updateButton = page.getByRole('button', {
+    name: `Cập nhật Kivuno phiên bản ${nextVersion}`,
+  });
+  for (const version of [metadata.version, nextVersion]) {
+    await desktop.evaluate((_electron, version) => {
+      const url = `/downloads/Kivuno-${version}-Setup.exe`;
+      const release = {
+        version,
+        platforms: {
+          windows: {
+            available: true,
+            version,
+            platform: 'win32-x64',
+            url,
+            size: 4,
+            sha256: 'a'.repeat(64),
+          },
+        },
+      };
+      globalThis.fetch = async (input) => {
+        const pathname = new URL(String(input)).pathname;
+        if (pathname === '/api/desktop/release') return Response.json(release);
+        throw new Error(`Unexpected request during update check: ${pathname}`);
+      };
+    }, version);
+    await page.reload();
+    await expect(page.getByRole('banner', { name: 'Điều khiển cửa sổ' })).toBeVisible();
+    const update = await page.evaluate(() => window.relayDesktop!.checkForUpdates());
+    assert.equal(update.latestVersion, version);
+    assert.equal(update.downloadAvailable, version === nextVersion);
+    if (version === nextVersion) {
+      await expect(updateButton).toBeVisible();
+      await expect(updateButton).toBeEnabled();
+      await page.getByRole('banner', { name: 'Điều khiển cửa sổ' }).screenshot({
+        path: '.local/kivuno-updater-titlebar.png',
+      });
+    } else await expect(page.locator('.desktop-update-button')).toHaveCount(0);
+  }
   const release = JSON.parse(
     await readFile(process.env.KIVUNO_RELEASE_MANIFEST || 'dist/downloads/release.json', 'utf8'),
   );

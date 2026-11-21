@@ -133,7 +133,7 @@ const browser = await chromium.launch();
 const context = await browser.newContext();
 await context.addInitScript(`
   sessionStorage.setItem('kivuno-guide-v3', 'seen');
-  window.relayDesktop = { platform: 'win32', version: '0.8.1', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({maximized:false,fullscreen:false}), onWindowState: () => () => {}, controlWindow: async () => ({}), openExternal: async () => {} };
+  window.relayDesktop = { platform: 'win32', version: '0.8.1', getStatus: async () => ({ signedIn: true, runtime: 'ready', owner: { id: 'fixture', name: 'Fixture' }, cloudOrigin: location.origin }), onStatus: () => () => {}, getWindowState: async () => ({maximized:false,fullscreen:false}), onWindowState: () => () => {}, onUpdateProgress: () => () => {}, checkForUpdates: async () => ({hasUpdate:false, downloadAvailable:false}), controlWindow: async () => ({}), openExternal: async () => {} };
 `);
 const page = await context.newPage();
 const errors: string[] = [];

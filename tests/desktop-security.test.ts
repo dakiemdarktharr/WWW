@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const {
@@ -18,14 +21,34 @@ const {
   githubMacReleaseAsset,
   trustedMacUpdateRedirect,
 } = require('../desktop/security.cjs');
-const { fetchMacUpdate } = require('../desktop/release-download.cjs');
+const { downloadUpdate, fetchMacUpdate } = require('../desktop/release-download.cjs');
+const {
+  portableManifest,
+  portableTree,
+  verifyPortableInstall,
+} = require('../desktop/portable-install.cjs');
 
-test('desktop updates use the published platform version and do not count future releases', () => {
+test('desktop updates require a newer verified package for the current platform', () => {
   const manifest = {
     version: '0.8.5',
     releases: ['99.0.0', '0.8.5', '0.8.4', '0.8.3', '0.8.2'],
     platforms: {
-      windows: { available: true, version: '0.8.5', url: '/downloads/Kivuno-0.8.5-Setup.exe' },
+      windows: {
+        available: true,
+        version: '0.8.5',
+        url: '/downloads/Kivuno-0.8.5-Setup.exe',
+        platform: 'win32-x64',
+        sha256: 'a'.repeat(64),
+        size: 1024,
+      },
+      linux: {
+        available: true,
+        version: '0.8.5',
+        url: '/downloads/Kivuno-0.8.5-linux-x64.tar.gz',
+        platform: 'linux-x64',
+        sha256: 'b'.repeat(64),
+        size: 2048,
+      },
       macos: {
         available: true,
         version: '0.8.4',
@@ -36,17 +59,25 @@ test('desktop updates use the published platform version and do not count future
   const mac = desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app');
   assert.equal(mac.status.hasUpdate, false);
   assert.equal(mac.status.latestVersion, '0.8.4');
-  assert.equal(mac.downloadUrl, '');
+  assert.equal(mac.updateArtifact, null);
   const windows = desktopUpdate(manifest, '0.8.2', 'win32', 'x64', 'https://kivuno.vercel.app');
-  assert.equal(windows.status.newerReleaseCount, 3);
-  assert.equal(windows.status.required, true);
-  assert.match(windows.downloadUrl, /0\.8\.5-Setup\.exe$/);
+  assert.equal(windows.status.downloadAvailable, true);
+  assert.match(windows.updateArtifact.url, /0\.8\.5-Setup\.exe$/);
+  const linux = desktopUpdate(manifest, '0.8.2', 'linux', 'x64', 'https://kivuno.vercel.app');
+  assert.equal(linux.status.downloadAvailable, true);
+  assert.match(linux.updateArtifact.url, /0\.8\.5-linux-x64\.tar\.gz$/);
+  const linuxArm = desktopUpdate(manifest, '0.8.2', 'linux', 'arm64', 'https://kivuno.vercel.app');
+  assert.equal(linuxArm.status.downloadAvailable, false);
   const olderMac = desktopUpdate(manifest, '0.8.2', 'darwin', 'arm64', 'https://kivuno.vercel.app');
-  assert.equal(olderMac.status.newerReleaseCount, 2);
-  assert.equal(olderMac.status.required, false);
+  assert.equal(olderMac.status.downloadAvailable, false);
   manifest.platforms.windows.url = 'https://attacker.test/downloads/Kivuno-0.8.5-Setup.exe';
   assert.throws(
     () => desktopUpdate(manifest, '0.8.2', 'win32', 'x64', 'https://kivuno.vercel.app'),
+    /invalid installer/,
+  );
+  manifest.platforms.linux.url = '/downloads/Kivuno-0.8.4-linux-x64.tar.gz';
+  assert.throws(
+    () => desktopUpdate(manifest, '0.8.2', 'linux', 'x64', 'https://kivuno.vercel.app'),
     /invalid installer/,
   );
 });
@@ -72,7 +103,7 @@ test('macOS updates accept only version-matched GitHub release assets and truste
   };
   const update = desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app');
   assert.equal(update.status.downloadAvailable, true);
-  assert.equal(update.downloadUrl, manifest.platforms.macos.autoUpdate.url);
+  assert.equal(update.updateArtifact.url, manifest.platforms.macos.autoUpdate.url);
   assert.equal(update.updateArtifact.size, 1024);
   const { autoUpdate: _autoUpdate, ...macosWithoutZip } = manifest.platforms.macos;
   const dmgFallback = {
@@ -80,8 +111,9 @@ test('macOS updates accept only version-matched GitHub release assets and truste
     platforms: { ...manifest.platforms, macos: macosWithoutZip },
   };
   assert.equal(
-    desktopUpdate(dmgFallback, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app').downloadUrl,
-    'https://kivuno.vercel.app/downloads/Kivuno-0.8.5-macOS-arm64.dmg',
+    desktopUpdate(dmgFallback, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app').status
+      .downloadAvailable,
+    false,
   );
   assert.equal(githubMacReleaseAsset(manifest.platforms.macos.autoUpdate.url, '.zip'), true);
   assert.equal(
@@ -146,6 +178,45 @@ test('macOS updater follows GitHub asset redirects and rejects untrusted hosts',
     }),
     /unapproved download host/,
   );
+});
+
+test('artifact download reports progress and rejects changed bytes', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kivuno-download-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const contents = 'artifact';
+  const artifact = {
+    url: 'https://kivuno.vercel.app/downloads/Kivuno-0.8.5-Setup.exe',
+    sha256: createHash('sha256').update(contents).digest('hex'),
+    size: contents.length,
+  };
+  const received: number[] = [];
+  const target = path.join(directory, 'verified');
+  await downloadUpdate(artifact, target, (percent: number) => received.push(percent), {
+    fetchImpl: async () => new Response(contents),
+  });
+  assert.equal(await readFile(target, 'utf8'), contents);
+  assert.deepEqual(received, [100]);
+  await assert.rejects(
+    downloadUpdate(artifact, path.join(directory, 'changed'), () => {}, {
+      fetchImpl: async () => new Response('tampered'),
+    }),
+    /Không xác minh được/,
+  );
+});
+
+test('portable update refuses to replace directories with extra user files', async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kivuno-portable-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await mkdir(path.join(directory, 'resources'));
+  await writeFile(path.join(directory, 'kivuno'), 'fixture');
+  await writeFile(path.join(directory, 'resources', 'app.asar'), 'fixture');
+  await writeFile(
+    path.join(directory, portableManifest),
+    JSON.stringify({ version: '0.8.5', tree: await portableTree(directory) }),
+  );
+  await verifyPortableInstall(directory, '0.8.5');
+  await writeFile(path.join(directory, 'resources', 'user-notes.txt'), 'keep');
+  await assert.rejects(verifyPortableInstall(directory, '0.8.5'), /đã thay đổi/);
 });
 
 test('Linux credentials require an OS keyring for both reading and writing sessions', () => {

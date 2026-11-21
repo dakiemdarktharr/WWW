@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.2',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Khi có phiên bản mới, bấm Cập nhật trên thanh tiêu đề để tải, kiểm tra và cài bản mới. Kivuno mở lại sau khi cài.',
+        en: 'When a new version is available, select Update in the title bar to download, verify and install it. Kivuno reopens after installation.',
+      },
+    ],
+  },
+  {
     version: '0.9.1',
     date: '2026-11-21',
     fixes: [

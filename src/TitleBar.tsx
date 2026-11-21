@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Copy, Download, Loader2, Minus, RefreshCw, Square, X } from 'lucide-react';
-import type { DesktopUpdateStatus, DesktopWindowState } from './desktop';
+import { Copy, Download, Loader2, Minus, Square, X } from 'lucide-react';
+import type { DesktopUpdateProgress, DesktopUpdateStatus, DesktopWindowState } from './desktop';
 import './TitleBar.css';
 
 export default function DesktopTitleBar({
   update,
-  downloading,
+  progress,
   onUpdate,
 }: {
   update: DesktopUpdateStatus | null;
-  downloading: boolean;
+  progress: DesktopUpdateProgress | null;
   onUpdate: () => void;
 }) {
   const [state, setState] = useState<DesktopWindowState>({ maximized: false, fullscreen: false });
@@ -86,7 +86,12 @@ export default function DesktopTitleBar({
       .catch(() => {});
   };
   if (!window.relayDesktop) return null;
-  const inAppUpdate = window.relayDesktop.platform === 'darwin';
+  const progressLabel =
+    progress?.phase === 'downloading'
+      ? `Đang tải ${progress.percent}%`
+      : progress?.phase === 'installing'
+        ? 'Đang cài và mở lại…'
+        : '';
   return (
     <header
       className={`desktop-titlebar${state.fullscreen ? ' fullscreen' : ''}${revealed ? ' revealed' : ''}`}
@@ -102,24 +107,22 @@ export default function DesktopTitleBar({
         <span>Kivuno</span>
       </div>
       <div className="desktop-titlebar-actions">
-        {update?.hasUpdate && update.downloadAvailable && (
+        {update && (progress || (update.hasUpdate && update.downloadAvailable)) && (
           <button
-            className={`desktop-update-button${update.required ? ' required' : ''}`}
-            aria-label={`Cập nhật Kivuno phiên bản ${update.latestVersion}`}
-            title={`${inAppUpdate ? 'Cập nhật trong ứng dụng' : 'Tải bản cập nhật'} v${update.latestVersion}`}
-            disabled={downloading}
+            className="desktop-update-button"
+            type="button"
+            aria-label={progressLabel || `Cập nhật Kivuno phiên bản ${update.latestVersion}`}
+            title={progressLabel || `Tải, cài v${update.latestVersion} và mở lại Kivuno`}
+            disabled={Boolean(progress)}
             onClick={onUpdate}
           >
-            {downloading ? (
-              <Loader2 className="spin" size={14} />
-            ) : inAppUpdate ? (
-              <RefreshCw size={14} />
-            ) : (
-              <Download size={14} />
-            )}
-            <span>v{update.latestVersion}</span>
+            {progress ? <Loader2 className="spin" size={14} /> : <Download size={14} />}
+            <span>{progressLabel || `Cập nhật v${update.latestVersion}`}</span>
           </button>
         )}
+        <span className="desktop-update-announcement" role="status">
+          {progress?.phase === 'downloading' ? 'Đang tải bản cập nhật Kivuno' : progressLabel}
+        </span>
         <div className="desktop-titlebar-controls">
           <button aria-label="Thu nhỏ" onClick={() => control('minimize')}>
             <Minus size={15} />

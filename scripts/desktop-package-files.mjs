@@ -3,6 +3,7 @@ export const desktopPackageFiles = [
   'preload.cjs',
   'browser.cjs',
   'provider-tools.cjs',
+  'portable-install.cjs',
   'release-download.cjs',
   'security.cjs',
   'workspaces.cjs',
@@ -11,3 +12,6 @@ export const desktopPackageFiles = [
   'icon.ico',
   '!node_modules/**/*',
 ];
+
+export const windowsUpdateHelpers = ['windows-update-helper.ps1', 'windows-update-launcher.js'];
+export const linuxUpdateHelpers = ['linux-update-helper.sh'];

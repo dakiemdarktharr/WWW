@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, writeFile, rm, lstat, chmod, stat, copyFile } from 'node:fs/promises';
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
-import { desktopPackageFiles } from './desktop-package-files.mjs';
+import { desktopPackageFiles, linuxUpdateHelpers } from './desktop-package-files.mjs';
 import { verifyDesktopModules } from './desktop-package-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { create as createTar } from 'tar';
 import { build, Platform, Arch } from 'electron-builder';
+import portableInstall from '../desktop/portable-install.cjs';
 
 if (process.platform !== 'linux' || process.arch !== 'x64')
   throw new Error('Build the Linux desktop on a Linux x64 host.');
@@ -193,7 +194,7 @@ await build({
     electronVersion: packageJson.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
     extraMetadata: { version: packageJson.version },
-    files: desktopPackageFiles,
+    files: [...desktopPackageFiles, ...linuxUpdateHelpers],
     asar: true,
     npmRebuild: false,
     extraResources: [
@@ -211,6 +212,7 @@ await build({
       await verifyDesktopModules(
         path.join(root, 'desktop'),
         path.join(appOutDir, 'resources', 'app.asar'),
+        linuxUpdateHelpers,
       );
       for (const required of [
         'kivuno',
@@ -243,6 +245,13 @@ exec "$HERE/kivuno" "$@"
   { mode: 0o755 },
 );
 await copyFile(path.join(root, 'docs/DESKTOP.md'), path.join(unpacked, 'DESKTOP.md'));
+await writeFile(
+  path.join(unpacked, portableInstall.portableManifest),
+  JSON.stringify({
+    version: packageJson.version,
+    tree: await portableInstall.portableTree(unpacked),
+  }) + '\n',
+);
 const artifactName = `Kivuno-${packageJson.version}-linux-x64.tar.gz`;
 const file = path.join(output, artifactName);
 await createTar({ gzip: true, file, cwd: unpacked, prefix: 'Kivuno', portable: true }, ['.']);
@@ -261,6 +270,7 @@ if (manifest.version !== packageJson.version || !manifest.platforms?.windows?.av
   throw new Error('Linux release must be paired with the current verified Windows artifact.');
 manifest.platforms.linux = {
   available: true,
+  version: packageJson.version,
   url: `/downloads/${artifactName}`,
   size: info.size,
   sha256,

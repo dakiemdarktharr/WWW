@@ -12,9 +12,15 @@ The public website introduces Kivuno, authenticates the workspace owner, approve
 
 ## Desktop updates
 
-The title bar shows an update button when a newer release is available for the current platform. Skipping is optional until three newer releases exist; at that point Kivuno blocks workspace use until the latest version is installed. The updater checks the published release manifest and compares its version history with the installed version. Each release must be added to `release-history.json`, newest first, when the package version is advanced. Windows and Linux installers are opened through the system browser. On macOS, Kivuno downloads a versioned ZIP update, verifies its byte size and SHA256, replaces the installed `Kivuno.app` bundle and reopens it. If the app is installed in a protected folder such as `/Applications`, macOS asks for administrator approval. The DMG remains the installer for new Mac installs. Versions built before the in-app updater need one manual DMG install to receive it.
+When a newer installable release is available for your platform, the title bar shows **Cập nhật** and the version. Click once to download the package, check its size and SHA-256 against the release manifest, install it and reopen Kivuno. You can continue using the workspace while the package downloads. Updates are optional. Kivuno stops its local agents when it closes to apply an update and asks you to sign in again when it opens.
 
-Installs older than 0.8.3 do not contain the updater and need one manual install from the website. Version 0.8.4 includes the Antigravity Google sign-in action. Its macOS DMG is published as a GitHub Release asset and served through the Kivuno download URL, so existing updater versions keep using the first-party download path.
+- Windows x64 runs the per-user NSIS installer against the current install folder.
+- macOS Apple Silicon replaces `Kivuno.app` using the release ZIP. A protected folder such as `/Applications` can require administrator approval. New installs use the DMG.
+- Linux x64 replaces the extracted portable bundle. Extract it into its own directory under a location you can write to. Keep user files and workspace data outside that directory.
+
+Older Windows and Linux builds can require one manual upgrade to a release that includes this updater. On macOS, builds with the in-place ZIP updater can upgrade from inside the app when the target release includes its ZIP. Builds that predate it need one manual DMG install.
+
+To publish a new desktop version, add it to `release-history.json`, newest first, and run the release packaging flow. The Windows installer and Linux archive must match the version and checksum in the feed. Include the matching macOS update ZIP in the Mac release metadata before offering the same version to Mac users. After publishing, check `/api/desktop/release` for all three platforms.
 
 ## Connect a project folder
 

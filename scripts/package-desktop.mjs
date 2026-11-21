@@ -9,7 +9,7 @@ import { build, Platform, Arch } from 'electron-builder';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 import { configureDestinationStaging } from './nsis-destination-staging.mjs';
-import { desktopPackageFiles } from './desktop-package-files.mjs';
+import { desktopPackageFiles, windowsUpdateHelpers } from './desktop-package-files.mjs';
 import { verifyDesktopModules } from './desktop-package-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -110,15 +110,13 @@ if (macosArtifact) {
       throw new Error('The macOS in-app update metadata is incomplete.');
     const updateUrl = new URL(update.url);
     const updateSize = Number(update.size);
-    const expectedGitHubUpdateUrl =
-      `https://github.com/dakiemdarktharr/WWW/releases/download/v${update.version}/` +
-      `Kivuno-${update.version}-macOS-arm64.zip`;
+    const updateFilename = `Kivuno-${update.version}-macOS-arm64.zip`;
+    const expectedGitHubUpdateUrl = `https://github.com/dakiemdarktharr/WWW/releases/download/v${update.version}/${updateFilename}`;
     const isGitHubUpdate = updateUrl.href === expectedGitHubUpdateUrl;
-    const validUpdatePath =
-      /^\/downloads\/Kivuno-[a-zA-Z0-9._-]+\.zip$/i.test(updateUrl.pathname) || isGitHubUpdate;
+    const validUpdatePath = updateUrl.pathname === `/downloads/${updateFilename}` || isGitHubUpdate;
     const trustedUpdateOrigin =
       updateUrl.origin === 'https://kivuno.vercel.app' ||
-      updateUrl.hostname.endsWith('.public.blob.vercel-storage.com') ||
+      updateUrl.origin === 'https://b42qbyq8gad5gspx.public.blob.vercel-storage.com' ||
       isGitHubUpdate;
     if (
       update.version !== macosArtifact.version ||
@@ -178,7 +176,7 @@ await build({
     electronVersion: rootPackage.devDependencies.electron,
     directories: { app: path.join(root, 'desktop'), output },
     extraMetadata: { version: manifest.version },
-    files: desktopPackageFiles,
+    files: [...desktopPackageFiles, ...windowsUpdateHelpers],
     asar: true,
     npmRebuild: false,
     extraResources: [
@@ -195,6 +193,7 @@ await build({
       await verifyDesktopModules(
         path.join(root, 'desktop'),
         path.join(appOutDir, 'resources', 'app.asar'),
+        windowsUpdateHelpers,
       );
       // Fail the build before producing a downloadable installer with missing deps.
       for (const required of [

@@ -9,7 +9,12 @@ contextBridge.exposeInMainWorld(
     platform: process.platform,
     version: versionArgument?.slice('--kivuno-version='.length) || '0.0.0',
     checkForUpdates: () => ipcRenderer.invoke('relay:update-status'),
-    installUpdate: () => ipcRenderer.invoke('relay:update-install'),
+    installUpdate: (version) => ipcRenderer.invoke('relay:update-install', version),
+    onUpdateProgress: (callback) => {
+      const listener = (_event, progress) => callback(progress);
+      ipcRenderer.on('relay:update-progress', listener);
+      return () => ipcRenderer.removeListener('relay:update-progress', listener);
+    },
     getStatus: () => ipcRenderer.invoke('relay:status'),
     onStatus: (callback) => {
       const listener = (_event, value) => callback(value);

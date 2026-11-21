@@ -278,11 +278,23 @@ function compareVersions(left, right) {
 
 function releaseForThisPlatform(manifest, platform, arch) {
   if (platform === 'win32' && arch === 'x64')
-    return { key: 'windows', suffix: '.exe', item: manifest.platforms?.windows || manifest };
+    return {
+      item: manifest.platforms?.windows || manifest,
+      platform: 'win32-x64',
+      filename: (version) => `Kivuno-${version}-Setup.exe`,
+    };
   if (platform === 'darwin' && arch === 'arm64')
-    return { key: 'macos', suffix: '.dmg', item: manifest.platforms?.macos };
+    return {
+      item: manifest.platforms?.macos,
+      platform: 'darwin-arm64',
+      filename: (version) => `Kivuno-${version}-macOS-arm64.zip`,
+    };
   if (platform === 'linux' && arch === 'x64')
-    return { key: 'linux', suffix: '.tar.gz', item: manifest.platforms?.linux };
+    return {
+      item: manifest.platforms?.linux,
+      platform: 'linux-x64',
+      filename: (version) => `Kivuno-${version}-linux-x64.tar.gz`,
+    };
   return null;
 }
 
@@ -305,13 +317,12 @@ function githubMacReleaseAsset(value, suffix) {
   }
 }
 
-function validatedReleaseUrl(item, suffix, identityOrigin) {
-  if (!item || item.available !== true || typeof item.url !== 'string') return '';
-  const url = new URL(item.url, identityOrigin);
-  const isGithubAsset = githubMacReleaseAsset(url.href, suffix);
+function validatedReleaseUrl(value, filename, identityOrigin, isMac) {
+  const url = new URL(value, identityOrigin);
+  const isGithubAsset = isMac && githubMacReleaseAsset(url.href, '.zip');
   const trustedOrigin =
     url.origin === identityOrigin ||
-    (url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com')) ||
+    url.origin === 'https://b42qbyq8gad5gspx.public.blob.vercel-storage.com' ||
     isGithubAsset;
   if (
     url.protocol !== 'https:' ||
@@ -321,8 +332,9 @@ function validatedReleaseUrl(item, suffix, identityOrigin) {
     url.search ||
     url.hash ||
     !trustedOrigin ||
-    (!isGithubAsset && !/^\/downloads\/Kivuno-[a-zA-Z0-9._-]+$/.test(url.pathname)) ||
-    !url.pathname.toLowerCase().endsWith(suffix)
+    (isGithubAsset
+      ? !url.pathname.endsWith(`/${filename}`)
+      : url.pathname !== `/downloads/${filename}`)
   )
     throw new Error('Kivuno returned an invalid installer link.');
   return url.href;
@@ -347,23 +359,30 @@ function trustedMacUpdateRedirect(value) {
   }
 }
 
-function validatedMacAutoUpdate(item, expectedVersion, identityOrigin) {
-  const artifact = item?.autoUpdate;
+function validatedUpdateArtifact(release, expectedVersion, identityOrigin) {
+  if (release?.item?.available !== true) return null;
+  const isMac = release.platform === 'darwin-arm64';
+  const artifact = isMac ? release.item.autoUpdate : release.item;
   if (artifact === undefined) return null;
   if (
     !artifact ||
     typeof artifact.url !== 'string' ||
-    artifact.version !== expectedVersion ||
-    artifact.platform !== 'darwin-arm64' ||
-    artifact.format !== 'zip' ||
+    (artifact.version ?? expectedVersion) !== expectedVersion ||
+    artifact.platform !== release.platform ||
+    (isMac && (artifact.version !== expectedVersion || artifact.format !== 'zip')) ||
     typeof artifact.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/i.test(artifact.sha256) ||
     !Number.isSafeInteger(artifact.size) ||
     artifact.size <= 0 ||
     artifact.size > 4 * 1024 * 1024 * 1024
   )
-    throw new Error('Kivuno returned invalid macOS update metadata.');
-  const url = validatedReleaseUrl({ available: true, url: artifact.url }, '.zip', identityOrigin);
+    throw new Error('Kivuno returned invalid update metadata.');
+  const url = validatedReleaseUrl(
+    artifact.url,
+    release.filename(expectedVersion),
+    identityOrigin,
+    isMac,
+  );
   return { url, sha256: artifact.sha256.toLowerCase(), size: artifact.size };
 }
 
@@ -373,40 +392,17 @@ function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {
   if (!versionParts(currentVersion) || !versionParts(latestVersion))
     throw new Error('Kivuno returned an invalid release version.');
   const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-  const versions = Array.isArray(platformRelease?.item?.releases)
-    ? platformRelease.item.releases
-    : Array.isArray(body.releases)
-      ? body.releases
-      : [latestVersion];
-  const newerReleaseCount = new Set(
-    [latestVersion, ...versions].filter(
-      (version) =>
-        typeof version === 'string' &&
-        compareVersions(version, currentVersion) > 0 &&
-        compareVersions(version, latestVersion) <= 0,
-    ),
-  ).size;
-  const macAutoUpdate =
-    hasUpdate && platformRelease?.key === 'macos'
-      ? validatedMacAutoUpdate(platformRelease.item, latestVersion, identityOrigin)
-      : null;
-  const downloadUrl = hasUpdate
-    ? platformRelease?.key === 'macos'
-      ? macAutoUpdate?.url ||
-        validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
-      : validatedReleaseUrl(platformRelease?.item, platformRelease?.suffix, identityOrigin)
-    : '';
+  const updateArtifact = hasUpdate
+    ? validatedUpdateArtifact(platformRelease, latestVersion, identityOrigin)
+    : null;
   return {
     status: {
       currentVersion,
       latestVersion,
       hasUpdate,
-      downloadAvailable: Boolean(downloadUrl),
-      newerReleaseCount,
-      required: Boolean(downloadUrl) && newerReleaseCount >= 3,
+      downloadAvailable: Boolean(updateArtifact),
     },
-    downloadUrl,
-    updateArtifact: macAutoUpdate,
+    updateArtifact,
   };
 }
 

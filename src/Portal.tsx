@@ -852,7 +852,7 @@ function PortalContent() {
               </div>
               <div className="kp-footer-bottom">
                 <span>© {new Date().getFullYear()} Kivuno · NoSleepClub</span>
-                <span>{release?.version || '0.9.1'}</span>
+                <span>{release?.version || '0.9.2'}</span>
                 <a href="#updates">Update patches</a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
                 <button onClick={home}>{t('Về đầu trang')}</button>

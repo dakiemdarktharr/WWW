@@ -52,9 +52,21 @@
 .desktop-update-button:hover {
   background: color-mix(in srgb, var(--lime) 17%, transparent);
 }
-.desktop-update-button.required {
-  border-color: color-mix(in srgb, #e7c785 55%, var(--line));
-  color: #e7c785;
+.desktop-update-button:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.desktop-update-button:disabled {
+  cursor: wait;
+  opacity: 1;
+}
+.desktop-update-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .desktop-titlebar-controls {
   display: flex;
@@ -94,76 +106,6 @@
   overflow: auto;
   position: relative;
   z-index: 1;
-}
-.desktop-workspace-layer {
-  min-height: 100%;
-}
-.desktop-update-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 100;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: color-mix(in srgb, var(--bg) 88%, #000 12%);
-  backdrop-filter: blur(9px);
-}
-.desktop-update-dialog {
-  width: min(100%, 460px);
-  padding: 32px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
-  box-shadow: 0 24px 100px #0008;
-  text-align: center;
-}
-.desktop-update-icon {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  margin: 0 auto 18px;
-  border: 1px solid color-mix(in srgb, var(--lime) 34%, var(--line));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--lime) 10%, transparent);
-  color: var(--lime);
-}
-.desktop-update-dialog h2 {
-  margin-bottom: 10px;
-  font-size: 20px;
-}
-.desktop-update-dialog p {
-  color: var(--muted);
-  line-height: 1.7;
-}
-.desktop-update-version {
-  display: inline-block;
-  margin: 16px 0;
-  color: var(--lime);
-  font-family: var(--mono);
-  font-size: 13px;
-}
-.desktop-update-download {
-  width: 100%;
-  min-height: 42px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  margin-top: 20px;
-  border: 1px solid color-mix(in srgb, var(--lime) 55%, var(--line));
-  border-radius: 7px;
-  background: #d5ff5f;
-  color: #222619;
-  font-weight: 700;
-}
-.desktop-update-download:hover {
-  background: #e1ff91;
-}
-.desktop-update-error {
-  margin-top: 14px !important;
-  color: #ffadb4 !important;
-  font-size: 12px;
 }
 .desktop-update-error-toast {
   position: fixed;

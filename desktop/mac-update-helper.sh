@@ -2,7 +2,7 @@
 set -eu
 umask 077
 
-if [ "$#" -ne 7 ]; then
+if [ "$#" -ne 8 ]; then
   exit 2
 fi
 
@@ -13,6 +13,7 @@ PARENT_PID=$4
 EXPECTED_VERSION=$5
 EXPECTED_SHA=$6
 EXPECTED_SIZE=$7
+PROFILE=$8
 
 case "$TARGET_APP" in
   */Kivuno.app) ;;
@@ -37,14 +38,16 @@ done
 
 PARENT_DIR=${TARGET_APP%/*}
 open_installed_app() {
+  set -- -a "$TARGET_APP"
+  if [ -n "$PROFILE" ]; then set -- "$@" --args "--user-data-dir=$PROFILE"; fi
   if [ "$(/usr/bin/id -u)" = '0' ]; then
     CONSOLE_UID=$(/usr/bin/stat -f '%u' /dev/console) || return 1
     case "$CONSOLE_UID" in
       ''|*[!0-9]*|0) return 1 ;;
     esac
-    /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -H -u "#$CONSOLE_UID" /usr/bin/open -a "$TARGET_APP"
+    /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -H -u "#$CONSOLE_UID" /usr/bin/open "$@"
   else
-    /usr/bin/open -a "$TARGET_APP"
+    /usr/bin/open "$@"
   fi
 }
 

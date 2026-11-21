@@ -46,9 +46,10 @@ export interface DesktopUpdateStatus {
   latestVersion: string;
   hasUpdate: boolean;
   downloadAvailable: boolean;
-  newerReleaseCount: number;
-  required: boolean;
+  lastInstallFailed: boolean;
 }
+export type DesktopUpdateProgress =
+  { phase: 'downloading'; percent: number } | { phase: 'installing' };
 export interface BrowserState {
   active: boolean;
   projectId: string;
@@ -78,7 +79,8 @@ declare global {
       platform: string;
       version: string;
       checkForUpdates(): Promise<DesktopUpdateStatus>;
-      installUpdate(): Promise<void>;
+      installUpdate(version: string): Promise<void>;
+      onUpdateProgress(callback: (progress: DesktopUpdateProgress) => void): () => void;
       getStatus(): Promise<DesktopStatus>;
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;
