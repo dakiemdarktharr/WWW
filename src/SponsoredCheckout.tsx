@@ -20,6 +20,9 @@ type Receipt = {
   wallet: string;
   token: string | null;
   treasury: string | null;
+  contract: string | null;
+  previousPlan: number;
+  previousPaidUntil: number;
   createdAt: number;
 };
 export function SponsoredCheckout({
@@ -29,6 +32,7 @@ export function SponsoredCheckout({
   refresh,
   token,
   treasury,
+  contract,
 }: {
   account: string;
   wallet: string | null;
@@ -36,6 +40,7 @@ export function SponsoredCheckout({
   refresh: () => Promise<unknown>;
   token: string | undefined;
   treasury: string | undefined;
+  contract: string | undefined;
 }) {
   const [order, setOrder] = useState<Receipt | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,6 +126,13 @@ export function SponsoredCheckout({
           !wallet ||
           !token ||
           !treasury ||
+          !contract ||
+          !quote.contract ||
+          getAddress(quote.contract) !== getAddress(contract) ||
+          ![0, 1, 2].includes(quote.previousPlan) ||
+          !Number.isSafeInteger(quote.previousPaidUntil) ||
+          quote.previousPaidUntil < 0 ||
+          (quote.previousPlan === 0) !== (quote.previousPaidUntil === 0) ||
           quote.protocol !== SPONSORED_PROTOCOL ||
           quote.plan !== plan ||
           quote.actualUsdc !== 0 ||
@@ -146,6 +158,7 @@ export function SponsoredCheckout({
           ...quote,
           token: quote.token,
           treasury: quote.treasury,
+          contract: quote.contract,
         });
         signature = await signer.signTypedData(auth.domain, AUTHORIZATION_TYPES, auth.message);
       }
@@ -198,7 +211,10 @@ export function SponsoredCheckout({
           Phí mạng do Kivuno trả bằng test AVAX miễn phí trên Fuji. Bạn không cần nạp USDC hoặc
           AVAX.
         </p>
-        <p>Ví của bạn ký chuyển 0 USDC đến ví chủ Kivuno. Kivuno gửi hộ giao dịch và trả gas.</p>
+        <p>
+          Ví của bạn ký mua gói qua hợp đồng KivunoPlans. Hợp đồng chuyển tiếp 0 USDC về ví chủ;
+          Kivuno trả test gas.
+        </p>
         <dl className="billing-transfer-parties">
           <dt>Ví của bạn</dt>
           <dd>
@@ -209,6 +225,15 @@ export function SponsoredCheckout({
             <code>{treasury}</code>
           </dd>
         </dl>
+        {contract && (
+          <a
+            href={'https://testnet.snowtrace.io/address/' + contract}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Xem hợp đồng mua gói KivunoPlans ↗
+          </a>
+        )}
       </div>
       <details className="billing-wallet-box">
         <summary>Ví riêng của tài khoản</summary>
@@ -308,8 +333,8 @@ export function SponsoredCheckout({
         </button>
       )}
       <p>
-        Trên Explorer, giao dịch được gửi bởi ví trả gas của Kivuno đến hợp đồng USDC. Mục Transfer
-        ghi ví của bạn → ví chủ, số tiền 0 USDC.
+        Trên Explorer, ví trả gas gọi KivunoPlans. Hai sự kiện Transfer ghi ví của bạn → hợp đồng →
+        ví chủ, đều 0 USDC. PlanPaid ghi gói và hạn dùng do hợp đồng xác nhận.
       </p>
       <p>
         Không tự gia hạn. Gia hạn cùng gói nối thêm 30 ngày; đổi gói bắt đầu kỳ mới ngay. Giá 2 và 6

@@ -46,6 +46,7 @@ test('enabling, changing and removing identity, mail or billing configuration ch
     RELAY_MAIL_FROM: 'mail@kivuno.example',
     RELAY_MAIL_REPLY_TO: 'support@kivuno.example',
     KIVUNO_FUJI_PAYMENT_CONTRACT: '0x' + '1'.repeat(40),
+    KIVUNO_FUJI_SPONSORED_CONTRACT: '0x' + '4'.repeat(40),
     KIVUNO_FUJI_USDC_ADDRESS: '0x' + '2'.repeat(40),
     KIVUNO_FUJI_TREASURY_ADDRESS: '0x' + '3'.repeat(40),
     KIVUNO_FUJI_RPC_URL: 'https://rpc.example',

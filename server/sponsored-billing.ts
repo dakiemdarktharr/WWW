@@ -17,6 +17,11 @@ import {
   SPONSORED_PROTOCOL,
   authorizationInterface,
   purchaseAuthorization,
+  LEGACY_SPONSORED_PROTOCOL,
+  PLANS_ABI,
+  plansInterface,
+  purchaseIntent,
+  contractPurchase,
 } from '../shared/sponsored-authorization.ts';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -41,6 +46,9 @@ type Order = {
   protocol?: string;
   token?: string;
   treasury?: string;
+  contract?: string;
+  previousPlan?: number;
+  previousPaidUntil?: number;
   startBlock?: number;
   scanBlock?: number;
   signature?: string;
@@ -72,6 +80,10 @@ export function registerSponsoredBilling(
   const treasury = process.env.KIVUNO_FUJI_TREASURY_ADDRESS
     ? getAddress(process.env.KIVUNO_FUJI_TREASURY_ADDRESS)
     : null;
+  const contractAddress = process.env.KIVUNO_FUJI_SPONSORED_CONTRACT
+    ? getAddress(process.env.KIVUNO_FUJI_SPONSORED_CONTRACT)
+    : null;
+  const plans = contractAddress ? new Contract(contractAddress, PLANS_ABI, provider) : null;
   const authorization = (order: Order) =>
     purchaseAuthorization({ ...order, token: order.token!, treasury: order.treasury! });
   app.addHook('onClose', async () => provider.destroy());
@@ -92,6 +104,9 @@ export function registerSponsoredBilling(
     protocol: order.protocol || 'legacy-receipt-v1',
     token: order.token || null,
     treasury: order.treasury || null,
+    contract: order.contract || null,
+    previousPlan: order.previousPlan ?? 0,
+    previousPaidUntil: order.previousPaidUntil ?? 0,
     authorization: order.protocol === SPONSORED_PROTOCOL ? authorization(order) : null,
   });
   const userFor = async (req: FastifyRequest) => {
@@ -107,9 +122,21 @@ export function registerSponsoredBilling(
     return order;
   };
   const ready = async () => {
-    if (!signer || !token || !treasury) return false;
+    if (!signer || !token || !treasury || !plans) return false;
     try {
+      const [version, onToken, onTreasury, onRelayer, price] = await Promise.all([
+        plans.protocol(),
+        plans.usdc(),
+        plans.treasury(),
+        plans.relayer(),
+        plans.ACTUAL_PRICE(),
+      ]);
       return (
+        version === SPONSORED_PROTOCOL &&
+        onToken === token &&
+        onTreasury === treasury &&
+        onRelayer === signer.address &&
+        price === 0n &&
         BigInt(await provider.send('eth_chainId', [])) === BigInt(CHAIN) &&
         (await new Contract(token, AUTHORIZATION_ABI, provider).DOMAIN_SEPARATOR()) ===
           TypedDataEncoder.hashDomain({
@@ -133,6 +160,7 @@ export function registerSponsoredBilling(
       chainId: CHAIN,
       token,
       treasury,
+      contract: contractAddress,
       protocol: SPONSORED_PROTOCOL,
     };
   });
@@ -145,8 +173,15 @@ export function registerSponsoredBilling(
     const binding = store.lookup<{ id: string; address: string }>('billingWallet', user.id);
     if (!binding)
       throw new DomainError('Ví tài khoản chưa sẵn sàng. Đăng nhập lại để tạo ví.', 409);
-    if (!token || !treasury) throw new DomainError('Chưa cấu hình ví nhận và USDC Fuji.', 503);
+    if (!token || !treasury || !plans || !contractAddress)
+      throw new DomainError('Chưa cấu hình hợp đồng KivunoPlans trên Fuji.', 503);
     const startBlock = await provider.getBlockNumber();
+    const current = await plans.subscriptions(binding.address);
+    const previous =
+      current.paidUntil === 0n ? store.lookup<Term>('billingEntitlement', user.id) : null;
+    const previousPlan =
+      previous && previous.paidUntil > Date.now() ? (previous.tier === 'plus' ? 1 : 2) : 0;
+    const previousPaidUntil = previousPlan ? Math.floor(previous!.paidUntil / 1000) : 0;
     return store.transaction(() => {
       const orders = store.all<Order>('sponsoredOrder').filter((o) => o.ownerId === user.id);
       // Returning the open order makes double clicks and multiple tabs idempotent.
@@ -157,6 +192,9 @@ export function registerSponsoredBilling(
           o.protocol === SPONSORED_PROTOCOL &&
           o.token === token &&
           o.treasury === treasury &&
+          o.contract === contractAddress &&
+          o.previousPlan === previousPlan &&
+          o.previousPaidUntil === previousPaidUntil &&
           o.plan === plan &&
           o.wallet === binding.address &&
           Date.now() - o.createdAt < 900_000,
@@ -175,6 +213,9 @@ export function registerSponsoredBilling(
           protocol: SPONSORED_PROTOCOL,
           token,
           treasury,
+          contract: contractAddress,
+          previousPlan,
+          previousPaidUntil,
           startBlock,
         }),
       );
@@ -195,7 +236,29 @@ export function registerSponsoredBilling(
     }
     if (!receipt) return false;
     let tx = await provider.getTransaction(order.hash);
-    const signed = order.protocol === SPONSORED_PROTOCOL;
+    const contractFlow = order.protocol === SPONSORED_PROTOCOL;
+    const signed = contractFlow || order.protocol === LEGACY_SPONSORED_PROTOCOL;
+    const planEvent = (candidate: typeof receipt) =>
+      candidate?.logs
+        .filter((l) => l.address.toLowerCase() === order.contract?.toLowerCase())
+        .flatMap((l) => {
+          try {
+            const event = plansInterface.parseLog(l);
+            return event ? [event] : [];
+          } catch {
+            return [];
+          }
+        })
+        .find(
+          (e) =>
+            e.name === 'PlanPaid' &&
+            e.args.paymentIntentId === purchaseIntent(order.id) &&
+            e.args.payer === order.wallet &&
+            Number(e.args.planId) === (order.plan === 'plus' ? 1 : 2) &&
+            e.args.token === order.token &&
+            e.args.amount === 0n &&
+            e.args.paidUntil > 0n,
+        );
     // Another relayer can submit an EIP-3009 authorization first. Reconcile the
     // exact token event/nonce instead of losing a valid purchase to front-running.
     const matches = (candidate: typeof receipt) => {
@@ -221,12 +284,21 @@ export function registerSponsoredBilling(
           (e) =>
             e.name === 'Transfer' &&
             e.args.from === order.wallet &&
-            e.args.to === order.treasury &&
+            e.args.to === (contractFlow ? order.contract : order.treasury) &&
             e.args.value === 0n,
-        )
+        ) &&
+        (!contractFlow ||
+          (!!planEvent(candidate) &&
+            events.some(
+              (e) =>
+                e.name === 'Transfer' &&
+                e.args.from === order.contract &&
+                e.args.to === order.treasury &&
+                e.args.value === 0n,
+            )))
       );
     };
-    if (signed && receipt.status === 0) {
+    if (order.protocol === LEGACY_SPONSORED_PROTOCOL && receipt.status === 0) {
       const end = await provider.getBlockNumber();
       let from = order.scanBlock ?? order.startBlock!;
       for (let i = 0; i < 3 && from <= end; i++) {
@@ -273,7 +345,11 @@ export function registerSponsoredBilling(
     if (
       signed &&
       receipt.status === 1 &&
-      (!matches(receipt) || !tx || Number(tx.chainId) !== CHAIN)
+      (!matches(receipt) ||
+        !tx ||
+        Number(tx.chainId) !== CHAIN ||
+        (contractFlow &&
+          (tx.to !== order.contract || tx.from !== order.sponsor || tx.value !== 0n)))
     )
       throw new DomainError(
         'USDC chưa xác nhận đúng chữ ký, ví nhận và số tiền 0. Chưa cấp gói.',
@@ -290,8 +366,9 @@ export function registerSponsoredBilling(
       }
       const previous = store.lookup<Term>('billingEntitlement', order.ownerId);
       const paidAt = block.timestamp * 1000;
-      const paidUntil =
-        (previous?.tier === order.plan ? Math.max(paidAt, previous.paidUntil) : paidAt) + PERIOD;
+      const paidUntil = contractFlow
+        ? Number(planEvent(receipt)!.args.paidUntil) * 1000
+        : (previous?.tier === order.plan ? Math.max(paidAt, previous.paidUntil) : paidAt) + PERIOD;
       store.put('billingEntitlement', {
         id: order.ownerId,
         ownerId: order.ownerId,
@@ -380,8 +457,17 @@ export function registerSponsoredBilling(
           'Dự án đã dùng hết lượt ghi biên nhận demo hôm nay. Thử lại ngày mai.',
           429,
         );
-      if (order.token !== token || order.treasury !== treasury)
+      if (
+        order.token !== token ||
+        order.treasury !== treasury ||
+        order.contract !== contractAddress
+      )
         throw new DomainError('Cấu hình ví nhận đã thay đổi. Hãy tạo đơn mới.', 409);
+      if (!(await ready()))
+        throw new DomainError(
+          'Hợp đồng hoặc ví trả gas chưa sẵn sàng. Bạn không cần nạp tiền.',
+          503,
+        );
       const auth = authorization(order);
       if (
         (await new Contract(order.token!, AUTHORIZATION_ABI, provider).DOMAIN_SEPARATOR()) !==
@@ -390,19 +476,14 @@ export function registerSponsoredBilling(
         throw new DomainError('Hợp đồng USDC không khớp miền chữ ký.', 503);
       const commitment = auth.message.nonce;
       const sig = Signature.from(signature!);
-      const data = authorizationInterface.encodeFunctionData('transferWithAuthorization', [
-        order.wallet,
-        order.treasury,
-        0,
-        auth.message.validAfter,
-        auth.message.validBefore,
-        commitment,
+      const data = plansInterface.encodeFunctionData('paySponsored', [
+        contractPurchase({ ...order, token: order.token!, treasury: order.treasury! }),
         sig.v,
         sig.r,
         sig.s,
       ]);
       const gasPrice = (await provider.getFeeData()).gasPrice;
-      const gasLimit = 150_000n;
+      const gasLimit = 250_000n;
       if (
         !gasPrice ||
         gasPrice * gasLimit > 2_000_000_000_000_000n ||
@@ -414,7 +495,7 @@ export function registerSponsoredBilling(
         );
       const raw = await signer.signTransaction({
         chainId: CHAIN,
-        to: order.token,
+        to: order.contract,
         value: 0n,
         data,
         nonce: await provider.getTransactionCount(signer.address, 'pending'),

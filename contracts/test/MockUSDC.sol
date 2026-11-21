@@ -97,6 +97,7 @@ contract MockUSDC {
         authorizationState[from][nonce] = true;
         balances[from] -= value;
         balances[to] += value;
+        emit AuthorizationUsed(from, nonce);
         emit Transfer(from, to, value);
     }
 }

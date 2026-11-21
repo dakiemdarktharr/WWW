@@ -136,6 +136,9 @@ export function registerBillingRoutes(
 ) {
   registerSponsoredBilling(app, store, currentUser);
   const demo = sponsoredMode();
+  const sponsoredContractAddress = process.env.KIVUNO_FUJI_SPONSORED_CONTRACT
+    ? safeAddress(process.env.KIVUNO_FUJI_SPONSORED_CONTRACT, '')
+    : null;
   const contractAddress = process.env.KIVUNO_FUJI_PAYMENT_CONTRACT
     ? safeAddress(process.env.KIVUNO_FUJI_PAYMENT_CONTRACT, '')
     : '';
@@ -321,6 +324,7 @@ export function registerBillingRoutes(
         tokenVersion: '2',
         tokenDecimals: 6,
         contractAddress: contractAddress || null,
+        sponsoredContractAddress,
         treasuryAddress,
         available:
           demo || (request.query as { rail?: string }).rail === 'bank' ? false : await configured(),

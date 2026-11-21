@@ -39,6 +39,7 @@ type WalletConfig = {
   tokenName?: string;
   tokenVersion?: string;
   contractAddress?: string;
+  sponsoredContractAddress?: string;
   treasuryAddress?: string;
   available?: boolean;
 };
@@ -997,6 +998,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                     refresh={refreshSummary}
                     token={config.tokenAddress || undefined}
                     treasury={config.treasuryAddress || undefined}
+                    contract={config.sponsoredContractAddress || undefined}
                   />
                 )}
                 {checkout && (bank || config?.mode !== 'sponsored-demo') && (

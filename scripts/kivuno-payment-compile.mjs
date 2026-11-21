@@ -7,7 +7,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const testBuild = process.argv.includes('--test-shanghai');
 const suffix = testBuild ? '-test-shanghai' : '';
 const sources = {};
-for (const file of ['KivunoPlans.sol', 'test/MockUSDC.sol']) {
+for (const file of ['KivunoPlans.sol', 'KivunoPlansSponsored.sol', 'test/MockUSDC.sol']) {
   sources[file] = { content: await fs.readFile(path.join(root, 'contracts', file), 'utf8') };
 }
 const input = {
@@ -39,6 +39,11 @@ if (failures.length) throw new Error(failures.map((entry) => entry.formattedMess
 
 for (const [source, contractName, target] of [
   ['KivunoPlans.sol', 'KivunoPlans', `kivuno-plans${suffix}-artifact.json`],
+  [
+    'KivunoPlansSponsored.sol',
+    'KivunoPlansSponsored',
+    `kivuno-plans-sponsored${suffix}-artifact.json`,
+  ],
   ['test/MockUSDC.sol', 'MockUSDC', `mock-usdc${suffix}-artifact.json`],
 ]) {
   const built = output.contracts[source][contractName];

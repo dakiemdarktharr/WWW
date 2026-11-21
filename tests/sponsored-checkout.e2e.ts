@@ -10,8 +10,8 @@ import os from 'node:os';
 import { chromium, expect } from '@playwright/test';
 import { build } from 'esbuild';
 import { Contract, ContractFactory, JsonRpcProvider, parseEther, Wallet } from 'ethers';
-import { authorizationInterface } from '../shared/sponsored-authorization.ts';
-import plans from '../shared/kivuno-plans-artifact.json' with { type: 'json' };
+import { plansInterface } from '../shared/sponsored-authorization.ts';
+import plans from '../shared/kivuno-plans-sponsored-test-shanghai-artifact.json' with { type: 'json' };
 import token from '../shared/mock-usdc-test-shanghai-artifact.json' with { type: 'json' };
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
@@ -48,6 +48,7 @@ test('sponsored checkout provisions the account wallet at signup and grants a re
   const deployed = await new ContractFactory(plans.abi, plans.bytecode, owner).deploy(
     tokenAddress,
     treasury.address,
+    sponsor.address,
   );
   await deployed.waitForDeployment();
   const store = new Store(path.join(data, 'workspace.db'));
@@ -63,6 +64,7 @@ test('sponsored checkout provisions the account wallet at signup and grants a re
     KIVUNO_BILLING_MODE: 'sponsored-demo',
     KIVUNO_FUJI_RECEIPT_KEY: sponsor.privateKey,
     KIVUNO_FUJI_PAYMENT_CONTRACT: await deployed.getAddress(),
+    KIVUNO_FUJI_SPONSORED_CONTRACT: await deployed.getAddress(),
     KIVUNO_FUJI_USDC_ADDRESS: tokenAddress,
     KIVUNO_FUJI_TREASURY_ADDRESS: treasury.address,
     KIVUNO_FUJI_RPC_URL: url,
@@ -273,13 +275,19 @@ test('sponsored checkout provisions the account wallet at signup and grants a re
   )[0];
   const tx = await rpc.getTransaction(order.hash);
   assert.equal(tx?.from, sponsor.address);
-  assert.equal(tx?.to, tokenAddress);
+  assert.equal(tx?.to, await deployed.getAddress());
   assert.equal(tx?.value, 0n);
-  const decoded = authorizationInterface.decodeFunctionData('transferWithAuthorization', tx!.data);
-  assert.equal(decoded.from, binding.address);
-  assert.equal(decoded.to, treasury.address);
-  assert.equal(decoded.value, 0n);
-  assert.equal(decoded.nonce, order.commitment);
+  const decoded = plansInterface.decodeFunctionData('paySponsored', tx!.data);
+  assert.equal(decoded.purchase.payer, binding.address);
+  assert.equal(decoded.purchase.planId, 1n);
+  assert.equal(
+    await deployed.getFunction('authorizationNonce')(decoded.purchase.toArray()),
+    order.commitment,
+  );
+  assert.equal(
+    Number((await deployed.getFunction('subscriptions')(binding.address)).paidUntil) * 1000,
+    order.paidUntil,
+  );
   assert.equal(await rpc.getBalance(binding.address), 0n);
   assert.equal(await rpc.getTransactionCount(binding.address), 0);
   assert.equal(await new Contract(tokenAddress, token.abi, owner).balanceOf(treasury.address), 0n);

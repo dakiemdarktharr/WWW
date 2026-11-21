@@ -33,6 +33,7 @@ export function cloudRuntimeEnvironment(env: NodeJS.ProcessEnv = process.env) {
     RELAY_MAIL_FROM: mail ? env.RELAY_MAIL_FROM || '' : '',
     RELAY_MAIL_REPLY_TO: mail ? env.RELAY_MAIL_REPLY_TO || '' : '',
     KIVUNO_FUJI_PAYMENT_CONTRACT: env.KIVUNO_FUJI_PAYMENT_CONTRACT || '',
+    KIVUNO_FUJI_SPONSORED_CONTRACT: env.KIVUNO_FUJI_SPONSORED_CONTRACT || '',
     KIVUNO_BILLING_MODE: env.KIVUNO_BILLING_MODE || '',
     KIVUNO_FUJI_RECEIPT_KEY: env.KIVUNO_FUJI_RECEIPT_KEY || '',
     KIVUNO_FUJI_USDC_ADDRESS: fuji ? env.KIVUNO_FUJI_USDC_ADDRESS || '' : '',
