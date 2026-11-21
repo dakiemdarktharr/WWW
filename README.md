@@ -1,33 +1,92 @@
 <div align="center">
   <img src="public/kivuno.svg" width="72" alt="Kivuno" />
   <h1>Kivuno</h1>
+  <p>Không gian làm việc desktop để phối hợp các trợ lý AI trên cùng một dự án phần mềm.</p>
+  <p><a href="https://kivuno.vercel.app">Website & tải ứng dụng</a> · <a href="https://github.com/dakiemdarktharr/WWW/releases">Bản phát hành</a> · <a href="docs/DESKTOP.md">Hướng dẫn desktop</a></p>
 </div>
 
-Kivuno là app desktop cho nhóm nhiều tài khoản Codex, Claude và Antigravity. Bạn có thể dùng các model Gemini mà Antigravity cung cấp cho tài khoản Google trên máy. Website dành cho giới thiệu, đăng nhập và tải app, có lựa chọn Việt/Anh. **Chat là chat dự án** trong Kivuno; Team chứa các tài khoản của bạn, còn mỗi nhóm chỉ có những thành viên bạn chọn. Task có phạm vi, worktree và quyền sở hữu để phối hợp mà không nhận trùng việc.
+Kivuno tập trung trao đổi, lập kế hoạch, thực thi và duyệt thay đổi trong một workspace gắn với Git repository. Người dùng kết nối các tài khoản AI của mình, chọn thành viên cho từng dự án và duyệt kế hoạch trước khi triển khai. Các nhiệm vụ độc lập có thể chạy song song trong Git worktree riêng; thay đổi được review trước khi tích hợp.
 
-Mở [NoSleepClub Kivuno](https://kivuno.vercel.app) để tải bản Windows/Linux x64 hoặc macOS Apple Silicon. App mở trang đăng nhập trên trình duyệt; kiểm tra và xác nhận mã hiển thị rồi quay lại app. Không gửi token đăng nhập qua URL. Nút **Hướng dẫn** trong desktop có hướng dẫn tiếng Việt theo từng khu vực. Xem [bản 0.4](docs/RELEASE-0.4.md) và [nghiên cứu coin gas riêng](docs/CUSTOM-L1.md); coin hiện chưa được triển khai.
+Ứng dụng hỗ trợ **Windows x64, Linux x64 và macOS Apple Silicon**. Website cung cấp giới thiệu sản phẩm, tải ứng dụng, đăng nhập, kết nối desktop và quản lý gói, với giao diện tiếng Việt và tiếng Anh.
 
-Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có thể thêm máy khác qua cấu hình ghép nối riêng; cloud chuyển tiếp kết nối đi ra, không mở cổng vào máy. Cloud miễn phí có thể ngủ/hết hạn mức: công việc remote cần kết nối còn sống, và gián đoạn phải recovery rõ ràng. Localhost chỉ là kênh nội bộ có khóa của desktop, không phải đường dẫn người dùng phải mở hoặc giữ popup.
+## Khả năng chính
 
+| Khu vực              | Chức năng                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| **Chat**             | Trao đổi theo dự án, gửi yêu cầu và theo dõi phản hồi của thành viên.              |
+| **Team**             | Quản lý hồ sơ nhà cung cấp, kết nối, model và thông tin usage khả dụng.            |
+| **Sade / Workroom**  | Lập kế hoạch có phụ thuộc, phân công và điều phối thực thi theo phạm vi công việc. |
+| **Sessions / Tasks** | Theo dõi phiên làm việc, tiến độ, công cụ và nhiệm vụ được giao.                   |
+| **Reviews**          | Kiểm tra diff và bằng chứng test; yêu cầu chỉnh sửa hoặc chấp thuận tích hợp.      |
+| **Gói & thanh toán** | Xem gói, kích hoạt và gia hạn trong demo miễn phí trên Avalanche Fuji.             |
+| **Quyền dự án**      | Cấu hình chính sách AEGIS, quyền máy và phê duyệt; nằm trong **Advanced**.         |
 
-## Cài đặt và demo
+Khóa nhiệm vụ, phạm vi chỉnh sửa và cơ chế lease giúp tránh nhận trùng việc và chồng chéo khi tích hợp. Sau gián đoạn, Kivuno giữ trạng thái để người dùng kiểm tra và khôi phục; không tự coi worker cũ đã dừng khi chưa xác minh.
 
-Xem [hướng dẫn cài đặt](docs/DESKTOP.md) và [cách chạy demo QR](docs/KIVUNO-BANK-DEMO.md). Checkout QR dùng chuyển khoản mô phỏng.
+## Bắt đầu sử dụng
 
-## Chạy local tùy chọn
+1. Tải bộ cài phù hợp tại [kivuno.vercel.app](https://kivuno.vercel.app), cài đặt và mở Kivuno.
+2. Đăng nhập tài khoản Kivuno. Nếu bắt đầu từ desktop, kiểm tra mã kết nối trên trình duyệt rồi xác nhận. Đăng nhập trực tiếp trên website không yêu cầu kết nối desktop.
+3. Trong **Team**, thêm hồ sơ Codex, Antigravity hoặc Claude và hoàn tất hướng dẫn kết nối của nhà cung cấp.
+4. Chọn **Connect project** để mở Git repository, rồi chọn thành viên tham gia dự án.
+5. Trao đổi trong **Chat**, lập và duyệt kế hoạch, sau đó kiểm tra kết quả trong **Reviews** trước khi tích hợp.
 
-**Team → Machine → Add account** tự đặt tên tài khoản; trong từng nhóm, dùng **Members** để chọn ai tham gia. Thành viên mới giới thiệu owner, gói, skills/plugins và nguyên tắc chung. Conversation có lựa chọn model/reasoning từ catalog thật. Cloud điều phối được cả máy cá nhân và SSH lattice qua kết nối đi ra, với giới hạn riêng cho máy đang train. Xem [cài máy, chia sẻ capabilities và recovery](docs/HYBRID.md).
+Khi có bản mới, nút **Cập nhật** trên thanh tiêu đề desktop cho phép tải, kiểm tra và cài bản phát hành. Cập nhật là tùy chọn. Mỗi bản công khai được phát hành đồng bộ cho ba nền tảng; macOS có DMG để cài mới và ZIP phục vụ cập nhật trong ứng dụng. Xem [hướng dẫn desktop](docs/DESKTOP.md).
 
-## Bắt đầu trong bốn bước
+## Kết nối nhà cung cấp AI
 
-1. **Team → Add account:** chọn provider. Desktop kiểm tra thành phần cần thiết và cài/khôi phục nếu thiếu trước khi tạo account. Codex đăng nhập bằng ChatGPT. Với Antigravity, xác nhận tài khoản Google của máy hoặc dùng MESH MCP. Claude Free và các gói trả phí có thể dùng Claude trong trình duyệt hoặc Claude Desktop. Người có quyền Claude Code còn có thể kết nối CLI qua MCP. Xem [cách kết nối](docs/EXTERNAL-MESH.md).
-2. **Neralu:** tạo dự án và chọn thành viên nhóm; bạn không cần đưa toàn bộ Team vào mỗi nhóm.
-3. **Chat:** nhập yêu cầu nghiên cứu/trao đổi, hoặc dùng **Plan project** để lập kế hoạch triển khai và duyệt workflow. Chat thường tạo session read-only. `/goal`, `/model`, `/reasoning`, `/skills` và `/tên-skill` cấu hình yêu cầu; lệnh không hợp lệ được báo lỗi.
-4. **Sessions / Reviews:** graph hiển thị từng conversation, kể cả nhiều conversation của cùng một Codex. Chọn node để xem tiến độ, react để phản hồi và vào Reviews để duyệt thay đổi.
+| Nhà cung cấp    | Cách tích hợp                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| **Codex**       | Codex App Server chính thức, đăng nhập ChatGPT và vùng cấu hình riêng cho từng hồ sơ.                                    |
+| **Antigravity** | CLI qua ACP với tài khoản Google trên máy sau khi người dùng xác nhận; model phụ thuộc catalog thực của tài khoản.       |
+| **Claude**      | Claude Web, Claude Desktop hoặc Claude Code qua MCP. Người dùng chọn model và gửi yêu cầu trong client Claude tương ứng. |
 
-♥ = đã hiểu, 👍 = đồng ý, 👎 = không đồng ý. Reaction gửi feedback cho tác giả; **không cấp quyền** chạy lệnh, chi tiền, merge hay deploy. Browser trong nhóm cho bạn mở trang/đăng nhập và chủ động chia sẻ nội dung đã kiểm tra với session. [Browser và giới hạn](docs/BROWSER-DESKTOP.md), [hướng dẫn kết nối provider](docs/PROVIDERS.md), [thiết kế hivemind](docs/HIVEMIND-ART.md).
+Kivuno không tạo tài khoản nhà cung cấp, không thay thế quyền sử dụng model và không tự chuyển sang API trả phí. Các hồ sơ dùng cùng tài khoản vẫn chia sẻ hạn mức của tài khoản đó. Usage chưa biết hoặc quá cũ không được mặc định là còn đầy.
 
-Yêu cầu phát triển: **Node.js 24.22.1 trở lên**, Git. Bản desktop đóng gói sẵn runtime và Codex CLI `0.166.0`. Ứng dụng còn tìm Codex trên PATH và ở thư mục cài đặt Codex desktop trên Windows. Không bật fallback sang API trả phí.
+Kết nối MCP cho phép Claude truy cập các công cụ Kivuno đã được cấp quyền; nó không cấp cho Kivuno credential gọi model Claude. Trạng thái kết nối cần MCP handshake, không chỉ mở trang hoặc hoàn tất OAuth. Chi tiết: [nhà cung cấp](docs/PROVIDERS.md), [kết nối MCP](docs/EXTERNAL-MESH.md), [trạng thái Claude](docs/CLAUDE-CONNECTION-UX.md).
+
+## Mua gói trên Avalanche Fuji
+
+Đây là **demo không thu tiền**. Plus và Max hiển thị giá mô phỏng **2 USDC** và **6 USDC** cho kỳ 30 ngày; mỗi lần mua thực trả **0 USDC**. Người dùng không cần nạp USDC hoặc AVAX và không phải tự trả gas.
+
+Luồng hiện hành sử dụng **KivunoPlansSponsored** trên **Avalanche Fuji C-Chain, chain ID 43113**:
+
+1. **Tạo ví theo tài khoản:** trình duyệt tạo và liên kết ví riêng khi đăng ký hoặc đăng nhập, trước checkout. Khóa riêng được mã hóa trong trình duyệt; máy chủ không giữ khóa riêng của người mua.
+2. **Người mua ký:** sau khi xác nhận gói, ví ký EIP-3009 `ReceiveWithAuthorization` cho số tiền 0. Chữ ký ràng buộc đơn, gói và hợp đồng nhận.
+3. **Dự án gửi giao dịch:** ví relayer gửi yêu cầu tới hợp đồng và trả gas bằng test AVAX miễn phí. Người mua không cần số dư.
+4. **Hợp đồng xử lý:** kiểm tra chữ ký, chống dùng lại đơn, chuyển tiếp 0 USDC tới ví chủ, lưu gói và hạn dùng, rồi phát sự kiện `PlanPaid`.
+5. **Kivuno cấp quyền:** máy chủ kiểm tra biên nhận và các sự kiện khớp đơn, sau đó đồng bộ quyền sử dụng theo hạn trên chain.
+
+Gia hạn cùng gói đang còn hiệu lực nối thêm 30 ngày. Đổi gói bắt đầu kỳ 30 ngày mới. Mỗi lần mua cần người dùng xác nhận; không có tự động gia hạn.
+
+| Thành phần                | Địa chỉ Fuji                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **KivunoPlansSponsored**  | [`0xC3b323443C6964404880b04F949636f742671474`](https://testnet.snowtrace.io/address/0xC3b323443C6964404880b04F949636f742671474) |
+| **Circle test USDC**      | [`0x5425890298aed601595a70AB815c96711a31Bc65`](https://testnet.snowtrace.io/address/0x5425890298aed601595a70AB815c96711a31Bc65) |
+| **Ví dự án trả test gas** | [`0xDcAdCD82de8dadB9d086c579553112bB8B293d78`](https://testnet.snowtrace.io/address/0xDcAdCD82de8dadB9d086c579553112bB8B293d78) |
+| **Ví chủ nhận 0 USDC**    | [`0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805`](https://testnet.snowtrace.io/address/0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805) |
+
+Trên explorer, **From → To** của giao dịch là **ví dự án → hợp đồng KivunoPlansSponsored**. Các sự kiện token thể hiện **ví người mua → hợp đồng → ví chủ**, mỗi chặng đều bằng **0 USDC**. Không có giá trị tiền được chuyển; gas vẫn được tiêu thụ bằng token thử nghiệm. Hệ thống chỉ gửi trên Fuji, không mua token và không chuyển sang mainnet khi thiếu test gas.
+
+[Mã nguồn](contracts/KivunoPlansSponsored.sol) · [ABI và bytecode](shared/kivuno-plans-sponsored-artifact.json) · [Xác minh mã nguồn Sourcify](https://repo.sourcify.dev/43113/0xC3b323443C6964404880b04F949636f742671474) · [Kiến trúc và cấu hình](docs/KIVUNO-SPONSORED-BILLING.md).
+
+Hợp đồng có relayer cố định do dự án vận hành. Việc nhập thời hạn đã mua từ phương thức cũ trong lần mua đầu tiên tin cậy dữ liệu của dự án và được ràng buộc trong chữ ký. Đây không phải hệ thống hoàn toàn phi tập trung. Các giao dịch QR, biên nhận mã băm và hợp đồng cũ vẫn là lịch sử; chúng không phải luồng checkout hiện hành.
+
+## Kiến trúc và ranh giới an toàn
+
+- **Desktop:** Electron chạy giao diện, coordinator và runtime cần thiết trên máy người dùng; Git repository và tác vụ thực thi nằm trên máy.
+- **Web / cloud:** phục vụ tài khoản, kết nối desktop, điều phối kết nối từ xa và quản lý quyền sử dụng. Máy ghép nối dùng kết nối đi ra; công việc từ xa phụ thuộc kết nối và dịch vụ còn hoạt động.
+- **Blockchain:** hợp đồng Fuji xác nhận mua gói và lưu hạn dùng. **AEGIS / Quyền dự án** là chức năng chính sách riêng, không phải thanh toán.
+
+Git worktree cách ly checkout, **không phải sandbox hệ điều hành**. Các tiến trình cùng quyền người dùng có thể tiếp cận cùng tài nguyên. Phạm vi nhiệm vụ hỗ trợ điều phối và kiểm tra tích hợp, không tạo ACL riêng cho từng thư mục. Chỉ chạy repository, hooks, skills và plugins đáng tin cậy.
+
+Thông báo hoàn thành của agent không thay thế việc kiểm tra diff và kết quả test. Reaction trong chat không cấp quyền chạy lệnh, chi tiền, merge hoặc deploy. Kiểm thử bằng fixture không chứng minh mọi tài khoản nhà cung cấp hoạt động thực tế; đăng nhập, model và quota cần được xác minh với tài khoản đang sử dụng.
+
+Ví tài khoản cần bản sao lưu mã hóa để khôi phục trên trình duyệt khác. Đăng nhập lại không tự phục hồi khóa riêng đã mất. Xem [bảo mật](docs/SECURITY.md), [kiến trúc hybrid và recovery](docs/HYBRID.md), [trình duyệt desktop](docs/BROWSER-DESKTOP.md).
+
+## Phát triển từ mã nguồn
+
+Yêu cầu: **Node.js 24.22.1 đến hết dòng 24.x**, npm và Git. Bản desktop đã đóng gói runtime; yêu cầu này dành cho người phát triển từ repository.
 
 ```sh
 npm ci
@@ -35,105 +94,56 @@ npm run build
 npm start
 ```
 
-Mở **http://127.0.0.1:4317**. Trên Windows, có thể chạy `start-relay.cmd` sau khi cài dependencies. Launcher dùng Node 24.22.1 qua npm nếu Node hệ thống chưa được cập nhật; nó không thay đổi Node toàn máy.
+Mở `http://127.0.0.1:4317`. Để phát triển giao diện, chạy `npm run dev` và mở `http://127.0.0.1:5173`.
 
-Phát triển giao diện: `npm run dev`, rồi mở http://127.0.0.1:5173. Chạy kiểm thử: `npm test`. Kiểm tra cả TypeScript, tests và build: `npm run check`.
+| Lệnh                           | Mục đích                                        |
+| ------------------------------ | ----------------------------------------------- |
+| `npm test`                     | Kiểm thử đơn vị và tích hợp.                    |
+| `npm run test:portal`          | Kiểm tra website, đăng nhập và kết nối desktop. |
+| `npm run test:desktop`         | Kiểm tra giao diện desktop.                     |
+| `npm run check`                | Kiểm tra định dạng, chạy tests và build.        |
+| `npm run payment:compile`      | Biên dịch hợp đồng Fuji.                        |
+| `npm run payment:compile:test` | Tạo artifact Shanghai cho kiểm thử EVM cục bộ.  |
 
-**Gói demo trên website.** Mở [Gói & thanh toán](https://kivuno.vercel.app/billing), đăng nhập và chọn Plus hoặc Max. Ví riêng được tạo ngay khi đăng ký hoặc đăng nhập. Người dùng ký mua gói bằng ví riêng, không cần nạp token; giá 2 và 6 USDC chỉ mô phỏng. Ví dự án gửi hộ giao dịch và trả gas bằng test AVAX miễn phí trên Avalanche Fuji. Hợp đồng **KivunoPlansSponsored** chuyển tiếp **0 USDC về ví chủ**, lưu gói và hạn dùng trên chain. Kivuno cấp quyền sau khi xác minh sự kiện **PlanPaid**. [Kiến trúc và cấu hình thanh toán miễn phí](docs/KIVUNO-SPONSORED-BILLING.md).
-
-**Demo QR cục bộ.** Chạy `npm run dev:fuji-demo`, mở [trang mua gói](http://127.0.0.1:5173/billing) và chọn Plus hoặc Max. Ngân hàng mô phỏng hiển thị số VND và mã đơn. Sau khi bạn xác nhận, Kivuno đối soát, cấp gói và cho phép kiểm chứng biên nhận trên EVM cục bộ. [Hướng dẫn demo QR](docs/KIVUNO-BANK-DEMO.md) · [Luồng test USDC cũ trên Avalanche Fuji](docs/KIVUNO-FUJI-DEPLOYMENT.md).
-
-Biên nhận QR cũ được giữ để tham khảo: [giao dịch Fuji](https://build.avax.network/explorer/fuji/c-chain/tx/0xa84e75b8c8524e6c307a3121092cde377cdb4a525e7d0785422d00bc87e1eb97), kiểm tra bằng `node scripts/fuji-qr-receipt.mjs verify`. Luồng mua gói hiện hành dùng [hợp đồng KivunoPlansSponsored](https://testnet.snowtrace.io/address/0xC3b323443C6964404880b04F949636f742671474).
-
-Nếu Node hệ thống cũ, chạy công cụ bằng runtime riêng:
+Kiểm thử luồng mua gói:
 
 ```sh
-npm exec --yes --package=node@24.22.1 -- node node_modules/vite/bin/vite.js build
-npm exec --yes --package=node@24.22.1 -- node --import tsx server/index.ts
+node --import tsx --test tests/billing.test.ts tests/sponsored-billing.test.ts tests/sponsored-checkout.e2e.ts tests/cloud-runner.test.ts
 ```
 
-## Thử với bốn tài khoản
+Bộ kiểm thử bao gồm ví không có tiền, chữ ký sai, chống phát lại, gia hạn/đổi gói, nhập hạn cũ, khôi phục giao dịch đang chờ và xác minh sự kiện. Giao dịch trên mạng Fuji công khai phải được kiểm tra riêng sau triển khai.
 
-Để dùng nền tảng mới:
+### Cấu hình cục bộ
 
-1. Trong desktop, tạo hồ sơ trong Team rồi New project: chọn Codex phụ trách, tên/link cuộc thi và deadline. Dự án có Git repository trên máy của Codex phụ trách; remote GitHub chưa được tự tạo. Có thể chọn repository có sẵn hoặc khởi tạo Git cho thư mục từ Neralu.
-2. Mở **Neralu** để trò chuyện theo project. Tin người dùng được nhận việc một lần và chuyển tới session chỉ đọc khi có account/quota phù hợp; agent không tự mở vòng trả lời nhau. `!!` chỉ đánh dấu lệnh từ người dùng thật.
-3. Trong **Sessions**, mở nhiều conversation theo account/project; chọn model/reasoning từ catalog thật, read-only hoặc scope ghi file. Bỏ trống prompt để lưu trước. Mỗi cửa sổ có output/tool events thật, follow-up/steering và Pause/Stop. Demo có thể dùng HTTPS hoặc địa chỉ loopback của máy đang chạy desktop. Đây là giao diện của runtime Codex thật, không phải cửa sổ native Codex Desktop hay ChatGPT Projects.
-4. Trong panel Usage, refresh quota. Còn ≤50% ở một cửa sổ áp dụng sẽ ngừng giao việc và pause các session của account. Nếu cần dùng phần dự trữ, người dùng cấp quyền theo account/project, mức sàn và thời hạn. Quota chưa biết/quá cũ không được coi là còn đầy.
-5. Trước code handoff, cấu hình owner GitHub/name/email trong Team và origin của project. Handoff dừng source, commit progress với author đã cấu hình, push và xác nhận remote SHA. Người nhận đọc/ACK, rồi tiếp tục từ session được chuyển quyền. Push lỗi giữ khóa và hiện Needs you.
-6. Sau gián đoạn, kiểm tra PID cũ, xác nhận worker đã dừng rồi Recover; Resume là bước riêng. Database migration giữ hồ sơ, task và lịch sử cũ.
+| Biến                  | Mặc định       | Vai trò                                                    |
+| --------------------- | -------------- | ---------------------------------------------------------- |
+| `RELAY_PORT`          | `4317`         | Cổng server, bind tại `127.0.0.1`.                         |
+| `RELAY_DATA_DIR`      | `.relay`       | SQLite, hồ sơ và worktree cục bộ.                          |
+| `RELAY_CODEX_COMMAND` | Tự tìm runtime | Đường dẫn runtime Codex khi cần chỉ định.                  |
+| `NODE_ENV`            | development    | Dùng `production` để giới hạn origin theo cấu hình server. |
 
-Luồng team workflow từ bản trước vẫn dùng được; các đường dẫn máy và browser callback dưới đây dành cho chế độ local, cloud dùng device code:
+Không commit thư mục dữ liệu, khóa ví hoặc thông tin đăng nhập. Không công khai cổng coordinator cục bộ qua reverse proxy. Cấu hình máy chủ cho mua gói nằm trong [hướng dẫn sponsored billing](docs/KIVUNO-SPONSORED-BILLING.md).
 
-1. Trong Neralu, chọn **Connect project** rồi chọn thư mục gốc của Git repository đã có commit. Với thư mục chưa có Git hoặc repo chưa có commit, chọn **Initialize folder with Git**; Kivuno sẽ tạo Git cục bộ và commit khởi đầu từ các file Git không bỏ qua. Các file credential phổ biến và thư mục tài khoản riêng được loại trừ. Thao tác không push lên remote. Đặt mục tiêu chung cho dự án; nhánh chính cần sạch trước khi tích hợp.
-2. Trong **Team**, tạo bốn hồ sơ, ví dụ Atlas / Vega / Echo / Nova, rồi chọn vai trò. Đây là nhãn bạn đặt, không phải tài khoản đã được tạo sẵn.
-3. Đăng nhập lần lượt bằng **Sign in with ChatGPT** hoặc device code. Nếu trình duyệt đang giữ tài khoản trước, hãy chọn đúng tài khoản trên trang OpenAI. Kiểm tra email hiện trong từng thẻ. Không đăng nhập đồng thời vì callback OAuth dùng cổng cục bộ.
-4. Dùng **Refresh** để đọc lại trạng thái, hạn mức và capabilities. **Import local skills** sao chép các standalone skills từ `~/.codex/skills` và `~/.agents/skills`, bỏ qua symlink, cấu hình xác thực và các file có tên nhạy cảm. Đây là thao tác bạn chủ động chọn.
-5. Trong phần setup của mỗi hồ sơ, xem `CODEX_HOME` riêng để cài plugins hoặc cấu hình MCP. Plugins và quyền truy cập không được giả định tự đồng bộ qua tài khoản ChatGPT. Không chép `auth.json` hoặc credentials từ hồ sơ khác. Khởi động lại Kivuno sau khi sửa cấu hình plugin/MCP.
-6. Từ chat chọn **Plan project** để vào Workroom, nhập yêu cầu rồi chọn **Run team**. Chỉ thành viên thuộc nhóm dự án được tham gia; các thành viên cần hoàn tất task/review đang giữ trước khi bắt đầu. Mỗi thành viên đọc repository và gửi đề xuất trong sandbox chỉ đọc. Lead tổng hợp thành kế hoạch có stages, dependencies, scope, acceptance và effort; không có task mẫu dựng sẵn.
-7. Bộ điều phối kiểm tra DAG, loại kế hoạch trùng tên nhiệm vụ đang mở và phân công theo tổng effort. Vai trò chuyên môn được ưu tiên khi tải bằng nhau. Các task độc lập tự chạy song song; một thành viên chỉ giữ một task. Phạm vi `.` giữ toàn repository nên các task khác phải chờ.
-8. Theo dõi hierarchy, nhiệm vụ và trao đổi giữa các agent ở **Workroom**. Feed có bộ lọc thành viên/loại hoạt động. **Pause** ngừng giao việc mới, cho lượt đã nhận tiếp tục; **Resume** tiếp tục hoặc thử lại task bị chặn. **Cancel** dừng các lượt đang chạy, giữ lại worktree và kết quả đang review.
-9. Kiểm tra diff, handoff và bằng chứng test trong **Reviews**. **Accept & integrate** tạo squash commit trên nhánh đang checkout của dự án, rồi tự mở các task phụ thuộc. **Request revision** gửi phản hồi và tự chạy lại nếu workflow còn hoạt động. Agent tự báo hoàn thành chưa mở khóa dependency. Sau khi khởi động lại ứng dụng, workflow luôn tạm dừng đến khi bạn chọn Resume.
-
-Bạn vẫn có thể tạo và chạy task thủ công trong **Tasks**. Dispatch thủ công chỉ nhận những task ngoài workflow; thành viên đã dành cho workflow không bị lấy sang công việc khác.
-
-Kivuno không đăng ký tài khoản thay bạn. Hai hồ sơ đăng nhập cùng một tài khoản vẫn dùng chung hạn mức của tài khoản đó. Chạy một task thật sẽ sử dụng usage của tài khoản được chọn; các bài kiểm thử trong repository dùng client kiểm soát được và không gọi model.
-
-## Những gì đã có
-
-- Workroom gọn với prompt, hierarchy, tải công việc, dependency queue và feed trao đổi realtime qua SSE.
-- Workflow từ một prompt: toàn team đề xuất → lead lập kế hoạch → cân bằng effort → thực thi theo DAG → review. Pause/resume/cancel có kiểm soát cạnh tranh; restart không tự tiêu usage.
-- Team với nhiều hồ sơ Codex riêng, browser/device login, logout, quota và inventory skills/plugins thực tế.
-- Board nhiệm vụ, priorities, dependencies, phạm vi công việc, assignment và dispatch.
-- Nhận việc nguyên tử bằng SQLite; mỗi task/session có một owner, hai session ghi file không giữ phạm vi giao nhau. Account có giới hạn session và quota chung; khóa vẫn giữ khi chờ review.
-- Git worktree và branch riêng, base commit được lưu, diff gồm thay đổi đã commit và chưa commit, tên file Unicode được hỗ trợ.
-- Human approval cho lệnh/file changes. Không có nút “approve everything”. Sandbox hoặc approval policy bị hạ cấp thì không khởi chạy turn.
-- Tích hợp squash có kiểm tra scope, phát hiện conflict và rollback; Git hooks vẫn được thực thi.
-- Trạng thái bền vững, fencing token, heartbeat và khôi phục có xác nhận sau lần dừng bất thường. Không tự tái giao việc khi chưa biết worker cũ đã dừng.
-- Tài liệu nghiên cứu đối chiếu năm sản phẩm và sáu paper arXiv trong repository.
-
-## Giới hạn hiện tại
-
-- Workspace chạy trên desktop của người dùng; máy khác tham gia bằng cấu hình ghép nối riêng. Bộ điều phối và các máy được ghép cần hoạt động để tiếp tục công việc. Đây chưa phải dịch vụ quản trị tổ chức với cách ly các tiến trình bằng hệ điều hành.
-- Khóa ID, tên nhiệm vụ và phạm vi ngăn nhận trùng kỹ thuật; không chứng minh hai mô tả khác nhau không trùng ý nghĩa. Lead được yêu cầu hợp nhất việc trùng; người review vẫn cần xem kế hoạch. Effort là ước lượng của model, không phải thời gian hay usage đo được. Task DAG và scope có thể giới hạn mức chạy song song.
-- Worktree cách ly checkout, **không phải container hoặc ranh giới bảo mật giữa tài khoản**. Các tiến trình cùng người dùng hệ điều hành có thể tiếp cận tài nguyên cùng quyền. Chỉ chạy repository, skills, plugins và hooks đáng tin cậy. Đọc [security model](docs/SECURITY.md).
-- Scope được dùng cho điều phối và kiểm tra trước tích hợp; sandbox cấp quyền trên worktree, không tạo ACL riêng cho từng thư mục scope. Quyền đọc của Codex phụ thuộc sandbox/hệ điều hành.
-- Handoff/test output của agent cần người review xác minh. Kivuno không tự coi lời khẳng định “tests passed” là kết quả test đã được server kiểm chứng.
-- Chưa thực hiện phiên live với bốn tài khoản trả phí: người dùng sẽ tự đăng nhập lúc thử. OAuth, quota thực, plugin permissions và chạy đồng thời bốn model cần kiểm thử bằng các tài khoản đó.
-- Các request tương tác Codex chưa được UI hỗ trợ sẽ bị từ chối, không tự chấp thuận. Một số tool có thể yêu cầu dùng Codex CLI để cấu hình trước.
-- Worktree/branch được giữ lại để kiểm tra; chưa có giao diện dọn lịch sử. Không xóa `.relay` khi worker đang chạy. Squash không xóa các blob đã từng ghi vào Git object store của máy.
-
-## Cấu hình
-
-| Biến môi trường       | Mặc định                    | Ý nghĩa                                                                                                          |
-| --------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `RELAY_PORT`          | `4317`                      | Cổng local; server luôn bind `127.0.0.1`.                                                                        |
-| `RELAY_DATA_DIR`      | `.relay` ở thư mục ứng dụng | SQLite, isolated profiles và worktrees. Được bỏ qua trong Git.                                                   |
-| `RELAY_CODEX_COMMAND` | Tìm trên PATH               | Đường dẫn tuyệt đối tới `codex.exe`, binary Codex hoặc `codex.js`; không chạy shell launcher do người dùng nhập. |
-| `NODE_ENV`            | development                 | Đặt `production` để chỉ cho origin của server, tắt origin Vite.                                                  |
-
-Không đưa thư mục dữ liệu lên cloud, không commit vào Git và không reverse-proxy cổng local ra Internet. Nếu cần đồng bộ backup, dừng worker trước và bảo vệ backup như dữ liệu đăng nhập.
-
-## Cấu trúc
+## Cấu trúc repository
 
 ```text
-src/              React UI, local API client, responsive styles
-shared/           Contracts dùng chung
-server/app.ts     API, browser session, CSRF, host/origin checks, SSE
-server/service.ts Coordination, room tools, approval and recovery
-server/workflows.ts Whole-team planning, hierarchy and automatic scheduling
-server/workflow-plan.ts Bounded plan validation and effort allocation
-server/store.ts   SQLite records, atomic claims and fencing
-server/codex.ts   Official App Server stdio bridge per profile
-server/git.ts     Worktree, diff and reviewed squash integration
-tests/            Protocol, concurrency, service, Git and HTTP tests
-docs/             Research, security, architecture and protocol notes
+src/          Giao diện React và API client
+server/       Coordinator, phiên provider, quyền truy cập và billing
+cloud/        Điều phối runtime cloud và kết nối máy
+desktop/      Electron, đóng gói và cập nhật ứng dụng
+contracts/    Hợp đồng Solidity và fixture kiểm thử
+shared/       Kiểu dữ liệu, giao thức, ABI và artifact dùng chung
+scripts/      Build, đóng gói, triển khai và xác minh
+tests/        Kiểm thử đơn vị, tích hợp và giao diện
+docs/         Hướng dẫn sử dụng, kiến trúc và vận hành
 ```
 
-## Nghiên cứu và nguồn
+## Tài liệu và giấy phép
 
-Đã đối chiếu **Amoeba, CodeAgentSwarm, Nimbalyst, T3 Code và Paradev**. Không sao chép mã hoặc assets của các sản phẩm đó. [Research notebook](docs/RESEARCH.md) ghi nguồn, version paper, quyết định và phần còn chưa kiểm chứng.
+- [Cài đặt và phát hành desktop](docs/DESKTOP.md)
+- [Nhà cung cấp AI](docs/PROVIDERS.md) và [kết nối MCP](docs/EXTERNAL-MESH.md)
+- [Mua gói miễn phí trên Fuji](docs/KIVUNO-SPONSORED-BILLING.md)
+- [Quyền dự án / AEGIS](docs/AEGIS.md)
+- [Bảo mật](docs/SECURITY.md) và [phối hợp nhiều máy](docs/HYBRID.md)
 
-Thiết kế điều phối tham khảo [CAID](https://arxiv.org/abs/2603.21489); các tình huống lỗi tham khảo [MAST](https://arxiv.org/abs/2503.13657). Giao thức và đăng nhập dựa trên [Codex App Server](https://learn.chatgpt.com/docs/app-server), [Codex authentication](https://learn.chatgpt.com/docs/auth) cùng TypeScript schema xuất từ binary đang cài.
-
-Kivuno là dự án độc lập, không phải sản phẩm chính thức của OpenAI. MIT licensed.
+Kivuno là dự án độc lập của NoSleepClub, không phải sản phẩm chính thức của các nhà cung cấp AI được tích hợp. Mã nguồn được phân phối theo [giấy phép MIT](LICENSE).
