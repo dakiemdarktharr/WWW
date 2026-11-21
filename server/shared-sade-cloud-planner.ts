@@ -125,6 +125,9 @@ const statusOnlyClause =
 const sharingStatus =
   /(?:^|[.!?;,:])\s*(?:(?:toi|minh|tui|tin nay) )?chi (?:bao|thong bao|cap nhat) (?:voi )?(?:nhom|ca nhom|team|moi nguoi)(?: [^.!?;]{0,50})? de (?:biet|nam(?: tinh hinh)?)(?: thoi)?[.! ]*$/u;
 const contradictory = /\b(?:nhung|tuy nhien|however|but|actually|sau do|then|dong thoi|also)\b/;
+// Keep accents here so an English conjunction such as “but” cannot match “bút”.
+const holdPivot =
+  /(?<![\p{L}\p{M}\p{N}_])(?:nhưng|nhung|tuy nhiên|tuy nhien|however|but|actually|sau đó|sau do|then|đồng thời|dong thoi|also)(?![\p{L}\p{M}\p{N}_])/iu;
 const affirmativeWork =
   /\b(?:hay|please|can you|could you|help me|nho|giao|cho) (?:[\p{L}\p{N}_.’-]+ ){0,7}(?:doc|xem|coi|tra|doi chieu|ra soat|xac minh|sua|viet|xoa|tao|chay|kiem tra|cap nhat|read|inspect|check|summarize|review|edit|write|delete|create|run|assign|verify|update)\b/u;
 const statusOpening =
@@ -144,9 +147,9 @@ const deferProposal =
 const currentAction =
   /^\s*(?:(?:va|and)\s+)?(?:ask|read|review|build|edit|assign|doc|kiem tra|lam|sua|giao)\b/;
 const limitedCopyEdit =
-  /^(?:(?:@?sade[, :]+)?(?:please )?(?:only|just) (?:change|edit|update|replace) (?:the )?|(?:@?sade[, :]+)?(?:chỉ|chi) (?:đổi|doi|sửa|sua|thay) )(?<label>heading|title|label|caption|tooltip|tiêu đề|tieu de|nhãn|nhan|chú thích|chu thich) (?:in|of|trong) `?(?<file>[\p{L}\p{N}_.-]+(?:\/[\p{L}\p{N}_.-]+)*\.[\p{L}\p{N}_-]+)`?(?<tail>.*)$/iu;
+  /^(?:(?:@?sade[, :]+)?(?:please )?(?:(?:only|just) (?:change|edit|update|replace)|(?:change|edit|update|replace) only) (?:the )?|(?:@?sade[, :]+)?(?:chỉ|chi) (?:đổi|doi|sửa|sua|thay) )(?<label>heading|title|label|caption|tooltip|tiêu đề|tieu de|nhãn|nhan|chú thích|chu thich) (?:in|of|trong) `?(?<file>[\p{L}\p{N}_.-]+(?:\/[\p{L}\p{N}_.-]+)*\.[\p{L}\p{N}_-]+)`?(?<tail>.*)$/iu;
 const untouchedCopy =
-  /^(?:[.!]\s*)?(?:(?:leave (?:everything else|the rest)(?: of [^.?!]{1,75})? (?:unchanged|as is|alone|for the existing owner)|no other changes|giu nguyen (?:phan|cac phan) con lai)[.!]?)?$/iu;
+  /^(?:[.!]\s*)?(?:(?:leave (?:everything else|the rest)(?: of [^.?!]{1,75})? (?:unchanged|as is|alone|for the existing owner)|the rest(?: of [^.?!]{1,75})? stays unchanged|no other changes|giu nguyen (?:phan|cac phan) con lai)[.!]?)?$/iu;
 const providerAliases: Readonly<Record<string, string>> = {
   chatgpt: 'codex',
   codex: 'codex',
@@ -314,7 +317,9 @@ function verifiedScopedCopy(delivery: SharedDelivery, request: string): Expected
   const match = limitedCopyEdit.exec(request)?.groups;
   if (!match || filesIn(match.file)[0] !== match.file) return;
   const tail = match.tail.trim();
-  const replacement = /^(?:to|thành|thanh)\s+["“]([^"”\r\n]{1,160})["”]([\s\S]*)$/iu.exec(tail);
+  const replacement = /^(?:to|with|thành|thanh)\s+["“]([^"”\r\n]{1,160})["”]([\s\S]*)$/iu.exec(
+    tail,
+  );
   const ending = folded(replacement?.[2] ?? tail).trim();
   if (
     !untouchedCopy.test(ending) ||
@@ -821,7 +826,7 @@ function expectedDecision(delivery: SharedDelivery): Expected {
     !delivery.clarification &&
     hold &&
     !request.includes('?') &&
-    !contradictory.test(visible) &&
+    !holdPivot.test(request.replace(quotePair, ' ').replace(pathToken, ' ')) &&
     !visible
       .slice(hold.length)
       .split(/[.!;,\n]+/u)

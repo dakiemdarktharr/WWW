@@ -104,6 +104,18 @@ test('a shop name containing an action word does not override a hold', async () 
   assert.match((result.plan as TeamPlan).summary, /tạm hoãn/);
 });
 
+test('Vietnamese product names do not become English conjunctions in a hold', async () => {
+  const result = await planSharedSadeCloud(
+    delivery(
+      'Sade ơi, thôi khoan dựng trang bán hàng cho hộp bút vải. Chờ nhóm in thử logo một lần nữa đã.',
+    ),
+    async () => assert.fail('The product name does not introduce a current assignment.'),
+  );
+  assert.equal(result.kind, 'plan');
+  assert.deepEqual((result.plan as TeamPlan).tasks, []);
+  assert.match((result.plan as TeamPlan).summary, /tạm hoãn/);
+});
+
 test('the published owner Minh is distinct from the Vietnamese first-person possessive', () => {
   const group: Pick<SharedGroup, 'people' | 'teammates'> = {
     people: ['Linh', 'Minh'].map((name) => ({ id: name, name, state: 'active' })),
