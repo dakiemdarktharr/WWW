@@ -2,7 +2,7 @@
 
 Ngày 19/11/2026. Trong Chat của project, bật **Sade · Plan and build** rồi gửi một yêu cầu. Một tài khoản đã kết nối lập kế hoạch. Sade kiểm tra kế hoạch, phân công theo tên hoặc vai trò, chờ đầu ra cần thiết và giao review độc lập. Xem [cấu hình và kết quả nghiên cứu](sade-workspace-research.vi.md) để phân biệt luồng Chat của project với Shared Groups.
 
-Trong Shared Groups, mỗi người thêm teammate, liên kết cùng Git origin và nhánh, rồi xác nhận số lượt và quyền trên desktop. Người gửi chọn **Ask Sade** và dùng cùng các prompt A–D. Sau review và tích hợp cục bộ, patch có thể đi thẳng đến harness phụ thuộc nếu chủ patch đã cấp quyền bàn giao. [Thiết lập Shared Groups và kết quả kiểm thử](shared-sade-verification.vi.md)
+Trong Shared Groups, mỗi người thêm teammate, liên kết cùng Git origin và nhánh, rồi xác nhận số lượt và quyền trên desktop. Người gửi chọn **Ask Sade** và dùng cùng các prompt A–D. Sau review và tích hợp cục bộ, patch có thể đi thẳng đến harness phụ thuộc nếu chủ patch đã cấp quyền bàn giao. Xem [hướng dẫn Shared Groups](SHARED-SADE.md).
 
 ## Chạy kiểm thử xác định
 
@@ -55,7 +55,7 @@ Trong **Machines**, A chọn project và xuất cấu hình ghép cặp. B nhậ
 
 `machine_list` chỉ trả máy đang online có grant đúng project. Dùng `machine_use` để kiểm tra máy, đồng bộ, đọc, ghi và nhận file sửa. `machine_run` nhận tên chương trình và danh sách đối số. Lệnh tối đa 60 giây. Runner hỗ trợ chia gói nhận snapshot tối đa 8 MiB, 2.000 file và 4 MiB mỗi file. Runner đời cũ nhận tối đa 2 MiB và 512 KiB mỗi file. Credential paths bị loại và các mẫu secret phổ biến bị chặn. Full access cho phép thực thi với quyền OS của chủ máy, **cwd chỉ là thư mục làm việc**. Stop trên máy đích thu hồi quyền. Hết hạn dừng subprocess và mất liên lạc dừng sau cửa sổ giám sát. Kết quả chưa rõ không tự chạy lại. Pull phải khớp snapshot nguồn và scope đang sở hữu.
 
-`machine-execution.test.ts` kiểm tra quyền, thu hồi, hết hạn, gửi lại và giới hạn nhận file sửa. Bài `paired-macos` chạy Node trên Windows và runner macOS arm64, tái hiện lỗi đường dẫn rồi chạy lại sau khi sửa. Windows nhận đúng file đã sửa. Một lượt riêng dùng Codex đã đăng nhập trên Windows và reviewer mô phỏng. Lượt cấp quyền từ desktop Mac của thành viên B vẫn cần kiểm chứng. [Bằng chứng trên Windows và macOS](shared-sade-verification.vi.md)
+`machine-execution.test.ts` kiểm tra quyền, thu hồi, hết hạn, gửi lại và giới hạn nhận file sửa. Bài `paired-macos` chạy Node trên Windows và runner macOS arm64, tái hiện lỗi đường dẫn rồi chạy lại sau khi sửa. Windows nhận đúng file đã sửa. Một lượt riêng dùng Codex đã đăng nhập trên Windows và reviewer mô phỏng. Lượt cấp quyền từ desktop Mac của thành viên B vẫn cần kiểm chứng.
 
 ## Chấm demo với hai tài khoản thật
 
