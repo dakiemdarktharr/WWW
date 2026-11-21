@@ -5,7 +5,7 @@
   <p><a href="https://kivuno.vercel.app">Website & tải ứng dụng</a> · <a href="https://github.com/dakiemdarktharr/WWW/releases">Bản phát hành</a> · <a href="docs/DESKTOP.md">Hướng dẫn desktop</a></p>
 </div>
 
-Kivuno tập trung trao đổi, lập kế hoạch, thực thi và duyệt thay đổi trong một workspace gắn với Git repository. Người dùng kết nối các tài khoản AI của mình, chọn thành viên cho từng dự án và duyệt kế hoạch trước khi triển khai. Các nhiệm vụ độc lập có thể chạy song song trong Git worktree riêng; thay đổi được review trước khi tích hợp.
+Khi dùng nhiều trợ lý AI để phát triển phần mềm, nhóm thường phải chuyển yêu cầu giữa các phiên làm việc riêng, tự tổng hợp tiến độ và xử lý những thay đổi chồng chéo. Kivuno giải quyết vấn đề này bằng một không gian làm việc chung gắn với dự án Git: tập trung trao đổi, lập kế hoạch, phân công và duyệt thay đổi. Các nhiệm vụ độc lập có thể chạy song song trong Git worktree riêng, còn người phụ trách kiểm tra kết quả trước khi tích hợp.
 
 Ứng dụng hỗ trợ **Windows x64, Linux x64 và macOS Apple Silicon**. Website cung cấp giới thiệu sản phẩm, tải ứng dụng, đăng nhập, kết nối desktop và quản lý gói, với giao diện tiếng Việt và tiếng Anh.
 
