@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.6',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Dọn tệp chương trình Electron của bản cài Windows cũ sau khi cập nhật thành công.',
+        en: 'Remove the previous Windows installation’s Electron archive after a successful update.',
+      },
+    ],
+  },
+  {
     version: '0.9.5',
     date: '2026-11-21',
     fixes: [

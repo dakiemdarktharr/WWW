@@ -19,7 +19,9 @@ import {
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createPackage } from '@electron/asar';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
+import electron from 'electron';
 import windowsUpdate from '../desktop/windows-update.cjs';
 
 if (process.platform !== 'win32') throw new Error('Run this check on Windows.');
@@ -34,6 +36,7 @@ const accountWorkspace = path.join(profile, 'users', 'fixture-owner', 'workspace
 const downloads = path.join(root, 'Downloads');
 const unrelatedInstaller = path.join(downloads, 'Kivuno-0.9.3-Setup.exe');
 const generatedAsset = path.join('resources', 'workspace', 'dist', 'assets', 'App-C_2Rt9aS.js');
+const appArchive = path.join('resources', 'app.asar');
 const credentials = path.join(profile, 'desktop-session.bin');
 const roster = path.join(accountWorkspace, 'workspace.db');
 const key = 'Software\\KivunoUpdateTest\\' + randomUUID();
@@ -51,6 +54,24 @@ const exists = (f) =>
     () => false,
   );
 const reg = (...args) => run('reg.exe', args, { windowsHide: true });
+const cleanupAsElectron = ({ backup, installed }) =>
+  run(
+    electron,
+    [
+      '-e',
+      [
+        'if (!process.versions.electron) throw new Error("The Electron filesystem is required.");',
+        'const [updater, backup, installed] = process.argv.slice(1);',
+        'require(updater).cleanPreviousWindowsInstall({ backup, installed }).catch(error => {',
+        '  console.error(error); process.exitCode = 1;',
+        '});',
+      ].join('\n'),
+      path.resolve('desktop/windows-update.cjs'),
+      backup,
+      installed,
+    ],
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, timeout: 30000 },
+  );
 let parent;
 try {
   await mkdir(target);
@@ -80,11 +101,14 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
     path.join(stagedFiles, path.dirname(generatedAsset), 'App-NA3blP8u.js'),
     'new frontend bundle',
   );
-  for (const file of [
-    'resources/app.asar',
-    'resources/runtime/node.exe',
-    'resources/workspace/dist/index.html',
-  ])
+  const archiveSource = path.join(root, 'asar source');
+  await mkdir(archiveSource);
+  await writeFile(path.join(archiveSource, 'main.cjs'), 'module.exports = "old app"');
+  await createPackage(archiveSource, path.join(target, appArchive));
+  await writeFile(path.join(archiveSource, 'main.cjs'), 'module.exports = "new app"');
+  await createPackage(archiveSource, path.join(stagedFiles, appArchive));
+  const newAppArchive = await readFile(path.join(stagedFiles, appArchive));
+  for (const file of ['resources/runtime/node.exe', 'resources/workspace/dist/index.html'])
     await writeFile(path.join(stagedFiles, file), 'new payload');
   await run('tar.exe', ['-acf', archive, '-C', stagedFiles, '.']);
   const nsis = await getMakeNsisPath();
@@ -249,8 +273,11 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
         await symlink(downloads, path.join(previous, 'external-junction'), 'junction');
         await access(path.join(previous, generatedAsset));
       }
-      await windowsUpdate.cleanPreviousWindowsInstall(update);
+      await access(path.join(previous, appArchive));
+      await cleanupAsElectron(update);
       assert.equal(await exists(path.join(previous, 'Kivuno.exe')), false);
+      assert.equal(await exists(path.join(previous, appArchive)), false);
+      assert.deepEqual(await readFile(path.join(target, appArchive)), newAppArchive);
       if (mode === 'live') {
         assert.equal(await exists(path.join(previous, generatedAsset)), false);
         assert.equal(await readFile(path.join(previous, 'old-marker'), 'utf8'), 'original');

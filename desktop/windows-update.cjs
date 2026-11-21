@@ -1,14 +1,9 @@
 'use strict';
 
-const {
-  lstat,
-  readdir,
-  readFile,
-  realpath,
-  rmdir,
-  unlink,
-  writeFile,
-} = require('node:fs/promises');
+// The old and new app.asar archives are files on disk, not Electron virtual directories.
+const { lstat, readdir, readFile, realpath, rmdir, unlink, writeFile } = (
+  process.versions.electron ? require('original-fs') : require('node:fs')
+).promises;
 const path = require('node:path');
 const { validIdentity } = require('./security.cjs');
 
