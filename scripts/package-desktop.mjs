@@ -11,7 +11,7 @@ import desktopSecurity from '../desktop/security.cjs';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 import { configureDestinationStaging } from './nsis-destination-staging.mjs';
 import { desktopPackageFiles, windowsUpdateHelpers } from './desktop-package-files.mjs';
-import { verifyDesktopModules } from './desktop-package-check.mjs';
+import { verifyDesktopModules, verifyDesktopWorkspace } from './desktop-package-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const staged = path.join(root, '.desktop-build');
@@ -190,13 +190,15 @@ await build({
     ],
     async afterPack(context) {
       const { appOutDir } = context;
+      const resources = path.join(appOutDir, 'resources');
       configureLinuxNsisExtraction(context);
       await configureDestinationStaging(context);
       await verifyDesktopModules(
         path.join(root, 'desktop'),
-        path.join(appOutDir, 'resources', 'app.asar'),
+        path.join(resources, 'app.asar'),
         windowsUpdateHelpers,
       );
+      await verifyDesktopWorkspace(root, path.join(resources, 'workspace'));
       // Fail the build before producing a downloadable installer with missing deps.
       for (const required of [
         'runtime/node.exe',
@@ -204,6 +206,7 @@ await build({
         'app.asar',
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
+        'workspace/node_modules/pptxgenjs/package.json',
         'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/@esbuild/win32-x64/esbuild.exe',
         'workspace/node_modules/@openai/codex/bin/codex.js',
@@ -211,7 +214,7 @@ await build({
         'workspace/scripts/mesh-mcp.mjs',
         'workspace/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe',
       ]) {
-        if (!(await stat(path.join(appOutDir, 'resources', required))).isFile())
+        if (!(await stat(path.join(resources, required))).isFile())
           throw new Error(`Packaged runtime is missing ${required}.`);
       }
     },

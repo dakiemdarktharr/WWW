@@ -14,7 +14,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { desktopPackageFiles } from './desktop-package-files.mjs';
-import { verifyDesktopModules } from './desktop-package-check.mjs';
+import { verifyDesktopModules, verifyDesktopWorkspace } from './desktop-package-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -328,6 +328,7 @@ await build({
     async afterPack({ appOutDir }) {
       const resources = path.join(appOutDir, 'Kivuno.app', 'Contents', 'Resources');
       await verifyDesktopModules(path.join(root, 'desktop'), path.join(resources, 'app.asar'));
+      await verifyDesktopWorkspace(root, path.join(resources, 'workspace'));
       const binaries = [
         'runtime/node',
         'runtime/git/bin/git',
@@ -341,6 +342,7 @@ await build({
         'workspace/node_modules/npm/bin/npm-cli.js',
         'workspace/node_modules/tsx/dist/loader.mjs',
         'workspace/node_modules/fastify/fastify.js',
+        'workspace/node_modules/pptxgenjs/package.json',
         'workspace/node_modules/@google/gemini-cli/bundle/gemini.js',
         'mac-update-helper.sh',
         ...binaries,

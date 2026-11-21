@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, writeFile, rm, lstat, chmod, stat, copyFile } from
 import { existsSync, createReadStream } from 'node:fs';
 import path from 'node:path';
 import { desktopPackageFiles, linuxUpdateHelpers } from './desktop-package-files.mjs';
-import { verifyDesktopModules } from './desktop-package-check.mjs';
+import { verifyDesktopModules, verifyDesktopWorkspace } from './desktop-package-check.mjs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -214,6 +214,7 @@ await build({
         path.join(appOutDir, 'resources', 'app.asar'),
         linuxUpdateHelpers,
       );
+      await verifyDesktopWorkspace(root, path.join(appOutDir, 'resources', 'workspace'));
       for (const required of [
         'kivuno',
         'resources/app.asar',
@@ -221,6 +222,7 @@ await build({
         'resources/workspace/node_modules/npm/bin/npm-cli.js',
         'resources/workspace/node_modules/tsx/dist/loader.mjs',
         'resources/workspace/node_modules/fastify/fastify.js',
+        'resources/workspace/node_modules/pptxgenjs/package.json',
         'resources/workspace/node_modules/@esbuild/linux-x64/bin/esbuild',
         'resources/workspace/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex',
       ]) {
