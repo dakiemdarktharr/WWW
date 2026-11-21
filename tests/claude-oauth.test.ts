@@ -235,6 +235,7 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     (await control(bob, { action: 'account-status', connectionId: accountId })).json().status,
     'disconnected',
   );
+  assert.equal((await status()).authorized, false);
   const projectAccess = {
     action: 'enroll',
     connectionId: sharedId,
@@ -280,6 +281,7 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     'pending',
     'OAuth approval and exchange alone do not verify an MCP client',
   );
+  assert.equal((await status()).authorized, true);
   const sessionResponse = await initialize(accountToken);
   assert.equal(sessionResponse.statusCode, 200);
   const verified = await status();
@@ -378,4 +380,37 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
   await control(device, { action: 'revoke', connectionId: accountId });
   assert.equal((await status()).status, 'disconnected');
   assert.equal((await initialize(verificationOnly)).statusCode, 401);
+  // Multiple old device/profile grants must not recommend the first saved row.
+  owner = 'Dana';
+  const oldDevice = desktop(owner),
+    newDevice = desktop(owner);
+  const oldId = randomUUID(),
+    newId = randomUUID();
+  const enrollAccount = (deviceToken: string, connectionId: string) =>
+    control(deviceToken, {
+      ...body,
+      memberId: newId,
+      connectionId,
+      profileName: 'Echo',
+      expiresAt: new Date(Date.now() + 600000).toISOString(),
+    });
+  await enrollAccount(oldDevice, oldId);
+  const oldGrant = store.all<any>('claudeWebGrant').find((g) => g.connectionId === oldId)!;
+  store.put('claudeWebGrant', { ...oldGrant, requestedAt: Date.now() - 1000 });
+  await enrollAccount(newDevice, newId);
+  const consentRequest = await request(published);
+  const choices = (await inspect(consentRequest)).json();
+  assert.equal(choices.recommendedConnectionId, newId);
+  assert.deepEqual(
+    choices.grants.map((g: any) => g.connectionId),
+    [newId, oldId],
+  );
+  const recent = store.all<any>('claudeWebGrant').find((g) => g.connectionId === newId)!;
+  store.put('claudeWebGrant', { ...recent, requestedAt: Date.now() - 1000 });
+  await enrollAccount(oldDevice, oldId);
+  assert.equal((await inspect(consentRequest)).json().recommendedConnectionId, oldId);
+  const older = store.all<any>('claudeWebGrant').find((g) => g.connectionId === oldId)!;
+  store.put('claudeWebGrant', { ...older, requestedAt: Date.now() - 700000 });
+  store.put('claudeWebGrant', { ...recent, requestedAt: Date.now() - 700000 });
+  assert.equal((await inspect(consentRequest)).json().recommendedConnectionId, undefined);
 });

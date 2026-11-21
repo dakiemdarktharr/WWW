@@ -87,32 +87,47 @@ function accountStatus(memberId: string) {
 export function useClaudeAccount(memberId: string | undefined, watchPending = false) {
   const [account, setAccount] = useState<ClaudeWebAccount>();
   const [error, setError] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<number>();
   useEffect(() => {
     setAccount(undefined);
     setError('');
+    setCheckedAt(undefined);
+    setChecking(false);
     if (!memberId || !window.relayDesktop?.claudeWebAccountStatus) return;
     const currentId = memberId;
-    const started = Date.now();
     let alive = true,
       revision = 0;
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       const requested = ++revision;
       clearTimeout(timer);
-      if (document.hidden) return;
+      if (document.hidden) {
+        setChecking(false);
+        return;
+      }
+      setChecking(true);
+      let retry = false;
+      let pending = false;
       try {
         const value = await accountStatus(currentId);
         if (!alive || requested !== revision) return;
         setAccount(value);
         setError('');
-        if (value.status === 'pending')
-          timer = setTimeout(refresh, watchPending && Date.now() - started < 120000 ? 3500 : 60000);
-        else if (value.status === 'connected' && value.expiresAt)
-          timer = setTimeout(refresh, Math.max(1000, Date.parse(value.expiresAt) - Date.now()));
+        setCheckedAt(Date.now());
+        pending = value.status === 'pending';
       } catch (cause) {
         if (!alive || requested !== revision) return;
         setAccount(undefined);
         setError((cause as Error).message);
+        retry = true;
+      } finally {
+        if (alive && requested === revision) {
+          setChecking(false);
+          // Never stop after a transient failure or schedule a 30-day timeout
+          // (which overflows the browser timer). Recheck revocations as well.
+          timer = setTimeout(refresh, retry ? 5000 : pending && watchPending ? 3500 : 30000);
+        }
       }
     }
     const changed = (event: Event) => {
@@ -121,6 +136,7 @@ export function useClaudeAccount(memberId: string | undefined, watchPending = fa
       }
     };
     window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener(accountEvent, changed);
     void refresh();
@@ -128,9 +144,10 @@ export function useClaudeAccount(memberId: string | undefined, watchPending = fa
       alive = false;
       clearTimeout(timer);
       window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener(accountEvent, changed);
     };
   }, [memberId, watchPending]);
-  return { account, error };
+  return { account, error, checking, checkedAt };
 }

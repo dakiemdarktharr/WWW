@@ -172,6 +172,7 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
       expiresAt: state.expiresAt,
       verifiedAt: state.verifiedAt,
       canShare: state.canShare,
+      authorized: state.authorized === true,
       url: origin + '/api/claude/mcp',
     };
   }

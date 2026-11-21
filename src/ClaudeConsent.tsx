@@ -8,6 +8,7 @@ import './billing.css';
 import './ClaudeConsent.css';
 
 interface Consent {
+  recommendedConnectionId?: string;
   account: { name: string };
   scope: string;
   grants: {
@@ -79,7 +80,11 @@ function ConsentForm() {
       )
         throw new Error(vi ? 'Yêu cầu cấp quyền không hợp lệ.' : 'The access request is invalid.');
       setData(consent);
-      if (consent.grants.length === 1) setSelected(consent.grants[0].connectionId);
+      const recommended = consent.grants.find(
+        (g) => g.connectionId === consent.recommendedConnectionId,
+      );
+      if (recommended) setSelected(recommended.connectionId);
+      else if (consent.grants.length === 1) setSelected(consent.grants[0].connectionId);
     }
     void inspect().catch((cause) => {
       if (!controller.signal.aborted) setError((cause as Error).message);
@@ -198,6 +203,11 @@ function ConsentForm() {
                             : 'Account link'
                           : grant.memberName || grant.memberId}
                       </span>
+                      {grant.connectionId === data.recommendedConnectionId && (
+                        <small>
+                          {vi ? 'Vừa yêu cầu kết nối từ Kivuno' : 'Just requested from Kivuno'}
+                        </small>
+                      )}
                       <small>
                         {vi ? 'Hết hạn' : 'Expires'}{' '}
                         <time dateTime={grant.expiresAt}>

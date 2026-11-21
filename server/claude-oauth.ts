@@ -261,25 +261,38 @@ export function registerClaudeOAuth(
           .code(404)
           .send({ error: 'This authorization request expired. Reconnect from Claude.' });
       if (!row.ownerId) store.put('claudeOAuthRequest', { ...row, ownerId: owner });
+      const grants = ownerGrants(owner)
+        .filter(
+          (g) =>
+            !g.accountGrantId &&
+            (g.kind === 'account' || (row.scope || scope).split(' ').includes(scope)),
+        )
+        .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0));
+      const latest = grants[0];
+      // This is a selection hint only: explicit owner consent and all grant
+      // checks still apply. Never infer intent from the oldest saved profile.
+      const recommendedConnectionId =
+        latest?.kind === 'account' &&
+        latest.requestedAt &&
+        latest.requestedAt <= Date.now() &&
+        latest.requestedAt > Date.now() - 600000 &&
+        latest.requestedAt !== grants[1]?.requestedAt
+          ? latest.connectionId
+          : undefined;
       return reply.send({
+        recommendedConnectionId,
         scope: row.scope || scope,
         account: { name: options.ownerName?.(req) || owner },
-        grants: ownerGrants(owner)
-          .filter(
-            (g) =>
-              !g.accountGrantId &&
-              (g.kind === 'account' || (row.scope || scope).split(' ').includes(scope)),
-          )
-          .map((g) => ({
-            kind: g.kind || 'project',
-            connectionId: g.connectionId,
-            projectId: g.projectId,
-            memberId: g.memberId,
-            projectName: g.projectName,
-            memberName: g.profileName,
-            deviceName: store.lookup<DesktopDevice>('desktopDevice', g.deviceId)?.name,
-            expiresAt: new Date(g.expiresAt).toISOString(),
-          })),
+        grants: grants.map((g) => ({
+          kind: g.kind || 'project',
+          connectionId: g.connectionId,
+          projectId: g.projectId,
+          memberId: g.memberId,
+          projectName: g.projectName,
+          memberName: g.profileName,
+          deviceName: store.lookup<DesktopDevice>('desktopDevice', g.deviceId)?.name,
+          expiresAt: new Date(g.expiresAt).toISOString(),
+        })),
       });
     });
     oauth.post(claudeConsentPath, { bodyLimit: 2048 }, (req, reply) => {

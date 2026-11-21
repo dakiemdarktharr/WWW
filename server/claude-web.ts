@@ -5,6 +5,7 @@ import { claudeMcpPath, claudeWebBearer, claudeWebControlPath } from '../shared/
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { Store, DomainError } from './store.ts';
 import {
+  claudeOAuthAccess,
   claudeOAuthConnection,
   claudeOAuthGrant,
   registerClaudeOAuth,
@@ -114,6 +115,7 @@ export interface ClaudeWebGrant {
   projectId?: string;
   kind?: 'account';
   accountGrantId?: string;
+  requestedAt?: number;
   verifiedAt?: string;
   verifiedCredential?: string;
   latestCredential?: string;
@@ -266,8 +268,16 @@ export function registerClaudeWeb(
         ? claudeOAuthConnection(store, account, oauth.origin + claudeMcpPath)
         : undefined;
     const connected = access && access.grantId === account.id && access.ownerId === account.ownerId;
+    const credential =
+      account.latestCredential && oauth
+        ? claudeOAuthAccess(store, account.latestCredential, oauth.origin + claudeMcpPath)
+        : undefined;
+    const authorized =
+      !!connected ||
+      !!(credential && credential.grantId === account.id && credential.ownerId === account.ownerId);
     return {
       status: connected ? ('connected' as const) : ('pending' as const),
+      authorized,
       connectionId: account.connectionId,
       expiresAt: new Date(
         connected && !account.latestRefresh
@@ -305,7 +315,14 @@ export function registerClaudeWeb(
     if (input.action === 'enroll-account')
       return store.transaction(() => {
         const existing = deviceAccounts().find((g) => g.memberId === input.memberId);
-        if (existing) return { enrolled: true, ...accountStatus(existing) };
+        if (existing) {
+          const requested = store.put<Grant>('claudeWebGrant', {
+            ...existing,
+            requestedAt: Date.now(),
+            profileName: input.profileName,
+          });
+          return { enrolled: true, ...accountStatus(requested) };
+        }
         const now = Date.now(),
           expiry = Date.parse(input.expiresAt);
         if (expiry <= now || expiry > now + 30 * 86400000)
@@ -321,6 +338,7 @@ export function registerClaudeWeb(
         const account = store.put<Grant>('claudeWebGrant', {
           id: 'account:' + randomUUID(),
           kind: 'account',
+          requestedAt: now,
           deviceId: device.id,
           ownerId: owner.id,
           connectionId: input.connectionId,
