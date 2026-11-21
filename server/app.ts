@@ -37,7 +37,12 @@ import {
 } from '../shared/claude-web.ts';
 import { sharedSadeCloudFinishPath } from '../shared/sade-cloud.ts';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
-import { sadeDeckRoute, sadeDeckFinishRoute, sadeDeckRenderRoute } from '../shared/sade-deck.ts';
+import {
+  sadeDeckRoute,
+  sadeDeckFinishRoute,
+  sadeDeckRenderRoute,
+  sadeDeckWorkerRoute,
+} from '../shared/sade-deck.ts';
 import { SadeDecks } from './sade-decks.ts';
 import { registerBillingRoutes } from './billing.ts';
 import { registerBankCheckout } from './bank-checkout.ts';
@@ -212,7 +217,12 @@ export async function buildApp(
         return reply.code(403).send({ error: 'A verified workspace origin is required.' });
       if (pathname.startsWith('/api/auth/') || pathname === '/api/cloud/health') return;
       if (pathname === '/api/cloud/prepare-upgrade') return;
-      if (pathname === sadeDeckFinishRoute || pathname === sadeDeckRenderRoute) return;
+      if (
+        pathname === sadeDeckFinishRoute ||
+        pathname === sadeDeckRenderRoute ||
+        pathname === sadeDeckWorkerRoute
+      )
+        return;
       if (
         [
           '/api/desktop/authorize',
@@ -350,15 +360,18 @@ export async function buildApp(
     });
   if (options.cloud) {
     const decks = new SadeDecks(workspace.store);
-    app.post(sadeDeckRoute, (request) => {
+    app.post(sadeDeckRoute, { bodyLimit: 64 * 1024 }, (request) => {
       const device = desktopIdentity!.authenticate(request.headers.authorization);
-      return decks.execute(desktopIdentity!.publicDevice(device).owner.id, request.body);
+      return decks.execute(desktopIdentity!.publicDevice(device).owner.id, request.body, device.id);
     });
     app.post(sadeDeckFinishRoute, { bodyLimit: 900 * 1024 }, (request) =>
       decks.finish(request.body),
     );
     app.post(sadeDeckRenderRoute, { bodyLimit: 64 * 1024 }, (request) =>
       decks.render(request.body),
+    );
+    app.post(sadeDeckWorkerRoute, { bodyLimit: 64 * 1024 }, (request) =>
+      decks.runWorker(request.body),
     );
     const auth = options.cloud.auth;
     const currentUser = (request: FastifyRequest) => auth.currentUser(request.headers);

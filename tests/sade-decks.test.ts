@@ -16,6 +16,7 @@ test('PowerPoint intent allows direct creation and leaves deferrals and papers t
     'Put together a pitch deck for our campus cafe',
     'Give me a PowerPoint on fieldwork safety',
     'Tạo file ppt giới thiệu bài nghiên cứu này',
+    'tôi cần một ppt thuyết trình chi tiết về 3 lần chống quân mông nguyên',
   ])
     assert.equal(isSadeDeckRequest(message), true, message);
   for (const message of [
@@ -23,6 +24,8 @@ test('PowerPoint intent allows direct creation and leaves deferrals and papers t
     'How can I create slides with speaker notes?',
     'Hãy viết paper về loài chim ở đảo rồi làm slides',
     'Please archive the current PowerPoint',
+    'Mình chưa cần một PPT cho buổi báo cáo này',
+    'Tôi cần xem PPT cũ trong nhóm ở đâu?',
   ])
     assert.equal(isSadeDeckRequest(message), false, message);
 });
@@ -106,7 +109,88 @@ test('PowerPoint job leases deduplicate retries, isolate owners, and reject stal
   assert.equal(downloaded.data, result.data);
 });
 
-test('a PowerPoint is delivered only after its assigned Codex session calls export and completes', async () => {
+test('Sade uses an eligible author, avoids a busy desktop, and can reassign a failed attempt', (t) => {
+  const store = new Store(':memory:');
+  t.after(() => store.close());
+  let now = 1000;
+  const decks = new SadeDecks(store, () => now);
+  const start = (prompt: string, deviceId: string, local: boolean) => {
+    const id = randomUUID();
+    const result = decks.execute(
+      'owner',
+      { action: 'start', id, prompt, ...(local ? { localAuthor: 'claude-code' } : {}) },
+      deviceId,
+    );
+    assert('work' in result && result.work);
+    return result.work;
+  };
+  const task = ({ id, lease }: { id: string; lease: string }, taskId = randomUUID()) => ({
+    action: 'assign',
+    id,
+    lease,
+    taskId,
+    input: { instructions: 'Author a deck', brief: '{}', schema: '{}' },
+  });
+  const first = start('Soạn file PPT về thư viện', 'desk', true);
+  const firstTask = task(first);
+  assert.deepEqual(decks.runWorker(firstTask), { provider: 'claude-code' });
+  assert.deepEqual(decks.runWorker(firstTask), { provider: 'claude-code' });
+  const poll = { action: 'worker-poll', runnerId: randomUUID() };
+  assert.deepEqual(decks.execute('owner', poll, 'other-desk'), { active: false });
+  const assignment = decks.execute('owner', poll, 'desk');
+  assert('assignment' in assignment && assignment.assignment?.taskId === firstTask.taskId);
+  assert.deepEqual(decks.execute('owner', { ...poll, runnerId: randomUUID() }, 'desk'), {
+    active: true,
+  });
+  now++;
+  const second = start('Tạo PPT về triển lãm tháng sau', 'desk', true);
+  assert.deepEqual(decks.runWorker(task(second)), { provider: 'codex' });
+  assert.throws(
+    () =>
+      decks.execute(
+        'owner',
+        {
+          action: 'worker-result',
+          id: first.id,
+          taskId: firstTask.taskId,
+          runnerId: poll.runnerId,
+          result: { status: 'unavailable' },
+        },
+        'other-desk',
+      ),
+    { status: 404 },
+  );
+  const report = {
+    action: 'worker-result',
+    id: first.id,
+    taskId: firstTask.taskId,
+    runnerId: poll.runnerId,
+    result: { status: 'unavailable' },
+  };
+  assert.deepEqual(decks.execute('owner', report, 'desk'), { accepted: true });
+  assert.deepEqual(
+    decks.runWorker({
+      action: 'result',
+      id: first.id,
+      lease: first.lease,
+      taskId: firstTask.taskId,
+    }),
+    { status: 'unavailable' },
+  );
+  assert.deepEqual(decks.runWorker(task(first)), { provider: 'codex' });
+  assert.deepEqual(decks.execute('owner', report, 'desk'), { accepted: false });
+  const read = decks.execute('owner', { action: 'read', id: first.id });
+  assert('deck' in read);
+  assert.deepEqual(
+    read.deck.assignments?.map(({ provider }) => provider),
+    ['claude-code', 'codex'],
+  );
+  assert.deepEqual(decks.runWorker(task(first)), { provider: null });
+  const offline = start('Build a deck for the spring program', 'offline', false);
+  assert.deepEqual(decks.runWorker(task(offline)), { provider: 'codex' });
+});
+
+test('after a desktop author becomes unavailable, Codex must export and report a valid deck', async () => {
   const sources = ['https://example.test/annual', 'https://example.test/quarter'];
   const brief = {
     scope: 'Campus cafe in 2026',
@@ -139,6 +223,8 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
   let audits = 0;
   let rejected = false;
   let revised = false;
+  let assignments = 0;
+  let desktopAttempts = 0;
   const transport: typeof fetch = async (url, init) => {
     const path = new URL(String(url)).pathname;
     calls.push((init?.method || 'GET') + ' ' + path);
@@ -241,6 +327,13 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
       apiKey: 'fixture',
       fetch: transport,
       pollMs: 1,
+      async assign() {
+        return ++assignments === 1 ? 'claude-code' : 'codex';
+      },
+      async localResult() {
+        desktopAttempts++;
+        return { status: 'unavailable' };
+      },
       async render(presentation) {
         const bytes = await renderSadePowerPoint(presentation);
         return {
@@ -253,6 +346,8 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
   assert.equal(result.worker.report, 'I exported the campus cafe slides.');
   assert.equal(result.worker.sessionId, sessionId);
   assert.equal(result.title, title);
+  assert.equal(assignments, 2);
+  assert.equal(desktopAttempts, 1);
   assert(rejected && revised);
   assert.equal(exported, 2);
   assert.equal(audits, 1);

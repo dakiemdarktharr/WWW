@@ -20,6 +20,16 @@ const patches = [
     ],
   },
   {
+    version: '0.9.11',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Sade chọn Claude Code hoặc Codex theo kết nối và tải hiện tại. Theo dõi việc giao, chuyển việc và xem PowerPoint có dẫn nguồn ngay trong Kivuno.',
+        en: 'Sade chooses Claude Code or Codex based on availability and active work. See assignments, handoffs, and cited PowerPoint files in Kivuno.',
+      },
+    ],
+  },
+  {
     version: '0.9.10',
     date: '2026-11-21',
     fixes: [

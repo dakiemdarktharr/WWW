@@ -24,14 +24,14 @@ function publicStatus(value) {
   };
 }
 
-async function codeStatus(environment = process.env) {
+async function codeStatus(environment = process.env, timeout = 15000) {
   const command = await findExecutable('claude', environment);
   if (!command) return { installed: false, signedIn: false };
   try {
     const { stdout } = await execute(command, ['auth', 'status'], {
       env: environment,
       windowsHide: true,
-      timeout: 15000,
+      timeout,
       maxBuffer: 64000,
     });
     return publicStatus(JSON.parse(stdout));

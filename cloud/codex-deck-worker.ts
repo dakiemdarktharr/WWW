@@ -45,7 +45,6 @@ export async function runCodexDeckWorker<T>(
     brief: string;
     schema: Record<string, unknown>;
     jobLease: string;
-    onSession?: (sessionId: string) => Promise<void>;
     render: (args: unknown) => Promise<{ artifact: T; receipt: string } | { error: string }>;
   },
   options: { apiKey?: string; fetch?: typeof fetch; signal?: AbortSignal; pollMs?: number } = {},
@@ -129,7 +128,6 @@ export async function runCodexDeckWorker<T>(
     });
   }
   try {
-    await input.onSession?.(session.id);
     let current = session;
     let result: { artifact: T; turn: string; receipt: string } | undefined;
     let calls = 0;

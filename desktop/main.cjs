@@ -38,6 +38,7 @@ const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
 const createClaudeWebRelay = require('./claude-web.cjs');
 const claudeClient = require('./claude-client.cjs');
+const { createSadeDeckWorker } = require('./sade-deck-worker.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const { downloadUpdate } = require('./release-download.cjs');
 const { verifyPortableInstall } = require('./portable-install.cjs');
@@ -48,6 +49,7 @@ const {
 } = require('./windows-update.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
 const sadeProjectFileRoute = '/api/desktop/sade-project-file';
+const sadeDeckRoute = '/api/desktop/sade-decks';
 const sadeProjectChunkBytes = 512 * 1024;
 const projectUid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const projectDigest = /^[a-f0-9]{64}$/;
@@ -108,6 +110,11 @@ let profileSyncQueue = Promise.resolve();
 let claudeWeb;
 let identityTransition = false;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sadeDeckWorker = createSadeDeckWorker({
+  request: (owner, input, signal) =>
+    cloudRequest(sadeDeckRoute, input, owner.accessToken, 6500, signal),
+  current: (owner) => !quitting && !identityTransition && identity === owner,
+});
 const projectBrowser = new ProjectBrowser({
   getWindow: () => window,
   getBackendOrigin: () => backendOrigin,
@@ -623,6 +630,7 @@ async function readIdentity(windowsUpdate) {
 async function clearIdentity() {
   claudeWeb?.stop();
   claudeWeb = undefined;
+  sadeDeckWorker.stop();
   projectBrowser.close();
   identity = null;
   pending = null;
@@ -785,6 +793,7 @@ async function bridgeLoop() {
     if (!response.ok || !body.deviceId || body.owner?.id !== identity.owner.id)
       throw new Error('Desktop identity is not available.');
     identity.deviceId = body.deviceId;
+    sadeDeckWorker.watch(identity);
     identity.bridgeKey ||= randomBytes(32).toString('hex');
     await persistIdentity(identity);
     const configured = await fetch(backendOrigin + '/api/desktop/bridge-config', {
@@ -1595,14 +1604,23 @@ function registerIpc() {
       Buffer.byteLength(JSON.stringify(input), 'utf8') > 15000
     )
       throw new Error('Invalid PowerPoint request.');
-    const { response, body } = await cloudRequest(
-      '/api/desktop/sade-decks',
-      input,
+    const command =
+      input.action === 'start' ? { action: 'start', id: input.id, prompt: input.prompt } : input;
+    const localAuthor = input.action === 'start' && (await sadeDeckWorker.ready());
+    if (identity !== owner || identityTransition) throw new Error('The active account changed.');
+    let result = await cloudRequest(
+      sadeDeckRoute,
+      localAuthor ? { ...command, localAuthor: sadeDeckWorker.localAuthor } : command,
       owner.accessToken,
     );
+    // Older gateways can still accept the request using their original contract.
+    if (localAuthor && result.response.status === 400 && identity === owner && !identityTransition)
+      result = await cloudRequest(sadeDeckRoute, command, owner.accessToken);
+    const { response, body } = result;
     if (identity !== owner || identityTransition) throw new Error('The active account changed.');
     if (!response.ok)
       throw new Error(body.error || 'The PowerPoint service is temporarily unavailable.');
+    if (localAuthor) sadeDeckWorker.watch(owner);
     return input.action === 'download' ? saveSadeDeck(body) : body;
   });
   ipcMain.handle('relay:project-preview', async (event, input) => {
@@ -2336,6 +2354,7 @@ else {
     projectBrowser.close();
     signInGeneration++;
     bridgeGeneration++;
+    sadeDeckWorker.stop();
     pendingUpdate?.controller.abort();
     void Promise.all([
       stopBackend(),
