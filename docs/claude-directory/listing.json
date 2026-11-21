@@ -1,0 +1,84 @@
+{
+  "status": "draft-not-submitted",
+  "preparedAt": "2026-11-21",
+  "listing": {
+    "name": "Kivuno",
+    "proposedSlug": "kivuno",
+    "assignedListingUrl": null,
+    "shortDescription": "Bring explicitly shared Kivuno project messages into Claude for summaries, handoffs, and blocker reviews.",
+    "description": "Kivuno connects Claude to the messages in a project group you explicitly share from your Kivuno desktop workspace. Ask Claude to summarize recent progress, review handoffs, or identify blockers using the shared conversation.\n\nConnect your Claude account to a Kivuno profile first. Project messages remain private until you separately choose to share a project in Kivuno. The connector reads the project name and short, paginated message excerpts. It cannot post messages, edit files, run commands, access unrelated projects, or make payments.\n\nKeep Kivuno open and online while reading project messages. You can stop sharing or disconnect in Kivuno. The connector works with Claude accounts that support connectors, including Free subject to Claude's limits. It does not include a Claude subscription or grant Claude Code access. Model availability and usage limits remain controlled by your Claude plan.",
+    "categorySuggestions": ["Collaboration", "Productivity", "Developer tools"],
+    "categoriesNote": "Map to available portal categories; these are descriptive suggestions, not verified portal enum values.",
+    "websiteUrl": "https://kivuno.vercel.app",
+    "documentationUrl": "https://github.com/dakiemdarktharr/WWW/blob/main/docs/claude-directory/USER-GUIDE.md",
+    "privacyPolicyUrl": null,
+    "privacyDraftPath": "docs/claude-directory/PRIVACY-NOTICE.draft.md",
+    "supportEmail": "khoadao29082007@gmail.com",
+    "iconPath": "docs/claude-directory/assets/kivuno-512.png"
+  },
+  "publisher": {
+    "name": "Đào Tiến Khoa",
+    "type": "individual",
+    "productName": "Kivuno",
+    "reviewContactEmail": "khoadao29082007@gmail.com",
+    "authorizedSubmittingAccount": "Team member with Claude Pro; account holder to confirm at sign-in"
+  },
+  "connection": {
+    "type": "remote-mcp",
+    "urlMode": "universal",
+    "serverUrl": "https://kivuno.vercel.app/api/claude/mcp",
+    "authenticationRequirement": "always-required",
+    "authenticationType": "oauth_cimd",
+    "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+    "clientSecretRequired": false,
+    "tokenEndpointAuthMethod": "none",
+    "pkce": "S256",
+    "resourceMetadataUrl": "https://kivuno.vercel.app/.well-known/oauth-protected-resource/api/claude/mcp",
+    "issuerMetadataUrl": "https://kivuno.vercel.app/.well-known/oauth-authorization-server",
+    "authorizationEndpoint": "https://kivuno.vercel.app/api/claude/oauth/authorize",
+    "tokenEndpoint": "https://kivuno.vercel.app/api/claude/oauth/token",
+    "registrationEndpoint": "https://kivuno.vercel.app/api/claude/oauth/register",
+    "redirectUri": "https://claude.ai/api/mcp/auth_callback",
+    "scopes": ["connector.connect", "mesh.read"],
+    "scopeNote": "Account linking alone exposes no project messages. mesh.read additionally requires a valid, separately approved project share.",
+    "allowedLinkUris": [],
+    "allowedLinkUrisNote": "The connector does not emit ui/open-link. OAuth discovery and callback are configured separately."
+  },
+  "useCases": [
+    "Summarize recent progress from an explicitly shared project group.",
+    "Review a handoff and identify unresolved questions in shared messages.",
+    "List blockers mentioned in the shared project conversation."
+  ],
+  "prerequisites": [
+    "Kivuno account and an open, signed-in Kivuno desktop workspace.",
+    "A Claude profile with a connection request started in Kivuno.",
+    "A Claude account with connector access; provider limits apply.",
+    "Separate project sharing approval before mesh_read becomes available."
+  ],
+  "dataHandling": {
+    "apiOwnership": "First-party Kivuno API and authorized Kivuno desktop relay only.",
+    "tool": "mesh_read",
+    "operation": "Read-only project message retrieval",
+    "returnedFields": [
+      "project.name",
+      "messages[].sequence",
+      "messages[].kind",
+      "messages[].content",
+      "nextAfter"
+    ],
+    "bounds": "Up to 12 messages per page; content truncated to 550 characters per message; project name up to 100 characters.",
+    "claudeConversationCollection": "No Claude chat history, memory, files, or conversation summaries are requested. Tool arguments contain only an optional numeric cursor.",
+    "sensitiveDataNote": "Project messages are user-authored and may contain personal or sensitive content. Users must review the selected project before sharing; redaction is not a complete DLP guarantee.",
+    "financialTransfers": false,
+    "aiImageVideoAudioGeneration": false,
+    "sponsoredContent": false,
+    "healthDataPurpose": "Not designed for health-data processing; do not claim that user-authored text can never contain health information."
+  },
+  "submissionChecks": {
+    "privacyApprovedAndPublished": false,
+    "freshClaudeAccountAcceptancePassed": false,
+    "liveSharedProjectToolCallPassed": false,
+    "directoryTermsAccepted": false,
+    "finalSubmissionApproved": false
+  }
+}
