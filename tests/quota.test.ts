@@ -145,6 +145,66 @@ async function fixture(t: TestContext) {
   };
 }
 
+test('connector-only Claude does not raise or retain a runtime quota decision', async (t) => {
+  const f = await fixture(t);
+  for (const member of f.members)
+    f.store.updateMember(member.id, {
+      provider: 'claude',
+      integration: 'external',
+      account: { type: 'external', planType: 'unknown' },
+    });
+  f.store.message({
+    projectId: f.project.id,
+    taskId: null,
+    authorId: null,
+    kind: 'message',
+    content: 'Read the shared project',
+    requestStatus: 'open',
+    claimedBy: null,
+  });
+  await f.quota.enforce();
+  assert.equal(f.store.all<HumanRequest>('humanRequest').length, 0);
+  f.store.put('humanRequest', {
+    id: 'legacy-connector-quota',
+    projectId: f.project.id,
+    kind: 'quota',
+    title: 'Team usage needs your decision',
+    content: 'Atlas: unknown; usage unknown',
+    status: 'open',
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+  } satisfies HumanRequest);
+  await f.quota.enforce();
+  assert.equal(
+    f.store.get<HumanRequest>('humanRequest', 'legacy-connector-quota').status,
+    'resolved',
+  );
+  assert.equal(f.interrupted.length, 0);
+});
+
+test('mixed roster quota decision includes only managed accounts and clears after recovery', async (t) => {
+  const f = await fixture(t);
+  f.store.updateMember(f.members[0].id, { provider: 'claude', integration: 'external' });
+  f.quota.ingest(f.members[1].id, usage(60));
+  f.store.message({
+    projectId: f.project.id,
+    taskId: null,
+    authorId: null,
+    kind: 'message',
+    content: 'Help',
+    requestStatus: 'open',
+    claimedBy: null,
+  });
+  await f.quota.enforce();
+  const request = f.store.all<HumanRequest>('humanRequest')[0];
+  assert.ok(request);
+  assert.match(request.content, /Vega/);
+  assert.doesNotMatch(request.content, /Atlas/);
+  f.quota.ingest(f.members[1].id, usage(10));
+  await f.quota.enforce();
+  assert.equal(f.store.get<HumanRequest>('humanRequest', request.id).status, 'resolved');
+});
+
 test('quota normalization preserves every provider bucket and applies the most restrictive window', () => {
   const quota = normalizeQuota('account', {
     ordinaryUsageAllowed: true,

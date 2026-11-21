@@ -590,7 +590,10 @@ export function ExternalConnection({
               <strong role="status">
                 <Check size={16} /> Claude connected
               </strong>
-              <p>Your Claude account verified the Kivuno connector.</p>
+              <p>
+                Your Claude account verified the Kivuno connector. Use it from a chat in Claude;
+                this connection does not enable automatic replies or model selection in Kivuno Chat.
+              </p>
               {account.canShare !== false ? (
                 <p>
                   To share messages later, open a project in Chat → Group team, add {member.name} to

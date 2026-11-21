@@ -496,8 +496,9 @@ export class QuotaManager {
       }
       for (const project of this.store.projects()) {
         if (this.host.closing) break;
-        const roster = groupMembers(this.store, project.id).filter((member) => member.account);
-        if (!roster.length) continue;
+        const roster = groupMembers(this.store, project.id).filter(
+          (member) => member.account && !isExternalMember(member),
+        );
         const allUnavailable = roster.every((member) => {
           try {
             this.assertCanRun(member.id, project.id);
@@ -506,6 +507,25 @@ export class QuotaManager {
             return true;
           }
         });
+        // Connector-only members have no runtime quota to reserve. Also retire stale
+        // automatic decisions after a managed account becomes runnable again.
+        if (!roster.length || !allUnavailable) {
+          for (const request of this.store.all<HumanRequest>('humanRequest')) {
+            if (
+              request.projectId === project.id &&
+              request.kind === 'quota' &&
+              request.status === 'open' &&
+              request.title === 'Team usage needs your decision'
+            ) {
+              this.store.put('humanRequest', {
+                ...request,
+                status: 'resolved',
+                resolvedAt: new Date().toISOString(),
+              });
+            }
+          }
+          continue;
+        }
         const waitingSession = this.store
           .sessions()
           .some(

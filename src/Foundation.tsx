@@ -179,7 +179,16 @@ export function QuotaCard({
   );
   if (providerOf(member) !== 'codex' && !isExternalMember(member))
     return <ProviderTurnAllowance member={member} state={state} busy={busy} request={request} />;
-  if (isExternalMember(member)) return <span className="provider-tag">Quota unknown</span>;
+  if (isExternalMember(member))
+    return (
+      <section className="quota-card">
+        <strong>{member.name}</strong>
+        <p>
+          Usage is managed in {providerLabels[providerOf(member)]}. This connection does not report
+          remaining quota to Kivuno.
+        </p>
+      </section>
+    );
   return (
     <section className="quota-card">
       <div className="quota-card-heading">

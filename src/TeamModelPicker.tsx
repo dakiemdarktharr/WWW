@@ -39,13 +39,12 @@ export default function TeamModelPicker({
   const [catalog, setCatalog] = useState<{ key: string; models: ModelOption[]; error?: string }>();
   const [saveError, setSaveError] = useState('');
   const [claudeClient, setClaudeClient] = useState(() => savedClaudeClient(member.id));
-  const [browseCode, setBrowseCode] = useState(false);
   const [openedCodeModel, setOpenedCodeModel] = useState<string>();
   const external = isExternalMember(member);
   const provider = providerLabels[member.provider || 'codex'];
   const claude = member.provider === 'claude';
   const canOpenCode = claude && Boolean(window.relayDesktop?.claudeClient);
-  const code = canOpenCode && (claudeClient === 'code' || browseCode);
+  const code = canOpenCode && claudeClient === 'code';
   const readable = !member.entitlementLocked && (code || Boolean(member.account && !external));
   const key = JSON.stringify([
     member.id,
@@ -56,7 +55,8 @@ export default function TeamModelPicker({
     code,
   ]);
   const current = readable && catalog?.key === key ? catalog : undefined;
-  const preferred = code ? openedCodeModel : member.preferredModel;
+  // Opening a terminal is not confirmation of an active or persisted model.
+  const preferred = code ? undefined : member.preferredModel;
   const selected = current?.models.find((model) => model.model === preferred);
   const automatic = code ? 'Claude Code default' : 'Automatic';
   const value =
@@ -67,7 +67,6 @@ export default function TeamModelPicker({
     function changed(event: Event) {
       if ((event as CustomEvent<string>).detail !== member.id) return;
       setClaudeClient(savedClaudeClient(member.id));
-      setBrowseCode(false);
     }
     window.addEventListener('kivuno-claude-client-changed', changed);
     return () => window.removeEventListener('kivuno-claude-client-changed', changed);
@@ -128,7 +127,7 @@ export default function TeamModelPicker({
     try {
       if (code) {
         await window.relayDesktop!.claudeClient('code-model', model);
-        setOpenedCodeModel(model ?? undefined);
+        setOpenedCodeModel(model ?? 'Claude Code default');
       } else {
         const updated = await api<Member>(`/members/${member.id}/model`, { model }, 'PATCH');
         onSaved(updated.preferredModel);
@@ -161,6 +160,28 @@ export default function TeamModelPicker({
     }
   }
 
+  if (claude && !code)
+    return (
+      <div className="team-model">
+        <button
+          className="button"
+          disabled={busy || pending || member.entitlementLocked}
+          onClick={() => void openClaudePicker()}
+        >
+          <ArrowUpRight size={15} aria-hidden="true" />
+          {claudeClient === 'desktop' ? 'Open Claude Desktop' : 'Open Claude chat'}
+        </button>
+        <p className="member-connection-note">
+          Choose the model inside Claude. The connector cannot change it from Kivuno.
+        </p>
+        {saveError && (
+          <p className="error-text" role="alert">
+            {saveError}
+          </p>
+        )}
+      </div>
+    );
+
   return (
     <div
       className="team-model"
@@ -179,7 +200,9 @@ export default function TeamModelPicker({
         ref={trigger}
         type="button"
         className="button team-model-trigger"
-        aria-label={`Model for ${member.name}: ${value}`}
+        aria-label={
+          code ? `Open Claude Code for ${member.name}` : `Model for ${member.name}: ${value}`
+        }
         aria-expanded={open}
         aria-controls={open ? panel : undefined}
         disabled={member.entitlementLocked}
@@ -189,8 +212,8 @@ export default function TeamModelPicker({
         }}
       >
         <Cpu size={15} aria-hidden="true" />
-        <span>Model</span>
-        <strong title={value}>{value}</strong>
+        <span>{code ? 'Open Claude Code' : 'Model'}</span>
+        <strong title={value}>{code ? 'Choose starting model' : value}</strong>
         <ChevronDown size={14} aria-hidden="true" />
       </button>
       {open && (
@@ -201,34 +224,7 @@ export default function TeamModelPicker({
           aria-label={`Models for ${member.name}`}
         >
           {external && !code ? (
-            claude ? (
-              <>
-                <button
-                  className="team-model-option"
-                  type="button"
-                  aria-disabled={busy || pending}
-                  onClick={() => void openClaudePicker()}
-                >
-                  <span>
-                    {claudeClient === 'desktop' && window.relayDesktop?.claudeClient
-                      ? 'Choose in Claude Desktop'
-                      : 'Choose in Claude Web'}
-                  </span>
-                  <ArrowUpRight size={14} aria-hidden="true" />
-                </button>
-                {canOpenCode && (
-                  <button
-                    className="team-model-option"
-                    type="button"
-                    onClick={() => setBrowseCode(true)}
-                  >
-                    Browse Claude Code models
-                  </button>
-                )}
-              </>
-            ) : (
-              <p>Choose the model in the connected {provider} app.</p>
-            )
+            <p>Choose the model in the connected {provider} app.</p>
           ) : !readable ? (
             <p>Sign in to this account to see its models.</p>
           ) : (
@@ -304,7 +300,7 @@ export default function TeamModelPicker({
               )}
               <p>
                 {code
-                  ? 'Opens a new Claude Code session with the chosen model.'
+                  ? 'Opens a separate Claude Code terminal with the chosen model. It does not change Kivuno Chat or an existing Claude conversation.'
                   : 'Applies to the next automatic turn.'}
               </p>
             </>
@@ -315,6 +311,12 @@ export default function TeamModelPicker({
             </p>
           )}
         </div>
+      )}
+      {code && openedCodeModel && (
+        <p className="member-connection-note" role="status">
+          Requested a new Claude Code terminal with {openedCodeModel}. Check the active model in
+          that terminal.
+        </p>
       )}
     </div>
   );

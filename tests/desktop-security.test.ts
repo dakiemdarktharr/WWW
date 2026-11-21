@@ -353,6 +353,15 @@ test('native machine import pins the HTTPS coordinator and owns its storage path
 test('desktop external navigation only opens approved HTTPS sites or the configured identity origin', () => {
   const identity = 'https://relay.example';
   assert.equal(externalUrl('https://claude.ai/login', identity), 'https://claude.ai/login');
+  assert.equal(externalUrl('https://claude.ai/new', identity), 'https://claude.ai/new');
+  for (const url of [
+    'https://claude.ai/new?prompt=private',
+    'https://claude.ai/new#private',
+    'https://claude.ai.evil.test/new',
+    'http://claude.ai/new',
+    'https://user@claude.ai/new',
+  ])
+    assert.throws(() => externalUrl(url, identity));
   const usage = 'https://claude.ai/settings/usage';
   assert.equal(externalUrl(usage, identity), usage);
   assert.throws(() => externalUrl(usage + '?redirect=elsewhere', identity));

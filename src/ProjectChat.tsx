@@ -37,6 +37,7 @@ import GlassSelect from './GlassSelect';
 import SessionGraph from './SessionGraph';
 import BrowserPanel from './BrowserPanel';
 import ClaudeProjectSharing from './ClaudeProjectSharing';
+import Presence from './MemberPresence';
 import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
 import './chat-interactions.css';
@@ -58,17 +59,6 @@ function Avatar({ member, human = false }: { member?: Member; human?: boolean })
       style={{ '--avatar-color': member?.color || '#d5ff5f' } as React.CSSProperties}
     >
       {human ? 'Y' : member?.name.slice(0, 1).toUpperCase() || 'K'}
-    </span>
-  );
-}
-function Presence({ member }: { member: Member }) {
-  const status =
-    member.presence ||
-    (member.status === 'offline' || member.status === 'error' ? 'offline' : 'online');
-  return (
-    <span className={`member-presence ${status}`}>
-      <i />
-      {status}
     </span>
   );
 }
@@ -1054,10 +1044,12 @@ export default function ProjectChat({
                         <strong>{member.name}</strong>
                         <span>
                           {providerLabels[providerOf(member)]} ·{' '}
-                          {member.account?.planType ||
-                            (isExternalProvider(providerOf(member))
-                              ? 'External client'
-                              : 'Not signed in')}{' '}
+                          {member.provider === 'claude'
+                            ? 'Use in Claude'
+                            : member.account?.planType ||
+                              (isExternalProvider(providerOf(member))
+                                ? 'External client'
+                                : 'Not signed in')}{' '}
                           · {member.owner?.login || member.account?.email || 'Owner not set'}
                         </span>
                       </div>
@@ -1219,10 +1211,12 @@ export default function ProjectChat({
                     <strong>{member.name}</strong>
                     <small>
                       {providerLabels[providerOf(member)]} ·{' '}
-                      {member.account?.planType ||
-                        (isExternalProvider(providerOf(member))
-                          ? 'External client'
-                          : 'Not signed in')}{' '}
+                      {member.provider === 'claude'
+                        ? 'Use in Claude'
+                        : member.account?.planType ||
+                          (isExternalProvider(providerOf(member))
+                            ? 'External client'
+                            : 'Not signed in')}{' '}
                       · {member.owner?.login || 'Owner not set'}
                     </small>
                   </span>

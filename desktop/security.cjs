@@ -52,6 +52,7 @@ function externalUrl(value, identityOrigin) {
       url.searchParams.getAll('connectorUrl').length === 1 &&
       url.searchParams.get('connectorUrl') === identityOrigin + '/api/claude/mcp') ||
     url.href === 'https://claude.ai/login' ||
+    url.href === 'https://claude.ai/new' ||
     url.href === 'https://claude.ai/settings/usage' ||
     url.href === 'https://claude.ai/customize/connectors/yours' ||
     url.href === 'https://claude.com/download' ||

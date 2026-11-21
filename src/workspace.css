@@ -1374,3 +1374,9 @@
     background: var(--panel);
   }
 }
+.member-connection-note {
+  margin: 0.5rem 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-muted, #bcb6ca);
+}

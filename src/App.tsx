@@ -1,5 +1,6 @@
 import { openExternal } from './desktop';
 import ProviderSignIn from './ProviderSignIn';
+import MemberPresence, { useMemberConnection } from './MemberPresence';
 import SharedGroups, { SharedGroupEntryDialog, SharedGroupListExtras } from './SharedGroups';
 import ChatHome, { useChatGroups, type ChatSelection } from './ChatHome';
 import { useWorkspaceTheme, WorkspaceThemeProvider } from './WorkspaceTheme';
@@ -80,13 +81,7 @@ import ProviderConnect, {
   providerLabels,
   providerOf,
 } from './ProviderConnect';
-import {
-  beginClaudeAccount,
-  saveClaudeClient,
-  useClaudeAccount,
-  useClaudeCodeAccount,
-  type ClaudeClient,
-} from './ClaudeAccount';
+import { beginClaudeAccount, saveClaudeClient, type ClaudeClient } from './ClaudeAccount';
 import {
   AccountSettings,
   MeshPage,
@@ -974,25 +969,18 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
                   <p id="chat-roster-label">Project teammates</p>
                   <ul aria-labelledby="chat-roster-label">
                     {projectRoster.map((member) => {
-                      const presence =
-                        member.presence ||
-                        (member.status === 'offline' || member.status === 'error'
-                          ? 'offline'
-                          : 'online');
                       return (
                         <li key={member.id}>
                           <span
                             className="chat-avatar"
                             style={{ '--avatar-color': member.color } as React.CSSProperties}
-                            aria-hidden="true"
                           >
                             {member.name.slice(0, 1).toUpperCase()}
-                            <i className={`presence-dot ${presence}`} />
+                            <MemberPresence member={member} dot />
                           </span>
                           <span>
                             <strong>{member.name}</strong>
                             <small>{providerLabels[providerOf(member)]}</small>
-                            <span className="sr-only">{presence}</span>
                           </span>
                         </li>
                       );
@@ -2705,19 +2693,12 @@ function MemberCard({
   const [expanded, setExpanded] = useState(false);
   const [usageError, setUsageError] = useState('');
   const provider = providerOf(member);
-  const { account: claudeAccount } = useClaudeAccount(
-    provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
-  );
-  const codeAccount = useClaudeCodeAccount(
-    provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
-  );
+  const connection = useMemberConnection(member);
+  const claudeAccount = connection.web.account;
+  const codeAccount = connection.code;
   const webStatus =
     provider === 'claude' && !member.entitlementLocked ? claudeAccount?.status : undefined;
-  const presence = codeAccount?.signedIn
-    ? 'signed in'
-    : webStatus === 'connected' || webStatus === 'pending'
-      ? webStatus
-      : member.presence || 'offline';
+  const presence = connection.status;
   return (
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
@@ -2735,8 +2716,8 @@ function MemberCard({
         </div>
         <span className={`member-presence ${presence}`}>
           <i />
-          {presence === 'connected'
-            ? 'Claude connected'
+          {provider === 'claude'
+            ? connection.label
             : presence === 'online' &&
                 provider === 'antigravity' &&
                 member.account &&
@@ -2762,10 +2743,19 @@ function MemberCard({
                   : member.account?.email ||
                     (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>
-        {member.account?.planType && member.account.planType !== 'unknown' && (
-          <span className="plan-tag">{member.account.planType}</span>
-        )}
+        {provider === 'claude'
+          ? codeAccount?.signedIn &&
+            codeAccount.plan && <span className="plan-tag">{codeAccount.plan} · Claude Code</span>
+          : member.account?.planType &&
+            member.account.planType !== 'unknown' && (
+              <span className="plan-tag">{member.account.planType}</span>
+            )}
       </div>
+      {provider === 'claude' && (
+        <p className="member-connection-note">
+          Use this connection in Claude. It does not enable automatic replies in Kivuno Chat.
+        </p>
+      )}
       <div className="member-quota" aria-label={`${member.name} usage`}>
         <div className="member-quota-title">
           <span>Usage</span>
@@ -2803,8 +2793,8 @@ function MemberCard({
               View usage on Claude
             </button>
             <small>
-              Detailed usage requires a supported paid Claude plan. Free does not include this
-              dashboard.
+              This connector does not report your Claude plan or remaining usage to Kivuno. Check
+              your subscription and usage in Claude.
             </small>
           </>
         ) : provider === 'antigravity' ? (

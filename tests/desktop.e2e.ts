@@ -1051,6 +1051,11 @@ try {
     if (provider === 'claude') {
       await expect(externalCard.locator('.member-presence')).toHaveText('Claude connected');
       await expect(externalCard.getByText('Claude account linked', { exact: true })).toBeVisible();
+      await expect(externalCard.getByText(/does not report your Claude plan/)).toBeVisible();
+      await expect(
+        externalCard.getByRole('button', { name: 'Open Claude chat', exact: true }),
+      ).toBeVisible();
+      await expect(externalCard.getByRole('button', { name: /^Model for/ })).toHaveCount(0);
     }
     await externalCard
       .getByRole('button', {
@@ -1085,6 +1090,15 @@ try {
         .click();
       await page.getByRole('button', { name: 'Group team', exact: true }).click();
       const group = page.locator('.group-member').filter({ hasText: external.name });
+      await expect(group.locator('.member-presence')).toHaveText('Claude connected');
+      await expect(page.locator('.chat-sidebar-roster').getByLabel('Claude connected')).toHaveCount(
+        1,
+      );
+      await expect(group.getByText(/does not reply in Kivuno or run Sade tasks/)).toBeVisible();
+      await group.getByRole('button', { name: 'Open Claude to chat', exact: true }).click();
+      await expect
+        .poll(() => desktop!.evaluate(() => (globalThis as any).claudeConnectorUrls.at(-1)))
+        .toBe('https://claude.ai/new');
       await group.getByText('Share project messages', { exact: true }).click();
       await group.getByRole('button', { name: 'Allow read-only project access' }).click();
       await expect.poll(() => webRead).toBe(true);

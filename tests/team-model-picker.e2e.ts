@@ -46,6 +46,7 @@ class CatalogClient extends CodexClient {
 
 const atlas = store.addMember({ name: 'Atlas', role: 'engineer' });
 const vega = store.addMember({ name: 'Vega', role: 'researcher' });
+const claude = store.addMember({ name: 'Claude linked', role: 'engineer', provider: 'claude' });
 const atlasClient = new CatalogClient('atlas@example.test', [
   model('fixture-luna', 'Fixture Luna'),
   model('fixture-sol', 'Fixture Sol', true),
@@ -89,6 +90,14 @@ try {
       getWindowState: async () => ({ maximized: false, fullscreen: false }),
       checkForUpdates: async () => ({ hasUpdate: false, downloadAvailable: false }),
       controlWindow: async () => ({}),
+      claudeWebAccountStatus: async () => ({status: 'connected', canShare: true, connectionId: 'fixture', url: 'https://example.test/mcp'}),
+      openExternal: async (url) => { window.fixtureOpened = url; },
+      claudeClient: async (action, model) => {
+        if (action === 'status') return { installed: true, signedIn: true, plan: 'pro', email: 'fixture@example.test' };
+        if (action === 'models') return [{ model: 'fixture-sonnet', displayName: 'Fixture Sonnet' }];
+        window.fixtureCodeAction = {action, model};
+        return {opened: true};
+      },
     };
   `);
   const page = await context.newPage();
@@ -156,6 +165,42 @@ try {
   const otherPanel = page.getByRole('group', { name: 'Models for Vega' });
   await expect(otherPanel.getByRole('button', { name: 'Vega only' })).toBeVisible();
   await expect(otherPanel.getByRole('button', { name: fresh.displayName })).toHaveCount(0);
+  const claudeCard = page.locator('.member-card').filter({
+    has: page.getByRole('heading', { name: claude.name, exact: true }),
+  });
+  await expect(claudeCard.locator('.member-presence')).toHaveText('Claude connected');
+  await expect(claudeCard.locator('.plan-tag')).toHaveCount(0);
+  await expect(claudeCard.getByText(/does not report your Claude plan/)).toBeVisible();
+  await expect(claudeCard.getByRole('button', { name: /^Model for/ })).toHaveCount(0);
+  await claudeCard.getByRole('button', { name: 'Open Claude chat', exact: true }).click();
+  assert.equal(await page.evaluate(() => (window as any).fixtureOpened), 'https://claude.ai/new');
+  const chooseClient = async (client: string) =>
+    page.evaluate(
+      ({ id, client }) => {
+        localStorage.setItem('kivuno-claude-client:' + id, client);
+        window.dispatchEvent(new CustomEvent('kivuno-claude-client-changed', { detail: id }));
+      },
+      { id: claude.id, client },
+    );
+  await chooseClient('desktop');
+  await claudeCard.getByRole('button', { name: 'Open Claude Desktop', exact: true }).click();
+  assert.equal(await page.evaluate(() => (window as any).fixtureCodeAction.action), 'desktop');
+  await chooseClient('code');
+  await expect(claudeCard.locator('.plan-tag')).toHaveText('pro · Claude Code');
+  const codeTrigger = claudeCard.getByRole('button', {
+    name: 'Open Claude Code for Claude linked',
+  });
+  await codeTrigger.click();
+  await claudeCard.getByRole('button', { name: 'Fixture Sonnet', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => (window as any).fixtureCodeAction), {
+    action: 'code-model',
+    model: 'fixture-sonnet',
+  });
+  assert.equal(store.get<Member>('member', claude.id).preferredModel, undefined);
+  await expect(codeTrigger).toContainText('Choose starting model');
+  await expect(claudeCard.getByRole('status')).toContainText(
+    'Check the active model in that terminal',
+  );
   assert.deepEqual(errors, []);
   console.log(
     'Codex Team picker passed placement, keyboard, tier order, live refresh, stale-model rejection, persistence, reset and profile isolation.',
