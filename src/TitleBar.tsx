@@ -90,7 +90,7 @@ export default function DesktopTitleBar({
     progress?.phase === 'downloading'
       ? `Đang tải ${progress.percent}%`
       : progress?.phase === 'installing'
-        ? 'Đang cài và mở lại…'
+        ? 'Đang chuẩn bị bản cập nhật…'
         : '';
   return (
     <header

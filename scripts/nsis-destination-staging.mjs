@@ -2,6 +2,7 @@
 // NSIS plugins still use the normal small system temp directory.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { nsisTemplatesDir } from 'app-builder-lib/out/targets/nsis/nsisUtil.js';
 import { writeUpgradeStaging } from './nsis-upgrade-staging.mjs';
@@ -71,6 +72,16 @@ export async function configureDestinationStaging({ targets, outDir }) {
   );
   let section = await readFile(path.join(nsisTemplatesDir, 'installSection.nsh'), 'utf8');
   section = replaceOnce(section, '!include installer.nsh', include(applicationPath));
+  const switchScript = fileURLToPath(new URL('./windows-update-switch.ps1', import.meta.url));
+  const updateSection = fileURLToPath(new URL('./windows-update-section.nsh', import.meta.url));
+  section = replaceOnce(
+    section,
+    'InitPluginsDir',
+    'InitPluginsDir\n!define KIVUNO_SWITCH_SCRIPT "' +
+      switchScript +
+      '"\n' +
+      include(updateSection),
+  );
   await writeFile(extractionPath, extraction);
   await writeFile(applicationPath, application);
   await writeFile(sectionPath, section);

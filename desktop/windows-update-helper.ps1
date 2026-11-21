@@ -26,10 +26,10 @@ function Get-KivunoHash($file) {
 }
 
 try {
-  [IO.File]::WriteAllText($readyFile, 'ready')
-  if ($parentProcess -and !$parentProcess.WaitForExit(120000)) {
-    [IO.File]::WriteAllText($failure, 'failed')
-    exit 1
+  $live = $env:KIVUNO_UPDATE_LIVE -eq '1'
+  if (!$live) {
+    [IO.File]::WriteAllText($readyFile, 'ready')
+    if ($parentProcess -and !$parentProcess.WaitForExit(120000)) { throw 'Application still running.' }
   }
   if ((Get-KivunoHash $installer) -ne $env:KIVUNO_UPDATE_SHA -or
       !(Test-KivunoVersion $installer)) {
@@ -49,13 +49,14 @@ try {
 } catch {
   [IO.File]::WriteAllText($failure, 'failed')
 } finally {
+  Remove-Item -LiteralPath (Join-Path $staging 'commit') -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath (Join-Path $staging 'launch-update.js') -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $staging -ErrorAction SilentlyContinue
+  try { [IO.Directory]::Delete($staging, $false) } catch { }
 }
 
-if (Test-Path -LiteralPath $app -PathType Leaf) {
+if ((!$parentProcess -or $parentProcess.HasExited) -and (Test-Path -LiteralPath $app -PathType Leaf)) {
   try {
     if ($profilePath) {
       $escapedProfile = $profilePath -replace '(\\+)$', '$1$1'

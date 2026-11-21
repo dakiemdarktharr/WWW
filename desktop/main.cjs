@@ -20,6 +20,7 @@ const {
   access,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   writeFile,
   unlink,
@@ -468,6 +469,7 @@ async function installWindowsOrLinuxUpdate(artifact, latestVersion, cancel) {
             KIVUNO_UPDATE_FILE: file,
             KIVUNO_UPDATE_SHA: artifact.sha256,
             KIVUNO_UPDATE_VERSION: latestVersion,
+            KIVUNO_UPDATE_LIVE: artifact.stagedUpdate ? '1' : '0',
             KIVUNO_UPDATE_FAILURE: updateFailureFile,
             KIVUNO_UPDATE_PROFILE: profile,
             KIVUNO_UPDATE_READY: readyFile,
@@ -475,13 +477,16 @@ async function installWindowsOrLinuxUpdate(artifact, latestVersion, cancel) {
         },
       );
       try {
-        const deadline = Date.now() + 15000;
+        const deadline = Date.now() + (artifact.stagedUpdate ? 30 * 60_000 : 15_000);
         while (!existsSync(readyFile)) {
           cancel.throwIfAborted();
           if (helper.exitCode !== null || helper.signalCode !== null || Date.now() >= deadline)
             throw new Error('Không khởi động được trình cài Kivuno. Hãy thử lại.');
-          await pause(100);
+          await pause(250);
         }
+        cancel.throwIfAborted();
+        if (artifact.stagedUpdate)
+          await writeFile(path.join(directory, 'commit'), 'go', { flag: 'wx' });
       } catch (error) {
         helper.kill();
         throw error;
@@ -517,6 +522,57 @@ async function installWindowsOrLinuxUpdate(artifact, latestVersion, cancel) {
     await rm(directory, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
+}
+
+async function cleanPreviousWindowsInstall() {
+  const {
+    KIVUNO_UPDATE_FILE: installer,
+    KIVUNO_UPDATE_APP: updatedApp,
+    KIVUNO_UPDATE_VERSION: version,
+  } = process.env;
+  if (
+    process.platform !== 'win32' ||
+    !app.isPackaged ||
+    !installer ||
+    version !== app.getVersion() ||
+    !updatedApp ||
+    path.relative(process.execPath, updatedApp) !== ''
+  )
+    return;
+  const stage = path.dirname(installer);
+  if (
+    path.basename(installer) !== 'Kivuno-Setup.exe' ||
+    !/^\.kivuno-update-[A-Za-z0-9]{6}$/.test(path.basename(stage)) ||
+    path.relative(path.dirname(stage), path.dirname(path.dirname(process.execPath))) !== ''
+  )
+    return;
+  const backup = stage + '-previous';
+  const item = await lstat(backup);
+  if (
+    !item.isDirectory() ||
+    item.isSymbolicLink() ||
+    path.relative(await realpath(backup), backup) !== ''
+  )
+    return;
+  if ((await readFile(path.join(backup, '.kivuno-replaced-by'), 'utf8')) !== updatedApp) return;
+  await access(path.join(backup, 'Uninstall Kivuno.exe'));
+  // Keep the recovery copy when the old install contains files outside the new package.
+  const installed = path.dirname(process.execPath);
+  async function onlyInstalledFiles(relative) {
+    for (const entry of await readdir(path.join(backup, relative), { withFileTypes: true })) {
+      const name = path.join(relative, entry.name);
+      if (name === '.kivuno-replaced-by') continue;
+      if (entry.isSymbolicLink()) return false;
+      const current = await lstat(path.join(installed, name)).catch(() => null);
+      if (!current || current.isSymbolicLink()) return false;
+      if (entry.isDirectory()) {
+        if (!current.isDirectory() || !(await onlyInstalledFiles(name))) return false;
+      } else if (!entry.isFile() || !current.isFile()) return false;
+    }
+    return true;
+  }
+  if (!(await onlyInstalledFiles(''))) return;
+  await rm(backup, { recursive: true, force: true, maxRetries: 3 });
 }
 
 async function persistIdentity(value) {
@@ -2224,9 +2280,18 @@ else {
     .then(async () => {
       await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
       await readIdentity();
-      await startBackend();
+      try {
+        await startBackend();
+      } catch (error) {
+        if (process.platform !== 'win32' || !app.isPackaged) throw error;
+        // A newly installed runtime can fail its first cold start. Release its lock before retrying.
+        await stopBackend();
+        await pause(1000);
+        await startBackend();
+      }
       registerIpc();
       await createWindow();
+      void cleanPreviousWindowsInstall().catch(() => {});
       if (identity) void bridgeLoop();
       if (identity) void restoreMachines();
     })

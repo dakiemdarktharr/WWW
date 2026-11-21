@@ -386,7 +386,14 @@ function validatedUpdateArtifact(release, expectedVersion, identityOrigin) {
     identityOrigin,
     isMac,
   );
-  return { url, sha256: artifact.sha256.toLowerCase(), size: artifact.size };
+  return {
+    url,
+    sha256: artifact.sha256.toLowerCase(),
+    size: artifact.size,
+    ...(release.platform === 'win32-x64' && artifact.stagedUpdate === true
+      ? { stagedUpdate: true }
+      : {}),
+  };
 }
 
 function desktopUpdate(body, currentVersion, platform, arch, identityOrigin) {

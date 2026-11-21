@@ -6,12 +6,22 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.4',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Cải thiện quá trình cập nhật và khởi động lại Kivuno trên Windows.',
+        en: 'Improved updates and restarts on Windows.',
+      },
+    ],
+  },
+  {
     version: '0.9.3',
     date: '2026-11-21',
     fixes: [
       {
-        vi: 'Thẻ Team hiện “Claude connected” khi Claude trên trình duyệt xác minh kết nối. Bạn có thể cấp quyền đọc dự án sau.',
-        en: 'The Team card shows “Claude connected” once Claude verifies the browser connection. You can grant project access later.',
+        vi: 'Tối ưu tính năng Claude.',
+        en: 'Improved Claude integration.',
       },
     ],
   },

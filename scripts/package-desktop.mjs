@@ -289,6 +289,7 @@ await writeFile(
           sha256,
           size: info.size,
           platform: 'win32-x64',
+          stagedUpdate: true,
           signed: false,
         },
         linux: { available: false, platform: 'linux-x64', signed: false },
