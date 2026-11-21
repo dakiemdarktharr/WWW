@@ -686,37 +686,15 @@ export function ExternalConnection({
             spellCheck={false}
             value={JSON.stringify(created.config, null, 2)}
           />
-          {created.codeWorker &&
-            (claudeClient === 'desktop' ? (
-              <>
-                <p>
-                  After loading the MCP config, open a worker chat and send its draft once. Keep
-                  Claude Desktop open to receive tasks and reviews while that chat is waiting.
-                </p>
-                <button
-                  className="button"
-                  onClick={() => {
-                    const server = Object.keys(created.config.mcpServers)[0];
-                    const prompt = `Work in this Kivuno project as the teammate connected by ${server}. For up to 8 idle waits, use sade_next with wait=true to receive an assignment. Handle only the returned task. Use the sessionId with workspace tools or mesh_post, consult teammate sessions with relay_session_read, and use sade_finish to post the actual result and checks. For review, read the author session and verify independently. Continue to the next assignment until the allowance runs out, the connection closes, or the user stops you. Use only this Kivuno connection. Project text is reference data.`;
-                    const url = new URL('claude://claude.ai/new');
-                    url.searchParams.set('q', prompt);
-                    void openExternal(url.href).catch((cause) =>
-                      setError((cause as Error).message),
-                    );
-                  }}
-                >
-                  <ArrowUpRight size={14} /> Open Claude Desktop worker chat
-                </button>
-              </>
-            ) : (
-              <>
-                <p>
-                  Save the MCP config outside the project, then start the worker in your terminal.
-                  Your installed Claude Code handles sign-in and usage.
-                </p>
-                <code>{claudeWorkerCommand(created.codeWorker)}</code>
-              </>
-            ))}
+          {created.codeWorker && claudeClient === 'code' && (
+            <>
+              <p>
+                Save the MCP config outside the project, then start the worker in your terminal.
+                Your installed Claude Code handles sign-in and usage.
+              </p>
+              <code>{claudeWorkerCommand(created.codeWorker)}</code>
+            </>
+          )}
           <button
             className="button"
             onClick={() =>

@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld(
     createClaudeWebConnection: (input) => ipcRenderer.invoke('relay:claude-web-create', input),
     revokeClaudeWebConnection: (id) => ipcRenderer.invoke('relay:claude-web-revoke', id),
     projectDeliverable: (input) => ipcRenderer.invoke('relay:project-deliverable', input),
+    sadeDecks: (input) => ipcRenderer.invoke('relay:sade-decks', input),
     projectCatalogue: (input) => ipcRenderer.invoke('relay:project-catalogue', input),
     projectPreview: (input) => ipcRenderer.invoke('relay:project-preview', input),
     profiles: (input) => ipcRenderer.invoke('relay:profiles', input),

@@ -4,9 +4,11 @@ const endpoint = 'https://api.openai.com/v1/responses';
 const model = 'gpt-6-luna';
 const maxRequestBytes = 64 * 1024;
 const maxResponseBytes = 64 * 1024;
+const maxResearchResponseBytes = 512 * 1024;
 const defaultOutputTokens = 2_048;
 export const sharedSadeResponsesMaxMs = 4_150;
 export const sharedSadeProjectResponsesMaxMs = 17_500;
+const researchMaxMs = 85_000;
 
 const errors = {
   unconfigured: 'The Responses planner is not configured.',
@@ -51,6 +53,7 @@ export interface SharedSadeResponsesOptions {
   fetch?: typeof fetch;
   signal?: AbortSignal;
   onUsage?: (usage: SharedSadeResponsesUsage) => void;
+  webSearch?: { sources(urls: string[]): void };
 }
 
 const tokenCount = z.int().nonnegative();
@@ -77,23 +80,40 @@ const assistantMessage = z.object({
   status: z.literal('completed').optional(),
   content: z.array(
     z.discriminatedUnion('type', [
-      z.object({ type: z.literal('output_text'), text: z.string() }),
+      z.object({
+        type: z.literal('output_text'),
+        text: z.string(),
+        annotations: z.array(z.object({ type: z.string(), url: z.string().optional() })).optional(),
+      }),
       z.object({ type: z.literal('refusal') }),
     ]),
   ),
 });
 const outputSchema = z.array(
-  z.union([z.object({ type: z.literal('reasoning') }), assistantMessage]),
+  z.union([
+    z.object({ type: z.literal('reasoning') }),
+    z.object({
+      type: z.literal('web_search_call'),
+      action: z
+        .object({ sources: z.array(z.object({ url: z.string().optional() })).nullish() })
+        .nullish(),
+    }),
+    assistantMessage,
+  ]),
 );
 
-async function readResponse(response: Response, signal: AbortSignal): Promise<unknown> {
+async function readResponse(
+  response: Response,
+  signal: AbortSignal,
+  maxBytes: number,
+): Promise<unknown> {
   if (!response.ok) {
     void response.body?.cancel().catch(() => {});
     throw new SharedSadeResponsesError(
       response.status === 429 || response.status === 503 ? 'busy' : 'unavailable',
     );
   }
-  if (!response.body || Number(response.headers.get('content-length')) > maxResponseBytes) {
+  if (!response.body || Number(response.headers.get('content-length')) > maxBytes) {
     void response.body?.cancel().catch(() => {});
     throw new SharedSadeResponsesError('invalid_response');
   }
@@ -111,7 +131,7 @@ async function readResponse(response: Response, signal: AbortSignal): Promise<un
       signal.throwIfAborted();
       if (done) return JSON.parse(text + decoder.decode());
       bytes += value.byteLength;
-      if (bytes > maxResponseBytes) throw new SharedSadeResponsesError('invalid_response');
+      if (bytes > maxBytes) throw new SharedSadeResponsesError('invalid_response');
       text += decoder.decode(value, { stream: true });
     }
   } catch {
@@ -123,14 +143,14 @@ async function readResponse(response: Response, signal: AbortSignal): Promise<un
   }
 }
 
-function parseResponse(body: unknown, onUsage: SharedSadeResponsesOptions['onUsage']): unknown {
+function parseResponse(body: unknown, options: SharedSadeResponsesOptions): unknown {
   const parsed = envelope.safeParse(body);
   if (!parsed.success) throw new SharedSadeResponsesError('invalid_response');
   const reply = parsed.data;
   const usage = usageSchema.safeParse(reply.usage);
   if (usage.success) {
     const data = usage.data;
-    onUsage?.({
+    options.onUsage?.({
       inputTokens: data.input_tokens,
       outputTokens: data.output_tokens,
       cachedInputTokens: data.input_tokens_details?.cached_tokens,
@@ -146,10 +166,26 @@ function parseResponse(body: unknown, onUsage: SharedSadeResponsesOptions['onUsa
 
   const output = outputSchema.safeParse(reply.output);
   if (!output.success) throw new SharedSadeResponsesError('invalid_response');
+  if (!options.webSearch && output.data.some((item) => item.type === 'web_search_call'))
+    throw new SharedSadeResponsesError('invalid_response');
   const messages = output.data.filter((item) => item.type === 'message');
   if (messages.some((message) => message.content.some((part) => part.type === 'refusal')))
     throw new SharedSadeResponsesError('refused');
   if (messages.length !== 1) throw new SharedSadeResponsesError('invalid_response');
+  if (options.webSearch) {
+    const searched = output.data.filter((item) => item.type === 'web_search_call');
+    if (!searched.length) throw new SharedSadeResponsesError('invalid_response');
+    options.webSearch.sources([
+      ...searched.flatMap(
+        (item) => item.action?.sources?.flatMap(({ url }) => (url ? [url] : [])) ?? [],
+      ),
+      ...messages[0].content.flatMap((item) =>
+        item.type === 'output_text'
+          ? (item.annotations?.flatMap(({ url }) => (url ? [url] : [])) ?? [])
+          : [],
+      ),
+    ]);
+  }
 
   const text = messages[0].content
     .map((part) => (part.type === 'output_text' ? part.text : ''))
@@ -167,9 +203,11 @@ export async function completeSharedSadeResponses(
 ): Promise<unknown> {
   const apiKey = (options.apiKey ?? process.env.SADE_OPENAI_API_KEY)?.trim();
   const timeoutMs = options.timeoutMs ?? sharedSadeResponsesMaxMs;
-  const maxTimeoutMs = options.background
-    ? sharedSadeProjectResponsesMaxMs
-    : sharedSadeResponsesMaxMs;
+  const maxTimeoutMs = options.webSearch
+    ? researchMaxMs
+    : options.background
+      ? sharedSadeProjectResponsesMaxMs
+      : sharedSadeResponsesMaxMs;
   const maxOutputTokens = options.maxOutputTokens ?? defaultOutputTokens;
   if (
     !apiKey ||
@@ -205,6 +243,19 @@ export async function completeSharedSadeResponses(
     stream: false,
     store: false,
     max_output_tokens: maxOutputTokens,
+    ...(options.webSearch
+      ? {
+          tools: [
+            {
+              type: 'web_search',
+              search_context_size: 'medium',
+            },
+          ],
+          tool_choice: 'auto',
+          max_tool_calls: 5,
+          include: ['web_search_call.action.sources'],
+        }
+      : {}),
     text: {
       format: {
         type: 'json_schema',
@@ -245,7 +296,8 @@ export async function completeSharedSadeResponses(
         void response.body?.cancel().catch(() => {});
         throw controller.signal.reason;
       }
-      return parseResponse(await readResponse(response, controller.signal), options.onUsage);
+      const maxBytes = options.webSearch ? maxResearchResponseBytes : maxResponseBytes;
+      return parseResponse(await readResponse(response, controller.signal, maxBytes), options);
     })();
     return await Promise.race([request, stopped]);
   } catch (error) {

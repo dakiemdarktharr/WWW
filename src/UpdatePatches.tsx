@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.8',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Gửi một yêu cầu tạo PowerPoint trong Chat. Sade giao việc, Codex chạy nền soạn và xuất tệp có nguồn, rồi báo kết quả ngay trong Kivuno.',
+        en: 'Request a PowerPoint in Chat. Sade assigns it to a background Codex harness, which writes the slides, exports the cited deck, and reports back in Kivuno.',
+      },
+    ],
+  },
+  {
     version: '0.9.7',
     date: '2026-11-21',
     fixes: [

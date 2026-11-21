@@ -1,4 +1,5 @@
 import { isExternalProvider } from '../shared/providers';
+import { isSadeDeckRequest } from '../shared/sade-deck';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
@@ -80,6 +81,7 @@ export default function ProjectChat({
   selectProject,
   addProject,
   openSessions,
+  makeDeck,
 }: FoundationProps) {
   const [panel, setPanel] = useState<Context>(null);
   const [content, setContent] = useState('');
@@ -259,6 +261,15 @@ export default function ProjectChat({
   async function send(event: FormEvent) {
     event.preventDefault();
     if (!project || !content.trim() || sendLock.current) return;
+    if (
+      makeDeck &&
+      !replyTo &&
+      !/@(?!sade\b)[\p{L}\p{N}]/iu.test(content) &&
+      isSadeDeckRequest(content)
+    ) {
+      if (makeDeck(content.trim())) setContent('');
+      return;
+    }
     sendLock.current = true;
     setSending(true);
     const sentContent = content;

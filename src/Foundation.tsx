@@ -54,6 +54,7 @@ export interface FoundationProps {
   selectProject: (id: string) => void;
   addProject: () => void;
   openSessions: () => void;
+  makeDeck?: (prompt: string) => boolean;
 }
 const dateTime = (value: string | number) =>
   new Date(typeof value === 'number' ? value * 1000 : value).toLocaleString();

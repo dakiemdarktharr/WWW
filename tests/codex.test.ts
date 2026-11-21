@@ -383,7 +383,7 @@ test('startTask requests human approvals, workspace sandbox and room tools; earl
   assert.equal(parameters.approvalsReviewer, 'user');
   assert.deepEqual(
     parameters.dynamicTools.map((tool: any) => tool.name),
-    ['relay_read_room', 'relay_report'],
+    ['relay_session_read', 'relay_read_room', 'relay_report'],
   );
   assert.ok(events.some((e) => e.method === 'turn/completed'));
   assert.equal(boundBeforeCompletion, true);

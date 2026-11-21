@@ -12,6 +12,7 @@ on:
           [
             desktop,
             macos,
+            macos-package,
             paired-macos,
             paired-macos-desktop,
             paired-files,
@@ -82,6 +83,34 @@ jobs:
       - if: runner.os == 'macOS'
         run: npm run test:collaboration
       - run: npm audit --omit=dev --audit-level=high
+  macos-package:
+    if: inputs.platform == 'macos-package'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: |
+          KIVUNO_MACOS_VERSION="$(node -p "require('./package.json').version")" npm run macos:installer
+          npm run test:macos-installer
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kivuno-macos-arm64
+          path: |
+            release/Kivuno-*-macOS-arm64.dmg
+            release/Kivuno-*-macOS-arm64.dmg.sha256
+            release/Kivuno-*-macOS-arm64.zip
+            release/Kivuno-*-macOS-arm64.zip.sha256
+            release/macos-arm64.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
   paired-macos:
     if: inputs.platform == 'paired-macos' || inputs.platform == 'paired-macos-desktop'
     runs-on: macos-latest

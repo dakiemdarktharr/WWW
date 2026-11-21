@@ -3,6 +3,7 @@ import { MessageSquare, Plus, Search, Users } from 'lucide-react';
 import type { WorkspaceState } from '../shared/types';
 import type { GroupListing, SharedGroup } from '../shared/collaboration';
 import { chatList, type ChatListItem } from '../shared/chat-list';
+import SadeDeckChat, { type useSadeDeckChat } from './SadeDeckChat';
 import './ChatHome.css';
 
 export default function ChatHome({
@@ -11,12 +12,14 @@ export default function ChatHome({
   open,
   create,
   groups,
+  deckChat,
 }: {
   state: WorkspaceState;
   projectsOnly?: boolean;
   open: (item: ChatListItem) => void;
   create: () => void;
   groups: () => void;
+  deckChat?: ReturnType<typeof useSadeDeckChat>;
 }) {
   const [shared, setShared] = useState<SharedGroup[]>([]),
     [error, setError] = useState(''),
@@ -70,6 +73,7 @@ export default function ChatHome({
           )}
         </div>
       </header>
+      {!projectsOnly && deckChat && <SadeDeckChat deckChat={deckChat} />}
       <label className="chat-home-search">
         <Search size={16} />
         <input

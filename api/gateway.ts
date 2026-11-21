@@ -5,6 +5,8 @@ import path from 'node:path';
 import { isIP } from 'node:net';
 import { waitUntil } from '@vercel/functions';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
+import { sadeDeckRoute, sadeDeckFinishRoute } from '../shared/sade-deck.ts';
+import { settleSadeDeck } from '../cloud/sade-deck.ts';
 import {
   claudeAuthorizePath,
   claudeChallenge,
@@ -104,6 +106,7 @@ export default async function handler(
     const method = request.method || 'GET';
     if (
       url.pathname === '/api/cloud/prepare-upgrade' ||
+      url.pathname === sadeDeckFinishRoute ||
       url.pathname === sharedSadeCloudFinishPath
     ) {
       response.writeHead(403).end(JSON.stringify({ error: 'This maintenance route is private.' }));
@@ -111,8 +114,8 @@ export default async function handler(
     }
     if (url.pathname === '/api/desktop/release' && method === 'GET') {
       let release = {
-        version: '0.9.7',
-        releases: ['0.9.7'],
+        version: '0.9.8',
+        releases: ['0.9.8'],
         available: false,
         platform: 'win32-x64',
         signed: false,
@@ -306,6 +309,18 @@ export default async function handler(
       ),
     });
     response.statusCode = upstream.status;
+    if (url.pathname === sadeDeckRoute && method === 'POST' && upstream.ok) {
+      const { work, ...publicResult } = (await upstream.json()) as Record<string, unknown>;
+      if (work)
+        waitUntil(
+          settleSadeDeck(work, runner.origin, headers).catch(() => {
+            console.error('A PowerPoint job could not save its result. The lease will expire.');
+          }),
+        );
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify(publicResult));
+      return;
+    }
     if (connector && upstream.status === 401)
       response.setHeader('WWW-Authenticate', claudeChallenge(publicOrigin));
     if (url.pathname === claudeAuthorizePath && [302, 303].includes(upstream.status)) {

@@ -2,6 +2,10 @@
 
 Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal. Google và Antigravity xử lý OAuth. Với Claude, thông tin xác thực và quota do ứng dụng hoặc CLI chính thức quản lý. Bạn có thể mở client để dùng thủ công hoặc bật nhận nhiệm vụ từ Sade theo hướng dẫn bên dưới.
 
+## PowerPoint trong Chat
+
+Gửi yêu cầu tạo PowerPoint ở **Chat → Nhắn Sade**. Sade chuẩn bị tài liệu nguồn, giao việc và kiểm tra nội dung so với yêu cầu. Harness Codex chạy nền qua OpenAI Agents API, soạn slide, gọi công cụ xuất tệp và gửi báo cáo về Kivuno. Trong Chat, chọn **Phiên Codex** để đọc báo cáo và **Tải PowerPoint** để lấy tệp có liên kết nguồn. Luồng này dùng phiên đăng nhập Kivuno và tự thử lại khi kết nối bị gián đoạn.
+
 ## Claude trong trình duyệt
 
 1. Mở **Team → Add account → Claude** trong Kivuno Desktop. Chọn **Claude in browser** và hồ sơ Claude trên máy, rồi bấm **Connect Claude in browser**. Bạn có thể chọn lại hồ sơ hiện có, chẳng hạn Nova.
@@ -30,7 +34,7 @@ Kivuno không tự sửa cấu hình MCP của client. Máy đang chạy app ph�
 Trong MESH connection, bật quyền nhận task và chọn số lượt tại **Sade assignments for this project**. Mỗi lượt là một nhiệm vụ hoặc một lần review do Sade phân công. Khi chưa có số liệu quota, người quản lý tài khoản có thể chọn tự theo dõi quota trong client. Sade giữ đúng người nhận khi một client đang chờ hoặc tạm ngắt kết nối.
 
 - **Claude Code**. Lưu cấu hình MCP do Kivuno cấp ngoài repo rồi chạy lệnh worker hiện trong hộp kết nối. Worker đợi nhiệm vụ và khởi chạy bản CLI chính thức khi có việc. Người dùng đăng nhập trong Claude Code và có thể dừng worker từ terminal.
-- **Claude Desktop**. Nạp cấu hình rồi chọn **Open Claude Desktop worker chat**. Gửi bản nháp một lần và duyệt công cụ theo cài đặt của Claude. Phiên đang chờ có thể nhận tiếp nhiệm vụ và review. Các link mở ứng dụng và điền bản nháp theo [tài liệu Anthropic](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link).
+- **Claude Desktop**. Kết nối MESH từ cuộc trò chuyện bạn mở trong Claude để tham gia nhóm thủ công. Phiên kết nối có thể nhận nhiệm vụ và review theo quyền đã cấp.
 
 Chọn **Open session** trên tin báo kết quả để mở đúng cuộc hội thoại trong sidebar. Các teammate và Sade dùng `relay_session_read` để xem các tin gần nhất từ phiên thuộc cùng dự án. Khi được giao review, teammate nhận tiêu chí và kết quả cần kiểm tra. Công cụ báo cáo gắn tên tác giả, nhiệm vụ và ID phiên vào nhóm.
 

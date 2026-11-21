@@ -100,6 +100,7 @@ declare global {
       revokeClaudeWebConnection(connectionId: string): Promise<{ revoked: true }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
+      sadeDecks<T>(input: import('../shared/sade-deck').SadeDeckCommand): Promise<T>;
       projectDeliverable(input: {
         groupId: string;
         runId: string;

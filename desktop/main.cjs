@@ -20,6 +20,7 @@ const {
   access,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   writeFile,
   unlink,
@@ -168,6 +169,46 @@ async function cloudRequest(route, body, token, timeoutMs = 25000, cancel) {
     throw new Error('The Kivuno website is not ready. Try again.');
   }
   return { response, body: bodyValue };
+}
+
+async function saveSadeDeck(body) {
+  const { filename, data, sha256 } = body;
+  const maximumBytes = 600 * 1024;
+  if (
+    !/^Sade-[a-f0-9]{8}\.pptx$/.test(filename) ||
+    typeof data !== 'string' ||
+    data.length > Math.ceil(maximumBytes / 3) * 4
+  )
+    throw new Error('Invalid PowerPoint file.');
+  const bytes = Buffer.from(data, 'base64');
+  if (
+    bytes.length < 4 ||
+    bytes.length > maximumBytes ||
+    bytes.readUInt32LE(0) !== 0x04034b50 ||
+    createHash('sha256').update(bytes).digest('hex') !== sha256
+  )
+    throw new Error('PowerPoint file integrity check failed.');
+  const directory = app.getPath('downloads');
+  await mkdir(directory, { recursive: true });
+  for (let copy = 1; copy <= 20; copy++) {
+    const name = copy === 1 ? filename : filename.slice(0, -5) + ` (${copy}).pptx`;
+    const target = path.join(directory, name);
+    const file = await open(target, 'wx').catch((error) => {
+      if (error.code === 'EEXIST') return null;
+      throw error;
+    });
+    if (!file) continue;
+    try {
+      await file.writeFile(bytes);
+      await file.close();
+      return { filename: name, path: target };
+    } catch (error) {
+      await file.close().catch(() => {});
+      await unlink(target).catch(() => {});
+      throw error;
+    }
+  }
+  throw new Error('This PowerPoint is already present in Downloads.');
 }
 
 async function readProjectDeliverable(input) {
@@ -1518,6 +1559,26 @@ function registerIpc() {
     trusted(event);
     const { data } = await readProjectDeliverable(input);
     return data.toString('base64');
+  });
+  ipcMain.handle('relay:sade-decks', async (event, input) => {
+    trusted(event);
+    const owner = identity;
+    if (!owner || identityTransition) throw new Error('Sign in to Kivuno first.');
+    if (
+      !input ||
+      !['start', 'read', 'list', 'download'].includes(input.action) ||
+      Buffer.byteLength(JSON.stringify(input), 'utf8') > 15000
+    )
+      throw new Error('Invalid PowerPoint request.');
+    const { response, body } = await cloudRequest(
+      '/api/desktop/sade-decks',
+      input,
+      owner.accessToken,
+    );
+    if (identity !== owner || identityTransition) throw new Error('The active account changed.');
+    if (!response.ok)
+      throw new Error(body.error || 'The PowerPoint service is temporarily unavailable.');
+    return input.action === 'download' ? saveSadeDeck(body) : body;
   });
   ipcMain.handle('relay:project-preview', async (event, input) => {
     trusted(event);

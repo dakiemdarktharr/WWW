@@ -229,17 +229,11 @@ export async function compileProjectPaper(
   };
 }
 
-export async function renderProjectSlides(
-  worktree: string,
-  outputs: string[],
-  raw: unknown,
-  current: () => void,
-) {
-  const spec = slidesInput.parse(raw);
-  const [destination, outline] = await Promise.all([
-    target(worktree, outputs, 'slides.pptx', current),
-    target(worktree, outputs, 'slides.md', current),
-  ]);
+type PowerPointSlide = z.infer<typeof slidesInput>['slides'][number] & {
+  bulletLinks?: string[];
+};
+
+export async function renderSadePowerPoint(spec: { title: string; slides: PowerPointSlide[] }) {
   const presentation = new pptxgen();
   presentation.layout = 'LAYOUT_WIDE';
   presentation.title = spec.title;
@@ -271,7 +265,13 @@ export async function renderProjectSlides(
       fit: 'shrink',
     });
     slide.addText(
-      item.bullets.map((bullet) => ({ text: bullet, options: { bullet: true, breakLine: true } })),
+      item.bullets.map((bullet, index) => {
+        const url = item.bulletLinks?.[index];
+        return {
+          text: bullet,
+          options: { bullet: true, breakLine: true, ...(url && { hyperlink: { url } }) },
+        };
+      }),
       {
         x: 0.85,
         y: 2.0,
@@ -298,6 +298,21 @@ export async function renderProjectSlides(
   const bytes = await presentation.write({ outputType: 'nodebuffer', compression: true });
   if (!Buffer.isBuffer(bytes))
     throw new DomainError('PowerPoint renderer returned an invalid package.');
+  return bytes;
+}
+
+export async function renderProjectSlides(
+  worktree: string,
+  outputs: string[],
+  raw: unknown,
+  current: () => void,
+) {
+  const spec = slidesInput.parse(raw);
+  const [destination, outline] = await Promise.all([
+    target(worktree, outputs, 'slides.pptx', current),
+    target(worktree, outputs, 'slides.md', current),
+  ]);
+  const bytes = await renderSadePowerPoint(spec);
   current();
   await writeFile(destination, bytes);
   current();

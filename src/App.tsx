@@ -2,6 +2,7 @@ import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
 import ChatHome from './ChatHome';
 import { useWorkspaceTheme, WorkspaceThemeProvider } from './WorkspaceTheme';
+import { useSadeDeckChat } from './SadeDeckChat';
 import { isExternalProvider, isExternalMember } from '../shared/providers';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -326,6 +327,8 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
         : 'mesh',
   );
   const [state, setState] = useState<WorkspaceState | null>(null);
+  const deckChatEnabled = Boolean(state && window.relayDesktop?.sadeDecks);
+  const deckChat = useSadeDeckChat(deckChatEnabled);
   const [chatMode, setChatMode] = useState<'home' | 'projects' | 'groups'>('home');
   const [chatOpen, setChatOpen] = useState(false);
   const [selectedShared, setSelectedShared] = useState('');
@@ -1149,6 +1152,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               <ChatHome
                 state={state}
                 projectsOnly={chatMode === 'projects'}
+                deckChat={deckChatEnabled ? deckChat : undefined}
                 create={() => setModal({ type: 'project' })}
                 groups={() => {
                   setSelectedShared('');
@@ -1176,6 +1180,16 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               selectProject={setSelectedProject}
               addProject={() => setModal({ type: 'project' })}
               openSessions={() => navigate('sessions')}
+              makeDeck={
+                deckChatEnabled
+                  ? (prompt) => {
+                      if (!deckChat.submit(prompt)) return false;
+                      setChatOpen(false);
+                      setChatMode('home');
+                      return true;
+                    }
+                  : undefined
+              }
             />
           )}
           {view === 'aegis' && state && <Aegis state={state} project={project} />}
