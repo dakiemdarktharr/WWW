@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.19',
+    date: '2026-11-22',
+    fixes: [
+      {
+        vi: 'Mỗi tài khoản dùng ví riêng ký chuyển 0 USDC đến ví chủ Kivuno. Dự án trả gas bằng test AVAX miễn phí; biên nhận USDC thể hiện ví người mua và ví nhận.',
+        en: 'Each account signs a zero-USDC transfer to the Kivuno treasury with its own wallet. Kivuno sponsors free testnet gas; USDC receipts identify buyer and recipient.',
+      },
+    ],
+  },
+  {
     version: '0.9.17',
     date: '2026-11-22',
     fixes: [
