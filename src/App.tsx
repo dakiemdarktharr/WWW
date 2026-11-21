@@ -1,6 +1,7 @@
 import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
 import ChatHome from './ChatHome';
+import { useWorkspaceTheme, WorkspaceThemeProvider } from './WorkspaceTheme';
 import { isExternalProvider, isExternalMember } from '../shared/providers';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -303,6 +304,14 @@ function Modal({
 }
 
 export default function App({ cloud = false }: { cloud?: boolean }) {
+  return (
+    <WorkspaceThemeProvider>
+      <WorkspaceApp cloud={cloud} />
+    </WorkspaceThemeProvider>
+  );
+}
+
+function WorkspaceApp({ cloud }: { cloud: boolean }) {
   const initialView = window.location.hash.slice(1);
   const [focusedSessionId, setFocusedSessionId] = useState(
     initialView.startsWith('session=') ? initialView.slice(8) : '',
@@ -328,24 +337,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
   const [busy, setBusy] = useState('');
   const [sidebar, setSidebar] = useState(false);
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    try {
-      return localStorage.getItem('kivuno-theme') === 'light' ? 'light' : 'dark';
-    } catch {
-      return 'dark';
-    }
-  });
-  useEffect(() => {
-    document.documentElement.dataset.workspaceTheme = theme;
-    try {
-      localStorage.setItem('kivuno-theme', theme);
-    } catch {
-      /* Optional preference. */
-    }
-    return () => {
-      delete document.documentElement.dataset.workspaceTheme;
-    };
-  }, [theme]);
+  const { theme, toggleTheme } = useWorkspaceTheme();
   const [taskFilter, setTaskFilter] = useState('all');
   const [taskSearch, setTaskSearch] = useState('');
   const [detailMember, setDetailMember] = useState('');
@@ -896,9 +888,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       )}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className={chatRoom ? 'chat-sidebar-brand' : undefined}>
+          <div className="workspace-brand">
             <Logo />
-            {chatRoom && <small>Workspace</small>}
+            <small>Workspace</small>
           </div>
           <button
             className="icon-button mobile-only"
@@ -1040,6 +1032,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
           <button
             className={`nav-item ${view === 'settings' ? 'active' : ''}`}
             onClick={() => navigate('settings')}
+            aria-current={view === 'settings' ? 'page' : undefined}
           >
             <Settings2 size={17} />
             <span>Settings</span>
@@ -1079,7 +1072,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               className="icon-button"
               aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
               title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              onClick={toggleTheme}
             >
               {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
             </button>

@@ -39,6 +39,7 @@ import ClaudeProjectSharing from './ClaudeProjectSharing';
 import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
 import './chat-interactions.css';
+import './ChatBubbles.css';
 
 type Context = 'sessions' | 'team' | 'usage' | 'needs' | 'handoffs' | 'browser' | 'research' | null;
 const feedback = [
@@ -470,7 +471,7 @@ export default function ProjectChat({
                     </time>
                   </div>
                   <div
-                    className={`chat-bubble${message.kind === 'handoff' ? ' chat-checkpoint' : ''}`}
+                    className={`chat-bubble conversation-bubble${message.kind === 'handoff' ? ' chat-checkpoint' : ''}`}
                   >
                     {message.kind === 'handoff' && (
                       <strong className="chat-checkpoint-label">

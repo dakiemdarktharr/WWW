@@ -16,6 +16,10 @@
   --lime: #d5ff5f;
   --mono: 'JetBrains Mono', monospace;
 }
+:root[data-workspace-theme='light'] {
+  color-scheme: light;
+  background: #f9f5ff;
+}
 * {
   box-sizing: border-box;
 }

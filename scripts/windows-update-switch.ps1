@@ -14,6 +14,13 @@ function Assert-Directory($directory) {
   }
 }
 
+function Test-DirectoryOverlap($left, $right) {
+  $left = [IO.Path]::GetFullPath($left).TrimEnd('\') + '\'
+  $right = [IO.Path]::GetFullPath($right).TrimEnd('\') + '\'
+  return $left.StartsWith($right, [StringComparison]::OrdinalIgnoreCase) -or
+    $right.StartsWith($left, [StringComparison]::OrdinalIgnoreCase)
+}
+
 try {
   Assert-Directory $stage
   Assert-Directory $target
@@ -26,6 +33,13 @@ try {
   if ($live) {
     $parent = Get-Process -Id ([int]$env:KIVUNO_UPDATE_PID)
     if ($parent.Path -ne $env:KIVUNO_UPDATE_APP) { throw 'Unexpected running application.' }
+  }
+  $profile = $env:KIVUNO_UPDATE_PROFILE
+  if (!$profile) { $profile = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'RELAY' }
+  if (![IO.Path]::IsPathRooted($profile)) { throw 'Invalid workspace location.' }
+  $profile = [IO.Path]::GetFullPath($profile)
+  foreach ($directory in $target, $stage, $previous) {
+    if (Test-DirectoryOverlap $profile $directory) { throw 'The installation overlaps workspace data.' }
   }
   New-Item -Path $next -ItemType Directory -ErrorAction Stop | Out-Null
   $createdCandidate = $true
@@ -55,10 +69,27 @@ try {
     try { [IO.Directory]::Move($target,$previous); break }
     catch [IO.IOException] { if ($attempt -eq 29) { throw }; Start-Sleep -Milliseconds 300 }
   }
+  $receipt = Join-Path $previous '.kivuno-replaced-by'
+  $createdReceipt = $false
   try {
-    [IO.File]::WriteAllText((Join-Path $previous '.kivuno-replaced-by'), $env:KIVUNO_UPDATE_APP)
+    $content = @{
+      app = $env:KIVUNO_UPDATE_APP
+      version = $env:KIVUNO_UPDATE_VERSION
+      profile = $profile
+    } | ConvertTo-Json -Compress
+    $stream = [IO.File]::Open($receipt, [IO.FileMode]::CreateNew)
+    $createdReceipt = $true
+    try {
+      $data = [Text.Encoding]::UTF8.GetBytes($content)
+      $stream.Write($data, 0, $data.Length)
+    } finally {
+      $stream.Dispose()
+    }
     [IO.Directory]::Move($next,$target)
   } catch {
+    if ($createdReceipt) {
+      try { [IO.File]::Delete($receipt) } catch { }
+    }
     [IO.Directory]::Move($previous,$target)
     throw
   }

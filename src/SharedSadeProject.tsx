@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { SharedSadeRun } from '../shared/collaboration';
 import type { SadeProjectArtifact, SadeProjectView } from '../shared/sade-project';
+import './ChatBubbles.css';
 
 const stages = {
   preparation: 'Preparation',
@@ -136,7 +137,9 @@ export default function SharedSadeProject({
                         minute: '2-digit',
                       })}
                     </time>
-                    <p>{event.text}</p>
+                    <p className={event.role === 'assistant' ? 'conversation-bubble' : undefined}>
+                      {event.text}
+                    </p>
                   </li>
                 ))}
               </ol>
@@ -160,7 +163,7 @@ export default function SharedSadeProject({
                       (run.jobs.find(({ task }) => task?.key === message.to)?.task?.title ||
                         message.to)}
                 </span>
-                <p>{message.text}</p>
+                <p className="conversation-bubble">{message.text}</p>
               </li>
             ))}
           </ol>

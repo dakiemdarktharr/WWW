@@ -1,4 +1,4 @@
-/* Quiet glass chrome, high-contrast conversation surfaces. No continuous effects. */
+/* Workspace chrome and surfaces shared by every app view. */
 :root {
   --action-fill: #d5ff5f;
   --action-ink: #222619;
@@ -7,30 +7,14 @@
 }
 .app {
   min-height: calc(100dvh - var(--desktop-titlebar-height, 0px));
-  background: radial-gradient(ellipse at 10% 0, #a88bfa18, transparent 42%), var(--bg);
-}
-.app .sidebar {
-  background: color-mix(in srgb, var(--panel) 76%, transparent);
-  backdrop-filter: blur(18px);
-  border-right: 1px solid var(--line-soft);
-  top: var(--desktop-titlebar-height, 0px);
-}
-.app .sidebar-brand {
-  margin-bottom: 24px;
-}
-.app .topbar {
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: blur(16px);
+  background: var(--room-surface);
 }
 .app .nav-item {
   border-radius: 11px;
 }
-.app .nav-item.active {
-  background: color-mix(in srgb, var(--lime) 12%, transparent);
-}
 .app .panel,
-.app .account-card {
-  background: color-mix(in srgb, var(--panel) 86%, transparent);
+.app .chat-home {
+  background: var(--panel);
   border-radius: 16px;
   border-color: var(--line-soft);
 }
@@ -107,7 +91,15 @@
 .view-mesh {
   padding: 16px 20px 20px;
 }
-.app[data-chat-room] {
+:root[data-workspace-theme] {
+  --bg: #19131f;
+  --panel: #241b30;
+  --panel-2: #30233e;
+  --line: #584568;
+  --line-soft: #453653;
+  --text: #f7f1ff;
+  --muted: #c4b6d6;
+  --subtle: #b2a1c6;
   --room-rail-width: 212px;
   --room-header-height: 72px;
   --room-rail: linear-gradient(160deg, #4e3371, #2b1e40 75%, #2e3524);
@@ -122,7 +114,7 @@
   --room-composer: #21172e;
   --room-composer-line: #a88bfa83;
 }
-:root[data-workspace-theme='light'] .app[data-chat-room] {
+:root[data-workspace-theme='light'] {
   --room-rail: linear-gradient(158deg, #e8dcfc, #f4eff9 74%, #edf2e1);
   --room-heading: #efe7ff;
   --room-surface: linear-gradient(145deg, #f9f5ff, #fff 65%, #f4eff8);
@@ -135,42 +127,43 @@
   --room-composer: #fcfaff;
   --room-composer-line: #bdabd4;
 }
-.app[data-chat-room] .sidebar {
+.app .sidebar {
   width: var(--room-rail-width);
   padding: 20px 10px 16px;
+  top: var(--desktop-titlebar-height, 0px);
   overflow-y: auto;
   background: var(--room-rail);
   border-color: var(--room-line);
   color: var(--room-text);
   backdrop-filter: none;
 }
-.app[data-chat-room] .main-shell {
+.app:not(.session-popout) .main-shell {
   margin-left: var(--room-rail-width);
 }
-.app[data-chat-room] .sidebar-brand {
+.app .sidebar-brand {
   margin-bottom: 28px;
   padding-inline: 0 4px;
 }
-.chat-sidebar-brand {
+.workspace-brand {
   display: grid;
   grid-template-columns: 33px auto;
   grid-template-rows: auto auto;
   align-items: center;
   column-gap: 11px;
 }
-.chat-sidebar-brand .brand {
+.workspace-brand .brand {
   display: contents;
 }
-.chat-sidebar-brand img {
+.workspace-brand img {
   width: 33px;
   height: 33px;
   grid-row: 1 / span 2;
 }
-.chat-sidebar-brand .brand > span {
+.workspace-brand .brand > span {
   font-size: 17px;
   letter-spacing: -0.035em;
 }
-.chat-sidebar-brand small,
+.workspace-brand small,
 .chat-sidebar-roster > p {
   color: var(--room-muted);
   text-transform: uppercase;
@@ -178,17 +171,17 @@
   font-size: 9px;
   font-weight: 650;
 }
-.app[data-chat-room] .workspace-picker {
+.app .workspace-picker {
   min-height: 44px;
   margin-bottom: 14px;
   padding: 4px 2px;
   border-color: transparent;
 }
-.app[data-chat-room] .workspace-picker select {
+.app .workspace-picker select {
   color: var(--room-text);
   font-weight: 650;
 }
-.app[data-chat-room] .workspace-picker select::picker-icon {
+.app .workspace-picker select::picker-icon {
   display: none;
 }
 .chat-project-summary {
@@ -200,11 +193,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.app[data-chat-room] .workspace-picker > svg {
+.app .workspace-picker > svg {
   display: block;
   color: var(--room-muted);
 }
-.app[data-chat-room] .workspace-glyph {
+.app .workspace-glyph {
   display: grid;
   width: 34px;
   height: 34px;
@@ -214,20 +207,20 @@
   border: 1px solid #e3d2ff;
   color: #38234f;
 }
-.app[data-chat-room] :is(.nav-item, .advanced-nav > summary, .sidebar-invite) {
+.app :is(.nav-item, .advanced-nav > summary, .sidebar-invite) {
   color: var(--room-muted);
 }
-.app[data-chat-room] .nav-item:hover {
+.app .nav-item:hover {
   color: var(--room-text);
   background: var(--room-chip);
 }
-.app[data-chat-room] .nav-item.active,
-.app[data-chat-room] .nav-item.active > svg {
+.app .nav-item.active,
+.app .nav-item.active > svg {
   background: var(--action-fill);
   color: var(--action-ink);
   font-weight: 650;
 }
-.app[data-chat-room] .nav-item.active .nav-count {
+.app .nav-item.active .nav-count {
   background: #afcf5c;
   color: #273219;
 }
@@ -272,19 +265,91 @@
   width: 9px;
   height: 9px;
 }
-.app[data-chat-room] .topbar {
+.app .topbar {
   height: var(--room-header-height);
   background: var(--room-heading);
   border-color: var(--room-line);
   color: var(--room-text);
   backdrop-filter: none;
 }
-.app[data-chat-room] :is(.breadcrumb-project, .breadcrumb-slash, .topbar .icon-button) {
+.app :is(.breadcrumb-project, .breadcrumb-slash, .topbar .icon-button) {
   color: var(--room-muted);
 }
-.app[data-chat-room] .breadcrumb-project {
+.app .breadcrumb-project {
   color: var(--room-text);
   font-weight: 650;
+}
+.app .page-heading {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: clamp(16px, 2.3vw, 26px);
+}
+.app .page-heading h1 {
+  color: var(--room-text);
+  font-size: clamp(22px, 2.55vw, 30px);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+}
+.app .panel-heading {
+  border-color: var(--line-soft);
+}
+.app .team-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr));
+  align-items: stretch;
+}
+.app .member-card {
+  height: 100%;
+  padding: clamp(14px, 1.7vw, 20px);
+}
+.app :is(.member-top .avatar, .member-initial, .event-marker:not(.system), .mesh-avatar) {
+  color: #38234f;
+  background: color-mix(in srgb, #f4eaff 60%, var(--avatar-color));
+}
+.app .member-top .avatar {
+  width: 37px;
+  height: 37px;
+  border-radius: 11px;
+}
+.app .event-marker.system {
+  color: var(--room-chip-ink);
+  background: var(--room-chip);
+}
+.app .member-current-task,
+.app .plan-tag,
+.app .nav-count:not(.highlight) {
+  background: var(--room-chip);
+  color: var(--room-chip-ink);
+}
+.app .member-current-task:hover {
+  border-color: var(--room-composer-line);
+}
+.app .member-account {
+  flex-wrap: wrap;
+}
+.app .machine-panel label {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.app .machine-panel select {
+  max-width: 100%;
+}
+.app .session-output {
+  background: var(--bg);
+}
+.app .session-event {
+  border-color: var(--line-soft);
+}
+.app .session-event.output-user > div > span {
+  color: var(--presence-online);
+}
+.app .session-event.output-agent > div > span {
+  color: var(--room-chip-ink);
+}
+:root[data-workspace-theme='light'] .app .session-event.output-error > div > span {
+  color: #9e4038;
+}
+.app .session-event:is(.output-system, .output-command, .output-files) pre {
+  color: var(--room-muted);
 }
 .app[data-chat-room='project'] .view-mesh {
   display: flex;
@@ -1193,7 +1258,7 @@
   --muted: #635b6d;
   --subtle: #73697f;
   --lime: #7651c8;
-  --presence-online: #677f2d;
+  --presence-online: #536a22;
   --presence-busy: #7651c8;
   color: var(--text);
   background: var(--bg);
@@ -1254,12 +1319,26 @@
   }
 }
 @media (max-width: 700px) {
-  .app[data-chat-room] {
+  :root[data-workspace-theme] {
     --room-rail-width: 210px;
     --room-header-height: 55px;
   }
-  .app[data-chat-room] .main-shell {
+  .app:not(.session-popout) .main-shell {
     margin-left: 0;
+  }
+  .app .sidebar {
+    visibility: hidden;
+  }
+  .app.sidebar-open .sidebar {
+    visibility: visible;
+  }
+  .app .breadcrumbs > strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .app .topbar-actions {
+    flex-shrink: 0;
   }
   .project-page-modes .neralu-mode {
     padding-block: 6px;
@@ -1306,9 +1385,19 @@
     font-size: 16px;
   }
 }
+@media (max-width: 360px) {
+  .app .topbar {
+    padding-inline: 8px;
+    gap: 6px;
+  }
+  .app .topbar-actions {
+    gap: 3px;
+  }
+  .app .breadcrumbs :is(.breadcrumb-project, .breadcrumb-slash) {
+    display: none;
+  }
+}
 @media (prefers-reduced-transparency: reduce) {
-  .app .sidebar,
-  .app .topbar,
   .chat-context,
   .slash-menu {
     backdrop-filter: none;

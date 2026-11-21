@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Project, Task, Workflow, WorkspaceState } from '../shared/types';
+import './ChatBubbles.css';
 
 const labels = {
   backlog: 'Backlog',
@@ -444,8 +445,16 @@ export default function Workroom({
                 const member = members.find((m) => m.id === event.memberId);
                 const task = tasks.find((t) => t.id === event.taskId);
                 const long = event.text.length > 440 || event.text.split('\n').length > 5;
+                const own = event.message && event.type === 'message' && !event.memberId;
+                const contentClass = event.message
+                  ? 'event-content conversation-bubble'
+                  : 'event-content';
                 return (
-                  <article className={`timeline-event event-${event.type}`} key={event.id}>
+                  <article
+                    className={`timeline-event event-${event.type}`}
+                    key={event.id}
+                    data-own={own || undefined}
+                  >
                     <span
                       className={`event-marker ${member ? '' : 'system'}`}
                       style={
@@ -477,7 +486,7 @@ export default function Workroom({
                         </time>
                       </div>
                       {long ? (
-                        <details className="event-content">
+                        <details className={contentClass}>
                           <summary>
                             {event.text
                               .split('\n')
@@ -488,7 +497,7 @@ export default function Workroom({
                           <pre>{event.text}</pre>
                         </details>
                       ) : (
-                        <p className="event-content">{event.text}</p>
+                        <p className={contentClass}>{event.text}</p>
                       )}
                       {task && (
                         <button className="event-task" onClick={() => openTask(task)}>

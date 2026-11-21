@@ -111,8 +111,8 @@ export default async function handler(
     }
     if (url.pathname === '/api/desktop/release' && method === 'GET') {
       let release = {
-        version: '0.9.4',
-        releases: ['0.9.4'],
+        version: '0.9.5',
+        releases: ['0.9.5'],
         available: false,
         platform: 'win32-x64',
         signed: false,

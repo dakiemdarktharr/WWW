@@ -6,6 +6,7 @@ export const desktopPackageFiles = [
   'provider-tools.cjs',
   'portable-install.cjs',
   'release-download.cjs',
+  'windows-update.cjs',
   'security.cjs',
   'workspaces.cjs',
   'package.json',

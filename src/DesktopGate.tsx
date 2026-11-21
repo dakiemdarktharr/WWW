@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, Loader2, Moon, RefreshCw, ShieldCheck, Sun } from 'lucide-react';
 import App from './App';
 import { resetApiSession } from './api';
 import type { DesktopStatus, DesktopUpdateProgress, DesktopUpdateStatus } from './desktop';
 import DesktopTitleBar from './TitleBar';
 import './portal.css';
 import ConnectionProgress from './ConnectionProgress';
+import { useWorkspaceTheme } from './WorkspaceTheme';
 
 export default function DesktopGate() {
   const [update, setUpdate] = useState<DesktopUpdateStatus | null>(null);
@@ -74,6 +75,7 @@ export default function DesktopGate() {
 }
 
 function DesktopWorkspace() {
+  const { theme, toggleTheme } = useWorkspaceTheme();
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -151,6 +153,14 @@ function DesktopWorkspace() {
       <div className="portal-brand">
         <img src="/kivuno.svg" alt="Kivuno" />
       </div>
+      <button
+        type="button"
+        className="icon-button desktop-welcome-theme"
+        aria-label={theme === 'dark' ? 'Dùng giao diện sáng' : 'Dùng giao diện tối'}
+        onClick={toggleTheme}
+      >
+        {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
       <div className="desktop-welcome-body">
         <h1>Kivuno</h1>
         {status?.signedIn ? (

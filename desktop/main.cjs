@@ -20,7 +20,6 @@ const {
   access,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
   writeFile,
   unlink,
@@ -38,6 +37,11 @@ const createClaudeWebRelay = require('./claude-web.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const { downloadUpdate } = require('./release-download.cjs');
 const { verifyPortableInstall } = require('./portable-install.cjs');
+const {
+  inspectWindowsUpdate,
+  resumeWindowsUpdateIdentity,
+  cleanPreviousWindowsInstall,
+} = require('./windows-update.cjs');
 const { findExecutable, prepareProvider } = require('./provider-tools.cjs');
 const sadeProjectFileRoute = '/api/desktop/sade-project-file';
 const sadeProjectChunkBytes = 512 * 1024;
@@ -74,6 +78,8 @@ const dataDirectory = app.getPath('userData');
 const identityFile = path.join(dataDirectory, 'desktop-session.bin');
 const ownerFile = path.join(dataDirectory, 'workspace-owner.json');
 const updateFailureFile = path.join(dataDirectory, 'desktop-update-failed');
+const workspaceThemeFile = path.join(dataDirectory, 'workspace-theme');
+let workspaceThemeWrite = Promise.resolve();
 let machinesDirectory = '';
 let machinesIndex = '';
 const machines = new Map();
@@ -524,57 +530,6 @@ async function installWindowsOrLinuxUpdate(artifact, latestVersion, cancel) {
   }
 }
 
-async function cleanPreviousWindowsInstall() {
-  const {
-    KIVUNO_UPDATE_FILE: installer,
-    KIVUNO_UPDATE_APP: updatedApp,
-    KIVUNO_UPDATE_VERSION: version,
-  } = process.env;
-  if (
-    process.platform !== 'win32' ||
-    !app.isPackaged ||
-    !installer ||
-    version !== app.getVersion() ||
-    !updatedApp ||
-    path.relative(process.execPath, updatedApp) !== ''
-  )
-    return;
-  const stage = path.dirname(installer);
-  if (
-    path.basename(installer) !== 'Kivuno-Setup.exe' ||
-    !/^\.kivuno-update-[A-Za-z0-9]{6}$/.test(path.basename(stage)) ||
-    path.relative(path.dirname(stage), path.dirname(path.dirname(process.execPath))) !== ''
-  )
-    return;
-  const backup = stage + '-previous';
-  const item = await lstat(backup);
-  if (
-    !item.isDirectory() ||
-    item.isSymbolicLink() ||
-    path.relative(await realpath(backup), backup) !== ''
-  )
-    return;
-  if ((await readFile(path.join(backup, '.kivuno-replaced-by'), 'utf8')) !== updatedApp) return;
-  await access(path.join(backup, 'Uninstall Kivuno.exe'));
-  // Keep the recovery copy when the old install contains files outside the new package.
-  const installed = path.dirname(process.execPath);
-  async function onlyInstalledFiles(relative) {
-    for (const entry of await readdir(path.join(backup, relative), { withFileTypes: true })) {
-      const name = path.join(relative, entry.name);
-      if (name === '.kivuno-replaced-by') continue;
-      if (entry.isSymbolicLink()) return false;
-      const current = await lstat(path.join(installed, name)).catch(() => null);
-      if (!current || current.isSymbolicLink()) return false;
-      if (entry.isDirectory()) {
-        if (!current.isDirectory() || !(await onlyInstalledFiles(name))) return false;
-      } else if (!entry.isFile() || !current.isFile()) return false;
-    }
-    return true;
-  }
-  if (!(await onlyInstalledFiles(''))) return;
-  await rm(backup, { recursive: true, force: true, maxRetries: 3 });
-}
-
 async function persistIdentity(value) {
   const generation = signInGeneration;
   if (!secureCredentialStorage(safeStorage, process.platform))
@@ -591,12 +546,12 @@ async function persistIdentity(value) {
   await rename(temporary, identityFile);
 }
 
-async function readIdentity() {
+async function readIdentity(windowsUpdate) {
   try {
     pinnedOwner = JSON.parse(await readFile(ownerFile, 'utf8')).id || '';
   } catch {}
-  // A fresh launch requires explicit Kivuno authentication. Never open the last
-  // user's projects just because this OS account has an encrypted session file.
+  // A normal launch still requires explicit sign-in. An updater relaunch can
+  // continue a valid session once, after checking the server and update receipt.
   identity = null;
   // Retire the previous launch's device lease so normal restarts cannot fill
   // the cloud's active-device limit. A failed cleanup never authenticates UI.
@@ -605,6 +560,14 @@ async function readIdentity() {
     const saved = await readFile(identityFile);
     if (secureCredentialStorage(safeStorage, process.platform)) {
       const previous = JSON.parse(safeStorage.decryptString(saved));
+      const restored = await resumeWindowsUpdateIdentity(windowsUpdate, previous, async (token) => {
+        const { response, body } = await cloudRequest('/api/desktop/me', undefined, token, 12000);
+        return response.ok ? body : null;
+      }).catch(() => null);
+      if (restored) {
+        identity = restored;
+        return;
+      }
       if (typeof previous.accessToken === 'string')
         void cloudRequest('/api/desktop/revoke', {}, previous.accessToken).catch(() => {});
     }
@@ -1152,6 +1115,28 @@ function powershellQuote(value) {
 }
 
 function registerIpc() {
+  ipcMain.handle('relay:workspace-theme', async (event, value) => {
+    trusted(event);
+    if (value === undefined) {
+      await workspaceThemeWrite.catch(() => {});
+      const saved = await readFile(workspaceThemeFile, 'utf8').catch(() => null);
+      return saved === 'light' || saved === 'dark' ? saved : null;
+    }
+    if (value !== 'light' && value !== 'dark') throw new Error('Invalid workspace theme.');
+    workspaceThemeWrite = workspaceThemeWrite
+      .catch(() => {})
+      .then(async () => {
+        const temporary = workspaceThemeFile + '.' + randomBytes(6).toString('hex') + '.tmp';
+        try {
+          await writeFile(temporary, value, { mode: 0o600, flag: 'wx' });
+          await rename(temporary, workspaceThemeFile);
+        } finally {
+          await unlink(temporary).catch(() => {});
+        }
+      });
+    await workspaceThemeWrite;
+    return value;
+  });
   ipcMain.handle('relay:update-status', async (event) => {
     trusted(event);
     const { status: update } = await inspectDesktopUpdate();
@@ -2279,7 +2264,16 @@ else {
     .whenReady()
     .then(async () => {
       await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
-      await readIdentity();
+      const windowsUpdate =
+        process.platform === 'win32' && app.isPackaged
+          ? await inspectWindowsUpdate(
+              process.env,
+              process.execPath,
+              dataDirectory,
+              app.getVersion(),
+            ).catch(() => null)
+          : null;
+      await readIdentity(windowsUpdate);
       try {
         await startBackend();
       } catch (error) {
@@ -2291,7 +2285,7 @@ else {
       }
       registerIpc();
       await createWindow();
-      void cleanPreviousWindowsInstall().catch(() => {});
+      void cleanPreviousWindowsInstall(windowsUpdate).catch(() => {});
       if (identity) void bridgeLoop();
       if (identity) void restoreMachines();
     })

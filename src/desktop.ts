@@ -119,6 +119,7 @@ declare global {
       chooseDirectory(): Promise<string | null>;
       joinMachine(): Promise<JoinedMachine | null>;
       stopMachine(id: string): Promise<void>;
+      workspaceTheme?(value?: 'light' | 'dark'): Promise<'light' | 'dark' | null>;
       getWindowState(): Promise<DesktopWindowState>;
       controlWindow(
         action: 'minimize' | 'maximize' | 'fullscreen' | 'close',

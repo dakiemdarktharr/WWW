@@ -6,6 +6,20 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.5',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Đồng bộ giao diện sáng và tối khắp workspace. Tin nhắn, câu trả lời và bàn giao dễ phân biệt trong từng luồng.',
+        en: 'Light and dark themes are consistent across the workspace, with distinct bubbles for messages, replies, and handoffs.',
+      },
+      {
+        vi: 'Trên Windows, cập nhật trong Kivuno giữ hồ sơ và teammate. Bản cài cũ được dọn sau khi bản mới khởi động thành công.',
+        en: 'On Windows, in-app updates preserve your profile and teammates. The previous installation is cleaned up after the new version starts successfully.',
+      },
+    ],
+  },
+  {
     version: '0.9.4',
     date: '2026-11-21',
     fixes: [

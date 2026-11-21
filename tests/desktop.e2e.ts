@@ -350,6 +350,11 @@ try {
   assert.equal(before.signedIn, false);
   assert.equal(before.runtime, 'ready');
   assert.equal(await page.evaluate(() => typeof (window as any).require), 'undefined');
+  await page.getByRole('button', { name: 'Dùng giao diện sáng' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
+  await expect
+    .poll(() => page.evaluate(() => window.relayDesktop!.workspaceTheme!()))
+    .toBe('light');
   const lockedOrigin = new URL(page.url()).origin;
   const unauthorized = await fetch(lockedOrigin + '/api/session');
   assert.equal(
@@ -371,6 +376,7 @@ try {
   assert.ok(tokenRequests > 0);
   await page.waitForURL((url) => url.origin !== lockedOrigin, { timeout: 30000 });
   await page.waitForLoadState('domcontentloaded');
+  await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
   const localOrigin = new URL(page.url()).origin;
   const state = await page.evaluate(async () => {
     const session = await (await fetch('/api/session')).json();
@@ -788,7 +794,7 @@ try {
     .toBeGreaterThan(0);
   await reviewed.fill('Reviewed and edited by the human.');
   await page.getByRole('button', { name: /Chia sẻ & tiếp tục|Gửi cho Codex/ }).click();
-  await expect(reviewed).toHaveCount(0);
+  await expect(reviewed).toHaveCount(0, { timeout: 20_000 });
   const sharedPage = await page.evaluate(async ({ projectId, sessionId }) => {
     const { token } = await (await fetch('/api/session')).json();
     return (
@@ -1015,6 +1021,7 @@ try {
   await expect(
     reopened.getByRole('button', { name: 'Đăng nhập Kivuno', exact: true }),
   ).toBeVisible();
+  await expect(reopened.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
 
   console.log(
     'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, Shared Sade consent retry and revocation sync, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',

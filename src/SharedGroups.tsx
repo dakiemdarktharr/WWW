@@ -20,6 +20,7 @@ import type {
   SharedSadeRun,
 } from '../shared/collaboration';
 import './SharedGroups.css';
+import './ChatBubbles.css';
 import { api } from './api';
 import type { Machine } from './Machines';
 import SharedSadeProject from './SharedSadeProject';
@@ -1203,7 +1204,7 @@ export default function SharedGroups({
                             {isSade && <span className="shared-group-kind">Coordinator</span>}
                             <time dateTime={message.createdAt}>{timeLabel.format(date)}</time>
                           </div>
-                          <div className="shared-group-bubble">
+                          <div className="shared-group-bubble conversation-bubble">
                             {message.sade?.replyTo && <small>Refers to a group message</small>}
                             <p>{message.content}</p>
                           </div>

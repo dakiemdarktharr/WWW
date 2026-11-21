@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld(
     chooseDirectory: () => ipcRenderer.invoke('relay:directory'),
     joinMachine: () => ipcRenderer.invoke('relay:join-machine'),
     stopMachine: (id) => ipcRenderer.invoke('relay:stop-machine', id),
+    workspaceTheme: (value) => ipcRenderer.invoke('relay:workspace-theme', value),
     getWindowState: () => ipcRenderer.invoke('relay:window-state'),
     controlWindow: (action) => ipcRenderer.invoke('relay:window-control', action),
     onWindowState: (callback) => {

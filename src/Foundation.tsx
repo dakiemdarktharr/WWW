@@ -1354,7 +1354,15 @@ export function SessionConsole({
                   </span>
                   <time title={dateTime(event.createdAt)}>{clock(event.createdAt)}</time>
                 </div>
-                <pre>{event.text}</pre>
+                <pre
+                  className={
+                    event.kind === 'user' || event.kind === 'agent'
+                      ? 'conversation-bubble'
+                      : undefined
+                  }
+                >
+                  {event.text}
+                </pre>
               </article>
             ))
         ) : (

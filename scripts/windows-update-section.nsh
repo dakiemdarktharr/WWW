@@ -35,6 +35,7 @@ ${AndIf} ${isUpdated}
   nsExec::Exec '"$1" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "$PLUGINSDIR\switch-kivuno.ps1"'
   Pop $0
   StrCmp $0 "0" 0 kivunoUpdateFailed
+  WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayName "${UNINSTALL_DISPLAY_NAME}"
   WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" DisplayVersion "${VERSION}"
   SetErrorLevel 0
   Quit

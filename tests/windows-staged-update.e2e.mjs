@@ -3,18 +3,39 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { mkdtemp, mkdir, writeFile, readFile, copyFile, access, rm, stat } from 'node:fs/promises';
-import os from 'node:os';
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  readFile,
+  copyFile,
+  access,
+  rm,
+  stat,
+  realpath,
+  symlink,
+  unlink,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
+import windowsUpdate from '../desktop/windows-update.cjs';
 
 if (process.platform !== 'win32') throw new Error('Run this check on Windows.');
 const run = promisify(execFile);
-const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno staged update '));
+await mkdir('.local', { recursive: true });
+const container = await realpath('.local');
+const root = await mkdtemp(path.join(container, 'kivuno staged update '));
 const target = path.join(root, 'installed Kivuno');
 const app = path.join(target, 'Kivuno.exe');
+const profile = path.join(root, 'existing user data');
+const accountWorkspace = path.join(profile, 'users', 'fixture-owner', 'workspace');
+const downloads = path.join(root, 'Downloads');
+const unrelatedInstaller = path.join(downloads, 'Kivuno-0.9.3-Setup.exe');
+const generatedAsset = path.join('resources', 'workspace', 'dist', 'assets', 'App-C_2Rt9aS.js');
+const credentials = path.join(profile, 'desktop-session.bin');
+const roster = path.join(accountWorkspace, 'workspace.db');
 const key = 'Software\\KivunoUpdateTest\\' + randomUUID();
 const system = process.env.SystemRoot;
 const compile = path.join(system, 'Microsoft.NET/Framework/v4.0.30319/csc.exe');
@@ -33,6 +54,11 @@ const reg = (...args) => run('reg.exe', args, { windowsHide: true });
 let parent;
 try {
   await mkdir(target);
+  await mkdir(accountWorkspace, { recursive: true });
+  await mkdir(downloads);
+  await writeFile(credentials, 'existing encrypted login');
+  await writeFile(roster, 'existing teammate database');
+  await writeFile(unrelatedInstaller, 'unrelated download');
   for (const dir of ['resources/workspace/dist', 'resources/runtime'])
     await mkdir(path.join(stagedFiles, dir), { recursive: true });
   const source = path.join(root, 'fixture.cs');
@@ -47,6 +73,13 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
   await copyFile(app, path.join(stagedFiles, 'Kivuno.exe'));
   await writeFile(path.join(target, 'Uninstall Kivuno.exe'), 'old uninstaller');
   await writeFile(path.join(target, 'old-marker'), 'original');
+  await mkdir(path.join(target, path.dirname(generatedAsset)), { recursive: true });
+  await mkdir(path.join(stagedFiles, path.dirname(generatedAsset)), { recursive: true });
+  await writeFile(path.join(target, generatedAsset), 'obsolete frontend bundle');
+  await writeFile(
+    path.join(stagedFiles, path.dirname(generatedAsset), 'App-NA3blP8u.js'),
+    'new frontend bundle',
+  );
   for (const file of [
     'resources/app.asar',
     'resources/runtime/node.exe',
@@ -69,6 +102,7 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
       '!define isUpdated "1 == 1"',
       '!define UAC_IsAdmin "0 == 1"',
       '!define VERSION "0.9.4"',
+      '!define UNINSTALL_DISPLAY_NAME "Kivuno 0.9.4"',
       '!define INSTALL_REGISTRY_KEY "' + key + '"',
       '!define UNINSTALL_REGISTRY_KEY "' + key + '"',
       '!define APP_64 "' + archive + '"',
@@ -86,11 +120,23 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
   );
   await run(nsis.path, ['-V2', nsi], { env: { ...process.env, ...nsis.env }, windowsHide: true });
   await reg('add', 'HKCU\\' + key, '/v', 'InstallLocation', '/d', target, '/f', '/reg:64');
-  for (const mode of ['bad-version', 'cancel', 'locked', 'live', 'legacy']) {
+  await reg('add', 'HKCU\\' + key, '/v', 'DisplayName', '/d', 'Kivuno older', '/f', '/reg:64');
+  for (const mode of [
+    'bad-version',
+    'inside-profile',
+    'cancel',
+    'locked',
+    'rollback',
+    'live',
+    'legacy',
+  ]) {
     const stage = await mkdtemp(path.join(root, '.kivuno-update-'));
     const installer = path.join(stage, 'Kivuno-Setup.exe');
     await copyFile(setup, installer);
-    const live = mode !== 'legacy' && mode !== 'locked';
+    const live = !['legacy', 'locked', 'inside-profile', 'rollback'].includes(mode);
+    const previousMarker = path.join(target, '.kivuno-replaced-by');
+    // Simulate a filesystem error after the old directory has been renamed.
+    if (mode === 'rollback') await writeFile(previousMarker, 'pre-existing file');
     if (mode === 'locked')
       parent = spawn(path.join(stagedFiles, 'Kivuno.exe'), ['--hold'], {
         cwd: target,
@@ -98,20 +144,22 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
         windowsHide: true,
       });
     if (live) parent = spawn(app, ['--hold'], { cwd: root, stdio: 'ignore', windowsHide: true });
+    const environment = {
+      ...process.env,
+      KIVUNO_UPDATE_FILE: installer,
+      KIVUNO_UPDATE_APP: app,
+      KIVUNO_UPDATE_VERSION: mode === 'bad-version' ? '0.9.5' : '0.9.4',
+      KIVUNO_UPDATE_PID: String(parent?.pid || 0),
+      KIVUNO_UPDATE_LIVE: live ? '1' : '0',
+      KIVUNO_UPDATE_PROFILE: mode === 'inside-profile' ? path.join(target, 'user-data') : profile,
+    };
     const result = run(installer, ['/S', '--updated', '/D=' + target], {
       cwd: root,
       windowsHide: true,
       // NSIS takes the unquoted remainder of the command line after /D=.
       windowsVerbatimArguments: true,
       timeout: 45000,
-      env: {
-        ...process.env,
-        KIVUNO_UPDATE_FILE: installer,
-        KIVUNO_UPDATE_APP: app,
-        KIVUNO_UPDATE_VERSION: mode === 'bad-version' ? '0.9.5' : '0.9.4',
-        KIVUNO_UPDATE_PID: String(parent?.pid || 0),
-        KIVUNO_UPDATE_LIVE: live ? '1' : '0',
-      },
+      env: environment,
     }).then(
       () => 0,
       (error) => error.code,
@@ -144,23 +192,84 @@ class TestApp { static void Main(string[] args) { if(args.Length > 0) System.Thr
       await exit;
       parent = undefined;
     }
-    if (mode === 'cancel' || mode === 'bad-version' || mode === 'locked') {
+    if (['cancel', 'bad-version', 'locked', 'inside-profile', 'rollback'].includes(mode)) {
       assert.notEqual(code, 0);
+      const { stdout } = await reg('query', 'HKCU\\' + key, '/v', 'DisplayName', '/reg:64');
+      assert.match(stdout, /Kivuno older/);
       assert.equal(await readFile(path.join(target, 'old-marker'), 'utf8'), 'original');
       assert.equal(await exists(stage + '-previous'), false);
+      if (mode === 'rollback') {
+        assert.equal(await readFile(previousMarker, 'utf8'), 'pre-existing file');
+        await unlink(previousMarker);
+      }
     } else {
       assert.equal(code, 0, mode);
+      const { stdout } = await reg('query', 'HKCU\\' + key, '/v', 'DisplayName', '/reg:64');
+      assert.match(stdout, /Kivuno 0\.9\.4/);
       await access(path.join(target, 'resources/workspace/dist/index.html'));
-      assert.equal(
-        await readFile(path.join(stage + '-previous', '.kivuno-replaced-by'), 'utf8'),
-        app,
+      const previous = stage + '-previous';
+      assert.deepEqual(
+        JSON.parse(await readFile(path.join(previous, '.kivuno-replaced-by'), 'utf8')),
+        { app, version: '0.9.4', profile },
       );
+      const update = await windowsUpdate.inspectWindowsUpdate(environment, app, profile, '0.9.4');
+      assert.ok(update?.mayResume, mode);
+      assert.equal(
+        await windowsUpdate.inspectWindowsUpdate(environment, app, downloads, '0.9.4'),
+        null,
+      );
+      assert.equal(await windowsUpdate.inspectWindowsUpdate({}, app, profile, '0.9.4'), null);
+      const saved = {
+        accessToken: 'x'.repeat(43),
+        deviceId: randomUUID(),
+        bridgeKey: 'a'.repeat(64),
+        owner: { id: 'fixture-owner', name: 'Fixture owner' },
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      };
+      let verifications = 0;
+      const verify = async (token) => {
+        assert.equal(token, saved.accessToken);
+        verifications++;
+        return { deviceId: saved.deviceId, owner: saved.owner, expiresAt: saved.expiresAt };
+      };
+      await assert.rejects(
+        windowsUpdate.resumeWindowsUpdateIdentity(
+          update,
+          { ...saved, expiresAt: new Date(0).toISOString() },
+          verify,
+        ),
+      );
+      assert.deepEqual(
+        await windowsUpdate.resumeWindowsUpdateIdentity(update, saved, verify),
+        saved,
+      );
+      assert.equal(await windowsUpdate.resumeWindowsUpdateIdentity(update, saved, verify), null);
+      assert.equal(verifications, 1);
+      if (mode === 'live') {
+        await symlink(downloads, path.join(previous, 'external-junction'), 'junction');
+        await access(path.join(previous, generatedAsset));
+      }
+      await windowsUpdate.cleanPreviousWindowsInstall(update);
+      assert.equal(await exists(path.join(previous, 'Kivuno.exe')), false);
+      if (mode === 'live') {
+        assert.equal(await exists(path.join(previous, generatedAsset)), false);
+        assert.equal(await readFile(path.join(previous, 'old-marker'), 'utf8'), 'original');
+        await access(path.join(previous, 'external-junction', path.basename(unrelatedInstaller)));
+      } else {
+        assert.equal(await exists(previous), false);
+      }
     }
+    assert.equal(await readFile(credentials, 'utf8'), 'existing encrypted login');
+    assert.equal(await readFile(roster, 'utf8'), 'existing teammate database');
+    assert.equal(await readFile(unrelatedInstaller, 'utf8'), 'unrelated download');
     console.log('Passed Windows update:', mode);
   }
 } finally {
   parent?.kill();
   await reg('delete', 'HKCU\\' + key, '/f', '/reg:64').catch(() => {});
-  if (path.dirname(root) === os.tmpdir() && path.basename(root).startsWith('kivuno staged update '))
+  if (
+    path.dirname(await realpath(root)) === container &&
+    path.basename(root).startsWith('kivuno staged update ')
+  )
     await rm(root, { recursive: true, force: true, maxRetries: 3 });
 }

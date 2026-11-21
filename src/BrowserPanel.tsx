@@ -317,8 +317,10 @@ export default function BrowserPanel({
                 className="button primary"
                 onClick={() => void share()}
                 disabled={busy || !review.text.trim()}
+                aria-busy={busy}
               >
-                <Send size={14} /> Chia sẻ & tiếp tục
+                {busy ? <Loader2 className="spin" size={14} /> : <Send size={14} />}
+                {busy ? 'Đang chia sẻ…' : 'Chia sẻ & tiếp tục'}
               </button>
             </div>
           </div>

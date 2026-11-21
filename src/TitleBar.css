@@ -5,7 +5,7 @@
   align-items: center;
   justify-content: space-between;
   color: var(--text);
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  background: var(--room-heading, var(--bg));
   border-bottom: 1px solid var(--line-soft);
   user-select: none;
   position: relative;
@@ -51,6 +51,9 @@
 }
 .desktop-update-button:hover {
   background: color-mix(in srgb, var(--lime) 17%, transparent);
+}
+:root[data-workspace-theme='light'] .desktop-update-button {
+  color: #56358a;
 }
 .desktop-update-button:focus-visible {
   outline: 2px solid var(--lime);
@@ -144,4 +147,30 @@
 }
 .desktop-frame-content > .desktop-welcome {
   min-height: 100%;
+  background: var(--room-surface, var(--bg));
+  color: var(--room-text, var(--text));
+}
+.desktop-frame-content > .desktop-welcome :is(.portal-muted, .portal-status) {
+  color: var(--room-muted, var(--muted));
+}
+:root[data-workspace-theme='light'] .desktop-welcome .error-text {
+  color: #9e4038;
+}
+.desktop-welcome-theme {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--room-line, var(--line-soft));
+  border-radius: 10px;
+  background: var(--room-composer, var(--panel));
+  color: var(--room-text, var(--text));
+}
+.desktop-welcome .activation-code {
+  padding: 8px 14px;
+  border: 1px solid var(--room-composer-line, var(--line));
+  border-radius: 8px;
+  background: var(--room-chip, var(--panel));
+  color: var(--room-chip-ink, var(--text));
 }
