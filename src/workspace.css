@@ -351,33 +351,6 @@
 .app .session-event:is(.output-system, .output-command, .output-files) pre {
   color: var(--room-muted);
 }
-.app[data-chat-room='project'] .view-mesh {
-  display: flex;
-  flex-direction: column;
-  height: calc(100dvh - var(--room-header-height) - var(--desktop-titlebar-height, 0px));
-  padding: 0;
-  background: var(--room-surface);
-  color: var(--room-text);
-}
-.project-topbar-modes {
-  display: none;
-}
-.project-page-modes .neralu-mode {
-  padding: 8px clamp(12px, 2vw, 25px);
-  border-bottom: 1px solid var(--room-line);
-}
-@media (min-width: 975px) {
-  .project-topbar-modes {
-    display: block;
-    margin-right: auto;
-  }
-  .project-topbar-modes .neralu-mode {
-    padding: 0;
-  }
-  .project-page-modes {
-    display: none;
-  }
-}
 .chat-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1339,9 +1312,6 @@
   }
   .app .topbar-actions {
     flex-shrink: 0;
-  }
-  .project-page-modes .neralu-mode {
-    padding-block: 6px;
   }
   .chat-heading {
     flex-wrap: wrap;

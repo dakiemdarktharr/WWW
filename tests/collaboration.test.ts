@@ -143,6 +143,63 @@ test('free group seats include the owner, reserve invitations, and let locked pe
   );
 });
 
+test('owners can share and revoke a room ID without exposing it or bypassing seats', async (t) => {
+  const dir = await mkdtemp(path.join(tempRoot, 'kivuno-group-room-id-'));
+  const store = new Store(path.join(dir, 'groups.db'));
+  t.after(async () => {
+    store.close();
+    assert.equal(path.dirname(dir), tempRoot);
+    await rm(dir, { recursive: true, force: true });
+  });
+  const owner = { id: 'room-owner', name: 'Owner' };
+  const guest = { id: 'room-guest', name: 'Guest' };
+  const invitee = { id: 'room-invitee', name: 'Invitee' };
+  const another = { id: 'room-another', name: 'Another' };
+  const groups = new SharedGroups(store, (id) => (id === invitee.id ? invitee : null));
+  const id = randomUUID();
+  const call = (who: typeof owner, action: string, extra = {}) =>
+    groups.execute(who, { action, groupId: id, ...extra }) as any;
+  const join = (who: typeof owner, roomId: string) =>
+    groups.execute(who, { action: 'join', roomId }) as SharedGroup;
+  groups.execute(owner, { action: 'create', id, name: 'Private workspace' });
+  const inactive = /Invalid or inactive room ID/;
+  assert.throws(() => join(guest, id), inactive);
+  assert.throws(() => join(guest, '0123-4567-89AB-CDEF'), inactive);
+  assert.throws(() => call(guest, 'room-id'), /Group unavailable/);
+
+  const { roomId } = call(owner, 'room-id');
+  assert.match(roomId, /^(?:[0-9A-HJKMNP-TV-Z]{4}-){3}[0-9A-HJKMNP-TV-Z]{4}$/);
+  assert.equal(call(owner, 'room-id').roomId, roomId);
+  assert.equal(JSON.stringify(groups.execute(owner, { action: 'list' })).includes(roomId), false);
+  assert.equal(JSON.stringify(call(owner, 'read')).includes(roomId), false);
+
+  call(owner, 'invite', { account: invitee.id });
+  const joined = join(guest, roomId.toLowerCase().replaceAll('-', ' '));
+  assert.equal(joined.id, id);
+  assert.equal(joined.ownerId, owner.id);
+  assert.equal(joined.people.find((person) => person.id === guest.id)?.state, 'active');
+  assert.equal(join(guest, roomId).people.length, 3);
+  assert.throws(() => call(guest, 'room-id'), /Only the group owner/);
+  assert.throws(() => call(guest, 'revoke-room-id'), /Only the group owner/);
+  assert.throws(() => join(another, roomId), /3 active group seats/);
+  call(owner, 'seats', { userIds: [owner.id] });
+  assert.throws(() => join(guest, roomId), /seat is locked/);
+  assert.throws(() => join(invitee, roomId), /seat is locked/);
+  call(owner, 'seats', { userIds: [owner.id, guest.id, invitee.id] });
+  assert.equal(join(invitee, roomId).people.find(({ id }) => id === invitee.id)?.state, 'active');
+
+  call(owner, 'remove', { userId: guest.id });
+  assert.throws(() => join(guest, roomId), inactive);
+  assert.throws(() => call(guest, 'read'), /Group unavailable/);
+  assert.equal(call(invitee, 'read').group.id, id);
+  const replacement = call(owner, 'room-id').roomId;
+  assert.notEqual(replacement, roomId);
+  assert.deepEqual(call(owner, 'revoke-room-id'), { roomId: null });
+  assert.deepEqual(call(owner, 'revoke-room-id'), { roomId: null });
+  assert.throws(() => join(another, replacement), inactive);
+  assert.equal(call(invitee, 'read').group.id, id);
+});
+
 test('Plus and Max group seats follow the owner tier and preserve people after a downgrade', async (t) => {
   const dir = await mkdtemp(path.join(tempRoot, 'kivuno-group-plan-seats-'));
   const store = new Store(path.join(dir, 'groups.db'));
@@ -312,6 +369,23 @@ test('real account login and PKCE tokens authenticate group API; cookies and rev
   assert.equal(
     (await request('/api/desktop/groups', { action: 'read', groupId: id }, bob.bearer)).statusCode,
     403,
+  );
+  const room = await request(
+    '/api/desktop/groups',
+    { action: 'room-id', groupId: id },
+    alice.bearer,
+  );
+  assert.equal(room.statusCode, 200, room.body);
+  const join = { action: 'join', roomId: room.json().roomId };
+  assert.equal((await request('/api/desktop/groups', join, bob.browser)).statusCode, 401);
+  const charlie = await account('Charlie');
+  const joined = await request('/api/desktop/groups', join, charlie.bearer);
+  assert.equal(joined.statusCode, 200, joined.body);
+  assert.equal(joined.json().id, id);
+  assert.equal(
+    (await request('/api/desktop/groups', { action: 'read', groupId: id }, charlie.bearer))
+      .statusCode,
+    200,
   );
   const publication = await request(
     '/api/desktop/groups',

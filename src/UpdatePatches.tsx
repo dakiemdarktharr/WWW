@@ -6,6 +6,20 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.12',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Chat có danh sách nhóm riêng và khung hội thoại dạng bong bóng.',
+        en: 'Chat has a separate conversation list and a dedicated bubble transcript.',
+      },
+      {
+        vi: 'Tạo nhóm mà không cần nhập mục tiêu, hoặc vào nhóm bằng ID phòng do chủ nhóm chia sẻ.',
+        en: 'Create a group without entering a goal, or join with a room ID shared by its owner.',
+      },
+    ],
+  },
+  {
     version: '0.9.10',
     date: '2026-11-21',
     fixes: [

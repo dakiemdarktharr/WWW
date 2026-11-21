@@ -25,7 +25,7 @@ export const hackathonInput = z
       .nullable()
       .optional()
       .transform((value) => (value ? new Date(value).toISOString() : null)),
-    goal: z.string().trim().min(1).max(16000),
+    goal: z.string().trim().max(16000).default(''),
   })
   .strict();
 const slug = (value: string) =>

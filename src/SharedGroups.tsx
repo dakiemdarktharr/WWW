@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowDown,
-  ArrowLeft,
-  ChevronDown,
-  ListTodo,
-  Send,
-  Sparkles,
-  Users,
-  X,
-} from 'lucide-react';
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { ArrowDown, ChevronDown, Copy, ListTodo, Send, Sparkles, Users, X } from 'lucide-react';
 import type { Member, Project } from '../shared/types';
 import { sadeProjectCatalogueMaxBytes } from '../shared/sade-project';
 import type {
@@ -27,6 +26,309 @@ import SharedSadeProject from './SharedSadeProject';
 
 const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(input);
 const roomPollInterval = 3000;
+
+function GroupActionDialog({
+  title,
+  busy,
+  onClose,
+  initialFocus,
+  children,
+}: {
+  title: string;
+  busy: boolean;
+  onClose: () => void;
+  initialFocus?: RefObject<HTMLElement | null>;
+  children: ReactNode;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useLayoutEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    initialFocus?.current?.focus({ preventScroll: true });
+    return () => element?.close();
+  }, [initialFocus]);
+  return (
+    <dialog
+      ref={dialog}
+      className="shared-group-dialog shared-group-action-dialog"
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!busy) onClose();
+      }}
+    >
+      <header>
+        <h2 id={titleId}>{title}</h2>
+        <button
+          type="button"
+          className="text-button"
+          aria-label="Close dialog"
+          disabled={busy}
+          onClick={onClose}
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      </header>
+      <div className="shared-group-dialog-body">{children}</div>
+    </dialog>
+  );
+}
+
+export function SharedGroupEntryDialog({
+  mode,
+  onClose,
+  onOpen,
+}: {
+  mode: 'create' | 'join';
+  onClose: () => void;
+  onOpen: (groupId: string) => void;
+}) {
+  const create = mode === 'create';
+  const title = create ? 'Create group chat' : 'Join with room ID';
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const creationId = useRef('');
+  const field = useRef<HTMLInputElement>(null);
+  const fieldId = useId();
+  return (
+    <GroupActionDialog title={title} busy={busy} onClose={onClose} initialFocus={field}>
+      <form
+        className="shared-group-entry-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const text = value.trim();
+          if (!text || busy) return;
+          setError('');
+          setBusy(true);
+          try {
+            if (create) {
+              creationId.current ||= crypto.randomUUID();
+              await request({ action: 'create', id: creationId.current, name: text });
+              onOpen(creationId.current);
+            } else {
+              const group = await request<SharedGroup>({ action: 'join', roomId: text });
+              onOpen(group.id);
+            }
+          } catch (cause) {
+            setError((cause as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label htmlFor={fieldId}>{create ? 'New group name' : 'Room ID'}</label>
+        <input
+          ref={field}
+          required
+          id={fieldId}
+          aria-describedby={
+            [!create && `${fieldId}-help`, error && `${fieldId}-error`].filter(Boolean).join(' ') ||
+            undefined
+          }
+          aria-invalid={Boolean(error)}
+          value={value}
+          placeholder={create ? 'Group name' : 'ABCD-EFGH-JKMN-PQRS'}
+          maxLength={create ? 100 : 32}
+          autoComplete="off"
+          autoCapitalize={create ? 'sentences' : 'characters'}
+          spellCheck={create}
+          disabled={busy}
+          onChange={(event) => {
+            setValue(event.target.value);
+            if (error) setError('');
+          }}
+        />
+        {!create && <p id={`${fieldId}-help`}>Ask the group owner for the room ID.</p>}
+        {error && (
+          <p className="error-text" role="alert" id={`${fieldId}-error`}>
+            {error}
+          </p>
+        )}
+        <button className="button primary" disabled={busy || !value.trim()}>
+          {busy ? (create ? 'Creating…' : 'Joining…') : create ? 'Create group' : 'Join group'}
+        </button>
+      </form>
+    </GroupActionDialog>
+  );
+}
+
+export function SharedGroupListExtras({
+  listing,
+  onOpen,
+  onChanged,
+}: {
+  listing?: GroupListing;
+  onOpen: (groupId: string) => void;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+  async function change(action: 'accept' | 'decline' | 'leave', groupId: string) {
+    if (busy) return;
+    setError('');
+    setBusy(true);
+    try {
+      await request({ action, groupId });
+      onChanged();
+      if (action === 'accept') onOpen(groupId);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (!listing) return null;
+  return (
+    <div className="shared-group-list-extras">
+      {Boolean(listing.invitations.length) && (
+        <section aria-label="Group invitations">
+          <h3>Invitations</h3>
+          {listing.invitations.map((invitation) => (
+            <div className="group-invitation" key={invitation.id}>
+              <strong>{invitation.name}</strong>
+              <div>
+                <button
+                  type="button"
+                  className="button compact"
+                  disabled={busy}
+                  onClick={() => void change('accept', invitation.id)}
+                >
+                  Accept invitation
+                </button>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => void change('decline', invitation.id)}
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+      {Boolean(listing.lockedGroups.length) && (
+        <section className="locked-groups" aria-label="Groups with locked seats">
+          <h3>Locked groups</h3>
+          {listing.lockedGroups.map((group) => (
+            <div className="locked-group-row" key={group.id}>
+              <div>
+                <strong>{group.name}</strong>
+                <span>Your seat is locked. You can leave the group.</span>
+              </div>
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => void change('leave', group.id)}
+              >
+                Leave
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+      <button
+        type="button"
+        className="text-button"
+        onClick={async () => {
+          setError('');
+          setCopied(false);
+          try {
+            await navigator.clipboard.writeText(listing.owner.id);
+            setCopied(true);
+          } catch {
+            setError(`Your account ID: ${listing.owner.id}`);
+          }
+        }}
+      >
+        {listing.owner.name} · Copy account ID
+      </button>
+      {copied && <p role="status">Account ID copied.</p>}
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ShareRoomIdDialog({ groupId, onClose }: { groupId: string; onClose: () => void }) {
+  const [roomId, setRoomId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  async function update(action: 'room-id' | 'revoke-room-id') {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await request<{ roomId: string | null }>({ action, groupId });
+      if (action === 'revoke-room-id') {
+        setRoomId('');
+        setNotice('Room ID disabled. Existing members kept their access.');
+        return;
+      }
+      if (!result.roomId) throw new Error('Could not create a room ID.');
+      setRoomId(result.roomId);
+      try {
+        await navigator.clipboard.writeText(result.roomId);
+        setNotice('Room ID copied.');
+      } catch {
+        setNotice('Copy the room ID from the field below.');
+      }
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <GroupActionDialog title="Share room ID" busy={busy} onClose={onClose}>
+      <div className="shared-group-share">
+        <p>Anyone with this room ID can join when a group seat is available. Share it privately.</p>
+        {notice && <p role="status">{notice}</p>}
+        {error && (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        )}
+        {roomId && (
+          <input
+            aria-label="Room ID"
+            readOnly
+            value={roomId}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        )}
+        <div className="shared-group-actions">
+          <button
+            type="button"
+            className="button primary"
+            disabled={busy}
+            onClick={() => void update('room-id')}
+          >
+            <Copy size={16} aria-hidden="true" /> Copy room ID
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => void update('revoke-room-id')}
+          >
+            Disable room ID
+          </button>
+        </div>
+      </div>
+    </GroupActionDialog>
+  );
+}
 
 async function catalogueJpeg(file: File) {
   const bitmap = await createImageBitmap(file);
@@ -79,6 +381,7 @@ type GroupRead = GroupSadeView & {
 };
 type GroupReader = {
   groupId: string;
+  refresh: () => Promise<void>;
   pause: () => void;
   resume: (refresh: boolean) => void;
 };
@@ -94,32 +397,33 @@ export default function SharedGroups({
   projects,
   sessions = [],
   addTeammate,
-  initialGroupId = '',
+  groupId: selected,
+  listing,
+  onGroupsChanged,
+  onLeave,
 }: {
   members: Member[];
   projects: Project[];
   sessions?: { id: string; title: string }[];
   addTeammate: () => void;
-  initialGroupId?: string;
+  groupId: string;
+  listing?: GroupListing;
+  onGroupsChanged?: () => void;
+  onLeave?: () => void;
 }) {
-  const [listing, setListing] = useState<GroupListing>();
-  const [selected, setSelected] = useState(initialGroupId);
   const [room, setRoom] = useState<SharedGroup>();
   const [messages, setMessages] = useState<SharedMessage[]>([]);
-  const [name, setName] = useState('');
   const [account, setAccount] = useState('');
   const [content, setContent] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [showList, setShowList] = useState(!initialGroupId);
+  const [sharing, setSharing] = useState(false);
   const [showLatest, setShowLatest] = useState(false);
-  const groupList = useRef<HTMLElement>(null);
   const roomHeading = useRef<HTMLHeadingElement>(null);
   const membersDialog = useRef<HTMLDialogElement>(null);
   const history = useRef<HTMLDivElement>(null);
   const nearLatest = useRef(true);
-  const moveRoomFocus = useRef(false);
   const [chosenTeammates, setChosenTeammates] = useState<string[]>([]);
   const [chosenSeats, setChosenSeats] = useState<string[]>([]);
   const [grants, setGrants] = useState<SharedHarnessGrant[]>([]);
@@ -143,7 +447,7 @@ export default function SharedGroups({
   const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
     null,
   );
-  const selectedRef = useRef(initialGroupId);
+  const selectedRef = useRef(selected);
   const roomReader = useRef<GroupReader | null>(null);
   const messageDraft = useRef<{
     id: string;
@@ -159,54 +463,9 @@ export default function SharedGroups({
     setSupportsReferencedMessage(next.supportsReferencedMessage === true);
     setSupportsProjects(next.supportsProjectOrchestration === true);
   };
-  const refreshList = async () => {
-    const next = await request<GroupListing>({ action: 'list' });
-    setListing(next);
-    if (selectedRef.current && !next.groups.some((group) => group.id === selectedRef.current)) {
-      selectedRef.current = '';
-      setSelected('');
-      setRoom(undefined);
-      setMessages([]);
-    }
-    return next;
-  };
-  useEffect(() => {
-    let active = true,
-      inFlight = false;
-    const refresh = async () => {
-      if (!active || inFlight || document.hidden) return;
-      inFlight = true;
-      try {
-        const next = await request<GroupListing>({ action: 'list' });
-        if (active) {
-          setListing(next);
-          if (
-            selectedRef.current &&
-            !next.groups.some((group) => group.id === selectedRef.current)
-          ) {
-            selectedRef.current = '';
-            setSelected('');
-            setRoom(undefined);
-            setMessages([]);
-            setGrants([]);
-            setSadeRuns([]);
-          }
-        }
-      } catch (cause) {
-        if (active) setError((cause as Error).message);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void refresh();
-    const timer = setInterval(refresh, 10000);
-    window.addEventListener('focus', refresh);
-    return () => {
-      active = false;
-      clearInterval(timer);
-      window.removeEventListener('focus', refresh);
-    };
-  }, []);
+  useLayoutEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
   useEffect(() => {
     let active = true,
       inFlight = false,
@@ -219,8 +478,11 @@ export default function SharedGroups({
     nearLatest.current = true;
     setShowLatest(false);
     setEditing(false);
+    setSharing(false);
     setContent('');
     setAccount('');
+    setError('');
+    setCatalogue(undefined);
     setGrants([]);
     setSadeRuns([]);
     setGrantMember('');
@@ -273,6 +535,7 @@ export default function SharedGroups({
     };
     roomReader.current = {
       groupId: selected,
+      refresh: read,
       pause: () => {
         // A read started before a mutation cannot replace its decision when it returns late.
         paused = true;
@@ -296,6 +559,11 @@ export default function SharedGroups({
       window.removeEventListener('focus', read);
     };
   }, [selected]);
+  useEffect(() => {
+    // Rejoining can restore access without changing the selected group or remounting the room.
+    if (error && room?.id !== selected && listing?.groups.some(({ id }) => id === selected))
+      void roomReader.current?.refresh();
+  }, [error, listing, room?.id, selected]);
   const submitRoom = async <T,>(
     input: GroupCommand & { groupId: string },
     apply: (result: T) => boolean,
@@ -328,13 +596,6 @@ export default function SharedGroups({
       setBusy(false);
     }
   };
-  const choose = (id: string) => {
-    setShowList(!id);
-    moveRoomFocus.current = Boolean(id) && window.matchMedia('(max-width: 660px)').matches;
-    setCatalogue(undefined);
-    selectedRef.current = id;
-    setSelected(id);
-  };
   useEffect(() => {
     if (!editing || !grantProject || !allowWrites) return;
     let active = true;
@@ -357,11 +618,10 @@ export default function SharedGroups({
   }, [editing, grantProject, allowWrites]);
   const latestMessageId = messages.at(-1)?.id;
   useEffect(() => {
-    if (!showList && room?.id === selected && moveRoomFocus.current && roomHeading.current) {
-      roomHeading.current.focus({ preventScroll: true });
-      moveRoomFocus.current = false;
+    if (room?.id === selected && window.matchMedia('(max-width: 660px)').matches) {
+      roomHeading.current?.focus({ preventScroll: true });
     }
-  }, [room?.id, selected, showList]);
+  }, [room?.id, selected]);
   useEffect(() => {
     const dialog = membersDialog.current;
     if (!dialog || dialog.open === editing) return;
@@ -373,16 +633,7 @@ export default function SharedGroups({
     if (!stream || stream.clientHeight === 0) return;
     if (nearLatest.current) stream.scrollTop = stream.scrollHeight;
     setShowLatest(stream.scrollHeight - stream.clientHeight - stream.scrollTop > 64);
-  }, [room?.id, latestMessageId, showList]);
-  const backToGroups = () => {
-    setShowList(true);
-    requestAnimationFrame(() =>
-      (
-        groupList.current?.querySelector<HTMLButtonElement>('[aria-current="page"]:enabled') ??
-        groupList.current
-      )?.focus(),
-    );
-  };
+  }, [room?.id, latestMessageId]);
   const paired = allowWrites
     ? machines.filter(
         (machine) =>
@@ -394,7 +645,7 @@ export default function SharedGroups({
       )
     : [];
   const ownerId = listing?.owner.id;
-  const isOwner = room?.ownerId === ownerId;
+  const isOwner = Boolean(ownerId && room?.ownerId === ownerId);
   const localGrants = grants.filter((grant) => grant.ownerId === ownerId);
   const linkedProjects = [
     ...new Map(localGrants.map((grant) => [grant.projectKey, grant.projectName])).entries(),
@@ -418,162 +669,21 @@ export default function SharedGroups({
   const latestProject = sadeRuns.findLast(({ project }) => project);
   const waiting = latestSade?.jobs.find((job) => job.state === 'waiting');
   return (
-    <section
-      className="shared-groups"
-      data-pane={selected && !showList ? 'room' : 'list'}
-      aria-label="Kivuno groups"
-    >
-      <aside className="shared-group-list" ref={groupList} tabIndex={-1} aria-label="Group list">
-        <h2>Groups</h2>
-        {!listing && !error && <p role="status">Connecting to your Kivuno groups…</p>}
-        <nav aria-label="Shared groups">
-          {listing?.groups.map((group) => (
-            <button
-              className="shared-group-link"
-              aria-label={group.name}
-              disabled={busy}
-              key={group.id}
-              aria-current={selected === group.id ? 'page' : undefined}
-              onClick={() => choose(group.id)}
-            >
-              <span className="shared-group-avatar" aria-hidden="true">
-                {initials(group.name)}
-              </span>
-              <span className="shared-group-list-copy">
-                <strong title={group.name}>{group.name}</strong>
-                {group.lastMessagePreview && <small>{group.lastMessagePreview}</small>}
-              </span>
-              {group.lastMessageAt && (
-                <time dateTime={group.lastMessageAt}>
-                  {timeLabel.format(new Date(group.lastMessageAt))}
-                </time>
-              )}
-            </button>
-          ))}
-        </nav>
-        {error && (
-          <p className="shared-group-list-error error-text" role="alert">
-            {error}
-          </p>
-        )}
-        {listing && (
-          <button
-            className="text-button"
-            title={listing.owner.id}
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(listing.owner.id)
-                .catch(() => setError(`Your account ID: ${listing.owner.id}`))
-            }
-          >
-            {listing.owner.name} · Copy account ID
-          </button>
-        )}
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const id = crypto.randomUUID();
-            void run(async () => {
-              await request({ action: 'create', id, name });
-              setName('');
-              await refreshList();
-              choose(id);
-            });
-          }}
-        >
-          <input
-            aria-label="New group name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={100}
-            placeholder="Group name"
-            required
-          />
-          <button className="button" disabled={busy || !name.trim()}>
-            Create group
-          </button>
-        </form>
-        {listing?.invitations.map((invitation) => (
-          <div className="group-invitation" key={invitation.id}>
-            <strong>{invitation.name}</strong>
-            <button
-              className="button compact"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await request({ action: 'accept', groupId: invitation.id });
-                  await refreshList();
-                  choose(invitation.id);
-                })
-              }
-            >
-              Accept invitation
-            </button>
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  await request({ action: 'decline', groupId: invitation.id });
-                  await refreshList();
-                })
-              }
-            >
-              Decline
-            </button>
-          </div>
-        ))}
-        {Boolean(listing?.lockedGroups.length) && (
-          <div className="locked-groups" aria-label="Groups with locked seats">
-            <h3>Locked groups</h3>
-            {listing?.lockedGroups.map((group) => (
-              <div className="locked-group-row" key={group.id}>
-                <div>
-                  <strong>{group.name}</strong>
-                  <span>Your seat is locked. You can leave the group.</span>
-                </div>
-                <button
-                  className="text-button"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      await request({ action: 'leave', groupId: group.id });
-                      await refreshList();
-                    })
-                  }
-                >
-                  Leave
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </aside>
+    <section className="shared-groups" aria-label="Kivuno group conversation">
       <div className="shared-group-room">
-        <button
-          className="shared-group-back text-button"
-          type="button"
-          aria-label="Back to group list"
-          onClick={backToGroups}
-        >
-          <ArrowLeft size={17} aria-hidden="true" /> Groups
-        </button>
         {error && !editing && (
           <p className="error-text" role="alert">
             {error}
           </p>
         )}
-        {selected && !room && !error && <p role="status">Opening group…</p>}
-        {listing && !selected && !error && (
-          <p className="shared-group-placeholder">Select a group to open the conversation.</p>
-        )}
+        {room?.id !== selected && !error && <p role="status">Opening group…</p>}
         {room && room.id === selected && (
           <>
             <header className="shared-group-heading">
               <span className="shared-group-avatar" aria-hidden="true">
                 {initials(room.name)}
               </span>
-              <div>
+              <div className="shared-group-identity">
                 <h2 ref={roomHeading} tabIndex={-1}>
                   {room.name}
                 </h2>
@@ -588,26 +698,43 @@ export default function SharedGroups({
                   )}
                 </p>
               </div>
-              <button
-                className="button compact"
-                aria-haspopup="dialog"
-                onClick={() => {
-                  setEditing(true);
-                  setChosenTeammates(
-                    room.teammates
-                      .filter((member) => member.ownerId === ownerId)
-                      .map((member) => member.localId),
-                  );
-                  setChosenSeats(
-                    room.people
-                      .filter((person) => person.id !== ownerId && !person.quotaLocked)
-                      .map((person) => person.id),
-                  );
-                }}
-              >
-                <Users size={16} aria-hidden="true" /> Members
-              </button>
+              <div className="shared-group-heading-actions">
+                {isOwner && (
+                  <button
+                    className="button compact"
+                    type="button"
+                    aria-haspopup="dialog"
+                    onClick={() => setSharing(true)}
+                  >
+                    <Copy size={16} aria-hidden="true" /> Share room ID
+                  </button>
+                )}
+                <button
+                  className="button compact"
+                  type="button"
+                  aria-haspopup="dialog"
+                  disabled={!ownerId}
+                  onClick={() => {
+                    setEditing(true);
+                    setChosenTeammates(
+                      room.teammates
+                        .filter((member) => member.ownerId === ownerId)
+                        .map((member) => member.localId),
+                    );
+                    setChosenSeats(
+                      room.people
+                        .filter((person) => person.id !== ownerId && !person.quotaLocked)
+                        .map((person) => person.id),
+                    );
+                  }}
+                >
+                  <Users size={16} aria-hidden="true" /> Members
+                </button>
+              </div>
             </header>
+            {sharing && isOwner && (
+              <ShareRoomIdDialog groupId={room.id} onClose={() => setSharing(false)} />
+            )}
             <dialog
               ref={membersDialog}
               className="shared-group-dialog"
@@ -956,15 +1083,16 @@ export default function SharedGroups({
                     </button>
                   </div>
                 ))}
-                {!isOwner && (
+                {ownerId && !isOwner && (
                   <button
                     className="text-button"
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
                         await request({ action: 'leave', groupId: room.id });
-                        choose('');
-                        await refreshList();
+                        setEditing(false);
+                        onGroupsChanged?.();
+                        onLeave?.();
                       })
                     }
                   >
@@ -1324,6 +1452,7 @@ export default function SharedGroups({
                         setReference(undefined);
                         setCatalogue(undefined);
                         if (saved?.id !== next.id || saved.groupId !== room.id) return false;
+                        onGroupsChanged?.();
                         const { sadeGroup, ...message } = saved;
                         if (Number.isSafeInteger(message.sequence))
                           setMessages((previous) => mergeMessages(previous, [message]));

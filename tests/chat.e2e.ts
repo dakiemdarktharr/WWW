@@ -14,6 +14,7 @@ import { CodexClient } from '../server/codex.ts';
 import type { CodexSession, RoomMessage } from '../shared/types.ts';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-chat-'));
+const goalFreeFolder = await mkdtemp(path.join(os.tmpdir(), 'kivuno-goal-free-'));
 const store = new Store(path.join(root, 'workspace.db'));
 const workspace = new Workspace(store, root, root);
 const models = [
@@ -142,7 +143,8 @@ try {
   await page.goto(`${origin}/#mesh`);
   const guide = page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true });
   if (await guide.isVisible()) await guide.click();
-  await expect(page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  const chatList = page.getByRole('complementary', { name: 'Chat list' });
+  await expect(chatList).toBeVisible();
   await expect(page.getByLabel('Message the project team', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open project Chat interactions', exact: true }).click();
   const sade = page.getByRole('checkbox', { name: 'Sade · Plan and build' });
@@ -253,13 +255,28 @@ try {
   await page.getByRole('button', { name: 'Competition research', exact: true }).click();
   await expect(page.getByLabel('research panel')).toContainText('2 sources');
   await expect(page.getByLabel('research panel')).toContainText('unknown');
-  await page.getByRole('button', { name: 'Chats', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  await expect(chatList).toBeVisible();
   await page.screenshot({
     path: '.local/kivuno-081-home.png',
     fullPage: true,
     animations: 'disabled',
   });
+  await chatList.getByRole('button', { name: 'New or join chat' }).click();
+  await chatList.getByRole('button', { name: 'New project', exact: true }).click();
+  const connectProject = page.getByRole('dialog', { name: 'Connect project' });
+  await connectProject.getByLabel('Project type').selectOption('initialize');
+  await connectProject.getByLabel('Project name').fill('Goal-free chat');
+  await connectProject.getByPlaceholder('D:\\projects\\your-project').fill(goalFreeFolder);
+  await expect(connectProject.getByRole('textbox', { name: /What would you like/ })).toHaveValue(
+    '',
+  );
+  await connectProject.getByRole('button', { name: 'Start project' }).click();
+  await expect(connectProject).toBeHidden();
+  await expect(
+    chatList.getByRole('button', { name: 'Open project Goal-free chat' }),
+  ).toHaveAttribute('aria-current', 'page');
+  assert.equal(store.projects().find((entry) => entry.name === 'Goal-free chat')?.goal, '');
+  await chatList.getByRole('button', { name: 'Open project Chat interactions' }).click();
   // Exercise Reviews controls with a deterministic response. The runner/Git test covers the real receipt.
   const reviewed = store.addTask({
     projectId: project.id,
@@ -369,4 +386,7 @@ try {
   assert.equal(path.dirname(root), path.resolve(os.tmpdir()));
   assert.ok(path.basename(root).startsWith('kivuno-chat-'));
   await rm(root, { recursive: true, force: true });
+  assert.equal(path.dirname(goalFreeFolder), path.resolve(os.tmpdir()));
+  assert.ok(path.basename(goalFreeFolder).startsWith('kivuno-goal-free-'));
+  await rm(goalFreeFolder, { recursive: true, force: true });
 }

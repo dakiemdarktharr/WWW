@@ -212,7 +212,9 @@ const fixture = async (index: number) => {
   const guide = page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true });
   if (await guide.isVisible()) await guide.click();
   try {
-    await page.getByRole('button', { name: 'Groups', exact: true }).click({ timeout: 12000 });
+    await expect(page.getByRole('complementary', { name: 'Chat list' })).toBeVisible({
+      timeout: 12000,
+    });
   } catch (error) {
     console.error(await page.locator('body').innerText(), errors);
     throw error;
@@ -222,6 +224,8 @@ const fixture = async (index: number) => {
 try {
   const a = await fixture(0),
     b = await fixture(1);
+  await a.page.getByRole('button', { name: 'New or join chat', exact: true }).click();
+  await a.page.getByRole('button', { name: 'Create group chat', exact: true }).click();
   await a.page.getByLabel('New group name').fill('Shared research');
   await a.page.getByRole('button', { name: 'Create group', exact: true }).click();
   await a.page.getByRole('button', { name: 'Members', exact: true }).click();
@@ -262,24 +266,25 @@ try {
   await b.page.getByLabel('Message group', { exact: true }).fill('Reply from Bob');
   await b.page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(a.page.getByRole('log', { name: 'Group messages' })).toContainText('Reply from Bob');
-  await a.page.getByRole('button', { name: 'Chats', exact: true }).click();
-  await expect(a.page.getByRole('region', { name: 'All chats' })).toBeVisible();
+  await expect(a.page.getByRole('complementary', { name: 'Chat list' })).toBeVisible();
   await a.page.getByRole('button', { name: 'Open group Shared research', exact: true }).click();
   await expect(a.page.getByRole('log', { name: 'Group messages' })).toContainText('Reply from Bob');
   await a.page.screenshot({ path: '.local/kivuno-07-groups.png' });
   await b.page.reload();
-  await b.page.getByRole('button', { name: 'Groups', exact: true }).click();
-  await b.page.getByRole('button', { name: 'Shared research', exact: true }).click();
+  await b.page.getByRole('button', { name: 'Open group Shared research', exact: true }).click();
   await expect(b.page.getByRole('log')).toContainText('Hello from Alice');
   const originalViewport = b.page.viewportSize()!;
   await b.page.setViewportSize({ width: 390, height: 844 });
-  const back = b.page.getByRole('button', { name: 'Back to group list' });
+  const back = b.page.getByRole('button', { name: 'Back to chats' });
   await expect(back).toBeVisible();
   await back.click();
-  const groupButton = b.page.getByRole('button', { name: 'Shared research', exact: true });
+  const groupButton = b.page.getByRole('button', {
+    name: 'Open group Shared research',
+    exact: true,
+  });
   await expect(groupButton).toBeFocused();
   await groupButton.click();
-  await expect(b.page.getByRole('heading', { name: 'Shared research' })).toBeFocused();
+  await expect(b.page.getByRole('region', { name: 'Conversation', exact: true })).toBeFocused();
   const mobileComposer = await b.page.getByLabel('Message group', { exact: true }).boundingBox();
   assert.ok(mobileComposer && mobileComposer.width >= 160);
   await b.page.setViewportSize(originalViewport);
@@ -541,6 +546,30 @@ try {
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(b.page.getByRole('log')).toHaveCount(0, { timeout: 10000 });
   await a.page.getByRole('button', { name: 'Close group members' }).click();
+  await a.page.getByRole('button', { name: 'Share room ID', exact: true }).click();
+  const share = a.page.getByRole('dialog', { name: 'Share room ID' });
+  await share.getByRole('button', { name: 'Copy room ID', exact: true }).click();
+  const roomField = share.getByRole('textbox', { name: 'Room ID', exact: true });
+  await expect(roomField).toHaveValue(/^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){3}$/);
+  const roomId = await roomField.inputValue();
+  await b.page.getByRole('button', { name: 'New or join chat', exact: true }).click();
+  await b.page.getByRole('button', { name: 'Join with room ID', exact: true }).click();
+  const join = b.page.getByRole('dialog', { name: 'Join with room ID' });
+  await join.getByRole('textbox', { name: 'Room ID', exact: true }).fill(roomId.toLowerCase());
+  await join.getByRole('button', { name: 'Join group', exact: true }).click();
+  await expect(b.page.getByRole('log', { name: 'Group messages' })).toContainText(
+    'Hello from Alice',
+  );
+  await expect(
+    b.page.getByRole('button', { name: 'Open group Shared research', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await share.getByRole('button', { name: 'Disable room ID', exact: true }).click();
+  await expect(share.getByRole('status')).toContainText('Existing members kept their access');
+  await a.page.keyboard.press('Escape');
+  await expect(share).toBeHidden();
+  await expect(b.page.getByRole('log', { name: 'Group messages' })).toContainText(
+    'Hello from Alice',
+  );
   await a.page
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Team', exact: true })

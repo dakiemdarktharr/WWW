@@ -1,13 +1,14 @@
 import { openExternal } from './desktop';
 import ProviderSignIn from './ProviderSignIn';
-import SharedGroups from './SharedGroups';
-import ChatHome from './ChatHome';
+import SharedGroups, { SharedGroupEntryDialog, SharedGroupListExtras } from './SharedGroups';
+import ChatHome, { useChatGroups, type ChatSelection } from './ChatHome';
 import { useWorkspaceTheme, WorkspaceThemeProvider } from './WorkspaceTheme';
-import { useSadeDeckChat } from './SadeDeckChat';
+import SadeDeckChat, { useSadeDeckChat } from './SadeDeckChat';
 import { isExternalProvider, isExternalMember } from '../shared/providers';
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownLeft,
+  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   Check,
@@ -96,6 +97,7 @@ import {
 type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings' | 'aegis';
 type ModalState =
   | { type: 'member' | 'project' | 'task' | 'search' | 'connect' }
+  | { type: 'group-entry'; mode: 'create' | 'join' }
   | { type: 'external'; memberId: string; claudeClient?: ClaudeClient }
   | { type: 'detail'; taskId: string }
   | { type: 'login'; memberId: string; result: LoginResult }
@@ -336,9 +338,13 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
   const [state, setState] = useState<WorkspaceState | null>(null);
   const deckChatEnabled = Boolean(state && window.relayDesktop?.sadeDecks);
   const deckChat = useSadeDeckChat(deckChatEnabled);
-  const [chatMode, setChatMode] = useState<'home' | 'projects' | 'groups'>('home');
-  const [chatOpen, setChatOpen] = useState(false);
-  const [selectedShared, setSelectedShared] = useState('');
+  const [selectedChat, setSelectedChat] = useState<ChatSelection | null>(null);
+  const [showChatDetail, setShowChatDetail] = useState(false);
+  const [chatGroupsRevision, setChatGroupsRevision] = useState(0);
+  const chatRail = useRef<HTMLElement>(null);
+  const chatConversation = useRef<HTMLElement>(null);
+  const canShareGroups = Boolean(window.relayDesktop?.groups);
+  const chatGroups = useChatGroups(view === 'mesh' && Boolean(state), chatGroupsRevision);
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedMachine, setSelectedMachine] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -432,14 +438,31 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
     setFeedback('');
   }, []);
   const navigate = useCallback((next: View) => {
-    if (next === 'mesh') {
-      setChatMode('home');
-      setChatOpen(false);
-    }
+    if (next === 'mesh') setShowChatDetail(false);
     setView(next);
     window.location.hash = next;
     setSidebar(false);
   }, []);
+  const openChat = (chat: ChatSelection) => {
+    if (chat.kind === 'project') setSelectedProject(chat.id);
+    setSelectedChat(chat);
+    setShowChatDetail(true);
+    if (window.matchMedia('(max-width: 880px)').matches)
+      requestAnimationFrame(() => chatConversation.current?.focus({ preventScroll: true }));
+  };
+  const backToChatList = () => {
+    setShowChatDetail(false);
+    requestAnimationFrame(() =>
+      (
+        chatRail.current?.querySelector<HTMLButtonElement>('[aria-current="page"]') ??
+        chatRail.current
+      )?.focus({ preventScroll: true }),
+    );
+  };
+  const refreshChatGroups = useCallback(
+    () => setChatGroupsRevision((revision) => revision + 1),
+    [],
+  );
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => {
@@ -570,52 +593,11 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
   const selectedTask =
     modal?.type === 'detail' ? state?.tasks.find((t) => t.id === modal.taskId) : undefined;
   const pageTitle = [...nav, ...advancedNav].find((item) => item.id === view)?.label ?? 'Settings';
-  const chatRoom =
-    view === 'mesh' && state
-      ? chatMode === 'projects' && chatOpen
-        ? 'project'
-        : chatMode === 'groups' && window.relayDesktop
-          ? 'group'
-          : undefined
-      : undefined;
+  const chatRoom = view === 'mesh' ? selectedChat?.kind : undefined;
   const projectRoster =
     chatRoom === 'project'
       ? members.filter((member) => project?.memberIds?.includes(member.id))
       : [];
-  const chatModes = view === 'mesh' && state && window.relayDesktop && (
-    <div className="neralu-mode" aria-label="Chat view">
-      <button
-        className="button compact"
-        aria-pressed={chatMode === 'home'}
-        onClick={() => {
-          setChatMode('home');
-          setChatOpen(false);
-        }}
-      >
-        Chats
-      </button>
-      <button
-        className="button compact"
-        aria-pressed={chatMode === 'projects'}
-        onClick={() => {
-          setChatMode('projects');
-          setChatOpen(false);
-        }}
-      >
-        Projects
-      </button>
-      <button
-        className="button compact"
-        aria-pressed={chatMode === 'groups'}
-        onClick={() => {
-          setSelectedShared('');
-          setChatMode('groups');
-        }}
-      >
-        Groups
-      </button>
-    </div>
-  );
   const pending = !!busy;
   async function openBilling() {
     const desktop = window.relayDesktop;
@@ -927,9 +909,9 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               id="workspace-choice"
               value={project?.id || ''}
               onChange={(e) => {
-                setSelectedProject(e.target.value);
-                setChatOpen(true);
-                if (view === 'mesh') setChatMode('projects');
+                const id = e.target.value;
+                if (view === 'mesh' && id) openChat({ kind: 'project', id });
+                else setSelectedProject(id);
               }}
             >
               {state?.projects.length ? (
@@ -1066,14 +1048,13 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               <Menu size={20} />
             </button>
             <span className="breadcrumb-project">
-              {view === 'mesh' && chatMode === 'home' ? 'Home' : project?.name || 'Workspace'}
+              {view === 'mesh' && chatRoom !== 'project'
+                ? 'Workspace'
+                : project?.name || 'Workspace'}
             </span>
             <span className="breadcrumb-slash">/</span>
             <strong>{pageTitle}</strong>
           </div>
-          {chatRoom === 'project' && chatModes && (
-            <div className="project-topbar-modes">{chatModes}</div>
-          )}
           <div className="topbar-actions">
             {state && !focusedSessionId && (
               <UsageGuide stage={view} enabled={!modal} cloud={cloud} />
@@ -1146,63 +1127,95 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
             </div>
           )}
 
-          {chatRoom === 'project'
-            ? chatModes && <div className="project-page-modes">{chatModes}</div>
-            : chatModes}
-          {view === 'mesh' && state && chatMode === 'groups' && window.relayDesktop && (
-            <SharedGroups
-              members={availableMembers}
-              projects={state.projects}
-              sessions={state.sessions}
-              addTeammate={() => setModal({ type: 'connect' })}
-              initialGroupId={selectedShared}
-            />
-          )}
-          {view === 'mesh' &&
-            state &&
-            (chatMode === 'home' || (chatMode === 'projects' && !chatOpen)) && (
+          {view === 'mesh' && state && (
+            <div
+              className="chat-workspace-frame"
+              data-pane={showChatDetail && selectedChat ? 'room' : 'list'}
+            >
               <ChatHome
                 state={state}
-                projectsOnly={chatMode === 'projects'}
-                deckChat={deckChatEnabled ? deckChat : undefined}
-                create={() => setModal({ type: 'project' })}
-                groups={() => {
-                  setSelectedShared('');
-                  setChatMode('groups');
-                }}
-                open={(item) => {
-                  if (item.kind === 'project') {
-                    setSelectedProject(item.id);
-                    setChatOpen(true);
-                    setChatMode('projects');
-                  } else {
-                    setSelectedShared(item.id);
-                    setChatMode('groups');
-                  }
-                }}
-              />
-            )}
-          {view === 'mesh' && state && chatMode === 'projects' && chatOpen && (
-            <MeshPage
-              key={project?.id || 'empty-mesh'}
-              state={state}
-              project={project}
-              busy={pending}
-              request={foundationRequest}
-              selectProject={setSelectedProject}
-              addProject={() => setModal({ type: 'project' })}
-              openSessions={() => navigate('sessions')}
-              makeDeck={
-                deckChatEnabled
-                  ? (prompt) => {
-                      if (!deckChat.submit(prompt)) return false;
-                      setChatOpen(false);
-                      setChatMode('home');
-                      return true;
+                listing={chatGroups.listing}
+                error={chatGroups.error}
+                selected={selectedChat}
+                open={openChat}
+                createProject={() => setModal({ type: 'project' })}
+                enterGroup={
+                  canShareGroups ? (mode) => setModal({ type: 'group-entry', mode }) : undefined
+                }
+                slides={deckChatEnabled}
+                railRef={chatRail}
+              >
+                {canShareGroups && (
+                  <SharedGroupListExtras
+                    listing={chatGroups.listing}
+                    onOpen={(id) => openChat({ kind: 'shared', id })}
+                    onChanged={refreshChatGroups}
+                  />
+                )}
+              </ChatHome>
+              <section
+                className="chat-room-panel"
+                aria-label="Conversation"
+                tabIndex={-1}
+                ref={chatConversation}
+              >
+                {selectedChat && (
+                  <button
+                    type="button"
+                    className="chat-room-back text-button"
+                    onClick={backToChatList}
+                  >
+                    <ArrowLeft size={16} aria-hidden="true" /> Back to chats
+                  </button>
+                )}
+                {selectedChat?.kind === 'shared' && canShareGroups ? (
+                  <SharedGroups
+                    key={selectedChat.id}
+                    members={availableMembers}
+                    projects={state.projects}
+                    sessions={state.sessions}
+                    addTeammate={() => setModal({ type: 'connect' })}
+                    groupId={selectedChat.id}
+                    listing={chatGroups.listing}
+                    onGroupsChanged={refreshChatGroups}
+                    onLeave={() => {
+                      setSelectedChat(null);
+                      backToChatList();
+                    }}
+                  />
+                ) : selectedChat?.kind === 'project' ? (
+                  <MeshPage
+                    key={selectedChat.id}
+                    state={state}
+                    project={state.projects.find((item) => item.id === selectedChat.id)}
+                    busy={pending}
+                    request={foundationRequest}
+                    selectProject={(id) => openChat({ kind: 'project', id })}
+                    addProject={() => setModal({ type: 'project' })}
+                    openSessions={() => navigate('sessions')}
+                    makeDeck={
+                      deckChatEnabled
+                        ? (prompt) => {
+                            if (!deckChat.submit(prompt)) return false;
+                            openChat({ kind: 'slides' });
+                            return true;
+                          }
+                        : undefined
                     }
-                  : undefined
-              }
-            />
+                  />
+                ) : deckChatEnabled && selectedChat?.kind === 'slides' ? (
+                  <div className="chat-room-slides">
+                    <SadeDeckChat deckChat={deckChat} />
+                  </div>
+                ) : (
+                  <div className="chat-room-placeholder">
+                    <MessageSquare size={28} aria-hidden="true" />
+                    <h2>Select a chat</h2>
+                    <p>Choose a conversation or use the plus button to start one.</p>
+                  </div>
+                )}
+              </section>
+            </div>
           )}
           {view === 'aegis' && state && <Aegis state={state} project={project} />}
           {view === 'sessions' && state && (
@@ -1848,6 +1861,18 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
         </Modal>
       )}
 
+      {modal?.type === 'group-entry' && (
+        <SharedGroupEntryDialog
+          mode={modal.mode}
+          onClose={closeModal}
+          onOpen={(id) => {
+            refreshChatGroups();
+            openChat({ kind: 'shared', id });
+            closeModal();
+          }}
+        />
+      )}
+
       {modal?.type === 'project' && (
         <Modal title={cloud ? 'New project' : 'Connect project'} close={closeModal}>
           <form
@@ -1855,6 +1880,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
             onSubmit={async (e) => {
               e.preventDefault();
               const data = new FormData(e.currentTarget);
+              const goal = String(data.get('goal') ?? '').trim();
               let deadline: string | null = null;
               try {
                 if (projectMode === 'hackathon') deadline = deadlineFromForm(data);
@@ -1872,12 +1898,12 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
                       competitionName: data.get('competitionName'),
                       competitionUrl: data.get('competitionUrl'),
                       deadline,
-                      goal: data.get('goal'),
+                      goal,
                     }
                   : {
                       name: data.get('name'),
                       path: data.get('path'),
-                      goal: data.get('goal'),
+                      goal,
                       initializeGit: projectMode === 'initialize',
                     },
                 projectMode === 'initialize'
@@ -1885,9 +1911,8 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
                   : 'Project connected. Your room is ready.',
               );
               if (result) {
-                setSelectedProject(result.id);
-                setChatOpen(true);
-                setChatMode('projects');
+                if (view !== 'mesh') navigate('mesh');
+                openChat({ kind: 'project', id: result.id });
                 closeModal();
               }
             }}
@@ -1972,11 +1997,10 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               </label>
             )}
             <label>
-              What would you like to achieve?
+              What would you like to achieve? (optional)
               <textarea
                 name="goal"
                 rows={3}
-                required
                 placeholder="What are we building, and what does success look like?"
                 maxLength={5000}
               />
@@ -3024,7 +3048,7 @@ function ProjectSettings({
       </label>
       <label>
         Shared mission
-        <textarea name="goal" rows={3} defaultValue={project.goal} required maxLength={5000} />
+        <textarea name="goal" rows={3} defaultValue={project.goal} maxLength={5000} />
       </label>
       <Button type="submit" disabled={busy}>
         Save changes

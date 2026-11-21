@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -20,6 +20,15 @@ import { sadeProjectFileRoute } from '../shared/sade-project.ts';
 import { sadeProjectFile } from './shared-sade-project-files.ts';
 
 const groupId = z.string().uuid();
+const roomCodeAlphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const roomCodePattern = /^[0-9A-HJKMNP-TV-Z]{16}$/;
+const roomCodes = 'sharedGroupRoomId';
+
+interface RoomCode {
+  id: string;
+  code: string;
+}
+
 const hostedFinish = z
   .object({
     groupId,
@@ -64,6 +73,8 @@ const command = z.discriminatedUnion('action', [
   z
     .object({ action: z.literal('invite'), groupId, account: z.string().trim().min(1).max(254) })
     .strict(),
+  z.object({ action: z.enum(['room-id', 'revoke-room-id']), groupId }).strict(),
+  z.object({ action: z.literal('join'), roomId: z.string().max(128) }).strict(),
   z.object({ action: z.enum(['accept', 'decline', 'leave']), groupId }).strict(),
   z.object({ action: z.literal('remove'), groupId, userId: z.string().min(1).max(128) }).strict(),
   z
@@ -99,6 +110,9 @@ export class SharedGroups {
     this.sade = new GroupSade(store);
     store.db.exec(
       "CREATE INDEX IF NOT EXISTS shared_message_group_sequence ON records(json_extract(data,'$.groupId'),json_extract(data,'$.sequence')) WHERE kind='sharedMessage'",
+    );
+    store.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS shared_group_room_code ON records(json_extract(data,'$.code')) WHERE kind='sharedGroupRoomId'",
     );
   }
   retireGeminiShares() {
@@ -243,6 +257,7 @@ export class SharedGroups {
           this.assertActiveSeat(owner.id, groupId),
         );
       }
+      if (input.action === 'join') return this.joinByRoomId(owner, input.roomId);
       const all = this.store.all<SharedGroup>('sharedGroup');
       if (input.action === 'list') {
         const groups: SharedGroup[] = [];
@@ -310,6 +325,21 @@ export class SharedGroups {
       }
       if (!group || !person) throw new DomainError('Group unavailable.', 403);
       const isOwner = group.ownerId === owner.id;
+      if (input.action === 'room-id' || input.action === 'revoke-room-id') {
+        if (!isOwner) throw new DomainError('Only the group owner can manage the room ID.', 403);
+        if (input.action === 'revoke-room-id') {
+          this.store.remove(roomCodes, group.id);
+          return { roomId: null };
+        }
+        // Keep the share credential out of ordinary group listings and read responses.
+        const { code } =
+          this.store.lookup<RoomCode>(roomCodes, group.id) ??
+          this.store.put(roomCodes, {
+            id: group.id,
+            code: Array.from(randomBytes(16), (byte) => roomCodeAlphabet[byte & 31]).join(''),
+          });
+        return { roomId: code.match(/.{4}/g)!.join('-') };
+      }
       if (this.reconcileSeats(group))
         this.store.put('sharedGroup', { ...group, updatedAt: new Date().toISOString() });
       if (input.action === 'accept') {
@@ -335,6 +365,8 @@ export class SharedGroups {
           throw new DomainError('The group owner cannot leave the group.', 409);
         if (target !== owner.id && !isOwner)
           throw new DomainError('Only the group owner can remove accounts.', 403);
+        if (input.action === 'remove' && isOwner && group.people.some(({ id }) => id === target))
+          this.store.remove(roomCodes, group.id);
         this.sade.endTeammateSharing(group, target);
         group.people = group.people.filter((person) => person.id !== target);
         group.teammates = group.teammates.filter((member) => member.ownerId !== target);
@@ -392,10 +424,7 @@ export class SharedGroups {
         if (!target) throw new DomainError('No Kivuno account matches that ID or email.', 404);
         if (group.people.some((person) => person.id === target.id))
           return { ...group, seatLimit: this.seatLimit(group.ownerId) };
-        const limit = this.seatLimit(group.ownerId);
-        const reserved = group.people.filter((person) => !person.quotaLocked).length;
-        if (limit !== null && reserved >= limit)
-          throw new DomainError(`This plan supports up to ${limit} active group seats.`, 429);
+        this.assertVacantSeat(group);
         group.people.push({ ...target, state: 'invited' });
       } else if (input.action === 'teammates') {
         const submitted = new Map(input.teammates.map((member) => [member.localId, member]));
@@ -475,6 +504,41 @@ export class SharedGroups {
         input,
       ),
     );
+  }
+
+  private joinByRoomId(owner: DesktopOwner, roomId: string): SharedGroup {
+    const code = roomId.toUpperCase().replace(/[\s-]/g, '');
+    if (!roomCodePattern.test(code)) throw new DomainError('Invalid or inactive room ID.', 404);
+    const room = this.store.db
+      .prepare(
+        "SELECT id FROM records WHERE kind='sharedGroupRoomId' AND json_extract(data,'$.code')=?",
+      )
+      .get(code);
+    const group = room && this.refreshGroupSeats(String(room.id));
+    if (!group) throw new DomainError('Invalid or inactive room ID.', 404);
+
+    const person = group.people.find(({ id }) => id === owner.id);
+    if (person?.quotaLocked)
+      throw new DomainError(
+        'Your group seat is locked. Ask the owner to assign an active seat.',
+        403,
+      );
+    if (person?.state === 'active') return { ...group, seatLimit: this.seatLimit(group.ownerId) };
+    if (person) {
+      person.state = 'active';
+      person.name = owner.name;
+    } else {
+      this.assertVacantSeat(group);
+      group.people.push({ ...owner, state: 'active' });
+    }
+    return this.saveGroup(group);
+  }
+
+  private assertVacantSeat(group: SharedGroup) {
+    const limit = this.seatLimit(group.ownerId);
+    const reserved = group.people.filter((person) => !person.quotaLocked).length;
+    if (limit !== null && reserved >= limit)
+      throw new DomainError(`This plan supports up to ${limit} active group seats.`, 429);
   }
 
   private seatLimit(ownerId: string): number | null {

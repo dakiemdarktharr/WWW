@@ -98,6 +98,8 @@ export type GroupCommand =
   | { action: 'create'; id: string; name: string }
   | { action: 'read'; groupId: string; after?: number }
   | { action: 'invite'; groupId: string; account: string }
+  | { action: 'room-id' | 'revoke-room-id'; groupId: string }
+  | { action: 'join'; roomId: string }
   | { action: 'accept' | 'decline' | 'leave'; groupId: string }
   | { action: 'remove'; groupId: string; userId: string }
   | { action: 'seats'; groupId: string; userIds: string[] }

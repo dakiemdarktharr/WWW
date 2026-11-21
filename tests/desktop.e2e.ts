@@ -9,10 +9,15 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { git } from '../server/git.ts';
+import type { GroupCommand, SharedGroup } from '../shared/collaboration.ts';
 import type { Member } from '../shared/types.ts';
 
 const directory = await mkdtemp(path.join(os.tmpdir(), 'relay-desktop-e2e-'));
 const accessToken = 'desktop-test-session-' + '0'.repeat(64);
+const fixtureRoomId = 'ABCD-EFGH-JKMN-PQRS';
+const fixtureRoomGroupId = randomUUID();
+const roomIdCommands: GroupCommand[] = [];
+let roomIdActive = false;
 let challenge = '';
 let approved = false;
 let accountId = 'desktop-test-owner';
@@ -205,6 +210,33 @@ const fixture = createServer(async (request, response) => {
         },
       }),
     );
+  } else if (
+    request.url === '/api/desktop/groups' &&
+    ['room-id', 'join', 'revoke-room-id'].includes(payload.action)
+  ) {
+    assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
+    roomIdCommands.push(payload);
+    if (payload.action === 'join') {
+      if (!roomIdActive) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: 'Invalid or inactive room ID.' }));
+        return;
+      }
+      response.end(
+        JSON.stringify({
+          id: fixtureRoomGroupId,
+          name: 'Room ID fixture',
+          ownerId: accountId,
+          people: [{ ...identity.owner, state: 'active' }],
+          teammates: [],
+          seatLimit: 3,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        } satisfies SharedGroup),
+      );
+    } else {
+      roomIdActive = payload.action === 'room-id';
+      response.end(JSON.stringify({ roomId: roomIdActive ? fixtureRoomId : null }));
+    }
   } else if (request.url === '/api/desktop/groups' && payload.action === 'sade-finish') {
     reportedSharedJobs.push(payload.jobId);
     if (reportedSharedJobs.length === 1) await firstSharedFinish;
@@ -363,6 +395,11 @@ try {
   const before = await page.evaluate(() => (window as any).relayDesktop.getStatus());
   assert.equal(before.signedIn, false);
   assert.equal(before.runtime, 'ready');
+  const groupCommand = <T>(input: GroupCommand) =>
+    page.evaluate((value) => window.relayDesktop!.groups<T>(value), input);
+  const joinRoom = { action: 'join' as const, roomId: fixtureRoomId.toLowerCase() };
+  await assert.rejects(groupCommand(joinRoom), /Sign in to Kivuno first/);
+  assert.equal(roomIdCommands.length, 0);
   assert.equal(await page.evaluate(() => typeof (window as any).require), 'undefined');
   await page.getByRole('button', { name: 'Dùng giao diện sáng' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
@@ -402,6 +439,15 @@ try {
   const publicStatus = await page.evaluate(() => (window as any).relayDesktop.getStatus());
   assert.equal(publicStatus.owner.id, 'desktop-test-owner');
   assert.equal(JSON.stringify(publicStatus).includes(accessToken), false);
+  const shareRoom = { action: 'room-id' as const, groupId: fixtureRoomGroupId };
+  const revokeRoom = { action: 'revoke-room-id' as const, groupId: fixtureRoomGroupId };
+  assert.deepEqual(await groupCommand(shareRoom), { roomId: fixtureRoomId });
+  const joined = await groupCommand<SharedGroup>(joinRoom);
+  assert.equal(joined.id, fixtureRoomGroupId);
+  assert.deepEqual(joined.people, [{ ...publicStatus.owner, state: 'active' }]);
+  assert.deepEqual(await groupCommand(revokeRoom), { roomId: null });
+  await assert.rejects(groupCommand(joinRoom), /Invalid or inactive room ID/);
+  assert.deepEqual(roomIdCommands, [shareRoom, joinRoom, revokeRoom, joinRoom]);
   const opened = desktop.waitForEvent('window');
   await page.evaluate((values) => window.relayDesktop!.projectPreview(values), previewIds);
   const projectPreview = await opened;
@@ -1075,7 +1121,7 @@ try {
   await expect(reopened.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
 
   console.log(
-    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, Shared Sade consent retry and revocation sync, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
+    'Desktop E2E passed: Electron/runtime/Codex probe, activation, protected local API, room ID bridge, Shared Sade consent retry and revocation sync, isolated project browser, explicit safe page snapshot, browser release, fullscreen controls, DPAPI session and sign-out.',
   );
 } finally {
   if (desktop) await desktop.close();

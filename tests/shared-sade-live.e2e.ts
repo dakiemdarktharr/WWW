@@ -725,14 +725,16 @@ try {
       deviceByOwner.set(owner.id, id);
     }
   const rooms = suite.cases.map((scenario) => buildRoom(scenario, deviceByOwner));
-  await page.getByRole('button', { name: 'Groups', exact: true }).click({ timeout: 15_000 });
+  await expect(page.getByRole('complementary', { name: 'Chat list' })).toBeVisible({
+    timeout: 15_000,
+  });
   const outcomes = [];
   let previousClick = -Infinity;
   for (const [index, scenario] of suite.cases.entries()) {
     const { groupId, projectKey, roomName, bindings } = rooms[index];
     await page
-      .getByRole('navigation', { name: 'Shared groups', exact: true })
-      .getByRole('button', { name: roomName, exact: true })
+      .getByRole('navigation', { name: 'Chats by latest activity', exact: true })
+      .getByRole('button', { name: `Open group ${roomName}`, exact: true })
       .click({ timeout: 8_000 });
     await expect(page.getByRole('heading', { name: roomName, exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Sade progress' })).toHaveCount(0);

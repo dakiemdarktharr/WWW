@@ -1,41 +1,35 @@
-import { useEffect, useState } from 'react';
-import { MessageSquare, Plus, Search, Users } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import {
+  FolderGit2,
+  KeyRound,
+  MessageSquare,
+  Plus,
+  Presentation,
+  Search,
+  Users,
+} from 'lucide-react';
 import type { WorkspaceState } from '../shared/types';
-import type { GroupListing, SharedGroup } from '../shared/collaboration';
-import { chatList, type ChatListItem } from '../shared/chat-list';
-import SadeDeckChat, { type useSadeDeckChat } from './SadeDeckChat';
+import type { GroupListing } from '../shared/collaboration';
+import { chatList } from '../shared/chat-list';
 import './ChatHome.css';
 
-export default function ChatHome({
-  state,
-  projectsOnly = false,
-  open,
-  create,
-  groups,
-  deckChat,
-}: {
-  state: WorkspaceState;
-  projectsOnly?: boolean;
-  open: (item: ChatListItem) => void;
-  create: () => void;
-  groups: () => void;
-  deckChat?: ReturnType<typeof useSadeDeckChat>;
-}) {
-  const [shared, setShared] = useState<SharedGroup[]>([]),
-    [error, setError] = useState(''),
-    [search, setSearch] = useState('');
-  const canShare = !!window.relayDesktop?.groups;
+export type ChatSelection = { kind: 'project' | 'shared'; id: string } | { kind: 'slides' };
+
+export function useChatGroups(enabled: boolean, revision: number) {
+  const [listing, setListing] = useState<GroupListing>();
+  const [error, setError] = useState('');
   useEffect(() => {
-    if (!canShare || projectsOnly) return;
-    let live = true,
-      inFlight = false;
+    const desktop = window.relayDesktop;
+    if (!enabled || !desktop?.groups) return;
+    let live = true;
+    let inFlight = false;
     const refresh = async () => {
       if (!live || inFlight || document.hidden) return;
       inFlight = true;
       try {
-        const listing = await window.relayDesktop!.groups<GroupListing>({ action: 'list' });
+        const next = await desktop.groups<GroupListing>({ action: 'list' });
         if (live) {
-          setShared(listing.groups);
+          setListing(next);
           setError('');
         }
       } catch (cause) {
@@ -45,38 +39,94 @@ export default function ChatHome({
       }
     };
     void refresh();
-    const timer = setInterval(refresh, 10000);
+    const timer = window.setInterval(refresh, 10000);
     window.addEventListener('focus', refresh);
     return () => {
       live = false;
-      clearInterval(timer);
+      window.clearInterval(timer);
       window.removeEventListener('focus', refresh);
     };
-  }, [canShare, projectsOnly]);
-  const rows = chatList(state, projectsOnly ? [] : shared).filter((row) =>
-    `${row.name} ${row.preview}`.toLowerCase().includes(search.toLowerCase()),
+  }, [enabled, revision]);
+  return { listing, error };
+}
+
+export default function ChatHome({
+  state,
+  listing,
+  error,
+  selected,
+  open,
+  createProject,
+  enterGroup,
+  slides,
+  railRef,
+  children,
+}: {
+  state: WorkspaceState;
+  listing?: GroupListing;
+  error: string;
+  selected: ChatSelection | null;
+  open: (selection: ChatSelection) => void;
+  createProject: () => void;
+  enterGroup?: (mode: 'create' | 'join') => void;
+  slides: boolean;
+  railRef: Ref<HTMLElement>;
+  children?: ReactNode;
+}) {
+  const [search, setSearch] = useState('');
+  const [adding, setAdding] = useState(false);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const rows = chatList(state, listing?.groups).filter((row) =>
+    `${row.name} ${row.preview}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const pick = (action: () => void) => {
+    setAdding(false);
+    addButton.current?.focus();
+    action();
+  };
   return (
-    <section className="chat-home" aria-label="All chats">
+    <aside className="chat-home" aria-label="Chat list" tabIndex={-1} ref={railRef}>
       <header>
-        <h1>{projectsOnly ? 'Projects' : 'Chats'}</h1>
-        <div>
-          <button className="button compact" onClick={create}>
-            <Plus size={15} />
-            New project
-          </button>
-          {canShare && (
-            <button className="button compact" onClick={groups}>
-              <Users size={15} />
-              Manage groups
-            </button>
-          )}
-        </div>
+        <h1>Chats</h1>
+        <button
+          type="button"
+          className="chat-home-add"
+          aria-label="New or join chat"
+          title="New or join chat"
+          aria-controls="chat-add-options"
+          aria-expanded={adding}
+          onClick={() => setAdding((open) => !open)}
+          ref={addButton}
+        >
+          <Plus size={25} aria-hidden="true" />
+        </button>
       </header>
-      {!projectsOnly && deckChat && <SadeDeckChat deckChat={deckChat} />}
+      <div
+        id="chat-add-options"
+        className="chat-home-actions"
+        hidden={!adding}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') pick(() => {});
+        }}
+      >
+        {enterGroup && (
+          <>
+            <button type="button" onClick={() => pick(() => enterGroup('create'))}>
+              <Users size={16} /> Create group chat
+            </button>
+            <button type="button" onClick={() => pick(() => enterGroup('join'))}>
+              <KeyRound size={16} /> Join with room ID
+            </button>
+          </>
+        )}
+        <button type="button" onClick={() => pick(createProject)}>
+          <FolderGit2 size={16} /> {enterGroup ? 'Connect project folder' : 'New project'}
+        </button>
+      </div>
       <label className="chat-home-search">
         <Search size={16} />
         <input
+          type="search"
           aria-label="Search chats"
           placeholder="Search chats"
           value={search}
@@ -88,42 +138,50 @@ export default function ChatHome({
           Shared groups unavailable: {error}
         </p>
       )}
-      <div className="chat-home-list" aria-label="Chats by latest activity">
-        {rows.map((row) => (
+      <nav className="chat-home-list" aria-label="Chats by latest activity">
+        {slides && !search.trim() && (
           <button
-            key={`${row.kind}:${row.id}`}
+            type="button"
             className="chat-home-row"
-            onClick={() => open(row)}
-            aria-label={`Open ${row.kind === 'project' ? 'project' : 'group'} ${row.name}`}
+            aria-current={selected?.kind === 'slides' ? 'page' : undefined}
+            onClick={() => open({ kind: 'slides' })}
           >
-            <span className="chat-home-avatar">
-              <MessageSquare size={21} />
+            <span className="chat-home-avatar" aria-hidden="true">
+              <Presentation size={16} />
             </span>
             <span className="chat-home-content">
-              <strong>{row.name}</strong>
-              <span>
-                {row.preview || (row.kind === 'shared' ? 'Shared group' : 'Project chat')}
-              </span>
-            </span>
-            <span className="chat-home-meta">
-              <span>{row.kind === 'shared' ? 'Group' : 'Project'}</span>
-              {row.active ? (
-                <time dateTime={new Date(row.at).toISOString()}>
-                  {new Date(row.at).toLocaleString([], {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </time>
-              ) : (
-                <span>Inactive</span>
-              )}
+              <strong>Sade slides</strong>
             </span>
           </button>
-        ))}
-        {!rows.length && <p role="status">{search ? 'No matching chats' : 'No chats yet'}</p>}
-      </div>
-    </section>
+        )}
+        {rows.map((row) => {
+          const current = selected?.kind === row.kind && selected.id === row.id;
+          return (
+            <button
+              type="button"
+              key={`${row.kind}:${row.id}`}
+              className="chat-home-row"
+              onClick={() => open({ kind: row.kind, id: row.id })}
+              aria-current={current ? 'page' : undefined}
+              aria-label={`Open ${row.kind === 'project' ? 'project' : 'group'} ${row.name}`}
+            >
+              <span className="chat-home-avatar" aria-hidden="true">
+                {row.kind === 'project' ? <FolderGit2 size={16} /> : <MessageSquare size={16} />}
+              </span>
+              <span className="chat-home-content">
+                <strong title={row.name}>{row.name}</strong>
+                <span>
+                  {row.preview || (row.kind === 'shared' ? 'Shared group' : 'Project chat')}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+        {!rows.length && (
+          <p role="status">{search.trim() ? 'No matching chats' : 'No chats yet'}</p>
+        )}
+      </nav>
+      {children}
+    </aside>
   );
 }
