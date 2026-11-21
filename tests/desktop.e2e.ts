@@ -417,6 +417,11 @@ try {
   const pending = await page.evaluate(() => (window as any).relayDesktop.beginSignIn());
   assert.equal(pending.pending.userCode, 'TEST-CODE');
   assert.equal(pending.signedIn, false);
+  await desktop.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.show();
+    window.minimize();
+  });
   approved = true;
   await expect
     .poll(
@@ -427,6 +432,15 @@ try {
   assert.ok(tokenRequests > 0);
   await page.waitForURL((url) => url.origin !== lockedOrigin, { timeout: 30000 });
   await page.waitForLoadState('domcontentloaded');
+  await expect
+    .poll(() =>
+      desktop!.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        return window.isVisible() && !window.isMinimized();
+      }),
+    )
+    .toBe(true);
+  console.log('Approved sign-in restored the desktop window.');
   await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
   const localOrigin = new URL(page.url()).origin;
   const state = await page.evaluate(async () => {

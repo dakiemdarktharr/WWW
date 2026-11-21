@@ -167,6 +167,8 @@ const english: Record<string, string> = {
   'Chủ workspace cũ': 'Existing workspace owner',
   'Kết nối desktop': 'Connect desktop',
   'Đã kết nối': 'Connected',
+  'Kivuno đang mở lại trên máy của bạn. Chờ vài giây để hoàn tất kết nối.':
+    'Kivuno is reopening on your computer. Allow a few seconds to finish connecting.',
   'Đóng đăng nhập': 'Close sign-in',
   'Tên của bạn': 'Your name',
   'Gói Kivuno': 'Kivuno plans',

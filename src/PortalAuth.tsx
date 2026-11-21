@@ -418,6 +418,11 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
                       <span className="ka-success-icon">
                         <CheckCheck size={32} />
                       </span>
+                      <p>
+                        {t(
+                          'Kivuno đang mở lại trên máy của bạn. Chờ vài giây để hoàn tất kết nối.',
+                        )}
+                      </p>
                       <motion.button
                         className="ka-primary"
                         onClick={onClose}

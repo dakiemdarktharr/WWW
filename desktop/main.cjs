@@ -751,6 +751,9 @@ async function pollSignIn(generation) {
       pending = null;
       lastError = '';
       publishStatus();
+      if (window?.isMinimized()) window.restore();
+      window?.show();
+      window?.focus();
       await stopBackend();
       await startBackend();
       if (quitting) return;
@@ -759,6 +762,7 @@ async function pollSignIn(generation) {
       publishStatus();
       void bridgeLoop();
       void restoreMachines();
+      if (window?.isMinimized()) window.restore();
       window?.show();
       window?.focus();
       return;
