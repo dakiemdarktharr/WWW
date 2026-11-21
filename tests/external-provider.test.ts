@@ -619,9 +619,16 @@ test('real stdio MCP transport authenticates a scoped local HTTP endpoint withou
   const post = await request('tools/call', {
     name: 'mesh_post',
     arguments: { content: 'Cross-provider protocol verified' },
+    _meta: { progressToken: 'claude-request-1' },
   });
   assert.equal(post.result.isError, false);
   assert.equal(JSON.parse(post.result.content[0].text).authorId, f.member.id);
+  const unexpectedArgument = await request('tools/call', {
+    name: 'mesh_post',
+    arguments: { content: 'Invalid tool argument', _meta: { progressToken: 'nested' } },
+    _meta: { progressToken: 'claude-request-2' },
+  });
+  assert.equal(unexpectedArgument.result.isError, true);
   const revoke = await app.inject({
     method: 'POST',
     url: `/api/external-connections/${created.json().id}/revoke`,

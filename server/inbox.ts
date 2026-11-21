@@ -127,8 +127,12 @@ export class InboxDispatcher {
     }
   }
   private async available(message: RoomMessage): Promise<Member | undefined> {
+    const members = groupMembers(this.host.store, message.projectId);
+    const recipients = members.filter((member) => message.mentions?.includes(member.id));
+    if (recipients.length && recipients.every(isExternalMember)) return;
+
     const counts = this.host.store.all<DispatchRecord>('meshDispatch');
-    const candidates = groupMembers(this.host.store, message.projectId)
+    const candidates = members
       .map((member) => ({ ...member, ...memberPresence(this.host, member) }))
       .filter(
         (member) =>

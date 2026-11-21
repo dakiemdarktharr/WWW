@@ -288,6 +288,33 @@ test('restart preserves an uncertain startup as blocked and never automatically 
   await restarted.close();
 });
 
+test('a request addressed only to an external teammate stays with that teammate', async (t) => {
+  const f = fixture(t);
+  const claude = f.store.addMember({
+    name: 'Claude',
+    provider: 'claude',
+    integration: 'external',
+    role: 'researcher',
+  });
+  f.store.put('project', { ...f.project, memberIds: [f.member.id, claude.id] });
+  const addressed = f.mesh.post({
+    projectId: f.project.id,
+    authorId: null,
+    kind: 'message',
+    content: 'Claude, please read the demo roster.',
+    mentions: [claude.id],
+  });
+  const general = f.human();
+
+  await f.dispatcher.dispatch(f.project.id);
+
+  const waiting = f.store.get<RoomMessage>('message', addressed.id);
+  assert.equal(waiting.requestStatus, 'open');
+  assert.ok(!waiting.claimedBy);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.get<RoomMessage>('message', general.id).claimedBy, f.member.id);
+});
+
 test('mixed-provider chat checks model and reasoning before claiming and skips external Claude', async (t) => {
   const f = fixture(t);
   const gemini = f.store.addMember({ name: 'Gemini', provider: 'gemini', role: 'researcher' });

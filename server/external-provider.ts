@@ -625,7 +625,11 @@ export class ExternalProviders {
       };
     try {
       const call = z
-        .object({ name: z.string(), arguments: z.unknown().optional() })
+        .object({
+          name: z.string(),
+          arguments: z.unknown().optional(),
+          _meta: z.record(z.string(), z.unknown()).optional(),
+        })
         .strict()
         .parse(message.params);
       const args = call.arguments || {};
