@@ -953,7 +953,7 @@ try {
     await expect
       .poll(() => desktop!.evaluate(() => (globalThis as any).claudeConnectorUrls.at(-1)))
       .toBe('https://claude.ai/customize/connectors/yours');
-    await dialog.getByText('First connection or setup did not open?').click();
+    await dialog.getByText('The setup form did not open?', { exact: true }).click();
     await expect(dialog.getByRole('textbox', { name: 'Connector URL' })).toHaveValue(
       fixtureOrigin + '/api/claude/mcp',
     );

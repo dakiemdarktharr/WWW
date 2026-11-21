@@ -30,12 +30,19 @@ function Guide({ vi }: { vi: boolean }) {
       </p>
 
       <section aria-labelledby="claude-guide-connect">
-        <h2 id="claude-guide-connect">{vi ? 'Liên kết hồ sơ' : 'Connect your profile'}</h2>
+        <h2 id="claude-guide-connect">
+          {vi ? 'Lần đầu thêm Kivuno vào Claude' : 'Add Kivuno to Claude for the first time'}
+        </h2>
+        <p>
+          {vi
+            ? 'Nếu chưa tìm thấy Kivuno trong danh mục Claude, hãy thêm connector tùy chỉnh theo các bước dưới đây. Bạn chỉ cần thêm một lần cho mỗi tài khoản Claude. Giữ ứng dụng Kivuno mở trong lúc kết nối.'
+            : 'If Kivuno is not in your Claude directory yet, add a custom connector using these steps. Add it once per Claude account. Keep the Kivuno desktop app open while connecting.'}
+        </p>
         <ol>
           <li>
             {vi
-              ? 'Mở ứng dụng Kivuno, đăng nhập rồi vào Team. Thêm hoặc chọn hồ sơ Claude và bấm Connect.'
-              : 'Open the Kivuno desktop app and sign in. In Team, add or select a Claude profile and choose Connect.'}
+              ? 'Trong Kivuno: đăng nhập → Team → thêm hoặc chọn hồ sơ Claude → Connect. Chọn Claude trong trình duyệt hoặc Claude Desktop, rồi bấm Link Kivuno to Claude hoặc Add Kivuno to Claude.'
+              : 'In Kivuno: sign in → Team → add or select a Claude profile → Connect. Choose Claude in browser or Claude Desktop, then Link Kivuno to Claude or Add Kivuno to Claude.'}
           </li>
           <li>
             {vi ? 'Mở ' : 'Open '}
@@ -43,39 +50,99 @@ function Guide({ vi }: { vi: boolean }) {
               {vi ? 'biểu mẫu thêm Kivuno trong Claude' : 'the Kivuno setup in Claude'}
             </a>
             {vi
-              ? '. Tên và địa chỉ được điền sẵn. Chờ biểu mẫu mở, bấm Tiếp tục, giữ cấu hình đăng nhập được phát hiện rồi bấm Thêm và Kết nối.'
-              : '. The name and address are filled in. Wait for the form, choose Continue, keep the detected sign-in settings, then Add and Connect.'}
-            <p>
-              <a href={claudeConnectorsUrl}>
-                {vi
-                  ? 'Đã thêm Kivuno? Mở connector hiện có'
-                  : 'Already added Kivuno? Open your existing connector'}
-              </a>
-            </p>
-            <div className="claude-guide-address">
-              <code>{address}</code>
-              <button className="billing-secondary" onClick={() => void copyAddress()}>
-                {vi ? 'Sao chép địa chỉ' : 'Copy address'}
-              </button>
-            </div>
-            {copy && (
-              <p role="status">
-                {copy === 'copied'
-                  ? vi
-                    ? 'Đã sao chép địa chỉ.'
-                    : 'Address copied.'
-                  : vi
-                    ? 'Hãy bôi chọn và sao chép địa chỉ.'
-                    : 'Select and copy the address.'}
-              </p>
-            )}
+              ? '. Đăng nhập Claude nếu được hỏi. Chờ biểu mẫu có tên Kivuno và địa chỉ điền sẵn, rồi bấm Tiếp tục (Continue). Nếu chỉ thấy danh sách plugin, dùng phần hướng dẫn thêm thủ công bên dưới.'
+              : '. Sign in to Claude if asked. Wait for the form with Kivuno and its address filled in, then choose Continue. If you only see the plugin list, follow the manual steps below.'}
           </li>
           <li>
             {vi
-              ? 'Dùng luồng OAuth được Claude phát hiện. Khi Kivuno hỏi, đăng nhập bằng tài khoản đang dùng trên máy và duyệt hồ sơ được đánh dấu vừa yêu cầu. Quay lại Kivuno và đợi trạng thái Claude connected.'
-              : 'Use the OAuth sign-in Claude detects. When Kivuno asks, sign in with the account you use in the desktop app and approve the profile marked as just requested. Return to Kivuno and wait for Claude connected.'}
+              ? 'Claude kiểm tra cách đăng nhập. Giữ nguyên cấu hình đã phát hiện, bấm Thêm (Add). Chưa cần nhập mã hay tạo khóa API.'
+              : 'Claude detects the sign-in settings. Keep those settings and choose Add. You do not need to enter a code or create an API key.'}
+          </li>
+          <li>
+            {vi
+              ? 'Mở mục Kivuno vừa thêm trong Claude, bấm Kết nối (Connect / Connecter). Chỉ bấm Thêm chưa hoàn tất liên kết tài khoản.'
+              : 'Open the Kivuno entry you just added in Claude and choose Connect (Connecter). Adding the connector alone does not finish linking your account.'}
+          </li>
+          <li>
+            {vi
+              ? 'Trang Kivuno mở ra: nếu cần, đăng nhập cùng tài khoản Kivuno đang dùng trong ứng dụng. Chọn hồ sơ có dòng “Vừa yêu cầu kết nối từ Kivuno”, kiểm tra đúng tên rồi bấm Liên kết tài khoản trước khi đồng hồ đếm ngược kết thúc.'
+              : 'On the Kivuno page, sign in with the same Kivuno account as the desktop app if asked. Select the profile marked as just requested, check its name, and choose Link account before the countdown ends.'}
+          </li>
+          <li>
+            {vi
+              ? 'Chờ trình duyệt quay lại Claude. Quay lại ứng dụng Kivuno: hồ sơ phải hiện Claude connected. Nếu chưa đổi, bấm Check connection. Tới đây tài khoản đã liên kết; chưa có dự án nào được chia sẻ.'
+              : 'Wait for the browser to return to Claude. Back in Kivuno, the profile should show Claude connected. If it has not updated, choose Check connection. Your account is now linked; no project has been shared yet.'}
           </li>
         </ol>
+      </section>
+
+      <section aria-labelledby="claude-guide-existing">
+        <h2 id="claude-guide-existing">
+          {vi ? 'Đã có Kivuno trong Claude?' : 'Already have Kivuno in Claude?'}
+        </h2>
+        <p>
+          <a href={claudeConnectorsUrl}>
+            {vi ? 'Mở danh sách connector của bạn' : 'Open your connectors'}
+          </a>
+          {vi
+            ? ' → Kivuno → Kết nối (Connect). Bỏ qua bước thêm; dùng cùng tài khoản Claude trong trình duyệt và Desktop.'
+            : ' → Kivuno → Connect. Skip adding it again; use the same Claude account in your browser and Desktop.'}
+        </p>
+        <p>
+          {vi
+            ? 'Nếu Claude đã ghi Đã kết nối nhưng Kivuno chưa cập nhật: quay lại Kivuno và bấm Check connection. Nếu có nút Use existing Claude connection, dùng nút đó để xác nhận chuyển liên kết sang hồ sơ đang chọn. Việc chuyển sẽ ngắt hồ sơ cũ và thu hồi quyền chia sẻ dự án cũ.'
+            : 'If Claude says Connected but Kivuno has not updated, choose Check connection in Kivuno. If Use existing Claude connection appears, use it to confirm moving the link to the selected profile. Moving it disconnects the old profile and revokes its project shares.'}
+        </p>
+        <p>
+          {vi
+            ? 'Nếu vẫn chưa nối được hồ sơ này: trong Claude, bấm menu ⋯ của Kivuno → Ngắt kết nối (Disconnect) → Kết nối (Connect), rồi duyệt đúng hồ sơ trên trang Kivuno. Cách này làm gián đoạn liên kết cũ; không cần xóa hoặc thêm lại plugin.'
+            : 'If this profile still cannot connect: in Claude, use Kivuno’s ⋯ menu → Disconnect → Connect, then approve the correct profile on Kivuno. This interrupts the old link; you do not need to delete or add the plugin again.'}
+        </p>
+      </section>
+
+      <section aria-labelledby="claude-guide-manual">
+        <h2 id="claude-guide-manual">
+          {vi ? 'Biểu mẫu điền sẵn không mở?' : 'The prefilled form did not open?'}
+        </h2>
+        <ol>
+          <li>
+            {vi
+              ? 'Trong Claude, mở Plugin → Plugin của bạn (Your plugins) → Trình kết nối (Connectors).'
+              : 'In Claude, open Plugins → Your plugins → Connectors.'}
+          </li>
+          <li>
+            {vi
+              ? 'Bấm Thêm (Add) → Tùy chỉnh (Custom) → Web. Một số giao diện ghi Thêm connector tùy chỉnh (Add custom connector).'
+              : 'Choose Add → Custom → Web. Some versions show Add custom connector instead.'}
+          </li>
+          <li>
+            {vi
+              ? 'Điền tên Kivuno. Sao chép địa chỉ dưới đây và dán vào ô URL máy chủ / Remote MCP server URL.'
+              : 'Enter Kivuno as the name. Copy the address below into Server URL / Remote MCP server URL.'}
+          </li>
+          <li>
+            {vi
+              ? 'Bấm Tiếp tục (Continue), giữ cấu hình được phát hiện → Thêm (Add) → Kết nối (Connect). Sau đó bấm Liên kết tài khoản trên trang Kivuno như bước 5 phía trên.'
+              : 'Choose Continue, keep the detected settings → Add → Connect. Then choose Link account on Kivuno as in step 5 above.'}
+          </li>
+        </ol>
+        <div className="claude-guide-address">
+          <code>{address}</code>
+          <button className="billing-secondary" onClick={() => void copyAddress()}>
+            {vi ? 'Sao chép địa chỉ' : 'Copy address'}
+          </button>
+        </div>
+        {copy && (
+          <p role="status">
+            {copy === 'copied'
+              ? vi
+                ? 'Đã sao chép địa chỉ.'
+                : 'Address copied.'
+              : vi
+                ? 'Hãy bôi chọn và sao chép địa chỉ.'
+                : 'Select and copy the address.'}
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="claude-guide-share">
@@ -120,6 +187,11 @@ function Guide({ vi }: { vi: boolean }) {
           {vi
             ? 'Nếu không thấy hồ sơ trên trang cấp quyền, mở đúng workspace trong Kivuno, bấm Connect trên hồ sơ cần dùng, rồi bắt đầu lại từ Claude. Nếu trạng thái chưa cập nhật, chọn Check connection trong Kivuno.'
             : 'If your profile is missing on the consent page, open the correct Kivuno workspace, choose Connect on that profile, and restart the connection from Claude. If the status is delayed, choose Check connection in Kivuno.'}
+        </p>
+        <p>
+          {vi
+            ? 'Nếu lời mời đã hết hạn: không bấm lại trang cũ. Quay về Claude → Kivuno → Kết nối để mở lời mời mới, rồi xác nhận trong 5 phút. “Liên kết có hiệu lực đến” là thời hạn của liên kết tài khoản, khác với thời gian xác nhận lời mời.'
+            : 'If the request expired, do not reuse the old page. Return to Claude → Kivuno → Connect for a fresh request and confirm within five minutes. “Link valid until” is the account link’s expiry, separate from the confirmation countdown.'}
         </p>
         <p>
           {vi ? 'Hỗ trợ qua ' : 'Contact support at '}

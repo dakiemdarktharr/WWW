@@ -75,3 +75,13 @@
   font-weight: 600;
   color: var(--muted);
 }
+/* Keep the sign-in sequence readable inside the connection dialog. */
+.claude-connect-steps {
+  margin: 0;
+  padding-inline-start: 1.5rem;
+  line-height: 1.6;
+}
+
+.claude-connect-steps li + li {
+  margin-top: 0.55rem;
+}
