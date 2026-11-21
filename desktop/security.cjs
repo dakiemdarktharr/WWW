@@ -308,7 +308,7 @@ function githubMacReleaseAsset(value, suffix) {
       !url.search &&
       !url.hash &&
       new RegExp(
-        `^/dakiemdarktharr/WWW/releases/download/v(\\d+\\.\\d+\\.\\d+)(?:-macos)?/Kivuno-\\1-macOS-arm64\\.${suffix.slice(1)}$`,
+        `^/dakiemdarktharr/WWW/releases/download/v(\\d+\\.\\d+\\.\\d+)(?:-macos(?:-r[1-9]\\d*)?)?/Kivuno-\\1-macOS-arm64\\.${suffix.slice(1)}$`,
         'i',
       ).test(url.pathname)
     );

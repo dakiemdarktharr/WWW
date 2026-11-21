@@ -3,7 +3,10 @@
   "version": "0.9.2",
   "private": true,
   "overrides": {
-    "zod": "$zod"
+    "zod": "$zod",
+    "pptxgenjs": {
+      "image-size": "2.1.0"
+    }
   },
   "type": "module",
   "description": "Kivuno â€” a desktop workspace for real Codex teams",

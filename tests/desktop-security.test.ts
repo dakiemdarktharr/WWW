@@ -115,6 +115,7 @@ test('macOS updates accept only version-matched GitHub release assets and truste
       .url,
     macReleaseUrl,
   );
+  assert.equal(githubMacReleaseAsset(macReleaseUrl.replace('-macos/', '-macos-r2/'), '.zip'), true);
   const { autoUpdate: _autoUpdate, ...macosWithoutZip } = manifest.platforms.macos;
   const dmgFallback = {
     ...manifest,
