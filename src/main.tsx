@@ -12,6 +12,7 @@ const PublicRouter = lazy(() => import('./PublicRouter'));
 const DesktopGate = lazy(() => import('./DesktopGate'));
 const PasswordRecoveryPage = lazy(() => import('./PasswordRecoveryPage'));
 const ClaudeConsent = lazy(() => import('./ClaudeConsent'));
+const ClaudeConnectorGuide = lazy(() => import('./ClaudeConnectorGuide'));
 
 const content = (
   <Suspense fallback={null}>
@@ -19,6 +20,8 @@ const content = (
       <DesktopGate />
     ) : window.location.pathname === '/claude/connect' ? (
       <ClaudeConsent />
+    ) : ['/claude/guide', '/claude/privacy'].includes(window.location.pathname) ? (
+      <ClaudeConnectorGuide />
     ) : ['/forgot-password', '/reset-password'].includes(window.location.pathname) ? (
       <PasswordRecoveryPage />
     ) : window.location.pathname === '/billing' ? (

@@ -147,6 +147,39 @@ test('Claude web reads one active project and excludes accounts, paths and secre
     !data.includes(token) && !data.includes(project.path) && !data.includes('owner@example.test'),
   );
   assert.deepEqual(Object.keys(JSON.parse(data)).sort(), ['messages', 'nextAfter', 'project']);
+  const initial = JSON.parse(data);
+  const sample = [
+    'Review sample: the landing page draft is complete.',
+    'Review sample: the demo is blocked until the team chooses a meeting time.',
+    'Review sample: the next handoff is to check keyboard navigation.',
+  ];
+  const added = Array.from({ length: 13 }, (_, index) =>
+    workspace.mesh.post({
+      projectId: project.id,
+      authorId: null,
+      kind: 'message',
+      content: sample[index] ?? `Review note ${index}`,
+    }),
+  );
+  const readPage = async (after: number) => {
+    const page: any = await external.claudeWeb({ ...read, after });
+    assert.equal(page.isError, false);
+    return JSON.parse(page.content[0].text);
+  };
+  const firstPage = await readPage(initial.nextAfter);
+  assert.deepEqual(firstPage.project, { name: project.name });
+  assert.equal(firstPage.messages.length, 12);
+  assert.deepEqual(
+    firstPage.messages.slice(0, 3).map(({ content }: { content: string }) => content),
+    sample,
+  );
+  assert.equal(firstPage.nextAfter, added[11].sequence);
+  const next = await readPage(firstPage.nextAfter);
+  assert.deepEqual(next.messages, [
+    { sequence: added[12].sequence, kind: 'message', content: added[12].content },
+  ]);
+  assert.equal(next.nextAfter, added[12].sequence);
+  assert.deepEqual((await readPage(next.nextAfter)).messages, []);
   await assert.rejects(external.claudeWeb({ ...read, projectId: randomUUID() }), /another project/);
   await assert.rejects(
     external.claudeWeb({ ...read, connectionId: connect().result.id }),

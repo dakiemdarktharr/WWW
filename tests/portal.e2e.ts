@@ -150,7 +150,14 @@ async function routePortal(context: BrowserContext, available = false) {
       body: await readFile(
         path.join(
           'dist',
-          ['/', '/billing', '/forgot-password', '/reset-password'].includes(url.pathname)
+          [
+            '/',
+            '/billing',
+            '/claude/guide',
+            '/claude/privacy',
+            '/forgot-password',
+            '/reset-password',
+          ].includes(url.pathname)
             ? 'index.html'
             : url.pathname,
         ),
@@ -923,7 +930,50 @@ try {
   await fallbackPage.locator('.kp-footer-cta').click();
   await expect(fallbackPage.getByRole('dialog', { name: 'Tải Kivuno' })).toBeVisible();
   await fallbackPage.keyboard.press('Escape');
+  await expect(
+    fallbackPage.getByRole('link', { name: 'Kết nối Claude', exact: true }),
+  ).toHaveAttribute('href', '/claude/guide');
   await fallbackPage.close();
+  const guideContext = await browser.newContext({ viewport: { width: 360, height: 800 } });
+  await routePortal(guideContext);
+  const connectorPage = await guideContext.newPage();
+  const connectorCalls: string[] = [];
+  connectorPage.on('request', (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.startsWith('/api/')) connectorCalls.push(pathname);
+  });
+  await connectorPage.goto(origin + '/claude/guide?lang=en');
+  await expect(
+    connectorPage.getByRole('heading', { name: 'Connect Kivuno to Claude' }),
+  ).toBeVisible();
+  await expect(connectorPage.getByRole('heading', { name: 'Share one project' })).toBeVisible();
+  await expect(
+    connectorPage.getByRole('link', { name: 'Claude’s Connectors settings' }),
+  ).toHaveAttribute('href', 'https://claude.ai/customize/connectors/yours');
+  await expect(connectorPage.locator('code')).toHaveText(
+    'https://kivuno.vercel.app/api/claude/mcp',
+  );
+  assert(await connectorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await connectorPage.getByRole('link', { name: 'Connector privacy notice' }).click();
+  await expect(
+    connectorPage.getByRole('heading', { name: 'Kivuno Claude Connector Privacy Notice' }),
+  ).toBeVisible();
+  await expect(connectorPage.locator('time')).toHaveAttribute('datetime', '2026-11-22');
+  await expect(connectorPage.getByRole('link', { name: 'Connector setup guide' })).toHaveAttribute(
+    'href',
+    '/claude/guide',
+  );
+  assert(await connectorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await connectorPage.goto(origin + '/claude/guide?lang=vi');
+  await expect(
+    connectorPage.getByRole('heading', { name: 'Kết nối Kivuno với Claude' }),
+  ).toBeVisible();
+  await connectorPage.getByRole('link', { name: 'Thông báo quyền riêng tư của connector' }).click();
+  await expect(
+    connectorPage.getByRole('heading', { name: 'Quyền riêng tư của Kivuno Claude connector' }),
+  ).toBeVisible();
+  assert.deepEqual(connectorCalls, [], 'The public connector pages do not require a session.');
+  await guideContext.close();
   assert.deepEqual(workspaceCalls, []);
   assert.deepEqual(cspViolations, [], 'The production CSP permits all portal resources.');
   assert.deepEqual(errors, []);

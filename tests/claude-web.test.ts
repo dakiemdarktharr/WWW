@@ -135,17 +135,38 @@ test('Claude web reads use one device and project, preserve retry results and st
   );
   assert.deepEqual((await control(second, { action: 'poll' })).json().jobs, []);
   assert.deepEqual((await control(stranger, { action: 'poll' })).json().jobs, []);
+  const discussion = { sequence: 5, kind: 'handoff', content: 'Review keyboard navigation.' };
   const completion = {
     action: 'complete',
     connectionId: enrollment.connectionId,
     jobId: job.jobId,
-    result: { content: [{ type: 'text', text: 'Selected project' }] },
+    result: {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            project: { name: 'Selected project', path: '/private/project' },
+            messages: [
+              { sequence: 4, kind: 'system', content: 'Group profile introduction' },
+              { ...discussion, authorId: 'private-profile' },
+              { sequence: 6, kind: 'system', content: 'Group working agreement' },
+            ],
+            nextAfter: 6,
+          }),
+        },
+      ],
+    },
+  };
+  const visiblePage = {
+    project: { name: 'Selected project' },
+    messages: [discussion],
+    nextAfter: 6,
   };
   assert.equal((await control(stranger, completion)).statusCode, 404);
   assert.equal((await control(desktop, completion)).statusCode, 200);
   assert.equal((await control(desktop, completion)).statusCode, 200);
-  assert.deepEqual((await response).json().result, completion.result);
-  assert.deepEqual((await retry).json().result, completion.result);
+  assert.deepEqual(JSON.parse((await response).json().result.content[0].text), visiblePage);
+  assert.deepEqual(JSON.parse((await retry).json().result.content[0].text), visiblePage);
   assert.deepEqual((await control(desktop, { action: 'poll' })).json().jobs, []);
   const repeatedRead = rpc(read, session).then((result) => result);
   const repeatedJob = await poll();

@@ -1,0 +1,75 @@
+.claude-guide {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: clamp(36px, 7vw, 72px) 0 40px;
+  overflow-wrap: anywhere;
+}
+
+.claude-guide h1 {
+  margin: 0 0 16px;
+  font-size: clamp(30px, 5.5vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.045em;
+}
+
+.claude-guide h2 {
+  margin: 0 0 12px;
+  font-size: clamp(21px, 3vw, 26px);
+  letter-spacing: -0.025em;
+}
+
+.claude-guide section {
+  padding-top: 24px;
+  margin-top: 28px;
+  border-top: 1px solid var(--bill-line);
+}
+
+.claude-guide p,
+.claude-guide li,
+.claude-guide blockquote {
+  color: var(--bill-muted);
+  line-height: 1.65;
+}
+
+.claude-guide p {
+  margin: 0 0 12px;
+}
+
+.claude-guide ol {
+  margin: 0;
+  padding-inline-start: 1.4rem;
+}
+
+.claude-guide li + li {
+  margin-top: 14px;
+}
+
+.claude-guide a {
+  color: var(--bill-violet-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.claude-guide-address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--bill-line);
+  border-radius: 12px;
+}
+
+.claude-guide-address code {
+  color: var(--bill-ink);
+  font-size: 0.875rem;
+  user-select: all;
+}
+
+.claude-guide blockquote {
+  margin: 12px 0 0;
+  padding-inline-start: 14px;
+  border-inline-start: 2px solid var(--bill-violet-ink);
+}

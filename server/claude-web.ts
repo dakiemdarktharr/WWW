@@ -33,6 +33,37 @@ const resultSchema = z
   .strict();
 type Result = z.infer<typeof resultSchema>;
 const failure = (text: string): Result => ({ content: [{ type: 'text', text }], isError: true });
+const projectPage = z.object({
+  project: z.object({ name: z.string().max(100) }),
+  messages: z
+    .array(
+      z.object({
+        sequence: z.int().positive(),
+        kind: z.enum(['message', 'progress', 'handoff', 'blocker', 'system']),
+        content: z.string().max(550),
+      }),
+    )
+    .max(12),
+  nextAfter: z.int().nonnegative(),
+});
+
+function sharedProjectResult(result: Result): Result {
+  if (result.isError) return result;
+  try {
+    const page = projectPage.parse(JSON.parse(result.content[0].text));
+    // Keep the cursor from the source page even if it contained only internal events.
+    const text = JSON.stringify({
+      ...page,
+      messages: page.messages.filter(({ kind }) => kind !== 'system'),
+    });
+    return { content: [{ type: 'text', text }] };
+  } catch {
+    return failure(
+      'Kivuno could not read this project page. Check the desktop connection and retry.',
+    );
+  }
+}
+
 const command = z.discriminatedUnion('action', [
   z
     .object({
@@ -107,7 +138,7 @@ const publishedTool = {
   name: 'mesh_read',
   title: 'Read shared project messages',
   description:
-    'Read the project name and a page of messages from the Kivuno group explicitly shared with this connection. The optional after cursor requests messages after that sequence number.',
+    'Read the project name and a page of messages exchanged in the Kivuno group explicitly shared with this connection. The nextAfter cursor tracks the source page even when it contains no visible messages. The optional after cursor requests the next page.',
   inputSchema: {
     type: 'object',
     properties: { after: { type: 'integer', minimum: 0 } },
@@ -685,7 +716,7 @@ export function registerClaudeWeb(
         return error(-32000, 'Project sharing was revoked.');
       if (!sessions.has(sessionId))
         return reply.code(404).send(error(-32000, 'Connector session unavailable'));
-      return response(result);
+      return response(sharedProjectResult(result));
     },
   });
 }

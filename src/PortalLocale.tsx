@@ -202,10 +202,16 @@ const Context = createContext<LocaleContext>({
   setLocale: () => {},
   t: (text) => text,
 });
-export function PortalLocaleProvider({ children }: { children: ReactNode }) {
+export function PortalLocaleProvider({
+  children,
+  initialLocale,
+}: {
+  children: ReactNode;
+  initialLocale?: PortalLocale;
+}) {
   const [locale, setLocale] = useState<PortalLocale>(() => {
     try {
-      return localStorage.getItem('kivuno-portal-locale') === 'en' ? 'en' : 'vi';
+      return initialLocale ?? (localStorage.getItem('kivuno-portal-locale') === 'en' ? 'en' : 'vi');
     } catch {
       return 'vi';
     }
