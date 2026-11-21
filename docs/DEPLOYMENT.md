@@ -1,6 +1,6 @@
 # Cloud deployment
 
-Production: https://nosleepclub-relay.vercel.app. Source: private `dakiemdarktharr/WWW`.
+Production: [kivuno.vercel.app](https://kivuno.vercel.app). Source: [public GitHub repository](https://github.com/dakiemdarktharr/WWW). The original Relay hostname is still documented for existing installations in [the brand guide](BRAND.md).
 
 The Vite frontend calls same-origin Vercel Node Functions at `/api/*`. The gateway resumes the named persistent Vercel Sandbox `relay-cloud-workspace`. That Linux VM runs Fastify, SQLite and the official `@openai/codex@0.166.0` App Server over stdio. Browser clients need neither localhost nor a connection popup. Optional conversation popouts are ordinary authenticated views.
 

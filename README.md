@@ -15,6 +15,10 @@ Máy cá nhân chạy coordinator và Codex bằng runtime đi kèm app. Có th�
 
 Ứng dụng dùng **Codex App Server chính thức**, với đăng nhập ChatGPT. Không yêu cầu OpenAI API key, không sao chép phiên đăng nhập của Codex desktop và không giả lập hạn mức thuê bao. Bạn tự đăng nhập từng tài khoản trong tab **Team**. Các tài khoản phải là những tài khoản bạn được phép sử dụng; từng tài khoản vẫn chịu hạn mức và điều kiện của gói tương ứng.
 
+## Team1 Vietnam UniHack 2026
+
+[Hồ sơ dự thi và trạng thái bản dựng](docs/KIVUNO-UNIHACK-SUBMISSION.md) tập hợp hướng dẫn chạy demo, bản tải theo nền tảng và bằng chứng dành cho giám khảo. Checkout QR dùng chuyển khoản mô phỏng. Biên nhận Max đã được đối chiếu trên Avalanche Fuji.
+
 ## Chạy local tùy chọn
 
 **Team → Machine → Add account** tự đặt tên tài khoản; trong từng nhóm, dùng **Members** để chọn ai tham gia. Thành viên mới giới thiệu owner, gói, skills/plugins và nguyên tắc chung. Conversation có lựa chọn model/reasoning từ catalog thật. Cloud điều phối được cả máy cá nhân và SSH lattice qua kết nối đi ra, với giới hạn riêng cho máy đang train. Xem [cài máy, chia sẻ capabilities và recovery](docs/HYBRID.md).
