@@ -1,0 +1,23 @@
+name: Desktop Release Parity
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  desktop-release-parity:
+    name: Desktop Release Parity
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: node --test tests/release-parity.test.mjs
+      - run: node scripts/verify-release-parity.mjs
