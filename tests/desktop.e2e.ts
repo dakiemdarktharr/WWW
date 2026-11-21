@@ -879,6 +879,10 @@ try {
     const externalCard = page
       .locator('.account-card-group')
       .filter({ has: page.getByRole('heading', { name: external.name, exact: true }) });
+    if (provider === 'claude') {
+      await expect(externalCard.locator('.member-presence')).toHaveText('Claude connected');
+      await expect(externalCard.getByText('Claude in browser', { exact: true })).toBeVisible();
+    }
     await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
     const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
     if (provider === 'claude') {

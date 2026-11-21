@@ -246,9 +246,8 @@ function Modal({
     const previous = document.activeElement as HTMLElement;
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const focus = () =>
+    if (!ref.current?.contains(document.activeElement))
       ref.current?.querySelector<HTMLElement>('input,select,textarea,button')?.focus();
-    const timer = window.setTimeout(focus, 20);
     const keyboard = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
       if (event.key === 'Tab') {
@@ -270,7 +269,6 @@ function Modal({
     };
     document.addEventListener('keydown', keyboard);
     return () => {
-      window.clearTimeout(timer);
       document.removeEventListener('keydown', keyboard);
       document.body.style.overflow = oldOverflow;
       previous?.focus();
@@ -2596,6 +2594,10 @@ function MemberCard({
   const { account: claudeAccount } = useClaudeAccount(
     provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
   );
+  const webStatus =
+    provider === 'claude' && !member.entitlementLocked ? claudeAccount?.status : undefined;
+  const presence =
+    webStatus === 'connected' || webStatus === 'pending' ? webStatus : member.presence || 'offline';
   return (
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
@@ -2611,9 +2613,9 @@ function MemberCard({
             </span>
           )}
         </div>
-        <span className={`member-presence ${member.presence || 'offline'}`}>
+        <span className={`member-presence ${presence}`}>
           <i />
-          {member.presence || 'offline'}
+          {presence === 'connected' ? 'Claude connected' : presence}
         </span>
       </div>
       <div className="member-account">
@@ -2624,9 +2626,9 @@ function MemberCard({
               : member.account
                 ? 'Connected to Antigravity on this computer'
                 : 'Device account disconnected'
-            : provider === 'claude' && claudeAccount?.status === 'connected'
-              ? 'Claude web connector verified'
-              : provider === 'claude' && claudeAccount?.status === 'pending'
+            : webStatus === 'connected'
+              ? 'Claude in browser'
+              : webStatus === 'pending'
                 ? 'Waiting for Claude'
                 : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>

@@ -698,6 +698,7 @@
   background: var(--subtle);
   display: inline-block;
 }
+.member-presence.connected i,
 .member-presence.online i,
 .presence-dot.online {
   background: var(--presence-online);

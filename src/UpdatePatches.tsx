@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.3',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Thẻ Team hiện “Claude connected” khi Claude trên trình duyệt xác minh kết nối. Bạn có thể cấp quyền đọc dự án sau.',
+        en: 'The Team card shows “Claude connected” once Claude verifies the browser connection. You can grant project access later.',
+      },
+    ],
+  },
+  {
     version: '0.9.2',
     date: '2026-11-21',
     fixes: [
