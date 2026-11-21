@@ -36,7 +36,7 @@ For Claude Free, the supported integration is a custom MCP connector. A director
 
 Anthropic distinguishes running its unmodified Claude Code with user-owned credentials from offering Claude.ai login for third-party inference. A direct Claude.ai login that gives Kivuno independent inference access is not a general replacement for this connector architecture.
 
-## Validation and remaining work
+## Earlier validation (0.9.7)
 
 TypeScript, production build and five targeted OAuth/MCP tests passed. Regression coverage includes expired access renewal, rotation, client/resource/scope mismatch, token-family replacement, replay revocation, project preservation and account revocation.
 
@@ -58,6 +58,14 @@ On this same Free account, navigating to https://claude.ai/settings/usage redire
 ### Checks
 
 TypeScript and production build passed. All 23 targeted tests for the native launcher, sanitized status, OAuth rotation/discovery, relay, package content and desktop security passed. The full Electron desktop E2E passed with updated connection wording, collapsed first-use instructions, verified web account, project scope/revocation, and the Desktop button present. The OAuth server in that automated test is a local fixture, not a live Claude account.
+
+### Installed Windows validation
+
+The public release at commit 0837e43 includes the Claude changes from 4687259 and the shared gateway startup correction. The Windows 0.9.9 installer was downloaded and its complete bytes matched the published SHA-256. The public feed serves Windows/Linux 0.9.9 and macOS 0.9.8; native macOS/Linux Claude launch was not tested here.
+
+The real installed Windows app updated through its own titlebar button from 0.9.7 to 0.9.9, reopened the existing workspace, and preserved its signed-in session and team profiles. The new Desktop action opened the installed Claude application. A separate packaged smoke test passed with runtime ready, isolated renderer, protected local API, no page errors, bundled Node/Git/Codex, verified installer bytes, and zero model turns. Eighteen focused integration tests also passed on the combined main revision.
+
+The existing Claude connector can be reconnected for the current Echo profile without entering its server address again. Live relinking reached the Kivuno authorization page; final user consent is still required. Do not treat a connector retained from an older profile as proof that the current profile is linked.
 
 ## Primary references
 
