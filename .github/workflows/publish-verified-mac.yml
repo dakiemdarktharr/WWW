@@ -1,0 +1,31 @@
+name: Publish verified macOS package
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify successful pinned build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/44923703373 > run.json
+          test "$(jq -r .conclusion run.json)" = success
+          test "$(jq -r .head_sha run.json)" = 166d97b19970300a1764d9d145c056fea64af7f2
+      - uses: actions/download-artifact@v8
+        with:
+          name: kivuno-macos-arm64
+          run-id: 44923703373
+          github-token: ${{ github.token }}
+          path: packages
+      - name: Publish staged package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd packages
+          sha256sum -c Kivuno-0.9.13-macOS-arm64.dmg.sha256
+          sha256sum -c Kivuno-0.9.13-macOS-arm64.zip.sha256
+          gh release create v0.9.13-macos --repo ${{ github.repository }} --target 166d97b19970300a1764d9d145c056fea64af7f2 --prerelease --title 'Kivuno 0.9.13 macOS staging' --notes 'Verified Apple Silicon DMG and update ZIP. Public desktop promotion waits for Windows and Linux.' Kivuno-0.9.13-macOS-arm64.dmg Kivuno-0.9.13-macOS-arm64.dmg.sha256 Kivuno-0.9.13-macOS-arm64.zip Kivuno-0.9.13-macOS-arm64.zip.sha256 macos-arm64.json
