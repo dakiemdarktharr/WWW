@@ -4,7 +4,14 @@ Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **C
 
 ## Claude trong trình duyệt
 
-Trong **Team → Add account → Claude**, chọn **Claude in browser**, chọn một project và thời hạn, rồi tạo web connector. Trong tab Claude đang đăng nhập, mở **Customize → Connectors → Add → Custom → Web**. Dán URL HTTPS Kivuno cung cấp. Chọn **No sign-in**, thêm request header có tên `Authorization` và dán nguyên giá trị riêng tư đã sao chép, gồm cả tiền tố `Bearer`. Bật connector trong cuộc trò chuyện, rồi yêu cầu Claude đọc nhóm dự án. Với tài khoản Free, Anthropic cho một custom connector. Trong Team hoặc Enterprise, người được cấp quyền dùng chung connector cũng có thể dùng thông tin xác thực đã cấu hình. [Hướng dẫn của Anthropic](https://claude.com/docs/connectors/custom/add-unlisted).
+1. Trong Kivuno Desktop, mở **Team → Claude → MESH connection → Claude in browser**. Chọn project và thời hạn, bấm **Create read-only web connector** và giữ Kivuno mở.
+2. Trong Claude, mở **Customize → Connectors → Add → Custom → Web**, đặt tên Kivuno và dán URL HTTPS hiển thị trong desktop. Nếu Claude yêu cầu chọn xác thực, chọn đăng nhập và giữ thiết lập OAuth đề xuất. Lưu connector rồi bấm **Connect** (**Connecter** trong giao diện tiếng Pháp).
+3. Trên trang Kivuno, đăng nhập bằng tài khoản dùng trên desktop. Kiểm tra tên máy, project, hồ sơ Claude và thời điểm hết hạn. Chọn một project rồi bấm **Cho phép chỉ đọc**. Kivuno đưa bạn về Claude. Bật Kivuno trong cuộc trò chuyện và yêu cầu Claude đọc nhóm project.
+4. Nếu danh sách trống, tạo web connector trên desktop đang đăng nhập cùng tài khoản rồi bấm **Làm mới danh sách**. Nếu yêu cầu đã hết hạn, mở lại **Connect** từ Claude. Có thể thu hồi quyền trong Team.
+
+Với tài khoản Free, Anthropic cho thêm một custom connector. Trong Team hoặc Enterprise, người có quyền quản trị connector của tổ chức thực hiện bước thêm URL. [Hướng dẫn của Anthropic](https://claude.com/docs/connectors/custom/add-unlisted).
+
+**Cấu hình header thủ công (tùy chọn).** Trong desktop, mở **Advanced: connect with a private request header**. Chọn **No sign-in** trong Claude và thêm header `Authorization`, dán toàn bộ giá trị riêng tư gồm cả tiền tố `Bearer`. Với connector của tổ chức dùng header chung, các thành viên được phép dùng connector cũng có quyền theo header đó. Anthropic hiện cung cấp xác thực bằng request header dưới dạng beta cho một số tổ chức. Nếu Claude không hiện mục **Request headers**, dùng nút **Connect** và luồng đăng nhập ở trên. [Phạm vi hỗ trợ của Anthropic](https://claude.com/docs/connectors/custom/add-unlisted#authenticate-with-request-headers).
 
 Kivuno Desktop trên máy chủ dự án phải đang chạy. Mỗi quyền chỉ áp dụng cho một profile và một project, tối đa 8 giờ. Công cụ `mesh_read` trả tên project và các đoạn tin nhắn của nhóm. Có thể thu hồi trong **MESH connection**. Trình duyệt dùng hạn mức của tài khoản Claude. Dịch vụ HTTPS của Kivuno cần chạy phiên bản có hỗ trợ connector. Máy dùng Claude Desktop hoặc Claude Code có thể dùng cầu nối cục bộ ở phần dưới.
 

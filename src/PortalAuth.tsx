@@ -20,6 +20,7 @@ interface PortalAuthProps {
   mode: 'login' | 'signup';
   activationCode: string;
   onClose: () => void;
+  onSignedIn?: () => void;
 }
 interface AuthUser {
   id: string;
@@ -47,7 +48,7 @@ const isUser = (value: unknown): value is AuthUser =>
     (key) => typeof (value as Record<string, unknown>)[key] === 'string',
   );
 
-export default function PortalAuth({ mode, activationCode, onClose }: PortalAuthProps) {
+export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }: PortalAuthProps) {
   const { t } = usePortalLocale();
   const reducedMotion = useReducedMotion();
   const titleId = useId();
@@ -145,8 +146,10 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
       .then(async (response) => {
         if (!response.ok) throw new Error('Authentication unavailable');
         const result = await response.json();
-        if (alive.current && !abort.signal.aborted)
+        if (alive.current && !abort.signal.aborted) {
           setUser(isUser(result?.user) ? result.user : null);
+          if (isUser(result?.user)) onSignedIn?.();
+        }
       })
       .catch(() => {
         if (alive.current && !abort.signal.aborted)
@@ -262,6 +265,7 @@ export default function PortalAuth({ mode, activationCode, onClose }: PortalAuth
         setPassword('');
         setUser(result.user);
         setError('');
+        onSignedIn?.();
       }
     } catch (cause) {
       if (alive.current && !controller.current?.signal.aborted) setError((cause as Error).message);

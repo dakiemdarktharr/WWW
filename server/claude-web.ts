@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { claudeMcpPath, claudeWebBearer, claudeWebControlPath } from '../shared/claude-web.ts';
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { Store, DomainError } from './store.ts';
+import { claudeOAuthGrant, registerClaudeOAuth, type ClaudeOAuthOptions } from './claude-oauth.ts';
 
 const uuid = z.string().uuid();
 const resultSchema = z
@@ -34,6 +35,8 @@ const command = z.discriminatedUnion('action', [
       projectId: uuid,
       memberId: uuid,
       tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+      projectName: z.string().trim().min(1).max(100).optional(),
+      profileName: z.string().trim().min(1).max(100).optional(),
       expiresAt: z.iso.datetime({ offset: true }),
     })
     .strict(),
@@ -82,7 +85,7 @@ const publishedTool = {
     openWorldHint: false,
   },
 };
-interface Grant {
+export interface ClaudeWebGrant {
   id: string;
   connectionId: string;
   projectId: string;
@@ -91,9 +94,13 @@ interface Grant {
   deviceId: string;
   expiresAt: number;
   revoked?: boolean;
+  projectName?: string;
+  profileName?: string;
 }
+type Grant = ClaudeWebGrant;
 interface Session {
   grantId: string;
+  credentialId: string;
   expiresAt: number;
   version: string;
 }
@@ -111,7 +118,12 @@ interface Job {
   expiresAt: number;
 }
 
-export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: DesktopIdentity) {
+export function registerClaudeWeb(
+  app: FastifyInstance,
+  store: Store,
+  identity: DesktopIdentity,
+  oauth?: ClaudeOAuthOptions,
+) {
   const sessions = new Map<string, Session>();
   const jobs = new Map<string, Job>();
   function settle(job: Job, result: Result) {
@@ -189,14 +201,19 @@ export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: 
     );
   }
   function authenticate(header?: string) {
-    const token = typeof header === 'string' && claudeWebBearer.exec(header)?.[1];
-    const grant = token
-      ? store.lookup<Grant>('claudeWebGrant', createHash('sha256').update(token).digest('hex'))
-      : undefined;
+    const token = typeof header === 'string' ? claudeWebBearer.exec(header)?.[1] : undefined;
+    let grant;
+    if (token?.startsWith('kwc_'))
+      grant = store.lookup<Grant>(
+        'claudeWebGrant',
+        createHash('sha256').update(token).digest('hex'),
+      );
+    else if (token && oauth) grant = claudeOAuthGrant(store, token, oauth.origin + claudeMcpPath);
     if (!valid(grant))
       throw new DomainError('The Claude connector credential has expired or is invalid.', 401);
     return grant;
   }
+  if (oauth) registerClaudeOAuth(app, store, oauth, valid);
   app.post(claudeWebControlPath, { bodyLimit: 450000 }, async (request) => {
     const device = identity.authenticate(request.headers.authorization);
     const owner = identity.publicDevice(device).owner;
@@ -241,6 +258,8 @@ export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: 
             connectionId: input.connectionId,
             projectId: input.projectId,
             memberId: input.memberId,
+            projectName: input.projectName,
+            profileName: input.profileName,
             ownerId: owner.id,
             deviceId: device.id,
             expiresAt: expiry,
@@ -307,6 +326,9 @@ export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: 
     handler: async (request, reply) => {
       cleanup();
       const grant = authenticate(request.headers.authorization);
+      const credentialId = createHash('sha256')
+        .update(request.headers.authorization!)
+        .digest('hex');
       if (request.method === 'GET') return reply.header('allow', 'POST, DELETE').code(405).send();
       const sessionId = request.headers['mcp-session-id'];
       const session = typeof sessionId === 'string' && sessions.get(sessionId);
@@ -338,6 +360,7 @@ export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: 
         const id = randomUUID();
         sessions.set(id, {
           grantId: grant.id,
+          credentialId,
           version,
           expiresAt: Math.min(grant.expiresAt, Date.now() + 600000),
         });
@@ -350,7 +373,12 @@ export function registerClaudeWeb(app: FastifyInstance, store: Store, identity: 
       }
       if (!sessionId)
         return reply.code(400).send(error(-32000, 'Initialize a connector session first'));
-      if (typeof sessionId !== 'string' || !session || session.grantId !== grant.id)
+      if (
+        typeof sessionId !== 'string' ||
+        !session ||
+        session.grantId !== grant.id ||
+        session.credentialId !== credentialId
+      )
         return reply.code(404).send(error(-32000, 'Connector session unavailable'));
       const version = request.headers['mcp-protocol-version'];
       if (version !== undefined && version !== session.version)

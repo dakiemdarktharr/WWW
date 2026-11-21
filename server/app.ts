@@ -24,6 +24,12 @@ import { executionMetadataSchema } from './machine-execution.ts';
 import { registerCollaboration } from './collaboration.ts';
 import { registerClaudeWeb } from './claude-web.ts';
 import {
+  claudeAuthorizePath,
+  claudeChallenge,
+  claudeConsentPath,
+  isClaudeOAuthPublicEndpoint,
+} from '../shared/claude-discovery.ts';
+import {
   claudeMcpPath,
   claudeWebControlPath,
   claudeConnectorOrigin,
@@ -181,7 +187,21 @@ export async function buildApp(
         if (request.url !== pathname || !claudeConnectorOrigin(origin) || request.headers.cookie)
           return reply.code(403).send({ error: 'Invalid connector request.' });
         if (!claudeWebBearer.test(request.headers.authorization || ''))
-          return reply.code(401).send({ error: 'A Claude connector credential is required.' });
+          return reply
+            .header('WWW-Authenticate', claudeChallenge(cloud.origin))
+            .code(401)
+            .send({ error: 'A Claude connector credential is required.' });
+        return;
+      }
+      if (isClaudeOAuthPublicEndpoint(pathname)) {
+        if (
+          !claudeConnectorOrigin(origin) ||
+          request.headers.cookie ||
+          request.headers.authorization ||
+          request.method !== (pathname === claudeAuthorizePath ? 'GET' : 'POST') ||
+          (pathname !== claudeAuthorizePath && request.url !== pathname)
+        )
+          return reply.code(403).send({ error: 'Invalid connector sign-in request.' });
         return;
       }
       if (origin && origin !== cloud.origin)
@@ -219,6 +239,7 @@ export async function buildApp(
         return;
       }
       const desktopBrowserRoute = [
+        claudeConsentPath,
         '/api/session',
         '/api/desktop/request',
         '/api/desktop/approve',
@@ -317,7 +338,12 @@ export async function buildApp(
       const user = await options.cloud!.auth.findUser(account);
       return user ? { id: user.id, name: user.name } : null;
     });
-  if (desktopIdentity) registerClaudeWeb(app, workspace.store, desktopIdentity);
+  if (desktopIdentity && options.cloud)
+    registerClaudeWeb(app, workspace.store, desktopIdentity, {
+      origin: options.cloud.origin,
+      ownerId: (request) => browserOwners.get(request)?.id,
+      ownerName: (request) => browserOwners.get(request)?.name,
+    });
   if (options.cloud) {
     const auth = options.cloud.auth;
     const currentUser = (request: FastifyRequest) => auth.currentUser(request.headers);

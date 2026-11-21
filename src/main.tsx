@@ -10,12 +10,15 @@ const App = lazy(() => import('./App'));
 const PublicRouter = lazy(() => import('./PublicRouter'));
 const DesktopGate = lazy(() => import('./DesktopGate'));
 const PasswordRecoveryPage = lazy(() => import('./PasswordRecoveryPage'));
+const ClaudeConsent = lazy(() => import('./ClaudeConsent'));
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Suspense fallback={null}>
       {window.relayDesktop ? (
         <DesktopGate />
+      ) : window.location.pathname === '/claude/connect' ? (
+        <ClaudeConsent />
       ) : ['/forgot-password', '/reset-password'].includes(window.location.pathname) ? (
         <PasswordRecoveryPage />
       ) : window.location.pathname === '/billing' ? (

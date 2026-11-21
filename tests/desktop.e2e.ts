@@ -849,6 +849,9 @@ try {
       await expect(externalDialog.getByRole('checkbox')).toHaveCount(0);
       await externalDialog.getByRole('button', { name: 'Create read-only web connector' }).click();
       const header = externalDialog.getByLabel('Private header value');
+      await expect(header).toBeHidden();
+      await expect(externalDialog.getByText(/choose Connect \(Connecter\)/)).toBeVisible();
+      await externalDialog.getByText('Advanced: connect with a private request header').click();
       await expect(header).toBeVisible();
       assert.equal(
         await externalDialog.getByLabel('Connector URL').inputValue(),

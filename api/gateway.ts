@@ -6,6 +6,15 @@ import { isIP } from 'node:net';
 import { waitUntil } from '@vercel/functions';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
 import {
+  claudeAuthorizePath,
+  claudeChallenge,
+  claudeIssuerMetadataPath,
+  claudeMetadata,
+  claudeResourceMetadataPath,
+  claudeTokenPath,
+  isClaudeOAuthPublicEndpoint,
+} from '../shared/claude-discovery.ts';
+import {
   claudeMcpPath,
   claudeWebControlPath,
   claudeConnectorOrigin,
@@ -34,6 +43,9 @@ export function gatewayTarget(requestUrl: string) {
   // Strip only that capture; preserve application parameters for strict validation.
   if (url.searchParams.get('path') === url.pathname.slice('/api/'.length))
     url.searchParams.delete('path');
+  if ([claudeResourceMetadataPath, '/.well-known/oauth-protected-resource'].includes(url.pathname))
+    url.pathname = '/api/claude/resource-metadata';
+  if (url.pathname === claudeIssuerMetadataPath) url.pathname = '/api/claude/issuer-metadata';
   return url;
 }
 
@@ -126,6 +138,31 @@ export default async function handler(
       return;
     }
     const incomingOrigin = request.headers.origin;
+    const issuerMetadata = url.pathname === '/api/claude/issuer-metadata';
+    if (issuerMetadata || url.pathname === '/api/claude/resource-metadata') {
+      if (!['GET', 'HEAD'].includes(method)) {
+        response.writeHead(405, { Allow: 'GET, HEAD' }).end();
+        return;
+      }
+      response
+        .writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+        .end(
+          method === 'HEAD'
+            ? undefined
+            : JSON.stringify(claudeMetadata(publicOrigin, issuerMetadata)),
+        );
+      return;
+    }
+    const oauthPublic = isClaudeOAuthPublicEndpoint(url.pathname);
+    if (
+      oauthPublic &&
+      (!claudeConnectorOrigin(incomingOrigin) ||
+        method !== (url.pathname === claudeAuthorizePath ? 'GET' : 'POST') ||
+        (url.pathname !== claudeAuthorizePath && url.search))
+    ) {
+      response.writeHead(403).end(JSON.stringify({ error: 'Invalid connector sign-in request.' }));
+      return;
+    }
     const connector = url.pathname === claudeMcpPath;
     if (connector) {
       if (
@@ -138,13 +175,14 @@ export default async function handler(
       }
       if (!claudeWebBearer.test(request.headers.authorization || '')) {
         response
-          .writeHead(401)
+          .writeHead(401, { 'WWW-Authenticate': claudeChallenge(publicOrigin) })
           .end(JSON.stringify({ error: 'A Claude connector credential is required.' }));
         return;
       }
     }
     if (
       !connector &&
+      !oauthPublic &&
       ((incomingOrigin && incomingOrigin !== publicOrigin) ||
         (!['GET', 'HEAD'].includes(method) && incomingOrigin !== publicOrigin))
     ) {
@@ -157,25 +195,42 @@ export default async function handler(
     const machine =
       url.pathname === '/api/runner/exchange' || url.pathname.startsWith('/api/desktop/bridge/');
     const desktop = url.pathname.startsWith('/api/desktop/');
-    const bodyLimit = connector
-      ? 16384
-      : url.pathname === claudeWebControlPath
-        ? 450000
-        : machine ||
-            url.pathname === '/api/desktop/profiles' ||
-            url.pathname === '/api/billing/profiles/select'
-          ? 4 * 1024 * 1024
-          : url.pathname === sadeProjectFileRoute
-            ? 768 * 1024
-            : 128 * 1024;
+    const bodyLimit =
+      connector || oauthPublic
+        ? 16384
+        : url.pathname === claudeWebControlPath
+          ? 450000
+          : machine ||
+              url.pathname === '/api/desktop/profiles' ||
+              url.pathname === '/api/billing/profiles/select'
+            ? 4 * 1024 * 1024
+            : url.pathname === sadeProjectFileRoute
+              ? 768 * 1024
+              : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
       if (request.body !== undefined) {
-        const value = Buffer.isBuffer(request.body)
-          ? request.body
-          : Buffer.from(
-              typeof request.body === 'string' ? request.body : JSON.stringify(request.body),
-            );
+        let parsedBody = request.body;
+        if (
+          url.pathname === claudeTokenPath &&
+          request.headers['content-type']?.split(';')[0] === 'application/x-www-form-urlencoded' &&
+          typeof parsedBody === 'object' &&
+          parsedBody !== null &&
+          !Buffer.isBuffer(parsedBody)
+        ) {
+          const form = new URLSearchParams();
+          for (const [key, value] of Object.entries(parsedBody)) {
+            if (typeof value !== 'string') {
+              response.writeHead(400).end();
+              return;
+            }
+            form.append(key, value);
+          }
+          parsedBody = form.toString();
+        }
+        const value = Buffer.isBuffer(parsedBody)
+          ? parsedBody
+          : Buffer.from(typeof parsedBody === 'string' ? parsedBody : JSON.stringify(parsedBody));
         chunks.push(value);
         length = value.length;
       } else
@@ -195,14 +250,14 @@ export default async function handler(
     const planningBudget = hostedSadeBudgetMs(body);
     const deadline = requestStarted + planningBudget;
     const pollingClaude = isClaudeWebPoll(url.pathname, method, body);
-    const opening = cloudRunner(!machine && !connector && !pollingClaude);
+    const opening = cloudRunner(!machine && !connector && !oauthPublic && !pollingClaude);
     const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
     if (!runner) {
       if (pollingClaude) {
         response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"jobs":[]}');
         return;
       }
-      response.writeHead(connector ? 503 : 204).end();
+      response.writeHead(connector || oauthPublic ? 503 : 204).end();
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });
@@ -215,9 +270,11 @@ export default async function handler(
       : request.socket.remoteAddress;
     if (typeof platformIp === 'string' && isIP(platformIp))
       headers.set('x-relay-client-ip', platformIp);
-    for (const key of connector
-      ? ['content-type', 'accept', 'origin', 'mcp-session-id', 'mcp-protocol-version']
-      : ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
+    for (const key of oauthPublic
+      ? ['content-type', 'accept', 'origin']
+      : connector
+        ? ['content-type', 'accept', 'origin', 'mcp-session-id', 'mcp-protocol-version']
+        : ['cookie', 'content-type', 'x-relay-token', 'origin', 'x-relay-bridge-key']) {
       const value = request.headers[key];
       if (typeof value === 'string') headers.set(key, value);
     }
@@ -238,6 +295,17 @@ export default async function handler(
       ),
     });
     response.statusCode = upstream.status;
+    if (connector && upstream.status === 401)
+      response.setHeader('WWW-Authenticate', claudeChallenge(publicOrigin));
+    if (url.pathname === claudeAuthorizePath && [302, 303].includes(upstream.status)) {
+      const rawLocation = upstream.headers.get('location');
+      const target = rawLocation && new URL(rawLocation, publicOrigin);
+      if (!target || target.origin !== publicOrigin || target.pathname !== '/claude/connect') {
+        response.writeHead(502).end();
+        return;
+      }
+      response.setHeader('Location', target.pathname + target.search);
+    }
     if (hosted && upstream.ok) {
       const admitted = Date.now();
       const timing: HostedSadeTiming = {};
@@ -273,7 +341,7 @@ export default async function handler(
       if (value) response.setHeader(key, value);
     }
     const cookies = upstream.headers.getSetCookie();
-    if (!connector && cookies.length) response.setHeader('Set-Cookie', cookies);
+    if (!connector && !oauthPublic && cookies.length) response.setHeader('Set-Cookie', cookies);
     if (!upstream.body || method === 'HEAD') {
       response.end();
       return;

@@ -155,6 +155,8 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
         check();
         const response = await cloud({
           action: 'enroll',
+          projectName: grant.projectName,
+          profileName: grant.profileName,
           projectId,
           memberId,
           connectionId: grant.id,

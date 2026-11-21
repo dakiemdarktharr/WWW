@@ -533,7 +533,12 @@ export class ExternalProviders {
       .parse(input);
     if (command.action === 'create') {
       const { memberId, projectId, durationMinutes } = command;
-      return this.register({ memberId, projectId, durationMinutes }, '', 'claude-web');
+      const grant = this.register({ memberId, projectId, durationMinutes }, '', 'claude-web');
+      return {
+        ...grant,
+        projectName: this.host.store.get<Project>('project', projectId).name.slice(0, 100),
+        profileName: this.host.store.get<Member>('member', memberId).name.slice(0, 100),
+      };
     }
     const connection = this.connections.get(command.connectionId);
     if (connection?.transport !== 'claude-web')

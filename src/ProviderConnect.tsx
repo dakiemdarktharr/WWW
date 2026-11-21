@@ -448,35 +448,41 @@ export function ExternalConnection({
             onFocus={(event) => event.target.select()}
           />
           <p>
-            Choose the option to connect without signing in to the server. Under Request headers,
-            add <code>Authorization</code>. Paste the private value below into that header, then add
-            the connector.
+            Save the connector, then choose Connect (Connecter). Sign in to Kivuno in the browser,
+            select this computer and project, and confirm read-only access.
           </p>
-          <button
-            className="button"
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(webConnection.headerValue)
-                .then(() => setCopied(true))
-                .catch(() =>
-                  setError('Clipboard unavailable. Select the private header value and copy it.'),
-                )
-            }
-          >
-            <Copy size={14} />
-            {copied ? 'Copied' : 'Copy private header value'}
-          </button>
-          <input
-            aria-label="Private header value"
-            type="password"
-            readOnly
-            value={webConnection.headerValue}
-            onFocus={(event) => event.target.select()}
-          />
           <p>
-            Enable Kivuno in a Claude chat and ask it to read the project group. Access expires at{' '}
-            {new Date(webConnection.expiresAt).toLocaleTimeString()}.
+            Enable Kivuno in your Claude chat and ask it to read the project group. Keep Kivuno
+            Desktop open. Access expires at {new Date(webConnection.expiresAt).toLocaleString()}.
           </p>
+          <details>
+            <summary>Advanced: connect with a private request header</summary>
+            <p>
+              If Claude shows Request headers for your organization, choose No sign-in and add an <code>Authorization</code> header.
+              Paste the full private value into that header.
+            </p>
+            <button
+              className="button"
+              onClick={() =>
+                void navigator.clipboard
+                  .writeText(webConnection.headerValue)
+                  .then(() => setCopied(true))
+                  .catch(() =>
+                    setError('Clipboard unavailable. Select the private header value and copy it.'),
+                  )
+              }
+            >
+              <Copy size={14} />
+              {copied ? 'Copied' : 'Copy private header value'}
+            </button>
+            <input
+              aria-label="Private header value"
+              type="password"
+              readOnly
+              value={webConnection.headerValue}
+              onFocus={(event) => event.target.select()}
+            />
+          </details>
         </section>
       )}
       {created && (
