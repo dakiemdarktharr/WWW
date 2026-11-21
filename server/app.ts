@@ -316,8 +316,8 @@ export async function buildApp(
       return manifest;
     } catch {
       return {
-        version: '0.9.0',
-        releases: ['0.9.0'],
+        version: '0.9.1',
+        releases: ['0.9.1'],
         available: false,
         platform: 'win32-x64',
         signed: false,

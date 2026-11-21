@@ -1229,3 +1229,61 @@
 .billing-panel .billing-plan-actions .billing-secondary {
   width: 100%;
 }
+
+.billing-page .billing-shell {
+  gap: 24px;
+  padding-top: clamp(24px, 4vw, 52px);
+}
+.billing-page .billing-intro p {
+  margin-top: 10px;
+  max-width: 68ch;
+}
+.billing-account-summary {
+  width: 100%;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.billing-account-summary > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.billing-account-summary strong {
+  font-size: 24px;
+}
+.billing-page .plan-banner {
+  min-height: 0;
+  padding: clamp(16px, 2.3vw, 28px);
+  border-radius: 16px;
+}
+.billing-page .plan-banner-name {
+  margin: 0;
+  font-size: 32px;
+}
+.billing-page .plan-banner-price {
+  margin-top: 12px;
+}
+.billing-page .plan-banner-price strong {
+  font-size: 28px;
+}
+.billing-page .plan-banner-perks {
+  gap: 6px;
+  margin: 16px 0;
+}
+.billing-page .plan-banner-bottom {
+  opacity: 1;
+  transform: none;
+}
+.billing-plan-actions h2,
+.billing-plan-actions > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.billing-transaction-details summary {
+  cursor: pointer;
+}
+.billing-page .billing-panel > p,
+.billing-plan-actions > p {
+  line-height: 1.6;
+  color: var(--bill-muted);
+}

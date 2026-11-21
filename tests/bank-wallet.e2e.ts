@@ -97,6 +97,11 @@ try {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(origin + '/billing');
+  async function openCheckout() {
+    await page.locator('.plan-banner--max').click();
+    await page.getByRole('button', { name: 'Xem báo giá QR mô phỏng · Max' }).click();
+  }
+  await openCheckout();
   const details = page.locator('details.billing-wallet-box');
   const summary = details.locator('summary');
   const address = details.locator('.billing-wallet-address');
@@ -127,11 +132,12 @@ try {
   await page.keyboard.press('Enter');
   await expect(details).not.toHaveAttribute('open');
   await page.reload();
+  await openCheckout();
   await expect(address).toHaveText(buyer);
   await summary.click();
   await expect(backup).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Chọn Plus' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Chọn Max' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Tạo mã QR cho gói Plus' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Tạo mã QR cho gói Max' })).toBeEnabled();
   // A second device has the account binding but no local ciphertext.
   await page.evaluate(
     () =>
@@ -143,6 +149,7 @@ try {
       }),
   );
   await page.reload();
+  await openCheckout();
   await expect(address).toHaveText(buyer);
   await summary.click();
   const restore = details.getByLabel('Khôi phục ví');

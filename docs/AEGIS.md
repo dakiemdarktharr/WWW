@@ -4,9 +4,9 @@ AEGIS is RELAY's optional policy and handoff-evidence module. It runs on Avalanc
 
 ## Setup in the desktop app
 
-1. Open **AEGIS** and choose **Set up**. RELAY creates a dedicated owner key, an executor key, and a random workspace identifier salt locally.
+1. In the sidebar, open **Advanced → Quyền dự án** and choose **Tạo khóa quản trị**. RELAY creates a dedicated owner key, an executor key, and a random workspace identifier salt locally.
 2. Copy the **owner** public address. Obtain free **Fuji test AVAX** from the linked faucet. Never buy AVAX or send mainnet assets for this setup. Faucet eligibility, coupons, and availability are controlled by the faucet; RELAY does not bypass them.
-3. Choose **Deploy on Fuji**. RELAY deploys the registry and allocates 0.01 test AVAX from the owner to its executor when the executor has less than 0.002 test AVAX. Every transaction is capped at a maximum cost plus value of 0.1 test AVAX.
+3. Choose **Tạo sổ quyền**. RELAY deploys the registry and allocates 0.01 test AVAX from the owner to its executor when the executor has less than 0.002 test AVAX. Every transaction is capped at a maximum cost plus value of 0.1 test AVAX.
 4. Select a project and enable its policy. The local machine initially receives run/merge permission for seven days. Grant any paired remote machine its own bounded permission before assigning protected work to it.
 5. Inspect a completed task's exact diff in AEGIS, approve it, then integrate it through Reviews. Approvals expire after at most ten minutes and can be consumed once.
 
@@ -30,7 +30,7 @@ This also rejects a hook that alters a file inside the permitted scope or change
 
 A completed protected handoff creates an EIP-712 signed receipt containing the handoff identifier, project/task/session identifiers, confirmed checkpoint, next steps, test evidence, and reported quota snapshot. The full payload remains in private local state. The registry receives only salted project/receipt identifiers and a digest.
 
-Use **Anchor** to put the receipt digest on Fuji. A protected handoff cannot be accepted until its current content matches the receipt and the configured registry confirms its anchor. Exported evidence includes the payload, signature, digest, registry, and transaction reference for verification. Treat exported evidence as private: it can contain repository and project details.
+Use **Ghi dấu lên Fuji** to put the receipt digest on Fuji. A protected handoff cannot be accepted until its current content matches the receipt and the configured registry confirms its anchor. Exported evidence includes the payload, signature, digest, registry, and transaction reference for verification. Treat exported evidence as private: it can contain repository and project details.
 
 If explicit recovery produces a revised checkpoint, RELAY creates a new receipt and preserves earlier receipts. Repeating the same checkpoint does not create duplicates. Acceptance uses the latest receipt for that handoff and requires it to be anchored, so an older anchored receipt cannot silently authorize revised content.
 

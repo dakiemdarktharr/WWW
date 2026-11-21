@@ -88,14 +88,7 @@ const EIP3009_TYPES = {
     { name: 'nonce', type: 'bytes32' },
   ],
 };
-const planFacts: Record<Plan, { usdc: string; cap: string; people: string }> = {
-  plus: { usdc: '2', cap: '10 profile', people: '10 người/group' },
-  max: {
-    usdc: '6',
-    cap: 'Không giới hạn profile',
-    people: 'Không giới hạn người/group',
-  },
-};
+const planPrice = { plus: '2', max: '6' };
 
 function walletAddress(summary: BillingSummary | null) {
   return summary?.wallet || summary?.walletBinding?.address || null;
@@ -199,6 +192,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [billingProfiles, setBillingProfiles] = useState<BillingProfiles | null>(null);
+  const [showSignIn, setShowSignIn] = useState(false);
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -217,7 +211,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
   const [selectedBanner, setSelectedBanner] = useState<PlanTier | null>(() => {
     const query = new URLSearchParams(window.location.search);
     const plan = query.get('plan');
-    if (bank && (query.has('bank') || query.has('receipt'))) return 'plus';
+    if (bank && (query.has('bank') || query.has('receipt'))) return null;
     return plan === 'free' || plan === 'plus' || plan === 'max' ? plan : null;
   });
   const [checkout, setCheckout] = useState(() => {
@@ -228,6 +222,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
 
   const choosePlan = (plan: PlanTier) => {
     setSelectedBanner(plan);
+    if (plan === selectedBanner) panel.current?.scrollIntoView({ block: 'nearest' });
     if (plan !== 'free') setSelectedPlan(plan);
     setCheckout(false);
     setError('');
@@ -235,14 +230,14 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
   };
 
   useEffect(() => {
-    if (!selectedBanner || loading) return;
-    if (selectedBanner !== 'free') setSelectedPlan(selectedBanner);
+    if ((!selectedBanner && !checkout && !showSignIn) || loading) return;
+    if (selectedBanner && selectedBanner !== 'free') setSelectedPlan(selectedBanner);
     const frame = requestAnimationFrame(() => {
       panel.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
       panel.current?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedBanner, loading]);
+  }, [selectedBanner, loading, checkout, user?.id, showSignIn]);
 
   const tier = currentTier(summary);
   const boundWallet = walletAddress(summary);
@@ -350,6 +345,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
         throw new Error('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.');
       resetApiSession();
       setUser(body.user as AuthUser);
+      setShowSignIn(false);
       setPassword('');
       await refreshSummary();
     } catch (cause) {
@@ -481,7 +477,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       if (funds.usdc < BigInt(intent.amount))
         throw new Error(
           'Ví cần ít nhất ' +
-            planFacts[intent.plan].usdc +
+            planPrice[intent.plan] +
             ' test USDC. Mở “Nạp token thử và sao lưu ví” để nhận token trên Fuji.',
         );
       if (funds.gas === 0n) throw new Error('Ví cần test AVAX để trả phí giao dịch trên Fuji.');
@@ -576,6 +572,8 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       const state = String(verification.status || verification.state || '').toLowerCase();
       if (verification.verified === true || state === 'verified' || state === 'paid') {
         finishPending();
+        setCheckout(false);
+        setSelectedBanner(null);
         setNotice('Thanh toán đã được xác minh. Đang cập nhật quyền Kivuno…');
         await refreshSummary();
         setNotice('Gói Kivuno đã được cập nhật sau khi xác minh giao dịch Fuji.');
@@ -612,6 +610,8 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       const state = String(verification.status || verification.state || '').toLowerCase();
       if (verification.verified === true || state === 'verified' || state === 'paid') {
         finishPending();
+        setCheckout(false);
+        setSelectedBanner(null);
         await refreshSummary();
         setNotice('Thanh toán đã được xác minh và quyền Kivuno đã được cập nhật.');
       } else setNotice('Transaction vẫn đang chờ xác minh. Bạn có thể thử lại.');
@@ -633,8 +633,10 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
     try {
       await postJson<unknown>('/api/auth/sign-out', {});
       resetApiSession();
+      setShowSignIn(false);
       setUser(null);
       setSummary(null);
+      setPending(false);
       setBillingProfiles(null);
       setWalletMode('');
       setNotice('');
@@ -672,6 +674,16 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
     }
   };
 
+  const selectedName = selectedPlan === 'plus' ? 'Plus' : 'Max';
+  const actionFor = (plan: PlanTier) => {
+    if (!user || !summary)
+      return plan === 'free' ? 'Xem gói miễn phí' : 'Xem gói ' + (plan === 'plus' ? 'Plus' : 'Max');
+    if (plan === 'free') return activePaidPlan ? 'Xem gói Free' : 'Gói đang dùng';
+    const name = plan === 'plus' ? 'Plus' : 'Max';
+    if (activePaidPlan && tier === plan)
+      return summary.trial?.active ? 'Mua gói ' + name : 'Gia hạn ' + name;
+    return activePaidPlan && tier === 'max' ? 'Đổi sang ' + name : 'Nâng cấp lên ' + name;
+  };
   const activePlanTitle = useMemo(
     () => (activePaidPlan ? (tier === 'plus' ? 'Plus' : 'Max') : 'Free'),
     [activePaidPlan, tier],
@@ -694,16 +706,70 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
 
       <section className="billing-shell" aria-labelledby="billing-title">
         <div className="billing-intro">
-          <h1 id="billing-title">Gói Kivuno.</h1>
+          <h1 id="billing-title">Gói &amp; thanh toán</h1>
+          <p>
+            {user
+              ? 'Quản lý gói cho tài khoản Kivuno của bạn.'
+              : 'Chọn gói để xem chi tiết. Đăng nhập bằng tài khoản dùng trong Kivuno để mua hoặc gia hạn.'}
+          </p>
         </div>
-        <PlanBanners
-          selected={selectedBanner}
-          onSelect={choosePlan}
-          disabled={busy !== '' || pending || !!preparedIntent}
-          trialAvailable={!user || !!summary?.trial?.eligible}
-        />
+        {!user && !loading && !selectedBanner && !showSignIn && !checkout && (
+          <button
+            className="billing-secondary"
+            type="button"
+            onClick={() => {
+              setAuthMode('signin');
+              setShowSignIn(true);
+            }}
+          >
+            Đăng nhập để xem gói của tôi
+          </button>
+        )}
+        {loading && <p role="status">Đang tải thông tin tài khoản…</p>}
+        {user && (
+          <div className="billing-current billing-account-summary">
+            <div>
+              <span>Gói hiện tại</span>
+              <strong>
+                {summary ? activePlanTitle : 'Đang chờ thông tin gói'}
+                {activePaidPlan && summary?.trial?.active ? ' · Dùng thử' : ''}
+              </strong>
+              <span>{user.email}</span>
+            </div>
+            {activePaidPlan && paidUntil && (
+              <time dateTime={paidUntil}>
+                Hết hạn{' '}
+                {new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
+                  new Date(paidUntil),
+                )}
+              </time>
+            )}
+            <button
+              type="button"
+              className="billing-switch"
+              disabled={busy !== ''}
+              onClick={() => void signOut()}
+            >
+              Đăng xuất
+            </button>
+          </div>
+        )}
+        {!checkout && (
+          <PlanBanners
+            actionLabel={actionFor}
+            selected={selectedBanner}
+            onSelect={choosePlan}
+            disabled={busy !== '' || pending || !!preparedIntent}
+          />
+        )}
 
-        {(selectedBanner || user) && (
+        {(showSignIn ||
+          selectedBanner ||
+          checkout ||
+          (user &&
+            (error ||
+              notice ||
+              billingProfiles?.profiles.some((profile) => !profile.selected)))) && (
           <div className="billing-panel" ref={panel}>
             {loading ? (
               <div className="billing-loading" role="status">
@@ -716,7 +782,14 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                   <button
                     className="billing-switch"
                     type="button"
-                    onClick={() => setSelectedBanner(null)}
+                    onClick={() => {
+                      if (checkout) {
+                        window.location.assign('/billing');
+                        return;
+                      }
+                      setSelectedBanner(null);
+                      setShowSignIn(false);
+                    }}
                     disabled={busy !== ''}
                   >
                     Đóng
@@ -796,44 +869,28 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
               </form>
             ) : (
               <>
-                <div className="billing-panel-heading billing-account-heading">
-                  <div>
-                    <span className="billing-step">Tài khoản</span>
-                    <h2 tabIndex={-1}>{user.name || user.email}</h2>
-                    <p>{user.email}</p>
-                  </div>
-                  <button
-                    className="billing-switch"
-                    type="button"
-                    onClick={() => void signOut()}
-                    disabled={busy !== ''}
-                  >
-                    Đăng xuất
-                  </button>
-                </div>
-
-                <div className="billing-current">
-                  <span className="billing-current-icon">
-                    <LockKeyhole size={17} />
-                  </span>
-                  <div>
-                    <span>Gói hiện tại</span>
-                    <strong>
-                      {activePlanTitle}
-                      {activePaidPlan && summary?.trial?.active ? ' · Trial' : ''}
-                    </strong>
-                  </div>
-                  {activePaidPlan && paidUntil && (
-                    <time dateTime={paidUntil}>
-                      đến{' '}
-                      {new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(
-                        new Date(paidUntil),
-                      )}
-                    </time>
-                  )}
-                </div>
                 {!checkout && (
                   <div className="billing-plan-actions">
+                    {selectedBanner && (
+                      <h2 tabIndex={-1}>
+                        {selectedBanner === 'free' ? 'Gói Free' : actionFor(selectedBanner)}
+                      </h2>
+                    )}
+                    {selectedBanner === 'free' && (
+                      <p>
+                        Gói Free gồm 3 hồ sơ nhà cung cấp và tối đa 3 người mỗi nhóm. Gói này miễn
+                        phí.
+                      </p>
+                    )}
+                    {selectedBanner && selectedBanner !== 'free' && (
+                      <p>
+                        {activePaidPlan && !summary?.trial?.active
+                          ? tier === selectedBanner
+                            ? 'Gia hạn cùng gói sẽ nối thêm 30 ngày. Bạn xác nhận trước khi thanh toán.'
+                            : 'Đổi gói bắt đầu kỳ mới ngay. Thời gian còn lại của gói cũ sẽ không được cộng hoặc hoàn lại.'
+                          : 'Mỗi lần mua có hiệu lực 30 ngày. Bạn tự quyết định khi nào gia hạn.'}
+                      </p>
+                    )}
                     {selectedBanner && selectedBanner !== 'free' && summary?.trial?.eligible && (
                       <button
                         className="billing-primary"
@@ -846,7 +903,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                         ) : (
                           <ArrowUpRight size={17} />
                         )}
-                        30 days trial · {selectedBanner === 'plus' ? 'Plus' : 'Max'}
+                        Dùng thử 30 ngày · {selectedBanner === 'plus' ? 'Plus' : 'Max'}
                       </button>
                     )}
                     {selectedBanner && selectedBanner !== 'free' && (
@@ -856,12 +913,14 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                         disabled={busy !== ''}
                         onClick={() => setCheckout(true)}
                       >
-                        Thanh toán · {planFacts[selectedPlan].usdc} test USDC / tháng
+                        {bank ? 'Xem báo giá QR mô phỏng' : 'Tiếp tục thanh toán'} · {selectedName}
                       </button>
                     )}
-                    <a className="billing-download" href="/?download">
-                      <ArrowUpRight size={17} /> Tải Kivuno
-                    </a>
+                    {selectedBanner === 'free' && (
+                      <a className="billing-download" href="/?download">
+                        <ArrowUpRight size={17} /> Tải Kivuno
+                      </a>
+                    )}
                     {error && (
                       <p className="billing-alert" role="alert">
                         <CircleAlert size={16} /> {error}
@@ -874,7 +933,8 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                     )}
                   </div>
                 )}
-                {billingProfiles &&
+                {!checkout &&
+                  billingProfiles &&
                   billingProfiles.profiles.length > 0 &&
                   billingProfiles.profiles.some((profile) => !profile.selected) && (
                     <section
@@ -927,6 +987,25 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
 
                 {checkout && (
                   <>
+                    {!busy && !pending && !preparedIntent && (
+                      <a className="billing-switch" href="/billing">
+                        Quay lại danh sách gói
+                      </a>
+                    )}
+                    <h2 tabIndex={-1}>
+                      {bank
+                        ? 'Thanh toán QR mô phỏng'
+                        : pending
+                          ? 'Đối chiếu giao dịch Fuji'
+                          : 'Thanh toán gói ' + selectedName}
+                    </h2>
+                    <p>
+                      {bank
+                        ? 'Kiểm tra báo giá VND trước khi tạo đơn thử.'
+                        : pending
+                          ? 'Kiểm tra trạng thái giao dịch đã gửi và quyền sử dụng gói.'
+                          : 'Kiểm tra ví và số dư Fuji, sau đó xem lại yêu cầu trước khi ký.'}
+                    </p>
                     {summary?.account?.id === user.id && (
                       <BillingWallet
                         key={user.id}
@@ -941,48 +1020,16 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                     )}
 
                     {bank && summary?.account?.id === user.id && (
-                      <BankCheckout key={user.id} onPaid={refreshSummary} />
+                      <BankCheckout
+                        key={user.id}
+                        selectedPlan={selectedPlan}
+                        onPaid={refreshSummary}
+                      />
                     )}
                     {bank && error && (
                       <p className="billing-alert" role="alert">
                         {error}
                       </p>
-                    )}
-                    {!bank && (
-                      <>
-                        <div className="billing-plans" role="group" aria-label="Chọn gói Kivuno">
-                          {(['plus', 'max'] as Plan[]).map((plan) => {
-                            const selected = selectedPlan === plan;
-                            return (
-                              <button
-                                className={`billing-plan ${selected ? 'is-selected' : ''} ${plan === 'max' ? 'is-max' : ''}`}
-                                type="button"
-                                key={plan}
-                                aria-pressed={selected}
-                                onClick={() => setSelectedPlan(plan)}
-                                disabled={busy !== '' || !!preparedIntent}
-                              >
-                                <span className="billing-plan-radio" aria-hidden="true">
-                                  {selected && <span />}
-                                </span>
-                                <span className="billing-plan-name">
-                                  {plan === 'plus' ? 'Plus' : 'Max'}
-                                </span>
-                                <span className="billing-plan-price">
-                                  <strong>{planFacts[plan].usdc} test USDC</strong>
-                                  <small>/ tháng</small>
-                                </span>
-
-                                <span className="billing-plan-limit">
-                                  {planFacts[plan].cap}
-                                  <br />
-                                  {planFacts[plan].people}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </>
                     )}
                     {!bank && (
                       <>
@@ -1007,40 +1054,13 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                               <span className="billing-review-chain">Fuji · 43113</span>
                             </div>
                             <div className="billing-review-price">
-                              <strong>{planFacts[preparedIntent.plan].usdc} test USDC</strong>
-                              <span>30 ngày</span>
+                              <strong>{planPrice[preparedIntent.plan]} test USDC</strong>
+                              <span>
+                                {preparedIntent.plan === 'plus' ? 'Plus' : 'Max'} · 30 ngày
+                              </span>
                             </div>
                             <dl className="billing-review-details">
-                              <div>
-                                <dt>Gói</dt>
-                                <dd>{preparedIntent.plan === 'plus' ? 'Plus' : 'Max'}</dd>
-                              </div>
-                              <div>
-                                <dt>Ví trả tiền</dt>
-                                <dd>
-                                  <code>{getAddress(preparedIntent.payer)}</code>
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Token USDC</dt>
-                                <dd>
-                                  <code>{getAddress(preparedIntent.token)}</code>
-                                </dd>
-                              </div>
-                              <div>
-                                <dt>Hợp đồng nhận giao dịch</dt>
-                                <dd>
-                                  <code>{getAddress(preparedIntent.contract)}</code>
-                                </dd>
-                              </div>
-                              {config?.treasuryAddress && (
-                                <div>
-                                  <dt>Kho nhận USDC</dt>
-                                  <dd>
-                                    <code>{getAddress(config.treasuryAddress)}</code>
-                                  </dd>
-                                </div>
-                              )}
+                              {' '}
                               <div>
                                 <dt>Yêu cầu hết hạn</dt>
                                 <dd>
@@ -1053,6 +1073,37 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                                 </dd>
                               </div>
                             </dl>
+                            <details className="billing-transaction-details">
+                              <summary>Địa chỉ ví và hợp đồng</summary>
+                              <dl className="billing-review-details">
+                                <div>
+                                  <dt>Ví trả tiền</dt>
+                                  <dd>
+                                    <code>{getAddress(preparedIntent.payer)}</code>
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Token USDC</dt>
+                                  <dd>
+                                    <code>{getAddress(preparedIntent.token)}</code>
+                                  </dd>
+                                </div>
+                                <div>
+                                  <dt>Hợp đồng nhận giao dịch</dt>
+                                  <dd>
+                                    <code>{getAddress(preparedIntent.contract)}</code>
+                                  </dd>
+                                </div>
+                                {config?.treasuryAddress && (
+                                  <div>
+                                    <dt>Kho nhận USDC</dt>
+                                    <dd>
+                                      <code>{getAddress(config.treasuryAddress)}</code>
+                                    </dd>
+                                  </div>
+                                )}
+                              </dl>
+                            </details>
                             <p className="billing-review-note">
                               Hợp đồng nhận chữ ký USDC đúng số tiền này rồi chuyển vào kho nhận.
                               Giao dịch cần thêm test AVAX để trả gas; không có gia hạn tự động.
@@ -1069,7 +1120,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                                 ) : (
                                   <ShieldCheck size={17} />
                                 )}
-                                Thanh toán {planFacts[preparedIntent.plan].usdc} test USDC
+                                Thanh toán {planPrice[preparedIntent.plan]} test USDC
                               </button>
                               <button
                                 className="billing-secondary"
@@ -1130,7 +1181,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
                             ) : (
                               <ArrowUpRight size={17} />
                             )}
-                            Tiếp tục với {planFacts[selectedPlan].usdc} test USDC
+                            Tiếp tục với {planPrice[selectedPlan]} test USDC
                           </button>
                         )}
                         <div className="billing-terms">
@@ -1161,7 +1212,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
             )}
           </div>
         )}
-        {!selectedBanner && !user && error && (
+        {!showSignIn && !checkout && !selectedBanner && !user && error && (
           <p className="billing-alert" role="alert">
             {error}
           </p>

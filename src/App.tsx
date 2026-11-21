@@ -16,6 +16,7 @@ import {
   Code2,
   Copy,
   Cpu,
+  CreditCard,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -99,7 +100,7 @@ const advancedNav = [
   { id: 'sessions', label: 'Sessions', icon: Terminal },
   { id: 'workroom', label: 'Workroom', icon: LayoutGrid },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
-  { id: 'aegis', label: 'AEGIS', icon: ShieldCheck },
+  { id: 'aegis', label: 'Quyền dự án', icon: ShieldCheck },
 ] as const;
 const roleIcons = {
   engineer: Code2,
@@ -560,12 +561,24 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const approvals = state?.approvals.filter((a) => tasks.some((t) => t.id === a.taskId)) || [];
   const selectedTask =
     modal?.type === 'detail' ? state?.tasks.find((t) => t.id === modal.taskId) : undefined;
+  const pageTitle = [...nav, ...advancedNav].find((item) => item.id === view)?.label ?? 'Settings';
   const pending = !!busy;
+  async function openBilling() {
+    const desktop = window.relayDesktop;
+    if (!desktop) return;
+    try {
+      const { cloudOrigin } = await desktop.getStatus();
+      await desktop.openExternal(new URL('/billing', cloudOrigin).href);
+      setSidebar(false);
+    } catch (cause) {
+      setToast({ text: 'Chưa mở được trang thanh toán. ' + (cause as Error).message, error: true });
+    }
+  }
   useEffect(() => {
     const session = state?.sessions.find((entry) => entry.id === focusedSessionId);
     document.title = session
       ? `${session.title} · Kivuno`
-      : `${view === 'mesh' ? 'Chat' : view[0].toUpperCase() + view.slice(1)}${project ? ` · ${project.name}` : ''} · Kivuno`;
+      : `${pageTitle}${project ? ` · ${project.name}` : ''} · Kivuno`;
   }, [
     focusedSessionId,
     view,
@@ -737,12 +750,6 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
     else setReviewRefresh((n) => n + 1);
   }
 
-  const pageTitle =
-    view === 'mesh'
-      ? 'Chat'
-      : view === 'workroom'
-        ? 'Workroom'
-        : view[0].toUpperCase() + view.slice(1);
   const taskRow = (task: Task) => {
     const Icon = kindIcons[task.kind];
     const owner = members.find((m) => m.id === task.assignedTo);
@@ -850,6 +857,21 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
               )}
             </button>
           ))}
+          {window.relayDesktop ? (
+            <button
+              className="nav-item"
+              onClick={() => void openBilling()}
+              title="Mở trang gói của tài khoản trong trình duyệt"
+            >
+              <CreditCard size={18} />
+              <span>Gói &amp; thanh toán</span>
+            </button>
+          ) : (
+            <a className="nav-item" href="/billing">
+              <CreditCard size={18} />
+              <span>Gói &amp; thanh toán</span>
+            </a>
+          )}
           <details
             className="advanced-nav"
             open={advancedNav.some((item) => item.id === view) || undefined}

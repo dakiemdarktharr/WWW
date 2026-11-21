@@ -146,7 +146,7 @@ async function login(context: BrowserContext) {
       chooseDirectory: async () => null,
       prepareProvider: async (provider) => ({ provider, available: true }),
       profiles: (command) => window.fixtureProfiles(command),
-      openExternal: async () => {},
+      openExternal: async (url) => { document.body.dataset.external = url; },
       openPreview: async () => {},
       signOut: async () => {},
       joinMachine: async () => null,
@@ -154,6 +154,8 @@ async function login(context: BrowserContext) {
       getWindowState: async () => ({ maximized: false, fullscreen: false }),
       controlWindow: async () => ({ maximized: false, fullscreen: false }),
       onWindowState: () => () => {},
+      checkForUpdates: async () => ({currentVersion: '0.8.5', latestVersion: '0.8.5', hasUpdate: false, downloadAvailable: false, lastInstallFailed: false}),
+      onUpdateProgress: () => () => {},
         onStatus: () => () => {},
     };
   `);
@@ -461,20 +463,48 @@ try {
     animations: 'disabled',
   });
   await page.setViewportSize({ width: 1400, height: 1000 });
-  await advanced('AEGIS');
-  await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Refresh AEGIS', exact: true }).click();
-  await page.getByRole('heading', { name: 'Set up AEGIS', exact: true }).waitFor();
-  assert.equal(await page.getByText('Not deployed', { exact: true }).count(), 0);
-  assert.equal(await page.getByText('Not configured', { exact: true }).count(), 1);
-  await expect(
-    page.getByText('A receipt verifies the recorded content and signer.', { exact: false }),
-  ).toBeHidden();
+  await page.getByRole('button', { name: 'Gói & thanh toán', exact: true }).click();
+  await expect(page.locator('body')).toHaveAttribute('data-external', origin + '/billing');
+  await advanced('Quyền dự án');
+  await page.getByRole('heading', { name: 'Thiết lập sổ quyền', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Làm mới quyền dự án', exact: true }).click();
+  await page.getByRole('heading', { name: 'Thiết lập sổ quyền', exact: true }).waitFor();
+  assert.equal(await page.getByText('Chưa tạo sổ', { exact: true }).count(), 0);
+  assert.equal(await page.getByText('Chưa thiết lập', { exact: true }).count(), 1);
+  await expect(page.getByText('Chọn tệp biên nhận JSON', { exact: false })).toBeHidden();
   await page.screenshot({ path: path.join(screenshots, 'aegis-minimal.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
+  await expect(page.getByRole('heading', { name: 'Quyền của máy' })).toHaveCount(0);
+  const projectId = store.projects().find((item) => item.name === 'Cloud project')!.id;
+  await page.route('**/api/aegis', (route) =>
+    route.fulfill({
+      json: {
+        setup: true,
+        online: true,
+        contractAddress: '0x' + '1'.repeat(40),
+        ownerAddress: '0x' + '2'.repeat(40),
+        executorAddress: '0x' + '3'.repeat(40),
+        balance: '0.03',
+        executorBalance: '0.01',
+        projects: [{ projectId, enabled: true }],
+        grants: [],
+        actions: [],
+        receipts: [],
+      },
+    }),
+  );
+  await page.getByRole('button', { name: 'Làm mới quyền dự án' }).click();
+  await expect(page.getByRole('button', { name: 'Cấp quyền', exact: true })).toBeEnabled();
+  await expect(page.getByRole('heading', { name: 'Duyệt gộp mã' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Biên nhận bàn giao', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Địa chỉ và số dư thử nghiệm')).toBeHidden();
+  await page.getByText('Kiểm tra tệp biên nhận bàn giao', { exact: true }).click();
+  await expect(page.getByText('Chọn tệp biên nhận JSON')).toBeVisible();
   assert.deepEqual(forbidden, []);
   assert.deepEqual(errors, []);
   assert.ok(profileCommands.some((command) => command.action === 'sync'));

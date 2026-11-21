@@ -11,6 +11,7 @@ type Props = {
   hrefBase?: string;
   disabled?: boolean;
   trialAvailable?: boolean;
+  actionLabel?: (tier: PlanTier) => string;
 };
 
 const tiers: PlanTier[] = ['free', 'plus', 'max'];
@@ -24,6 +25,7 @@ export function PlanBanners({
   hrefBase = '/billing',
   disabled = false,
   trialAvailable = true,
+  actionLabel,
 }: Props) {
   const en = locale === 'en';
   const id = useId();
@@ -42,8 +44,9 @@ export function PlanBanners({
   return (
     <div className="plan-banners" aria-label={en ? 'Kivuno plans' : 'Các gói Kivuno'}>
       {tiers.map((tier, index) => {
-        const action =
-          tier === 'free'
+        const action = actionLabel
+          ? actionLabel(tier)
+          : tier === 'free'
             ? en
               ? 'Start free'
               : 'Dùng miễn phí'
@@ -55,24 +58,26 @@ export function PlanBanners({
         const perks =
           tier === 'free'
             ? [
-                en ? '3 provider profiles' : '3 profile nhà cung cấp',
-                en ? '3 people per group' : '3 người mỗi group',
+                en ? '3 provider profiles' : '3 hồ sơ nhà cung cấp',
+                en ? '3 people per group' : '3 người mỗi nhóm',
               ]
             : tier === 'plus'
               ? [
-                  en ? '10 provider profiles' : '10 profile nhà cung cấp',
-                  en ? '10 people per group' : '10 người mỗi group',
+                  en ? '10 provider profiles' : '10 hồ sơ nhà cung cấp',
+                  en ? '10 people per group' : '10 người mỗi nhóm',
                 ]
               : [
-                  en ? 'Unlimited provider profiles' : 'Không giới hạn profile',
-                  en ? 'Unlimited group members' : 'Không giới hạn người trong group',
+                  en ? 'Unlimited provider profiles' : 'Không giới hạn hồ sơ nhà cung cấp',
+                  en ? 'Unlimited group members' : 'Không giới hạn người trong nhóm',
                 ];
         const contents = (
           <>
-            <span className="plan-banner-top">
-              <span>0{index + 1}</span>
-              <ArrowUpRight size={24} aria-hidden="true" />
-            </span>
+            {!actionLabel && (
+              <span className="plan-banner-top">
+                <span>0{index + 1}</span>
+                <ArrowUpRight size={24} aria-hidden="true" />
+              </span>
+            )}
             <span className="plan-banner-name">{names[tier]}</span>
             <span className="plan-banner-price">
               <strong>{prices[tier]}</strong>
@@ -106,7 +111,7 @@ export function PlanBanners({
               <span>{action}</span>
               <ArrowUpRight size={18} aria-hidden="true" />
             </span>
-            {tier !== 'free' && (
+            {!actionLabel && tier !== 'free' && (
               <span className="plan-banner-network">
                 Avalanche Fuji · {en ? 'test network' : 'mạng thử nghiệm'}
               </span>

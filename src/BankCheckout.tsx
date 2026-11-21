@@ -29,9 +29,6 @@ type Proof = {
 };
 const money = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format;
 const planName = (plan: Plan) => (plan === 'plus' ? 'Plus' : 'Max');
-const query = new URLSearchParams(location.search);
-const bankId = query.get('bank');
-const receiptId = query.get('receipt');
 function getOrder(id: string) {
   return api<Order>('/billing/bank/status', { id });
 }
@@ -136,7 +133,16 @@ function BankForm({ order, done }: { order: Order; done: (paidOrder: Order) => v
     </form>
   );
 }
-export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
+export function BankCheckout({
+  selectedPlan,
+  onPaid,
+}: {
+  selectedPlan: Plan;
+  onPaid: () => Promise<unknown>;
+}) {
+  const query = new URLSearchParams(location.search);
+  const bankId = query.get('bank');
+  const receiptId = query.get('receipt');
   const [config, setConfig] = useState<Quote | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [proof, setProof] = useState<Proof | null>(null);
@@ -144,7 +150,8 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const orderId = order?.id;
-  const image = useMemo(() => (orderId && !bankId ? qrImage(orderId) : ''), [orderId]);
+  const quotedPlan = order?.plan ?? selectedPlan;
+  const image = useMemo(() => (orderId && !bankId ? qrImage(orderId) : ''), [orderId, bankId]);
   const update = useCallback(
     (updatedOrder: Order) => {
       setOrder(updatedOrder);
@@ -172,7 +179,7 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
     return () => {
       alive = false;
     };
-  }, [update]);
+  }, [update, bankId, receiptId]);
   useEffect(() => {
     if (!orderId || order?.status !== 'pending') return;
     let alive = true,
@@ -228,23 +235,19 @@ export function BankCheckout({ onPaid }: { onPaid: () => Promise<unknown> }) {
       {config && !config.available && (
         <p className="billing-alert">Chuyển khoản mô phỏng chỉ mở trong bản demo cục bộ.</p>
       )}
-      {config?.available && !bankId && (
+      {config?.available && !bankId && (!order || order.status === 'expired') && (
         <div className="bank-plan-list" role="group" aria-label="Chọn gói">
-          {(['plus', 'max'] as const).map((plan) => (
-            <button
-              key={plan}
-              type="button"
-              className="billing-secondary bank-plan"
-              aria-label={'Chọn ' + planName(plan)}
-              aria-pressed={order?.plan === plan}
-              disabled={busy}
-              onClick={() => void run(() => choose(plan))}
-            >
-              <strong>{planName(plan)}</strong>
-              <span>{plan === 'plus' ? 2 : 6} USDC / 30 ngày</span>
-              <small>{money(plan === 'plus' ? config.plusVnd : config.maxVnd)} mô phỏng</small>
-            </button>
-          ))}
+          <button
+            type="button"
+            className="billing-secondary bank-plan"
+            aria-label={'Tạo mã QR cho gói ' + planName(quotedPlan)}
+            disabled={busy}
+            onClick={() => void run(() => choose(quotedPlan))}
+          >
+            <strong>Tạo mã QR cho gói {planName(quotedPlan)}</strong>
+            <span>{quotedPlan === 'plus' ? 2 : 6} test USDC / 30 ngày</span>
+            <small>{money(quotedPlan === 'plus' ? config.plusVnd : config.maxVnd)} mô phỏng</small>
+          </button>
         </div>
       )}
       {order && (

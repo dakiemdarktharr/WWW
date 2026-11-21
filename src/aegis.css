@@ -10,20 +10,6 @@
   align-items: center;
   gap: 10px;
 }
-.aegis-network {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.aegis-network::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #e85c5c;
-}
 .aegis-loading,
 .aegis-notice {
   display: flex;
@@ -35,14 +21,14 @@
   padding: 0;
   color: var(--lime);
 }
-.aegis-network-panel > header {
+.aegis-network-panel > summary {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 20px;
   border-bottom: 1px solid var(--line-soft);
 }
-.aegis-network-panel > header > h2 {
+.aegis-network-panel > summary > h2 {
   flex: 1;
 }
 .aegis-state {
@@ -262,7 +248,31 @@
   .aegis-record > div:first-child {
     flex-basis: 100%;
   }
-  .aegis-network-panel > header {
+  .aegis-network-panel > summary {
     flex-wrap: wrap;
   }
+}
+
+.aegis-network-panel > summary {
+  cursor: pointer;
+}
+.aegis-network-panel > summary::after {
+  content: '▸';
+  color: var(--muted);
+}
+.aegis-network-panel[open] > summary::after {
+  content: '▾';
+}
+.aegis-network-panel:not([open]) > summary {
+  border-bottom: 0;
+}
+.aegis-hint {
+  max-width: 68ch;
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.aegis-section-body details .aegis-wallets {
+  margin-top: 12px;
 }

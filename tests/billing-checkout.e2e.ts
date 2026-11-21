@@ -167,6 +167,9 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
   await page.goto(origin + '/billing');
   await expect(page.locator('.plan-banner')).toHaveCount(3);
   await expect(page.locator('.billing-auth')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Đăng nhập để xem gói của tôi' }).click();
+  await expect(page.locator('.billing-auth')).toBeVisible();
+  await page.getByRole('button', { name: 'Đóng', exact: true }).click();
   await page.locator('.plan-banner--plus').hover();
   await expect(page.locator('.plan-banner--plus .plan-banner-bottom')).toHaveCSS('opacity', '1');
   await page.locator('.plan-banner--plus').click();
@@ -180,10 +183,10 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
   await page.getByLabel(/^Mật khẩu/).fill(randomBytes(24).toString('hex'));
   await page.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: '30 days trial · Plus', exact: true }),
+    page.getByRole('button', { name: 'Dùng thử 30 ngày · Plus', exact: true }),
   ).toBeVisible();
   await expect(page.locator('.billing-wallet-address')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Thanh toán · 2 test USDC / tháng', exact: true }).click();
+  await page.getByRole('button', { name: 'Tiếp tục thanh toán · Plus', exact: true }).click();
   const addressEl = page.locator('.billing-wallet-address code');
   await expect(addressEl)
     .toHaveText(/^0x[\da-f]{40}$/i, { timeout: 15_000 })
@@ -215,7 +218,23 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
   assert.equal(await fixtureToken.balanceOf(treasury.address), 2_000_000n);
   assert.equal(await fixtureToken.balanceOf(buyer), 0n);
   assert.equal(store.all('billingPayment').length, 1);
-  await expect(page.locator('.plan-banner--plus .plan-banner-bottom')).toHaveText('Chọn gói');
+  await expect(page.locator('.plan-banner--plus .plan-banner-bottom')).toHaveText('Gia hạn Plus');
+  await page.locator('.plan-banner--plus').click();
+  await expect(page.getByRole('heading', { name: 'Gia hạn Plus' })).toBeVisible();
+  assert.equal(writes.length, 1, 'Selecting renewal must not charge');
+  const firstExpiry = await page.locator('.billing-current time').getAttribute('datetime');
+  assert.ok(firstExpiry);
+  await (await fixtureToken.mint(buyer, 2_000_000n)).wait();
+  await page.getByRole('button', { name: 'Tiếp tục thanh toán · Plus' }).click();
+  await page.getByRole('button', { name: 'Tiếp tục với 2 test USDC' }).click();
+  assert.equal(writes.length, 1, 'Reviewing renewal must not charge');
+  await page.getByRole('button', { name: 'Thanh toán 2 test USDC', exact: true }).click();
+  const renewedExpiry = new Date(Date.parse(firstExpiry) + 30 * 86400_000).toISOString();
+  await expect(page.locator('.billing-current time')).toHaveAttribute('datetime', renewedExpiry, {
+    timeout: 35_000,
+  });
+  assert.equal(writes.length, 2);
+  assert.equal(store.all('billingPayment').length, 2);
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await expect(page.locator('.billing-auth')).toHaveCount(0);
   await page.locator('.plan-banner--max').focus();
@@ -225,15 +244,15 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
   await page.getByLabel('Email', { exact: true }).fill('trial-buyer@example.test');
   await page.getByLabel(/^Mật khẩu/).fill(randomBytes(24).toString('hex'));
   await page.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click();
-  await page.getByRole('button', { name: '30 days trial · Max', exact: true }).click();
-  await expect(page.locator('.billing-current strong')).toHaveText('Max · Trial');
-  await expect(page.locator('.plan-banner--max .plan-banner-bottom')).toHaveText('Chọn gói');
-  await expect(page.getByRole('button', { name: '30 days trial · Max', exact: true })).toHaveCount(
-    0,
-  );
+  await page.getByRole('button', { name: 'Dùng thử 30 ngày · Max', exact: true }).click();
+  await expect(page.locator('.billing-current strong')).toHaveText('Max · Dùng thử');
+  await expect(page.locator('.plan-banner--max .plan-banner-bottom')).toHaveText('Mua gói Max');
+  await expect(
+    page.getByRole('button', { name: 'Dùng thử 30 ngày · Max', exact: true }),
+  ).toHaveCount(0);
   assert.equal(store.all('billingTrial').length, 1);
   assert.equal(store.all('billingWallet').length, 1, 'The trial must not create a wallet');
-  assert.equal(writes.length, 1, 'The trial must not broadcast or charge');
+  assert.equal(writes.length, 2, 'The trial must not broadcast or charge');
   const screenshots = path.join(process.cwd(), '.local', 'billing-review');
   await mkdir(screenshots, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -255,6 +274,6 @@ test('browser buyer creates a wallet, reviews Plus and pays the treasury', async
     .screenshot({ path: path.join(screenshots, 'plans-mobile.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.reload();
-  await expect(page.locator('.billing-current strong')).toHaveText('Max · Trial');
+  await expect(page.locator('.billing-current strong')).toHaveText('Max · Dùng thử');
   assert.deepEqual(browserErrors, []);
 });

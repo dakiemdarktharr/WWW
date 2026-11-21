@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.1',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Mở Gói & thanh toán từ thanh bên để xem gói, nâng cấp hoặc gia hạn. Quyền dự án trong Advanced hướng dẫn cấp quyền máy và duyệt gộp mã.',
+        en: 'Open Billing from the sidebar to view, upgrade or renew your plan. Project permissions under Advanced guides machine access and merge approvals.',
+      },
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-11-20',
     fixes: [

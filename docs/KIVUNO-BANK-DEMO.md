@@ -1,6 +1,6 @@
 # Dùng thử thanh toán gói Kivuno bằng QR
 
-Người mua dùng một tài khoản Kivuno để nhận quyền Plus hoặc Max. Trong bản demo cục bộ, họ chuyển VND mô phỏng trực tiếp cho bên bán sau khi chọn gói. Người mua có thể thực hiện toàn bộ quy trình trong một tab trình duyệt. Lần đầu mở trang mua gói sau khi đăng nhập, Kivuno tự tạo ví riêng nếu tài khoản chưa có ví liên kết. Mở mục **Ví riêng của tài khoản Kivuno** để xem địa chỉ và sao lưu. Người mua không cần Core hoặc số dư token để dùng QR. Ví phát hành của Kivuno ký giao dịch chứng thực trên Fuji.
+Người mua dùng một tài khoản Kivuno để nhận quyền Plus hoặc Max. Trong bản demo cục bộ, họ chuyển VND mô phỏng trực tiếp cho bên bán sau khi chọn gói. Người mua có thể thực hiện toàn bộ quy trình trong một tab trình duyệt. Lần đầu mở bước thanh toán sau khi đăng nhập, Kivuno tự tạo ví riêng nếu tài khoản chưa có ví liên kết. Mở mục **Ví riêng của tài khoản Kivuno** để xem địa chỉ và sao lưu. Người mua không cần Core hoặc số dư token để dùng QR. Ví phát hành của Kivuno ký giao dịch chứng thực trên Fuji.
 
 ## Chạy trên máy
 
@@ -12,7 +12,7 @@ npm run dev:fuji-demo
 ```
 
 1. Mở [Thanh toán Kivuno trên máy này](http://127.0.0.1:5173/billing). Tạo tài khoản Kivuno cục bộ hoặc đăng nhập tài khoản demo đã có.
-2. Bấm **Chọn Plus** hoặc **Chọn Max**. Kiểm tra số VND, người thụ hưởng, số tài khoản mô phỏng và nội dung chuyển khoản bên cạnh QR. Giá gói trong bài thử là 2 hoặc 6 test USDC cho 30 ngày. Số VND minh họa được chốt cho đơn trong 15 phút, theo cấu hình `KIVUNO_BANK_VND_PER_USDC` của máy chủ khi tạo đơn.
+2. Chọn **Plus** hoặc **Max**, mở **Xem báo giá QR mô phỏng** rồi bấm **Tạo mã QR** cho gói đã chọn. Kiểm tra số VND, người thụ hưởng, số tài khoản mô phỏng và nội dung chuyển khoản bên cạnh QR. Giá gói trong bài thử là 2 hoặc 6 test USDC cho 30 ngày. Số VND minh họa được chốt cho đơn trong 15 phút, theo cấu hình `KIVUNO_BANK_VND_PER_USDC` của máy chủ khi tạo đơn.
 3. Bấm **Mở ngân hàng mô phỏng** ngay dưới đơn để thử trên cùng máy. Đây là màn hình thực hiện chuyển thử. Mã và thông tin người thụ hưởng chỉ có hiệu lực trong trình mô phỏng. Trên điện thoại, địa chỉ `127.0.0.1` trỏ về chính điện thoại.
 4. Rà soát số tiền, tài khoản và mã đơn, bấm **Xác nhận chuyển thử**, rồi **Trở về Kivuno**. Sau đối soát, gói hiện tại hiển thị Plus hoặc Max. Tải lại trang để xem quyền vẫn còn hiệu lực. Mỗi lần gia hạn cần người mua xác nhận.
 5. Bấm **Kiểm chứng biên nhận** để xem bằng chứng của đơn. Máy chủ ghi và kiểm tra một giao dịch trên sổ cái EVM cục bộ có chain ID `31337`. Hash này chỉ tra cứu được trong môi trường vừa chạy. Giao dịch thử trên Avalanche Fuji C-Chain có chain ID `43113` và được mô tả riêng trong [hồ sơ triển khai Fuji](KIVUNO-FUJI-DEPLOYMENT.md).
