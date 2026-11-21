@@ -387,7 +387,9 @@ export class SessionManager {
       skills: options.skills || [],
       modelPolicy:
         options.modelPolicy ||
-        (this.host.store.get<Member>('member', options.memberId).managed ? 'auto' : 'manual'),
+        (member.managed || (member.preferredModel && !options.model && !options.reasoningEffort)
+          ? 'auto'
+          : 'manual'),
     });
     this.event(
       session.id,

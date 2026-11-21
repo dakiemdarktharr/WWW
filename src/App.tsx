@@ -71,6 +71,7 @@ import UsageGuide from './UsageGuide';
 import Aegis from './Aegis';
 import DeadlineField from './DeadlineField';
 import HelpDetails from './HelpDetails';
+import TeamModelPicker from './TeamModelPicker';
 import { deadlineFromForm } from './deadline';
 import ProviderConnect, {
   ExternalConnection,
@@ -1294,6 +1295,17 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
                           `/members/${member.id}/refresh`,
                           {},
                           'Account status refreshed.',
+                        )
+                      }
+                      modelSaved={(preferredModel) =>
+                        setState(
+                          (current) =>
+                            current && {
+                              ...current,
+                              members: current.members.map((entry) =>
+                                entry.id === member.id ? { ...entry, preferredModel } : entry,
+                              ),
+                            },
                         )
                       }
                       logout={() =>
@@ -2672,6 +2684,7 @@ function MemberCard({
   busy,
   login,
   refresh,
+  modelSaved,
   logout,
   importSkills,
   openTask,
@@ -2687,6 +2700,7 @@ function MemberCard({
   busy: boolean;
   login: (method: 'browser' | 'device') => void;
   refresh: () => void;
+  modelSaved: (model: string | undefined) => void;
   logout: () => void;
   importSkills: () => void;
   openTask: (task: Task) => void;
@@ -2886,56 +2900,59 @@ function MemberCard({
         </div>
       )}
       <div className={`member-actions ${provider === 'antigravity' ? 'antigravity-actions' : ''}`}>
-        {provider === 'antigravity' && isExternalMember(member) ? (
-          <div className="member-provider-actions">
-            <Button
-              primary
-              onClick={googleSignIn}
-              disabled={busy || member.entitlementLocked}
-              title="Opens the official Antigravity Google sign-in in Terminal."
-            >
-              <ArrowUpRight size={15} /> Sign in with Google
-            </Button>
-            <Button onClick={external} disabled={busy || member.entitlementLocked}>
-              <ExternalLink size={15} /> MESH connection
-            </Button>
-          </div>
-        ) : isExternalMember(member) ? (
-          <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
-            <ExternalLink size={15} />
-            {provider === 'claude'
-              ? webStatus === 'connected'
-                ? 'Manage Claude connection'
-                : 'Connect Claude'
-              : 'MESH connection'}
-          </Button>
-        ) : member.account ? (
-          <>
-            <Button onClick={refresh} disabled={busy || member.entitlementLocked}>
-              <RefreshCw size={14} /> Refresh
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              primary
-              onClick={() => login(member.runnerId ? 'device' : 'browser')}
-              disabled={busy || member.entitlementLocked}
-            >
-              <ArrowUpRight size={15} />{' '}
-              {provider === 'antigravity' ? 'Connect device account' : 'Sign in with OpenAI'}
-            </Button>
-            {provider === 'codex' && (
-              <button
-                className="text-button"
+        <div className="member-action-main">
+          <TeamModelPicker member={member} busy={busy} onSaved={modelSaved} />
+          {provider === 'antigravity' && isExternalMember(member) ? (
+            <div className="member-provider-actions">
+              <Button
+                primary
+                onClick={googleSignIn}
                 disabled={busy || member.entitlementLocked}
-                onClick={() => login('browser')}
+                title="Opens the official Antigravity Google sign-in in Terminal."
               >
-                Browser sign-in
-              </button>
-            )}
-          </>
-        )}
+                <ArrowUpRight size={15} /> Sign in with Google
+              </Button>
+              <Button onClick={external} disabled={busy || member.entitlementLocked}>
+                <ExternalLink size={15} /> MESH connection
+              </Button>
+            </div>
+          ) : isExternalMember(member) ? (
+            <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
+              <ExternalLink size={15} />
+              {provider === 'claude'
+                ? webStatus === 'connected'
+                  ? 'Manage Claude connection'
+                  : 'Connect Claude'
+                : 'MESH connection'}
+            </Button>
+          ) : member.account ? (
+            <>
+              <Button onClick={refresh} disabled={busy || member.entitlementLocked}>
+                <RefreshCw size={14} /> Refresh
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                primary
+                onClick={() => login(member.runnerId ? 'device' : 'browser')}
+                disabled={busy || member.entitlementLocked}
+              >
+                <ArrowUpRight size={15} />{' '}
+                {provider === 'antigravity' ? 'Connect device account' : 'Sign in with OpenAI'}
+              </Button>
+              {provider === 'codex' && (
+                <button
+                  className="text-button"
+                  disabled={busy || member.entitlementLocked}
+                  onClick={() => login('browser')}
+                >
+                  Browser sign-in
+                </button>
+              )}
+            </>
+          )}
+        </div>
         <button
           className="icon-button member-remove"
           aria-label={`Remove ${member.name} from team`}

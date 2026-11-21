@@ -1228,21 +1228,21 @@ function registerIpc() {
       throw error;
     }
   });
-  ipcMain.handle('relay:claude-client', async (event, action) => {
+  ipcMain.handle('relay:claude-client', async (event, action, model) => {
     trusted(event);
     if (!identity || identityTransition || Date.parse(identity.expiresAt) <= Date.now())
       throw new Error('Sign in to Kivuno first.');
     if (action === 'desktop') return claudeClient.openDesktop(shell);
     if (action === 'status') return claudeClient.codeStatus();
+    const context = {
+      ...runtimePaths(),
+      providerHome: path.join(dataDirectory, 'provider-runtimes'),
+      environment: process.env,
+    };
+    if (action === 'models') return claudeClient.codeModels(context);
+    if (action === 'code-model') return claudeClient.openCodeModel(context, model);
     if (action !== 'login' && action !== 'code') throw new Error('Unknown Claude action.');
-    return claudeClient.openCode(
-      {
-        ...runtimePaths(),
-        providerHome: path.join(dataDirectory, 'provider-runtimes'),
-        environment: process.env,
-      },
-      action === 'login',
-    );
+    return claudeClient.openCode(context, action === 'login');
   });
   ipcMain.handle('relay:prepare-provider', async (event, provider) => {
     trusted(event);

@@ -93,6 +93,8 @@ declare global {
       beginSignIn(): Promise<DesktopStatus>;
       cancelSignIn(): Promise<DesktopStatus>;
       claudeClient(action: 'status'): Promise<ClaudeCodeStatus>;
+      claudeClient(action: 'models'): Promise<{ model: string; displayName: string }[]>;
+      claudeClient(action: 'code-model', model: string | null): Promise<{ opened: boolean }>;
       claudeClient(action: 'desktop' | 'code' | 'login'): Promise<{ opened: boolean }>;
       prepareProvider(provider: import('../shared/types').ProviderId): Promise<{
         provider: import('../shared/types').ProviderId;

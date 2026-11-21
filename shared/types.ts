@@ -71,6 +71,8 @@ export interface Member {
   color: string;
   status: 'offline' | 'connecting' | 'ready' | 'working' | 'error';
   account: { email?: string; planType?: string; type?: string } | null;
+  /** Overrides automatic model selection for the next turn on this profile. */
+  preferredModel?: string;
   skills: string[];
   plugins: string[];
   capabilitiesError?: string;
