@@ -6,7 +6,7 @@
   "redirects": [
     {
       "source": "/downloads/Kivuno-0.9.2-macOS-arm64.dmg",
-      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.9.2-macos-r2/Kivuno-0.9.2-macOS-arm64.dmg",
+      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.9.2-macos-r3/Kivuno-0.9.2-macOS-arm64.dmg",
       "statusCode": 307
     },
     {
