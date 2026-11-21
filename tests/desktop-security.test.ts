@@ -105,6 +105,16 @@ test('macOS updates accept only version-matched GitHub release assets and truste
   assert.equal(update.status.downloadAvailable, true);
   assert.equal(update.updateArtifact.url, manifest.platforms.macos.autoUpdate.url);
   assert.equal(update.updateArtifact.size, 1024);
+  const macReleaseUrl = manifest.platforms.macos.autoUpdate.url.replace(
+    '/v0.8.5/',
+    '/v0.8.5-macos/',
+  );
+  manifest.platforms.macos.autoUpdate.url = macReleaseUrl;
+  assert.equal(
+    desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app').updateArtifact
+      .url,
+    macReleaseUrl,
+  );
   const { autoUpdate: _autoUpdate, ...macosWithoutZip } = manifest.platforms.macos;
   const dmgFallback = {
     ...manifest,
@@ -141,7 +151,7 @@ test('macOS updates accept only version-matched GitHub release assets and truste
     false,
   );
   manifest.platforms.macos.autoUpdate.url =
-    'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.4/Kivuno-0.8.5-macOS-arm64.zip';
+    'https://github.com/dakiemdarktharr/WWW/releases/download/v0.8.4-macos/Kivuno-0.8.5-macOS-arm64.zip';
   assert.throws(
     () => desktopUpdate(manifest, '0.8.4', 'darwin', 'arm64', 'https://kivuno.vercel.app'),
     /invalid installer link/,

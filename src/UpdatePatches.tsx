@@ -14,8 +14,8 @@ const patches = [
         en: 'When a new version is available, select Update in the title bar to download, verify and install it. Kivuno reopens after installation.',
       },
       {
-        vi: 'Trên Windows và Linux, Sade lập kế hoạch, điều phối và kiểm tra đầu ra cho bài nghiên cứu kèm slide, trang bán hàng và dashboard. Groups hiển thị tiến độ và các phiên làm việc đã cấp quyền.',
-        en: 'On Windows and Linux, Sade plans, coordinates, and reviews research papers with slides, storefronts, and dashboards. Groups shows progress and sessions shared with permission.',
+        vi: 'Sade lập kế hoạch, điều phối và kiểm tra đầu ra cho bài nghiên cứu kèm slide, trang bán hàng và dashboard trên Windows, Linux và macOS Apple Silicon. Groups hiển thị tiến độ và các phiên làm việc đã cấp quyền.',
+        en: 'Sade plans, coordinates, and reviews research papers with slides, storefronts, and dashboards on Windows, Linux, and Apple Silicon Macs. Groups shows progress and sessions shared with permission.',
       },
       {
         vi: 'Sade xác nhận lệnh hoãn rõ ràng và xử lý yêu cầu đổi chữ trong một tệp ngay tại Kivuno. Nếu thiếu nội dung mới, Sade hỏi trước khi giao việc.',

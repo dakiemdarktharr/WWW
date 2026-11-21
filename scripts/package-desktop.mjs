@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { build, Platform, Arch } from 'electron-builder';
 import { getMakeNsisPath } from 'app-builder-lib/out/toolsets/windows.js';
+import desktopSecurity from '../desktop/security.cjs';
 import { configureLinuxNsisExtraction } from './nsis-uninstaller.mjs';
 import { configureDestinationStaging } from './nsis-destination-staging.mjs';
 import { desktopPackageFiles, windowsUpdateHelpers } from './desktop-package-files.mjs';
@@ -111,8 +112,9 @@ if (macosArtifact) {
     const updateUrl = new URL(update.url);
     const updateSize = Number(update.size);
     const updateFilename = `Kivuno-${update.version}-macOS-arm64.zip`;
-    const expectedGitHubUpdateUrl = `https://github.com/dakiemdarktharr/WWW/releases/download/v${update.version}/${updateFilename}`;
-    const isGitHubUpdate = updateUrl.href === expectedGitHubUpdateUrl;
+    const isGitHubUpdate =
+      desktopSecurity.githubMacReleaseAsset(updateUrl.href, '.zip') &&
+      updateUrl.pathname.endsWith(`/${updateFilename}`);
     const validUpdatePath = updateUrl.pathname === `/downloads/${updateFilename}` || isGitHubUpdate;
     const trustedUpdateOrigin =
       updateUrl.origin === 'https://kivuno.vercel.app' ||

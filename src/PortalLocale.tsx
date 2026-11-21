@@ -16,8 +16,8 @@ const english: Record<string, string> = {
   'Điều phối trong Chat': 'Coordination in Chat',
   'Cách Sade điều phối': 'How Sade works',
   'Điều phối dự án với Sade': 'Coordinate projects with Sade',
-  'Trong Kivuno 0.9.2 cho Windows và Linux, nhắn @Sade trong Groups để giao bài nghiên cứu kèm slide, web bán hàng hoặc dashboard. Theo dõi ai đang làm gì ngay cạnh cuộc trò chuyện.':
-    'In Kivuno 0.9.2 for Windows and Linux, message @Sade in Groups to start a research paper with slides, a storefront, or a dashboard. See who is doing what beside the conversation.',
+  'Trong Kivuno 0.9.2 cho Windows, Linux và macOS Apple Silicon, nhắn @Sade trong Groups để giao bài nghiên cứu kèm slide, web bán hàng hoặc dashboard. Theo dõi ai đang làm gì ngay cạnh cuộc trò chuyện.':
+    'In Kivuno 0.9.2 for Windows, Linux, and Apple Silicon Macs, message @Sade in Groups to start a research paper with slides, a storefront, or a dashboard. See who is doing what beside the conversation.',
   'Tải Kivuno để dùng Sade': 'Download Kivuno to use Sade',
   'Từ brief đến bàn giao': 'From brief to handoff',
   'Các bước Sade điều phối': 'Sade project stages',
