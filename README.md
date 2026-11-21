@@ -44,7 +44,9 @@ Mở **http://127.0.0.1:4317**. Trên Windows, có thể chạy `start-relay.cmd
 
 Phát triển giao diện: `npm run dev`, rồi mở http://127.0.0.1:5173. Chạy kiểm thử: `npm test`. Kiểm tra cả TypeScript, tests và build: `npm run check`.
 
-**Demo mua gói bằng QR.** Chạy `npm run dev:fuji-demo`, mở [trang mua gói](http://127.0.0.1:5173/billing) và chọn Plus hoặc Max. Ngân hàng mô phỏng hiển thị số VND và mã đơn. Sau khi bạn xác nhận, Kivuno đối soát, cấp gói và cho phép kiểm chứng biên nhận trên EVM cục bộ. [Hướng dẫn demo QR](docs/KIVUNO-BANK-DEMO.md) · [Luồng test USDC riêng trên Avalanche Fuji](docs/KIVUNO-FUJI-DEPLOYMENT.md).
+**Gói demo trên website.** Mở [Gói & thanh toán](https://kivuno.vercel.app/billing), đăng nhập và chọn Plus hoặc Max. Ví riêng được tạo ngay khi đăng ký hoặc đăng nhập. Người dùng xác nhận **thực trả 0 USDC**, không cần nạp token; giá 2 và 6 USDC chỉ mô phỏng. Ví dự án trả gas để ghi biên nhận thật trên Avalanche Fuji, sau đó Kivuno cấp gói 30 ngày. [Kiến trúc và cấu hình thanh toán miễn phí](docs/KIVUNO-SPONSORED-BILLING.md).
+
+**Demo QR cục bộ.** Chạy `npm run dev:fuji-demo`, mở [trang mua gói](http://127.0.0.1:5173/billing) và chọn Plus hoặc Max. Ngân hàng mô phỏng hiển thị số VND và mã đơn. Sau khi bạn xác nhận, Kivuno đối soát, cấp gói và cho phép kiểm chứng biên nhận trên EVM cục bộ. [Hướng dẫn demo QR](docs/KIVUNO-BANK-DEMO.md) · [Luồng test USDC cũ trên Avalanche Fuji](docs/KIVUNO-FUJI-DEPLOYMENT.md).
 
 Giám khảo có thể đối chiếu gói Max của đơn QR với [giao dịch Fuji](https://build.avax.network/explorer/fuji/c-chain/tx/0xa84e75b8c8524e6c307a3121092cde377cdb4a525e7d0785422d00bc87e1eb97) bằng lệnh `node scripts/fuji-qr-receipt.mjs verify`. [Biên nhận công khai và thời hạn gói](public/kivuno-qr-fuji.json).
 
