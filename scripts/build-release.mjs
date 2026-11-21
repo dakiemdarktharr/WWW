@@ -4,10 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import releaseDownload from '../desktop/release-download.cjs';
 import desktopSecurity from '../desktop/security.cjs';
+import { verifyPublishedDesktopFeed, verifyReleaseParity } from './verify-release-parity.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run build:release through npm.');
+const parity = await verifyReleaseParity(root);
+if (!parity.existingRelease && process.platform !== 'linux')
+  throw new Error('Run the full release build on Linux to package both Windows and Linux.');
 const buildEnv = { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
 delete buildEnv.SADE_OPENAI_API_KEY;
 delete buildEnv.OPENAI_API_KEY;
@@ -52,22 +56,19 @@ for (const [script, args] of steps) {
 const downloads = path.join(root, 'dist', 'downloads');
 const releaseFile = path.join(downloads, 'release.json');
 const release = JSON.parse(await readFile(releaseFile, 'utf8'));
+verifyPublishedDesktopFeed(release, parity);
 const macos = release.platforms?.macos;
 if (
   macos?.autoUpdate &&
-  !buildEnv.KIVUNO_MACOS_URL?.trim() &&
-  !buildEnv.KIVUNO_MACOS_UPDATE_URL?.trim()
+  (!parity.existingRelease ||
+    (!buildEnv.KIVUNO_MACOS_URL?.trim() && !buildEnv.KIVUNO_MACOS_UPDATE_URL?.trim()))
 ) {
-  const metadata = JSON.parse(
-    await readFile(path.join(root, 'release-artifacts', `macos-${macos.version}.json`), 'utf8'),
-  );
-  const source = metadata.autoUpdate?.assetSource;
-  if (source) {
-    const filename = `Kivuno-${macos.version}-macOS-arm64.zip`;
+  const source = parity.metadata.autoUpdate?.assetSource;
+  const filename = `Kivuno-${macos.version}-macOS-arm64.zip`;
+  if (source && macos.autoUpdate.url === `https://kivuno.vercel.app/downloads/${filename}`) {
     if (
       !desktopSecurity.githubMacReleaseAsset(source, '.zip') ||
-      !new URL(source).pathname.endsWith(`/${filename}`) ||
-      macos.autoUpdate.url !== `https://kivuno.vercel.app/downloads/${filename}`
+      !new URL(source).pathname.endsWith(`/${filename}`)
     )
       throw new Error('Invalid mirror for the macOS in-app update.');
     // Copy the verified ZIP into the same deployment as its checksum. Older Mac apps
