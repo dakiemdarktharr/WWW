@@ -10,6 +10,11 @@
       "statusCode": 307
     },
     {
+      "source": "/downloads/Kivuno-0.9.10-macOS-arm64.dmg",
+      "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.9.10/Kivuno-0.9.10-macOS-arm64.dmg",
+      "statusCode": 307
+    },
+    {
       "source": "/downloads/Kivuno-0.9.8-macOS-arm64.dmg",
       "destination": "https://github.com/dakiemdarktharr/WWW/releases/download/v0.9.8-macos/Kivuno-0.9.8-macOS-arm64.dmg",
       "statusCode": 307
