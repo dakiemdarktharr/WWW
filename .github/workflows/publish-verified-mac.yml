@@ -33,4 +33,4 @@ jobs:
           cd packages
           sha256sum -c Kivuno-0.9.13-macOS-arm64.dmg.sha256
           sha256sum -c Kivuno-0.9.13-macOS-arm64.zip.sha256
-          gh release create v0.9.13-macos-r2 --repo ${{ github.repository }} --target b185de975cdb456504eaccfc8d3eae0178c02313 --prerelease --title 'Kivuno 0.9.13 macOS staging' --notes 'Verified Apple Silicon DMG and update ZIP. Public desktop promotion waits for Windows and Linux.' Kivuno-0.9.13-macOS-arm64.dmg Kivuno-0.9.13-macOS-arm64.dmg.sha256 Kivuno-0.9.13-macOS-arm64.zip Kivuno-0.9.13-macOS-arm64.zip.sha256 macos-arm64.json
+          gh release upload v0.9.13-macos-r2 --repo ${{ github.repository }} Kivuno-0.9.13-macOS-arm64.dmg Kivuno-0.9.13-macOS-arm64.dmg.sha256 Kivuno-0.9.13-macOS-arm64.zip Kivuno-0.9.13-macOS-arm64.zip.sha256 macos-arm64.json
