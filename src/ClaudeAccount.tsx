@@ -8,6 +8,13 @@ export const claudeClients = [
   { value: 'code', label: 'Claude Code · eligible paid plan' },
 ];
 export const claudeConnectorsUrl = 'https://claude.ai/customize/connectors/yours';
+export function claudeInstallUrl(connectorUrl: string) {
+  const url = new URL('https://claude.ai/customize/connectors');
+  url.searchParams.set('modal', 'add-custom-connector');
+  url.searchParams.set('connectorName', 'Kivuno');
+  url.searchParams.set('connectorUrl', connectorUrl);
+  return url.href;
+}
 const accountEvent = 'kivuno-claude-account-changed';
 export function refreshClaudeAccount(memberId: string) {
   inFlight.delete(memberId);
@@ -18,7 +25,7 @@ export async function beginClaudeAccount(memberId: string) {
     throw new Error('Open the current Kivuno desktop app to connect Claude.');
   const account = await window.relayDesktop.beginClaudeWebAccount({ memberId });
   refreshClaudeAccount(memberId);
-  if (account.status !== 'connected') await openExternal(claudeConnectorsUrl);
+  if (account.status !== 'connected') await openExternal(claudeInstallUrl(account.url));
   return account;
 }
 

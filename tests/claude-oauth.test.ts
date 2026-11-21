@@ -223,7 +223,7 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     connectionId: accountId,
     memberId,
     profileName: 'New Claude',
-    expiresAt: new Date(Date.now() + 600000).toISOString(),
+    expiresAt: new Date(Date.now() + 29 * 86400000).toISOString(),
   };
   assert.equal((await control(device, body)).json().status, 'pending');
   assert.equal(
@@ -242,9 +242,24 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     memberId,
     projectId: randomUUID(),
     tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
-    expiresAt: body.expiresAt,
+    expiresAt: new Date(Date.now() + 600000).toISOString(),
   };
   assert.equal((await control(device, projectAccess)).statusCode, 403);
+  let lastRefresh = '';
+  const refresh = (raw: string, overrides = {}) =>
+    app.inject({
+      method: 'POST',
+      url: prefix + 'token',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: raw,
+        client_id: published,
+        resource: origin + claudeMcpPath,
+        ...overrides,
+      }).toString(),
+    });
+
   const accountAuth = async (fields: Record<string, string>) => {
     const auth = await start({ client_id: published, ...fields });
     assert.equal(auth.statusCode, 302);
@@ -255,9 +270,11 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
       [['account', accountId, undefined]],
     );
     const c = new URL((await decide(req, accountId)).json().redirectUrl).searchParams.get('code')!;
-    return (await exchange(c, { client_id: published })).json().access_token;
+    const result = (await exchange(c, { client_id: published })).json();
+    lastRefresh = result.refresh_token;
+    return result.access_token;
   };
-  const accountToken = await accountAuth({ scope: '' });
+  let accountToken = await accountAuth({ scope: '' });
   assert.equal(
     (await status()).status,
     'pending',
@@ -310,8 +327,27 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     connectionId: freshId,
     tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
   });
+  const expiredId = createHash('sha256').update(accountToken).digest('hex');
+  const expiredAccess = store.lookup<any>('claudeOAuthAccess', expiredId)!;
+  store.put('claudeOAuthAccess', { ...expiredAccess, expiresAt: Date.now() - 1 });
+  assert.equal((await initialize(accountToken)).statusCode, 401);
+  assert.equal((await status()).status, 'connected');
+  const renewed = await refresh(lastRefresh);
+  assert.equal(renewed.statusCode, 200);
+  assert.ok(renewed.json().expires_in <= 3600);
+  accountToken = renewed.json().access_token;
+  lastRefresh = renewed.json().refresh_token;
+  const renewedHandshake = await initialize(accountToken);
+  assert.equal(renewedHandshake.statusCode, 200);
+  assert.equal(
+    (await mcp('tools/list', {}, String(renewedHandshake.headers['mcp-session-id']))).json().result
+      .tools[0].name,
+    'mesh_read',
+  );
+  const oldFamilyRefresh = lastRefresh;
   const verificationOnly = await accountAuth({ scope: 'connector.connect' });
   assert.equal((await initialize(accountToken)).statusCode, 401);
+  assert.equal((await refresh(oldFamilyRefresh)).statusCode, 400);
   assert.equal((await status()).status, 'pending');
   const handshake = await initialize(verificationOnly);
   assert.equal(handshake.statusCode, 200);
@@ -323,6 +359,22 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     [],
   );
   assert.equal((await control(device, projectAccess)).statusCode, 403);
+  const originalRefresh = lastRefresh;
+  assert.match(originalRefresh, /^kwr_[A-Za-z0-9_-]{43}$/);
+  assert.equal((await refresh(originalRefresh, { client_id: id })).statusCode, 400);
+  assert.equal((await refresh(originalRefresh, { resource: origin })).statusCode, 400);
+  assert.equal((await refresh(originalRefresh, { scope: 'mesh.read' })).statusCode, 400);
+  const rotated = await refresh(originalRefresh);
+  assert.equal(rotated.statusCode, 200);
+  assert.notEqual(rotated.json().refresh_token, originalRefresh);
+  assert.equal((await initialize(verificationOnly)).statusCode, 401);
+  assert.equal((await status()).status, 'connected');
+  assert.equal((await status()).canShare, false);
+  assert.equal((await initialize(rotated.json().access_token)).statusCode, 200);
+  assert.ok(!JSON.stringify(store.all('claudeOAuthRefresh')).includes(originalRefresh));
+  assert.equal((await refresh(originalRefresh)).statusCode, 400);
+  assert.equal((await initialize(rotated.json().access_token)).statusCode, 401);
+  assert.equal((await refresh(rotated.json().refresh_token)).statusCode, 400);
   await control(device, { action: 'revoke', connectionId: accountId });
   assert.equal((await status()).status, 'disconnected');
   assert.equal((await initialize(verificationOnly)).statusCode, 401);

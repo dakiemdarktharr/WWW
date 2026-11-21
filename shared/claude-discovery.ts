@@ -30,7 +30,7 @@ export function claudeMetadata(origin: string, issuer: boolean) {
     token_endpoint: origin + claudeTokenPath,
     registration_endpoint: origin + claudeRegisterPath,
     response_types_supported: ['code'],
-    grant_types_supported: ['authorization_code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     scopes_supported: claudeScopes,
     token_endpoint_auth_methods_supported: ['none'],

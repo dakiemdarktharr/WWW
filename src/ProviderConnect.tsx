@@ -13,6 +13,7 @@ import {
   beginClaudeAccount,
   claudeClients,
   claudeConnectorsUrl,
+  claudeInstallUrl,
   refreshClaudeAccount,
   useClaudeAccount,
   type ClaudeClient,
@@ -526,10 +527,13 @@ export function ExternalConnection({
             </>
           ) : account?.status === 'pending' ? (
             <>
-              <strong role="status">Waiting for Claude</strong>
+              <ConnectionProgress
+                step={1}
+                labels={['Open Claude', 'Approve connection', 'Verify connection']}
+              />
               <p>
-                In your Claude connectors, choose Kivuno → Connect (Connecter), then confirm the
-                account link on Kivuno.
+                If Kivuno is already listed in Claude, open it and choose Connect. Confirm the
+                account link on the Kivuno page. This window updates automatically.
               </p>
               <button
                 className="button primary"
@@ -540,11 +544,21 @@ export function ExternalConnection({
               >
                 <ArrowUpRight size={16} /> Open Claude connectors
               </button>
-              <details>
-                <summary>Add Kivuno to Claude for the first time</summary>
+              <button
+                className="text-button"
+                onClick={() =>
+                  void openExternal(claudeInstallUrl(account.url)).catch((cause) =>
+                    setError(cause.message),
+                  )
+                }
+              >
+                Open prefilled Claude setup
+              </button>
+              <details open>
+                <summary>First connection or setup did not open?</summary>
                 <p>
-                  Choose Add → Custom → Web, name it Kivuno and enter this URL. Save it, then choose
-                  Connect.
+                  Choose Add → Custom → Web. Name it Kivuno, paste the address below and continue
+                  with the detected sign-in settings. Then choose Connect.
                 </p>
                 <input
                   aria-label="Connector URL"
@@ -552,6 +566,19 @@ export function ExternalConnection({
                   value={account.url}
                   onFocus={(event) => event.target.select()}
                 />
+                <button
+                  className="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(account.url);
+                      setCopied(true);
+                    } catch {
+                      setError('Select and copy the address above to continue.');
+                    }
+                  }}
+                >
+                  <Copy size={15} /> {copied ? 'Address copied' : 'Copy address'}
+                </button>
               </details>
             </>
           ) : (

@@ -34,7 +34,7 @@ type RequestData = Timed & {
   ownerId?: string;
   scope?: string;
 };
-type Code = RequestData & { grantId: string; issuedTokenId?: string };
+type Code = RequestData & { grantId: string; issuedTokenId?: string; issuedRefreshId?: string };
 type Token = Timed & {
   grantId: string;
   ownerId: string;
@@ -42,6 +42,33 @@ type Token = Timed & {
   resource: string;
   scope: string;
 };
+type Refresh = Token & { family: string; accessId: string; used?: boolean };
+export function claudeOAuthConnection(store: Store, grant: ClaudeWebGrant, resource: string) {
+  if (!grant.verifiedCredential || grant.verifiedCredential !== grant.latestCredential) return;
+  const access = store.lookup<Token>('claudeOAuthAccess', grant.verifiedCredential);
+  if (
+    access &&
+    access.grantId === grant.id &&
+    access.ownerId === grant.ownerId &&
+    access.resource === resource &&
+    access.expiresAt > Date.now()
+  )
+    return access;
+  const refresh = grant.latestRefresh
+    ? store.lookup<Refresh>('claudeOAuthRefresh', grant.latestRefresh)
+    : undefined;
+  if (
+    refresh &&
+    !refresh.used &&
+    refresh.expiresAt > Date.now() &&
+    refresh.family === grant.refreshFamily &&
+    refresh.accessId === grant.verifiedCredential &&
+    refresh.grantId === grant.id &&
+    refresh.ownerId === grant.ownerId &&
+    refresh.resource === resource
+  )
+    return refresh;
+}
 export type ClaudeOAuthOptions = {
   origin: string;
   ownerId: (request: FastifyRequest) => string | undefined;
@@ -127,6 +154,15 @@ export function registerClaudeOAuth(
       resource: z.literal(resource),
       client_id: z.string().max(256),
       code_verifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/),
+    })
+    .strict();
+  const refreshInput = z
+    .object({
+      grant_type: z.literal('refresh_token'),
+      refresh_token: z.string().regex(/^kwr_[A-Za-z0-9_-]{43}$/),
+      client_id: z.string().min(1).max(256),
+      resource: z.literal(resource),
+      scope: supportedScopes.optional(),
     })
     .strict();
   const consent = z.discriminatedUnion('decision', [
@@ -293,6 +329,79 @@ export function registerClaudeOAuth(
         req.headers.authorization
       )
         return reply.code(400).send({ error: 'invalid_request' });
+      if ((req.body as { grant_type?: string })?.grant_type === 'refresh_token') {
+        const parsed = refreshInput.safeParse(req.body);
+        if (!parsed.success) return reply.code(400).send({ error: 'invalid_request' });
+        const q = parsed.data;
+        const response = store.transaction(() => {
+          const previous = store.lookup<Refresh>('claudeOAuthRefresh', hash(q.refresh_token));
+          if (
+            !previous ||
+            previous.expiresAt <= Date.now() ||
+            previous.clientId !== q.client_id ||
+            previous.resource !== q.resource ||
+            !knownClient(q.client_id) ||
+            (q.scope &&
+              q.scope.split(' ').some((value) => !previous.scope.split(' ').includes(value)))
+          )
+            return;
+          const grant = store.lookup<ClaudeWebGrant>('claudeWebGrant', previous.grantId);
+          if (
+            !valid(grant) ||
+            grant.kind !== 'account' ||
+            grant.ownerId !== previous.ownerId ||
+            grant.refreshFamily !== previous.family
+          )
+            return;
+          if (previous.used) {
+            store.put('claudeWebGrant', { ...grant, revoked: true });
+            return;
+          }
+          if (
+            grant.latestRefresh !== previous.id ||
+            grant.latestCredential !== previous.accessId ||
+            !available('claudeOAuthRefresh', 32768)
+          )
+            return;
+          const accessToken = secret('kwo_'),
+            refreshToken = secret('kwr_');
+          const id = hash(accessToken),
+            refreshId = hash(refreshToken);
+          const access: Token = {
+            id,
+            grantId: grant.id,
+            ownerId: previous.ownerId,
+            clientId: previous.clientId,
+            resource,
+            scope: q.scope || previous.scope,
+            expiresAt: Math.min(grant.expiresAt, Date.now() + 3600000),
+          };
+          store.put('claudeOAuthAccess', access);
+          store.put('claudeOAuthRefresh', { ...previous, used: true });
+          store.put<Refresh>('claudeOAuthRefresh', {
+            ...access,
+            id: refreshId,
+            accessId: id,
+            family: previous.family,
+            expiresAt: Math.min(grant.expiresAt, previous.expiresAt),
+          });
+          store.put('claudeWebGrant', {
+            ...grant,
+            latestRefresh: refreshId,
+            latestCredential: id,
+            verifiedCredential: grant.verifiedCredential === previous.accessId ? id : undefined,
+          });
+          store.remove('claudeOAuthAccess', previous.accessId);
+          return {
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            token_type: 'Bearer',
+            expires_in: Math.floor((access.expiresAt - Date.now()) / 1000),
+            scope: access.scope,
+          };
+        });
+        return response ? reply.send(response) : reply.code(400).send({ error: 'invalid_grant' });
+      }
       const parsed = tokenInput.safeParse(req.body);
       if (!parsed.success) return reply.code(400).send({ error: 'invalid_request' });
       const q = parsed.data;
@@ -314,6 +423,9 @@ export function registerClaudeOAuth(
           return;
         if (code.issuedTokenId) {
           store.remove('claudeOAuthAccess', code.issuedTokenId);
+          const linked = store.lookup<ClaudeWebGrant>('claudeWebGrant', code.grantId);
+          if (code.issuedRefreshId && linked?.refreshFamily === code.issuedRefreshId)
+            store.put('claudeWebGrant', { ...linked, revoked: true });
           return;
         }
         const grant = store.lookup<ClaudeWebGrant>('claudeWebGrant', code.grantId);
@@ -326,7 +438,12 @@ export function registerClaudeOAuth(
         const token = secret('kwo_'),
           expiresAt = Math.min(grant.expiresAt, Date.now() + 3600000);
         const id = hash(token);
+        let refreshToken: string | undefined;
+        let refreshId: string | undefined;
         if (grant.kind === 'account') {
+          if (!available('claudeOAuthRefresh', 32768)) return;
+          refreshToken = secret('kwr_');
+          refreshId = hash(refreshToken);
           // Claude does not attest a personal email to our resource server. A new
           // authorization must never inherit the previous connector's project.
           if (grant.latestCredential) {
@@ -338,6 +455,8 @@ export function registerClaudeOAuth(
           store.put('claudeWebGrant', {
             ...grant,
             latestCredential: id,
+            refreshFamily: refreshId,
+            latestRefresh: refreshId,
             verifiedAt: undefined,
             verifiedCredential: undefined,
           });
@@ -351,9 +470,26 @@ export function registerClaudeOAuth(
           resource,
           scope: code.scope || scope,
         });
-        store.put<Code>('claudeOAuthCode', { ...code, issuedTokenId: id });
+        if (refreshId)
+          store.put<Refresh>('claudeOAuthRefresh', {
+            id: refreshId,
+            accessId: id,
+            family: refreshId,
+            expiresAt: grant.expiresAt,
+            grantId: grant.id,
+            ownerId: code.ownerId,
+            clientId: code.clientId,
+            resource,
+            scope: code.scope || scope,
+          });
+        store.put<Code>('claudeOAuthCode', {
+          ...code,
+          issuedTokenId: id,
+          issuedRefreshId: refreshId,
+        });
         return {
           access_token: token,
+          ...(refreshToken ? { refresh_token: refreshToken } : {}),
           token_type: 'Bearer',
           expires_in: Math.floor((expiresAt - Date.now()) / 1000),
           scope: code.scope || scope,

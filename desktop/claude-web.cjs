@@ -149,7 +149,7 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
             connectionId: randomUUID(),
             memberId,
             profileName: localProfile.profileName,
-            expiresAt: new Date(Date.now() + 8 * 3600000).toISOString(),
+            expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
           }
         : { action: 'account-status', memberId },
     );

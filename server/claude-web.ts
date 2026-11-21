@@ -5,7 +5,7 @@ import { claudeMcpPath, claudeWebBearer, claudeWebControlPath } from '../shared/
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { Store, DomainError } from './store.ts';
 import {
-  claudeOAuthAccess,
+  claudeOAuthConnection,
   claudeOAuthGrant,
   registerClaudeOAuth,
   type ClaudeOAuthOptions,
@@ -117,6 +117,8 @@ export interface ClaudeWebGrant {
   verifiedAt?: string;
   verifiedCredential?: string;
   latestCredential?: string;
+  refreshFamily?: string;
+  latestRefresh?: string;
   memberId: string;
   ownerId: string;
   deviceId: string;
@@ -261,14 +263,16 @@ export function registerClaudeWeb(
     if (!valid(account)) return { status: 'disconnected' as const, canShare: false };
     const access =
       account.verifiedCredential && oauth
-        ? claudeOAuthAccess(store, account.verifiedCredential, oauth.origin + claudeMcpPath)
+        ? claudeOAuthConnection(store, account, oauth.origin + claudeMcpPath)
         : undefined;
     const connected = access && access.grantId === account.id && access.ownerId === account.ownerId;
     return {
       status: connected ? ('connected' as const) : ('pending' as const),
       connectionId: account.connectionId,
       expiresAt: new Date(
-        connected ? Math.min(account.expiresAt, access.expiresAt) : account.expiresAt,
+        connected && !account.latestRefresh
+          ? Math.min(account.expiresAt, access.expiresAt)
+          : account.expiresAt,
       ).toISOString(),
       ...(connected
         ? {
@@ -304,8 +308,8 @@ export function registerClaudeWeb(
         if (existing) return { enrolled: true, ...accountStatus(existing) };
         const now = Date.now(),
           expiry = Date.parse(input.expiresAt);
-        if (expiry <= now || expiry > now + 8 * 3600000)
-          throw new DomainError('Choose an expiry within eight hours.', 400);
+        if (expiry <= now || expiry > now + 30 * 86400000)
+          throw new DomainError('Choose an expiry within thirty days.', 400);
         const rows = store.all<Grant>('claudeWebGrant');
         for (const grant of rows)
           if (grant.expiresAt <= now) store.remove('claudeWebGrant', grant.id);
