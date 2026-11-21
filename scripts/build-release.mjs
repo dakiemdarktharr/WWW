@@ -15,6 +15,18 @@ delete buildEnv.SADE_QWEN_API_KEY;
 delete buildEnv.SADE_QWEN_WORKSPACE_HOST;
 const steps = [
   ['build', [npmCli, 'run', 'build']],
+  // Verify gateway startup under the module rules used by the deployed function.
+  [
+    'gateway:startup',
+    [
+      '--no-experimental-detect-module',
+      '--no-experimental-require-module',
+      '--experimental-transform-types',
+      '--input-type=module',
+      '-e',
+      "await import('./api/gateway.ts')",
+    ],
+  ],
   ['desktop:stage', [npmCli, 'run', 'desktop:stage']],
   ['desktop:package', [npmCli, 'run', 'desktop:package']],
   ...(process.platform === 'linux'

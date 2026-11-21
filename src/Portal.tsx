@@ -698,7 +698,7 @@ function PortalContent() {
                     <h2 id="sade-title">{t('Điều phối dự án với Sade')}</h2>
                     <p>
                       {t(
-                        'Trong Kivuno 0.9.2 cho Windows, Linux và macOS Apple Silicon, nhắn @Sade trong Groups để giao bài nghiên cứu kèm slide, web bán hàng hoặc dashboard. Theo dõi ai đang làm gì ngay cạnh cuộc trò chuyện.',
+                        'Nhắn Sade trong Chat để tạo PowerPoint. Codex chạy nền soạn slide, xuất tệp có nguồn và báo kết quả ngay trong Kivuno.',
                       )}
                     </p>
                     <button className="kp-sade-intro-link" onClick={() => setDownloadsOpen(true)}>

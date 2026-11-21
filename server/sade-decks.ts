@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isSadeDeckRequest, sadeDeckMaxBytes, type SadeDeckView } from '../shared/sade-deck.ts';
 import { redact } from './security.ts';
+import { renderSadePowerPoint } from './shared-sade-project-render.ts';
 import { DomainError, type Store } from './store.ts';
 
 const command = z.discriminatedUnion('action', [
@@ -35,6 +36,27 @@ const completion = z.strictObject({
   ]),
 });
 export type SadeDeckResult = z.infer<typeof completion>['result'];
+
+const renderRequest = z.strictObject({
+  id: z.uuid(),
+  lease: z.uuid(),
+  presentation: z.strictObject({
+    title: z.string().min(1).max(130),
+    slides: z
+      .array(
+        z.strictObject({
+          title: z.string().min(1).max(130),
+          bullets: z.array(z.string().min(1).max(400)).min(1).max(5),
+          bulletLinks: z
+            .array(z.url({ protocol: /^https$/ }).max(1500))
+            .max(5)
+            .optional(),
+        }),
+      )
+      .min(1)
+      .max(16),
+  }),
+});
 
 type Deck = SadeDeckView & {
   ownerId: string;
@@ -155,6 +177,23 @@ export class SadeDecks {
       error:
         'Sade could not verify enough source material or finish the presentation after retrying.',
     } satisfies Deck);
+  }
+
+  async render(input: unknown) {
+    const { id, lease, presentation } = renderRequest.parse(input);
+    const current = this.store.lookup<Deck>(kind, id);
+    if (current?.lease !== lease || current.state !== 'authoring')
+      throw new DomainError(
+        'This export does not belong to the active PowerPoint assignment.',
+        409,
+      );
+    const bytes = await renderSadePowerPoint(presentation);
+    if (bytes.length > sadeDeckMaxBytes)
+      throw new DomainError('The PowerPoint exceeds its delivery limit.', 413);
+    return {
+      data: bytes.toString('base64'),
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    };
   }
 
   finish(input: unknown) {

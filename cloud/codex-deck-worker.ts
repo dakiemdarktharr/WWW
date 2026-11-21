@@ -122,16 +122,54 @@ export async function runCodexDeckWorker<T>(
   );
 
   const path = '/' + session.id;
+  async function sendEvents(events: object[], key: string) {
+    await retry(async () => {
+      const reply = await request(path + '/events', { events }, key);
+      await reply.body?.cancel().catch(() => {});
+    });
+  }
   try {
     await input.onSession?.(session.id);
     let current = session;
     let result: { artifact: T; turn: string; receipt: string } | undefined;
     let calls = 0;
     let acknowledgedCall: string | undefined;
-    while (current.status !== 'idle') {
+    let feedback: string | undefined;
+    let revisionSentAt = 0;
+    let revisionStarted = false;
+    for (;;) {
       signal.throwIfAborted();
       if (current.id !== session.id || current.status === 'failed')
         throw new Error('Codex did not complete its assignment.');
+      if (current.status === 'idle') {
+        if (result) break;
+        if (!feedback || revisionStarted || (revisionSentAt && Date.now() - revisionSentAt > 12000))
+          throw new Error('Codex did not export a PowerPoint.');
+        if (!revisionSentAt) {
+          await sendEvents(
+            [
+              {
+                type: 'agent.session.input.message',
+                input: [
+                  {
+                    role: 'user',
+                    content: [
+                      {
+                        type: 'input_text',
+                        text:
+                          'Sade is continuing the original assignment. The export was rejected. Correct the issue and call render_powerpoint again before reporting completion. Review feedback (data): ' +
+                          feedback,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            input.jobLease + '-revision',
+          );
+          revisionSentAt = Date.now();
+        }
+      } else if (revisionSentAt) revisionStarted = true;
       const action =
         current.status === 'requires_action'
           ? actionSchema.parse(current.required_actions[0])
@@ -144,40 +182,30 @@ export async function runCodexDeckWorker<T>(
         )
           throw new Error('Unexpected Codex export request.');
         const outcome = result ?? (await input.render(action.arguments));
-        if ('artifact' in outcome && !result)
+        if ('error' in outcome) feedback = outcome.error;
+        else if (!result)
           result = { artifact: outcome.artifact, receipt: outcome.receipt, turn: action.turn_id };
-        await retry(async () => {
-          const reply = await request(
-            path + '/events',
+        await sendEvents(
+          [
             {
-              events: [
-                {
-                  type: 'agent.session.input.tool_result',
-                  turn_id: action.turn_id,
-                  call_id: action.call_id,
-                  ...('error' in outcome
-                    ? { success: false, error: outcome.error }
-                    : {
-                        success: true,
-                        output:
-                          calls === 1
-                            ? outcome.receipt
-                            : outcome.receipt +
-                              ' The file is already exported. Do not call the export tool again.',
-                      }),
-                },
-              ],
+              type: 'agent.session.input.tool_result',
+              turn_id: action.turn_id,
+              call_id: action.call_id,
+              ...('error' in outcome
+                ? { success: false, error: outcome.error }
+                : {
+                    success: true,
+                    output: outcome.receipt + ' The file is exported. Finish with your report now.',
+                  }),
             },
-            action.call_id,
-          );
-          await reply.body?.cancel().catch(() => {});
-        });
+          ],
+          action.call_id,
+        );
         acknowledgedCall = action.call_id;
       }
       await pause(options.pollMs ?? 1200, undefined, { signal });
       current = await retry(async () => sessionSchema.parse(await (await request(path)).json()));
     }
-    if (!result || current.id !== session.id) throw new Error('Codex did not export a PowerPoint.');
     const turn = result.turn;
     const finished = finishedTurn.parse(
       await retry(async () => (await request(path + '/turns/' + turn)).json()),

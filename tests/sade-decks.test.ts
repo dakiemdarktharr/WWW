@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { generateSadeDeck } from '../cloud/sade-deck.ts';
 import { isSadeDeckRequest } from '../shared/sade-deck.ts';
 import { SadeDecks } from '../server/sade-decks.ts';
+import { renderSadePowerPoint } from '../server/shared-sade-project-render.ts';
 import { Store } from '../server/store.ts';
 
 const request = 'Tạo giúp mình file PPT về số liệu tuyển sinh năm qua';
@@ -26,7 +27,7 @@ test('PowerPoint intent allows direct creation and leaves deferrals and papers t
     assert.equal(isSadeDeckRequest(message), false, message);
 });
 
-test('PowerPoint job leases deduplicate retries, isolate owners, and reject stale or corrupt output', (t) => {
+test('PowerPoint job leases deduplicate retries, isolate owners, and reject stale or corrupt output', async (t) => {
   const store = new Store(':memory:');
   t.after(() => store.close());
   let now = Date.parse('2026-11-21T08:00:00Z');
@@ -66,12 +67,23 @@ test('PowerPoint job leases deduplicate retries, isolate owners, and reject stal
     service.finish({ id, lease: start.work.lease, result: { status: 'retry' } }).accepted,
     false,
   );
-  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]);
+  const presentation = {
+    title: 'Tuyển sinh',
+    slides: [{ title: 'Tóm tắt', bullets: ['Báo cáo tuyển sinh.'] }],
+  };
+  await assert.rejects(service.render({ id, lease: retry.work.lease, presentation }), {
+    status: 409,
+  });
+  service.finish({ id, lease: retry.work.lease, result: { status: 'authoring' } });
+  await assert.rejects(service.render({ id, lease: start.work.lease, presentation }), {
+    status: 409,
+  });
+  const file = await service.render({ id, lease: retry.work.lease, presentation });
+  assert.equal(Buffer.from(file.data, 'base64').readUInt32LE(0), 0x04034b50);
   const result = {
     status: 'ready',
     title: 'Tuyển sinh',
-    data: bytes.toString('base64'),
-    sha256: createHash('sha256').update(bytes).digest('hex'),
+    ...file,
     sources: [
       { title: 'Source A', url: 'https://example.test/source-a' },
       { title: 'Source B', url: 'https://example.test/source-b' },
@@ -111,18 +123,22 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
     slides: ['Scope', 'Throughput', 'Operations'].map((label) => ({
       title: label,
       bullets: [
-        { text: 'The cafe opened in March.', evidence: [1] },
-        { text: 'It served 350 students in Q3.', evidence: [2] },
+        { text: 'The cafe opened in March.', evidence: ['E1'] },
+        { text: 'It served 350 students in Q3.', evidence: ['E2'] },
       ],
     })),
   };
   const sessionId = 'sess_deckfixture0001';
   const turn = 'turn_deckfixture0001';
+  const firstTurn = 'turn_deckfixture0000';
+  const badCall = 'exec_deckfixture0000';
   const call = 'exec_deckfixture0001';
   const calls: string[] = [];
   const duplicateCall = 'exec_deckfixture0002';
   let exported = 0;
   let audits = 0;
+  let rejected = false;
+  let revised = false;
   const transport: typeof fetch = async (url, init) => {
     const path = new URL(String(url)).pathname;
     calls.push((init?.method || 'GET') + ' ' + path);
@@ -144,14 +160,28 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
             type: 'message',
             role: 'assistant',
             content: [
-              { type: 'output_text', text: JSON.stringify(searching ? brief : { accepted: true }) },
+              {
+                type: 'output_text',
+                text: JSON.stringify(searching ? brief : { accepted: true, feedback: '' }),
+              },
             ],
           },
         ],
       });
     }
     if (path.endsWith('/events')) {
+      if (body.events[0].type === 'agent.session.input.message') {
+        assert(rejected && !revised);
+        revised = true;
+        return new Response(null, { status: 204 });
+      }
       assert.equal(body.events[0].type, 'agent.session.input.tool_result');
+      if (!revised) {
+        assert.equal(body.events[0].call_id, badCall);
+        assert.equal(body.events[0].success, false);
+        rejected = true;
+        return new Response(null, { status: 204 });
+      }
       assert.equal(body.events[0].turn_id, turn);
       assert.equal(body.events[0].call_id, exported === 0 ? call : duplicateCall);
       assert.equal(body.events[0].success, true);
@@ -181,17 +211,21 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
     return Response.json({
       id: sessionId,
       agent: { model: 'gpt-6-luna' },
-      status: created ? 'in_progress' : exported === 2 ? 'idle' : 'requires_action',
+      status: created
+        ? 'in_progress'
+        : (rejected && !revised) || exported === 2
+          ? 'idle'
+          : 'requires_action',
       required_actions:
-        created || exported === 2
+        created || (rejected && !revised) || exported === 2
           ? []
           : [
               {
                 type: 'function_call',
-                call_id: exported === 0 ? call : duplicateCall,
-                turn_id: turn,
+                call_id: !revised ? badCall : exported === 0 ? call : duplicateCall,
+                turn_id: revised ? turn : firstTurn,
                 name: 'render_powerpoint',
-                arguments: args,
+                arguments: revised ? args : { ...args, title: '' },
               },
             ],
     });
@@ -203,11 +237,23 @@ test('a PowerPoint is delivered only after its assigned Codex session calls expo
       date: '2026-11-21T08:00:00.000Z',
       prompt: 'Make a PowerPoint for the campus cafe year-in-review',
     },
-    { apiKey: 'fixture', fetch: transport, pollMs: 1 },
+    {
+      apiKey: 'fixture',
+      fetch: transport,
+      pollMs: 1,
+      async render(presentation) {
+        const bytes = await renderSadePowerPoint(presentation);
+        return {
+          data: bytes.toString('base64'),
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        };
+      },
+    },
   );
   assert.equal(result.worker.report, 'I exported the campus cafe slides.');
   assert.equal(result.worker.sessionId, sessionId);
   assert.equal(result.title, title);
+  assert(rejected && revised);
   assert.equal(exported, 2);
   assert.equal(audits, 1);
   assert.equal(Buffer.from(result.data, 'base64').readUInt32LE(0), 0x04034b50);

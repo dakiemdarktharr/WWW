@@ -1,5 +1,6 @@
 export const sadeDeckRoute = '/api/desktop/sade-decks';
 export const sadeDeckFinishRoute = '/api/cloud/sade-deck-finish';
+export const sadeDeckRenderRoute = '/api/cloud/sade-deck-render';
 export const sadeDeckMaxBytes = 600 * 1024;
 
 export interface SadeDeckView {
@@ -18,6 +19,11 @@ export type SadeDeckCommand =
   | { action: 'start'; id: string; prompt: string }
   | { action: 'read' | 'download'; id: string }
   | { action: 'list' };
+
+export interface SadeDeckPresentation {
+  title: string;
+  slides: { title: string; bullets: string[]; bulletLinks?: string[] }[];
+}
 
 export function isSadeDeckRequest(input: string) {
   const text = input
