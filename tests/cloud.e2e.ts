@@ -205,9 +205,7 @@ try {
   await project
     .getByLabel('Competition URL', { exact: true })
     .fill('https://example.com/challenge');
-  await project
-    .getByLabel('What would you like to achieve?', { exact: true })
-    .fill('Verify real cloud workspace interactions');
+  await expect(project.getByLabel('What would you like to achieve? (optional)')).toHaveValue('');
   await expect(project.getByRole('combobox', { name: 'Deadline', exact: true })).toHaveText(
     'No deadline',
   );
@@ -222,6 +220,7 @@ try {
   await project.waitFor({ state: 'hidden' });
   assert.equal(store.projects()[0].repositoryName, 'NoSleepClub_Browser-challenge_Cloud-project');
   assert.equal(store.projects()[0].competition?.deadline, null);
+  assert.equal(store.projects()[0].goal, '');
   await nav('Chat').click();
   await page.getByRole('button', { name: 'Open project Cloud project', exact: true }).click();
   await page.getByLabel('Message the project team').fill('Shared across devices');
@@ -244,10 +243,15 @@ try {
   await page.screenshot({ path: path.join(screenshots, 'chat-dark.png'), animations: 'disabled' });
   await page.getByRole('button', { name: 'Use light mode', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-workspace-theme', 'light');
-  await expect(page.locator('.project-chat')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(message.locator('.chat-bubble')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(message.locator('.chat-bubble')).toHaveCSS('border-top-color', 'rgb(57, 51, 63)');
-  await expect(page.locator('.nav-item.active')).toHaveCSS('color', 'rgb(23, 22, 25)');
+  await expect(page.getByRole('complementary', { name: 'Chat list' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Conversation', exact: true })).toHaveCSS(
+    'background-image',
+    /linear-gradient\(145deg, rgb\(249, 245, 255\)/,
+  );
+  const bubble = message.locator('.conversation-bubble');
+  await expect(bubble).toHaveCSS('background-color', 'rgb(234, 224, 247)');
+  await expect(bubble).toHaveCSS('border-top-color', 'rgb(199, 176, 228)');
+  await expect(nav('Chat')).toHaveCSS('color', 'rgb(34, 38, 25)');
   await page.screenshot({ path: path.join(screenshots, 'chat-light.png'), animations: 'disabled' });
   await page.getByRole('button', { name: 'Use dark mode', exact: true }).click();
   await page.getByLabel('Message the project team').fill('/g');
@@ -357,8 +361,8 @@ try {
   const claudeCard = page
     .locator('.account-card-group')
     .filter({ has: page.getByRole('heading', { name: claude.name, exact: true }) });
-  await claudeCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
-  const connection = page.getByRole('dialog', { name: 'Claude · MESH connection' });
+  await claudeCard.getByRole('button', { name: 'Connect Claude', exact: true }).click();
+  const connection = page.getByRole('dialog', { name: 'Claude · Connect' });
   await expect(connection.getByRole('alert')).toBeVisible();
   await expect(
     connection.getByRole('button', { name: 'Generate MCP config', exact: true }),
