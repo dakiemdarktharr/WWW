@@ -8,7 +8,7 @@
 
 Dùng mẫu Stripe để học các ranh giới tin cậy và xử lý vòng đời thanh toán: máy chủ tạo yêu cầu giá có kiểm soát; xác nhận từ trình duyệt không tự cấp quyền; xác thực nguồn sự kiện; xử lý lặp an toàn; entitlement là trạng thái riêng được cập nhật sau khi giao dịch đã được xác minh. Stripe Billing tự thu tiền định kỳ nên không bê nguyên luồng subscription của Stripe: Kivuno yêu cầu người dùng ký/xác nhận riêng cho mỗi tháng và không tự gia hạn.
 
-Trang mua gói cục bộ mở QR và thông tin ngân hàng mô phỏng sau khi chọn Plus hoặc Max. Máy chủ đối soát giao dịch rồi cấp quyền. Xem [cách chạy demo QR](KIVUNO-BANK-DEMO.md), [quy định tại Việt Nam](KIVUNO-VN-PAYMENTS.md) và [đối chiếu yêu cầu UniHack](KIVUNO-UNIHACK-CHECK.md).
+Trang mua gói cục bộ mở QR và thông tin ngân hàng mô phỏng sau khi chọn Plus hoặc Max. Máy chủ đối soát giao dịch rồi cấp quyền. Xem [cách chạy demo QR](KIVUNO-BANK-DEMO.md) và [quy định tại Việt Nam](KIVUNO-VN-PAYMENTS.md).
 
 Trong luồng thanh toán test USDC trên Fuji, Kivuno tạo ví thanh toán trong trình duyệt khi tài khoản lần đầu mở trang mua gói. Người dùng xem mạng, gói, số USDC, địa chỉ nhận và người trả gas trước khi xác nhận từng lần mua. Ví ký cho đúng giao dịch đó. Máy chủ kiểm tra chain, token, contract, payer, amount, plan, receipt và event trước khi cấp quyền.
 

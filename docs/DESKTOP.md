@@ -24,12 +24,11 @@ Older Windows and Linux builds can require one manual upgrade to a release that 
 
 Release one version for Windows x64, Linux x64, and macOS Apple Silicon. Wait until all three platforms are ready before promoting a new version to users.
 
-1. Set the shared version in `package.json` and add it to the front of `release-history.json`.
-2. Build and smoke test the macOS installer DMG and in-app update ZIP from the release source. Stage both artifacts at public, versioned HTTPS URLs. Record the DMG and ZIP metadata in `release-artifacts/macos-<version>.json` and set `release-artifacts/macos-stable.json` to the shared version.
-3. Run `node scripts/verify-release-parity.mjs`. GitHub runs the same check. For downloads served by the portal, configure the DMG redirect in `vercel.json` and set the update ZIP's `assetSource` to its GitHub release asset.
-4. Run `npm run build:release` on Linux to build Windows and Linux and verify the update feed. Publish only after this build succeeds. Check that `/api/desktop/release` reports the same version for all three platforms.
+1. Set the shared version in `package.json` and `desktop/package.json`, update both lockfiles, and add that version to the front of `release-history.json`.
+2. Merge the version bump to `main`. **Desktop Release** packages Windows and Linux on Linux and builds the macOS DMG and updater ZIP on Apple Silicon. It installs and runs the Windows build on Windows, launches the Linux archive, and checks the macOS DMG and ZIP.
+3. GitHub Actions compares the package versions, byte sizes, and SHA-256 checksums. The workflow publishes the draft for the exact build commit once all checks pass. Vercel accepts a completed GitHub Release with the same version and mirrors the checked update files. The public feed switches after that deploy succeeds.
 
-The existing Windows/Linux 0.9.9 and macOS 0.9.8 pair can still be redeployed while macOS catches up. Every new version must pass the parity check.
+Use **Actions → Desktop Release → Run workflow** with **publish** off to rehearse with the current source. For a failed release, rerun the failed jobs on the same commit so the workflow can complete the matching draft. Keep existing GitHub release assets intact when shipping a correction. Versions through 0.9.11 retain their existing packaging path.
 
 ## Connect a project folder
 

@@ -2,13 +2,13 @@
 
 19/11/2026 · Đối chiếu GitHub `main` tại `1c0e168`, các sửa lỗi Mac ở PR #2 và adapter/quyền máy ở PR #3. Manual audit tập trung vào đường Chat → kế hoạch → task → quyền → Git; bộ kiểm thử rộng hơn bao phủ web, desktop, auth, dữ liệu, cloud, adapter và runner. Đây là đánh giá ứng dụng và dependency, không phải chứng nhận an toàn.
 
-Kết quả sau đợt nghiên cứu này gồm luồng Shared Groups, bộ 1.000 tin nhắn và thử nghiệm LoRA trên Windows. [Báo cáo kiểm chứng Shared Groups](shared-sade-verification.vi.md)
+Kết quả sau đợt nghiên cứu này gồm luồng Shared Groups, bộ 1.000 tin nhắn và thử nghiệm LoRA trên Windows.
 
 ## Cấu hình chọn cho bản hiện tại
 
 **Một lượt lập kế hoạch chỉ đọc bằng tài khoản đã kết nối, sau đó Sade phân công bằng quy tắc trong ứng dụng.** Với bốn profile, bước chuẩn bị giảm từ năm lượt (bốn đề xuất và một tổng hợp) xuống một lượt, giảm 80% số lượt lập kế hoạch. Các lượt viết code, xác minh và review tính riêng. Một lượt harness có thể thực hiện nhiều lần suy luận hoặc gọi công cụ nội bộ. Chưa có số đo tiền/token hoặc độ trễ trên model thật.
 
-Trong Shared Groups, thao tác **Ask Sade** xác nhận tin nhắn cần điều phối. Một phép đo trong 144 tin viết riêng cho thấy bộ phân loại CPU nhận đúng 122 tin và Qwen 0,6B LoRA nhận đúng 105 tin. Dùng cả hai để lọc lời gợi ý chỉ bắt được 36/72 yêu cầu dù tất cả gợi ý trong phép đo đều đúng. Sade giữ một lượt planner có cấu trúc theo quyền tài khoản cho tin đã xác nhận. Hai bộ phân loại phục vụ thử nghiệm offline. [Kết quả cùng dữ liệu thử](shared-sade-verification.vi.md#đối-chiếu-qwen-06b-với-bộ-phân-loại-cpu)
+Trong Shared Groups, thao tác **Ask Sade** xác nhận tin nhắn cần điều phối. Một phép đo trong 144 tin viết riêng cho thấy bộ phân loại CPU nhận đúng 122 tin và Qwen 0,6B LoRA nhận đúng 105 tin. Dùng cả hai để lọc lời gợi ý chỉ bắt được 36/72 yêu cầu dù tất cả gợi ý trong phép đo đều đúng. Sade giữ một lượt planner có cấu trúc theo quyền tài khoản cho tin đã xác nhận. Hai bộ phân loại phục vụ thử nghiệm offline.
 
 | Thành phần          | Cấu hình đã chọn                                                                                                                                                                                                                                                                   |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

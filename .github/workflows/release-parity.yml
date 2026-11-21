@@ -19,5 +19,5 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
-      - run: node --test tests/release-parity.test.mjs
+      - run: node --test tests/release-parity.test.mjs tests/desktop-release-assets.test.mjs
       - run: node scripts/verify-release-parity.mjs

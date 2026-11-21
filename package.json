@@ -30,6 +30,7 @@
     "test:codex-native": "tsx tests/codex-native.e2e.ts",
     "desktop:stage": "node scripts/build-desktop.mjs",
     "desktop:package": "node scripts/package-desktop.mjs",
+    "desktop:package-linux": "node scripts/package-linux.mjs",
     "macos:installer": "npm run build && node scripts/package-macos.mjs",
     "aegis:compile": "node scripts/aegis-compile.mjs",
     "typecheck": "tsc --noEmit",

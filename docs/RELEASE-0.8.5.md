@@ -21,4 +21,4 @@ Automatic review is limited to complete text diffs of at most 12,000 characters.
 
 The macOS 0.8.4 installer predates these fixes. Its existing updater can still display the global website version and open a DMG; the platform-aware updater and in-app ZIP update require a newly built Mac release. Existing installs need one manual DMG install of that release before later updates can replace the app in place.
 
-See `sade-demo.md`, `password-recovery.md` and `legal/privacy-security-review-2026-11-17.md` for acceptance criteria, operational blockers and legal readiness gaps.
+See [Sade demos](sade-demo.md), [password recovery](password-recovery.md) and the [security model](SECURITY.md) for product behavior and operational limits. Unpublished legal drafts are maintained outside this repository.
