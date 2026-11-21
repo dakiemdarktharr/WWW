@@ -1,0 +1,242 @@
+name: Desktop Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - desktop/package.json
+      - release-history.json
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/desktop-release.yml
+      - scripts/desktop-release-assets.mjs
+      - scripts/publish-desktop-release.mjs
+      - tests/desktop-release-archive.e2e.mjs
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified current version (main only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.repository == 'dakiemdarktharr/WWW' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - name: Validate source versions and identify a new release
+        id: plan
+        env:
+          PREVIOUS_COMMIT: ${{ github.event.before }}
+          MANUAL_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            git fetch --no-tags --depth=1 origin "$PREVIOUS_COMMIT"
+            git show "${PREVIOUS_COMMIT}:package.json" > "$RUNNER_TEMP/previous-package.json"
+          fi
+          node --input-type=module <<'JS'
+          import { appendFile, readFile } from 'node:fs/promises';
+          import path from 'node:path';
+          import {
+            compareVersions, isAutomatedRelease, readDesktopReleaseSource,
+          } from './scripts/desktop-release-assets.mjs';
+          const { version } = await readDesktopReleaseSource(process.cwd());
+          const { GITHUB_EVENT_NAME, GITHUB_REF, MANUAL_PUBLISH, RUNNER_TEMP, GITHUB_OUTPUT } = process.env;
+          let build = true;
+          if (GITHUB_EVENT_NAME === 'push') {
+            const previous = JSON.parse(await readFile(path.join(RUNNER_TEMP, 'previous-package.json'), 'utf8'));
+            const change = compareVersions(version, previous.version);
+            if (change < 0) throw new Error('A new release must increase the desktop version.');
+            build = change > 0 && isAutomatedRelease(version);
+          }
+          if (MANUAL_PUBLISH === 'true' && (GITHUB_REF !== 'refs/heads/main' || !isAutomatedRelease(version)))
+            throw new Error('Publish only a new automated release from main.');
+          await appendFile(GITHUB_OUTPUT, `version=${version}\nbuild=${build}\n`);
+          JS
+
+  windows-linux:
+    name: Build Windows and Linux, verify Linux
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      windows: ${{ steps.windows.outputs.artifact-id }}
+      linux: ${{ steps.linux.outputs.artifact-id }}
+    env:
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run build
+      - run: npm run desktop:stage
+      - run: npm run desktop:package
+      - run: npm run desktop:package-linux
+      - run: xvfb-run -a node tests/desktop-release-archive.e2e.mjs
+      - run: cp dist/downloads/release.json release/pc-release.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: windows
+        with:
+          name: desktop-windows-${{ github.run_attempt }}
+          path: |
+            release/Kivuno-${{ env.RELEASE_VERSION }}-Setup.exe
+            release/Kivuno-${{ env.RELEASE_VERSION }}-Setup.exe.sha256
+            release/pc-release.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: linux
+        with:
+          name: desktop-linux-${{ github.run_attempt }}
+          path: |
+            release/Kivuno-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz
+            release/Kivuno-${{ env.RELEASE_VERSION }}-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  windows:
+    name: Install and verify on Windows
+    needs: [prepare, windows-linux]
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      KIVUNO_EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows-linux.outputs.windows }}
+          path: release
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Install the release artifact
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'kivuno-release-install'
+          $installer = (Resolve-Path "release/Kivuno-$env:KIVUNO_EXPECTED_VERSION-Setup.exe").Path
+          $release = Get-Content release/pc-release.json -Raw | ConvertFrom-Json
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $release.platforms.windows.sha256) {
+            throw 'The Windows package did not match its SHA-256.'
+          }
+          $install = Start-Process -FilePath $installer -ArgumentList "/S /D=$path" -Wait -PassThru
+          if ($install.ExitCode -ne 0 -or !(Test-Path (Join-Path $path 'Kivuno.exe'))) {
+            throw "Kivuno installation failed with exit code $($install.ExitCode)."
+          }
+          Add-Content $env:GITHUB_ENV "KIVUNO_PACKAGE_DIR=$path"
+          Add-Content $env:GITHUB_ENV "KIVUNO_INSTALLER_FILE=$installer"
+      - run: npm run test:desktop-package
+        env:
+          KIVUNO_RELEASE_MANIFEST: release/pc-release.json
+
+  macos:
+    name: Build and verify on macOS
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      KIVUNO_MACOS_VERSION: ${{ needs.prepare.outputs.version }}
+    outputs:
+      macos: ${{ steps.macos.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run macos:installer
+      - run: npm run test:macos-installer
+      - run: node tests/desktop-release-archive.e2e.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: macos
+        with:
+          name: desktop-macos-${{ github.run_attempt }}
+          path: |
+            release/Kivuno-${{ env.KIVUNO_MACOS_VERSION }}-macOS-arm64.dmg
+            release/Kivuno-${{ env.KIVUNO_MACOS_VERSION }}-macOS-arm64.dmg.sha256
+            release/Kivuno-${{ env.KIVUNO_MACOS_VERSION }}-macOS-arm64.zip
+            release/Kivuno-${{ env.KIVUNO_MACOS_VERSION }}-macOS-arm64.zip.sha256
+            release/macos-arm64.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  verify:
+    name: Verify the complete desktop release
+    needs: [windows-linux, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows-linux.outputs.windows }},${{ needs.windows-linux.outputs.linux }},${{ needs.macos.outputs.macos }}
+          merge-multiple: true
+          path: release
+      - run: node scripts/publish-desktop-release.mjs verify release "$GITHUB_SHA"
+
+  publish:
+    name: Publish the verified GitHub Release
+    needs: [prepare, windows-linux, macos, verify]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: publish-kivuno-${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows-linux.outputs.windows }},${{ needs.windows-linux.outputs.linux }},${{ needs.macos.outputs.macos }}
+          merge-multiple: true
+          path: release
+      - run: node scripts/publish-desktop-release.mjs publish release "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ github.token }}

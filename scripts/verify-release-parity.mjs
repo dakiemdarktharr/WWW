@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import desktopSecurity from '../desktop/security.cjs';
+import { isAutomatedRelease, readDesktopReleaseSource } from './desktop-release-assets.mjs';
 
 const portalOrigin = 'https://kivuno.vercel.app';
 const macPlatform = 'darwin-arm64';
@@ -123,10 +124,17 @@ export function verifyPublishedDesktopFeed(release, { version, metadata, existin
 
 if (import.meta.main) {
   const root = fileURLToPath(new URL('../', import.meta.url));
-  const { version, metadata, existingRelease } = await verifyReleaseParity(root);
-  console.log(
-    existingRelease
-      ? `Existing desktop feed allowed: Windows/Linux ${version}, macOS ${metadata.version}.`
-      : `Kivuno ${version} has both macOS release artifacts.`,
-  );
+  const { version } = await readDesktopReleaseSource(root);
+  if (isAutomatedRelease(version)) {
+    console.log(
+      `Kivuno ${version} version files agree. Desktop Release will check the built artifacts.`,
+    );
+  } else {
+    const { metadata, existingRelease } = await verifyReleaseParity(root);
+    console.log(
+      existingRelease
+        ? `Existing desktop feed allowed: Windows/Linux ${version}, macOS ${metadata.version}.`
+        : `Kivuno ${version} has both macOS release artifacts.`,
+    );
+  }
 }
