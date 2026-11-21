@@ -31,6 +31,7 @@ interface Host {
   closing: boolean;
   quota: Pick<QuotaManager, 'refresh' | 'assertCanRun'>;
   sade?: { schedule(task: Task): Promise<void> };
+  external?: { canAssign(memberId: string, projectId: string): boolean };
   run(taskId: string, memberId: string): Promise<Task>;
   stop(taskId: string): Promise<Task>;
   refresh(memberId: string): Promise<Member>;
@@ -89,16 +90,15 @@ export class Workflows {
     try {
       if (!prompt.trim() || prompt.length > 16000)
         throw new DomainError('Enter a prompt of up to 16,000 characters.');
-      const profiles = groupMembers(this.store, projectId).filter(
-        (member) => !isExternalMember(member),
-      );
+      const sade = options.orchestrator === 'sade';
+      const teammates = groupMembers(this.store, projectId);
+      const profiles = teammates.filter((member) => !isExternalMember(member));
       // Reads account metadata only. No model turns or login flows occur during preflight.
       const checks = await Promise.allSettled(
         profiles.map((member) => this.host.refresh(member.id)),
       );
       if (this.host.closing) throw new DomainError('The coordinator is shutting down.');
       const failed = checks.findIndex((result) => result.status === 'rejected');
-      const sade = options.orchestrator === 'sade';
       if (failed >= 0 && !sade)
         throw new DomainError(
           `Cannot check ${profiles[failed].name}. Refresh this profile in Team and try again.`,
@@ -108,12 +108,21 @@ export class Workflows {
           .filter((_, index) => checks[index].status === 'fulfilled')
           .map((member) => member.id),
       );
-      const members = groupMembers(this.store, projectId).filter(
+      const nativeMembers = groupMembers(this.store, projectId).filter(
         (member) => checked.has(member.id) && !!member.account && !isExternalMember(member),
       );
-      if (!members.length)
+      if (!nativeMembers.length)
         throw new DomainError('Connect at least one supported AI teammate in Team.');
-      const ordered = [...members].sort(
+      const members = sade
+        ? [
+            ...nativeMembers,
+            ...groupMembers(this.store, projectId).filter(
+              (member) =>
+                isExternalMember(member) && this.host.external?.canAssign(member.id, projectId),
+            ),
+          ]
+        : nativeMembers;
+      const ordered = [...nativeMembers].sort(
         (a, b) =>
           Number(b.role === 'engineer') - Number(a.role === 'engineer') || a.id.localeCompare(b.id),
       );
@@ -465,12 +474,17 @@ export class Workflows {
         return;
       }
       const plan = parseTeamPlan(workflow.plan);
-      const members = groupMembers(this.store, workflow.projectId).filter(
-        (member) => workflow.memberIds.includes(member.id) && !isExternalMember(member),
+      const members = groupMembers(this.store, workflow.projectId).filter((member) =>
+        workflow.memberIds.includes(member.id),
       );
       const available = new Set<string>();
       if (workflow.orchestrator === 'sade') {
         for (const member of members) {
+          if (isExternalMember(member)) {
+            if (this.host.external?.canAssign(member.id, workflow.projectId))
+              available.add(member.id);
+            continue;
+          }
           if (!member.account || !['ready', 'working'].includes(member.status)) continue;
           try {
             this.host.quota.assertCanRun(member.id, workflow.projectId);
@@ -589,6 +603,7 @@ export class Workflows {
       )
         continue;
       const member = this.store.get<Member>('member', task.assignedTo!);
+      if (isExternalMember(member)) continue; // The project's approved client claims this assignment through MCP.
       if (member.status === 'working') continue;
       if (!member.account || member.status !== 'ready') {
         this.store.updateWorkflow(id, {

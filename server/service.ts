@@ -57,6 +57,8 @@ import {
 import { safeRunnerFile } from './runner-files.ts';
 import { machineTool, machineTools } from './machine-tools.ts';
 import { isPrivateCredentialPath } from './checkpoint.ts';
+import { ExternalProviders } from './external-provider.ts';
+import { readProjectSession } from './project-sessions.ts';
 
 interface Running {
   taskId: string;
@@ -103,6 +105,7 @@ export class Workspace {
   closing = false;
   mergeBusy = new Set<string>();
   externalOperations = new Set<string>();
+  external: ExternalProviders;
   workflows: Workflows;
   sade: Sade;
   sessions: SessionManager;
@@ -148,6 +151,7 @@ export class Workspace {
     this.runners = new Runners(this);
     this.aegis = new Aegis(store, dataDir);
     this.sade = new Sade(this);
+    this.external = new ExternalProviders(this);
     this.sharedSade = new SharedSadeWorker(this);
   }
   async initialize() {
@@ -1404,6 +1408,13 @@ export class Workspace {
             this.quota.assertCanRun(memberId, task.projectId, task.sessionId || task.id);
           },
         );
+      else if (p.tool === 'relay_session_read')
+        output = readProjectSession(
+          this.store,
+          task.projectId,
+          memberId,
+          typeof p.arguments === 'string' ? JSON.parse(p.arguments) : p.arguments || {},
+        );
       else if (p.tool === 'relay_read_room')
         output = {
           ...this.mesh.readRoom(task.projectId, memberId, {
@@ -1825,6 +1836,7 @@ export class Workspace {
   async close() {
     if (this.closing) return;
     this.closing = true;
+    this.external.close();
     this.sharedSade.close();
     await this.research.close();
     this.loginGeneration++;

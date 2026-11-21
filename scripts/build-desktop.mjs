@@ -100,6 +100,10 @@ await cp(
   path.join(root, 'scripts', 'mesh-mcp.mjs'),
   path.join(workspace, 'scripts', 'mesh-mcp.mjs'),
 );
+await cp(
+  path.join(root, 'scripts', 'sade-claude-code.mjs'),
+  path.join(workspace, 'scripts', 'sade-claude-code.mjs'),
+);
 if (existsSync(path.join(root, 'contracts')))
   await cp(path.join(root, 'contracts'), path.join(workspace, 'contracts'), { recursive: true });
 

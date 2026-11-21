@@ -233,6 +233,7 @@ export interface CodexSession {
   provider?: ProviderId;
   external?: boolean;
   externalConnectionId?: string;
+  sadeAssignment?: boolean;
   skills?: string[];
   id: string;
   memberId: string;

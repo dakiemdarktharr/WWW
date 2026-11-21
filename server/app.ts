@@ -17,7 +17,7 @@ import { createHackathonProject } from './hackathons.ts';
 import { DesktopIdentity, type DesktopOwner } from './desktop-auth.ts';
 import { registerDesktopRoutes } from './desktop-routes.ts';
 import { registerAegisRoutes } from './aegis-routes.ts';
-import { ExternalProviders, registerExternalRoutes } from './external-provider.ts';
+import { registerExternalRoutes } from './external-provider.ts';
 import { providerCapabilities } from './providers.ts';
 import { resolveManagedCommand } from './managed-process.ts';
 import { executionMetadataSchema } from './machine-execution.ts';
@@ -118,7 +118,7 @@ export async function buildApp(
   });
   let bridgeConnection: { origin: string; exchangeUrl: string; bridgeKey: string } | undefined;
   const port = options.port || 4317;
-  const external = new ExternalProviders(workspace);
+  const external = workspace.external;
   external.configure(port);
   const allowed = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
   if (options.development) {

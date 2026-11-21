@@ -28,6 +28,18 @@ function sameOrigin(value, origin) {
 function externalUrl(value, identityOrigin) {
   if (typeof value !== 'string' || value.length > 4096) throw new Error('Invalid external link.');
   const url = new URL(value);
+  if (
+    url.protocol === 'claude:' &&
+    url.hostname === 'claude.ai' &&
+    url.pathname === '/new' &&
+    !url.port &&
+    !url.hash &&
+    !url.username &&
+    !url.password &&
+    [...url.searchParams.keys()].join(',') === 'q' &&
+    url.searchParams.get('q')
+  )
+    return url.href;
   const domains = [
     'openai.com',
     'chatgpt.com',

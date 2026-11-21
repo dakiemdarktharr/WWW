@@ -189,7 +189,7 @@ for (const source of ['server', 'shared', 'dist', 'package.json', 'package-lock.
 }
 await cp(path.join(root, 'contracts'), path.join(workspace, 'contracts'), { recursive: true });
 await mkdir(path.join(workspace, 'scripts'), { recursive: true });
-for (const script of ['check-runtime.mjs', 'mesh-mcp.mjs'])
+for (const script of ['check-runtime.mjs', 'mesh-mcp.mjs', 'sade-claude-code.mjs'])
   await copyFile(path.join(root, 'scripts', script), path.join(workspace, 'scripts', script));
 
 console.log(`Preparing verified Node ${nodeVersion} for macOS arm64…`);

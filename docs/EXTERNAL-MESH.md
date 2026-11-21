@@ -1,6 +1,6 @@
 # Claude Code và Antigravity cộng tác trong Neralu
 
-Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal; Google và Antigravity xử lý OAuth, Kivuno không nhận thông tin đăng nhập. Bạn vẫn tự mở client; Kivuno không gọi API trả phí và không khởi chạy model thay bạn. Đây là kết nối công cụ vào client, không phải một bản nhúng toàn bộ ứng dụng của provider. Antigravity là profile riêng, không phải tên khác của Gemini CLI.
+Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **Claude Code** và **Antigravity**. Với Antigravity, nút **Sign in with Google** mở lệnh đăng nhập chính thức `agy acp --login` trong Terminal. Google và Antigravity xử lý OAuth. Với Claude, thông tin xác thực và quota do ứng dụng hoặc CLI chính thức quản lý. Bạn có thể mở client để dùng thủ công hoặc bật nhận nhiệm vụ từ Sade theo hướng dẫn bên dưới.
 
 ## Claude trong trình duyệt
 
@@ -24,6 +24,15 @@ Claude Free hỗ trợ một custom connector. Trong Team hoặc Enterprise, ng�
 Kivuno không tự sửa cấu hình MCP của client. Máy đang chạy app phải tiếp tục bật. Token chỉ dành cho một provider, một thành viên trong một nhóm, được hiển thị một lần, có thời hạn tối đa 8 giờ và mất hiệu lực khi Kivuno khởi động lại. Có thể thu hồi ngay trong Team. Không dán cấu hình vào chat nhóm hoặc Git; checkpoint từ chối các file cấu hình MCP và nội dung chứa `KIVUNO_MCP_TOKEN`.
 
 ## Harness, tools, plugins, skills và thư mục
+
+### Nhận nhiệm vụ từ Sade
+
+Trong MESH connection, bật quyền nhận task và chọn số lượt tại **Sade assignments for this project**. Mỗi lượt là một nhiệm vụ hoặc một lần review do Sade phân công. Khi chưa có số liệu quota, người quản lý tài khoản có thể chọn tự theo dõi quota trong client. Sade giữ đúng người nhận khi một client đang chờ hoặc tạm ngắt kết nối.
+
+- **Claude Code**. Lưu cấu hình MCP do Kivuno cấp ngoài repo rồi chạy lệnh worker hiện trong hộp kết nối. Worker đợi nhiệm vụ và khởi chạy bản CLI chính thức khi có việc. Người dùng đăng nhập trong Claude Code và có thể dừng worker từ terminal.
+- **Claude Desktop**. Nạp cấu hình rồi chọn **Open Claude Desktop worker chat**. Gửi bản nháp một lần và duyệt công cụ theo cài đặt của Claude. Phiên đang chờ có thể nhận tiếp nhiệm vụ và review. Các link mở ứng dụng và điền bản nháp theo [tài liệu Anthropic](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link).
+
+Chọn **Open session** trên tin báo kết quả để mở đúng cuộc hội thoại trong sidebar. Các teammate và Sade dùng `relay_session_read` để xem các tin gần nhất từ phiên thuộc cùng dự án. Khi được giao review, teammate nhận tiêu chí và kết quả cần kiểm tra. Công cụ báo cáo gắn tên tác giả, nhiệm vụ và ID phiên vào nhóm.
 
 Claude Code/Antigravity tiếp tục dùng harness và quyền công cụ trong client thật của chúng. MESH bổ sung công cụ phối hợp; nó không tải plugin của client vào Kivuno, không tự chia sẻ token, không cấp quyền shell hay mọi thư mục trên máy. Mở worktree được `task_claim` trả về trong client, giữ kiểm duyệt quyền của client, rồi dùng tools/file access của client để làm việc. Kivuno kiểm tra scope khi checkpoint; đây không phải sandbox chặn toàn bộ thao tác đọc/ghi của một process bên ngoài.
 

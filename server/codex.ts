@@ -7,6 +7,7 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import { providerLabels } from '../shared/providers.ts';
 import type { CodexModel, LoginResult, Member, ProviderId } from '../shared/types.ts';
+import { projectSessionTool } from './project-sessions.ts';
 
 const execFileAsync = promisify(execFile);
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -634,6 +635,7 @@ export interface DynamicTool {
 }
 
 export const relayDynamicTools = [
+  projectSessionTool,
   {
     type: 'function',
     name: 'relay_read_room',

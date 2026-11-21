@@ -8,7 +8,7 @@ import { ExternalProviders } from '../server/external-provider.ts';
 import { Workspace } from '../server/service.ts';
 import { Store } from '../server/store.ts';
 import { createWorktree, git } from '../server/git.ts';
-import type { CodexSession, Project, Task } from '../shared/types.ts';
+import type { CodexSession, Project, Task, Workflow } from '../shared/types.ts';
 import { buildApp } from '../server/app.ts';
 import { createServer } from 'node:net';
 import { spawn } from 'node:child_process';
@@ -163,6 +163,121 @@ test('Claude web reads one active project and excludes accounts, paths and secre
   store.put('project', project);
   await external.claudeWeb({ action: 'revoke', connectionId: grant.id });
   await assert.rejects(external.claudeWeb(read), /expired or revoked/);
+});
+
+test('Sade queues one scoped external review and publishes the reviewer session under its owner', async (t) => {
+  const f = await fixture(t);
+  const author = f.store.addMember({ name: 'Codex author', role: 'engineer' });
+  f.store.put('project', { ...f.project, memberIds: [author.id, f.member.id] });
+  const now = new Date().toISOString();
+  const workflow = f.store.put('workflow', {
+    id: randomUUID(),
+    orchestrator: 'sade',
+    controlVersion: 0,
+    projectId: f.project.id,
+    prompt: 'Check the roster',
+    status: 'review',
+    phase: 'execution',
+    leadId: author.id,
+    memberIds: [author.id, f.member.id],
+    contributions: [],
+    plan: null,
+    hierarchy: [],
+    error: null,
+    createdAt: now,
+    updatedAt: now,
+  } satisfies Workflow);
+  const source = f.store.addTask({
+    projectId: f.project.id,
+    title: 'Roster count',
+    description: 'Read the roster.',
+    kind: 'research',
+    priority: 'medium',
+    scope: ['README.md'],
+    dependsOn: [],
+    acceptance: 'Say how many entries there are.',
+    assignedTo: author.id,
+    workflowId: workflow.id,
+    phase: 'execution',
+  });
+  f.store.updateTask(source.id, { status: 'review', summary: 'Two entries.' });
+  const authorSession = f.workspace.sessions.adopt(source.id, author.id, true);
+  f.workspace.sessions.event(authorSession.id, 'agent', 'I found two entries.');
+  f.workspace.sessions.event(
+    authorSession.id,
+    'command',
+    'Private tool output should not be shared.',
+  );
+  const grant = f.workspace.external.create({
+    memberId: f.member.id,
+    projectId: f.project.id,
+    allowTaskClaims: true,
+    allowUnknownQuota: true,
+    sadeTurns: 1,
+  });
+  const config = Object.values(grant.config.mcpServers)[0];
+  const auth = `Bearer ${config.env.KIVUNO_MCP_TOKEN}`;
+  const call = async (name: string, args: unknown = {}) => {
+    const result = await f.workspace.external.rpc(auth, {
+      jsonrpc: '2.0',
+      id: randomUUID(),
+      method: 'tools/call',
+      params: { name, arguments: args, _meta: { progressToken: 'qa' } },
+    });
+    return (result as any).result;
+  };
+  const ok = async (name: string, args?: unknown) => {
+    const reply = await call(name, args);
+    assert.equal(reply.isError, false, reply.content[0].text);
+    return JSON.parse(reply.content[0].text);
+  };
+  assert.deepEqual(await ok('sade_next', { wait: false, take: false }), { available: false });
+  await f.workspace.sade.schedule(f.store.get<Task>('task', source.id));
+  const offered = await ok('sade_next', { wait: false, take: false });
+  assert.equal(offered.available, true);
+  assert.equal(f.store.lease(offered.taskId), undefined);
+  const review = await ok('sade_next', { wait: false });
+  assert.equal(review.session.memberId, f.member.id);
+  assert.equal(review.session.readOnly, true);
+  assert.equal(review.task.reviewOfTaskId, source.id);
+  assert.equal((await ok('sade_next', { wait: false })).session.id, review.session.id);
+  const shared = await ok('relay_session_read', { sessionId: authorSession.id });
+  assert.equal(shared.session.teammate, author.name);
+  assert.deepEqual(
+    shared.messages.map(({ text }: { text: string }) => text),
+    ['I found two entries.'],
+  );
+  const other = f.store.put('session', {
+    ...authorSession,
+    id: randomUUID(),
+    projectId: randomUUID(),
+  });
+  assert.equal((await call('relay_session_read', { sessionId: other.id })).isError, true);
+  assert.equal(
+    (
+      await call('workspace_write_file', {
+        sessionId: review.session.id,
+        path: 'README.md',
+        content: 'incorrect',
+      })
+    ).isError,
+    true,
+  );
+  await ok('sade_finish', {
+    sessionId: review.session.id,
+    summary: 'Confirmed two entries independently.',
+  });
+  await ok('sade_finish', {
+    sessionId: review.session.id,
+    summary: 'Retry must not duplicate the message.',
+  });
+  assert.equal(f.store.get<{ status: string }>('sadeReview', source.id).status, 'completed');
+  assert.equal(f.store.lease(review.task.id), undefined);
+  const messages = f.store.roomPage(f.project.id, 0, 50).filter((m) => m.kind === 'handoff');
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].authorId, f.member.id);
+  assert.equal(messages[0].sessionId, review.session.id);
+  assert.deepEqual(await ok('sade_next', { wait: false }), { available: false, exhausted: true });
 });
 
 test('external connections expose only scoped config and cannot impersonate a human or escape a group', async (t) => {

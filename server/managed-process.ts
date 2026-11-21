@@ -1,8 +1,7 @@
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { promisify } from 'node:util';
-import { stat, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { CodexClient, codexEnvironment, redactCodexError, type DynamicTool } from './codex.ts';
 import { GeminiTools } from './gemini-tools.ts';
@@ -14,53 +13,7 @@ export function managedInvocation(command: string, args: string[]) {
     ? { command: process.execPath, args: [command, ...args] }
     : { command, args };
 }
-export async function resolveManagedCommand(provider: 'claude' | 'antigravity') {
-  const name = provider === 'claude' ? 'claude' : 'agy';
-  const override = process.env[`RELAY_${provider.toUpperCase()}_COMMAND`];
-  const candidates = override
-    ? [override]
-    : [
-        path.join(
-          os.homedir(),
-          '.local',
-          'bin',
-          name + (process.platform === 'win32' ? '.exe' : ''),
-        ),
-        ...(provider === 'antigravity' && process.platform === 'win32'
-          ? [
-              path.join(
-                process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-                'agy',
-                'bin',
-                'agy.exe',
-              ),
-            ]
-          : []),
-        ...(provider === 'claude' && process.platform !== 'win32'
-          ? [path.join(os.homedir(), '.claude', 'local', 'claude')]
-          : []),
-        ...(process.env.PATH || process.env.Path || '')
-          .split(path.delimiter)
-          .filter(Boolean)
-          .map((dir) =>
-            path.join(
-              dir.replace(/^"|"$/g, ''),
-              name + (process.platform === 'win32' ? '.exe' : ''),
-            ),
-          ),
-      ];
-  for (const candidate of candidates) {
-    if (!path.isAbsolute(candidate) || /\.(?:cmd|bat|ps1)$/i.test(candidate)) continue;
-    if (
-      await stat(candidate).then(
-        (info) => info.isFile(),
-        () => false,
-      )
-    )
-      return candidate;
-  }
-  throw new Error(`Install the official ${name} CLI on this computer first.`);
-}
+export { resolveManagedCommand } from './managed-command.ts';
 
 export function managedEnvironment(home: string) {
   const env = codexEnvironment(home);

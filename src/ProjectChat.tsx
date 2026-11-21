@@ -469,6 +469,17 @@ export default function ProjectChat({
                     >
                       {time(message.createdAt)}
                     </time>
+                    {projectSessions.some((entry) => entry.id === message.sessionId) && (
+                      <button
+                        className="button compact ghost"
+                        onClick={() => {
+                          setSelectedSession(message.sessionId!);
+                          setPanel('sessions');
+                        }}
+                      >
+                        Open session
+                      </button>
+                    )}
                   </div>
                   <div
                     className={`chat-bubble conversation-bubble${message.kind === 'handoff' ? ' chat-checkpoint' : ''}`}
