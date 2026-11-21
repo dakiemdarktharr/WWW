@@ -273,6 +273,12 @@ function ConsentForm() {
             </p>
           </div>
         )}
+        <a className="billing-back" href="/claude/guide" target="_blank" rel="noreferrer">
+          {vi ? 'Hướng dẫn kết nối Claude' : 'Claude connector guide'}
+        </a>
+        <a className="billing-back" href="/claude/privacy" target="_blank" rel="noreferrer">
+          {vi ? 'Quyền riêng tư của connector' : 'Connector privacy notice'}
+        </a>
       </section>
       {login && (
         <PortalAuth

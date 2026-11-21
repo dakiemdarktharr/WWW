@@ -309,7 +309,13 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     403,
   );
   assert.equal((await control(device, projectAccess)).statusCode, 200);
-  assert.equal((await mcp('tools/list')).json().result.tools[0].name, 'mesh_read');
+  const catalog = (await mcp('tools/list')).json().result.tools;
+  assert.deepEqual(
+    catalog.map(({ name }: { name: string }) => name),
+    ['mesh_read'],
+  );
+  assert.equal(catalog[0].title, 'Read shared project messages');
+  assert.equal(catalog[0].annotations.readOnlyHint, true);
   assert.equal(
     (
       await control(device, {
@@ -323,6 +329,11 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
   );
   await control(device, { action: 'revoke', connectionId: sharedId });
   assert.deepEqual((await mcp('tools/list')).json().result.tools, []);
+  assert.match(
+    (await mcp('tools/call', { name: 'mesh_read', arguments: {} })).json().error.message,
+    /no shared project tools/,
+  );
+  assert.deepEqual((await control(device, { action: 'poll' })).json().jobs, []);
   const freshId = randomUUID();
   await control(device, {
     ...projectAccess,

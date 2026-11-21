@@ -83,6 +83,8 @@
       "destination": "/api/gateway?relay_path=claude/issuer-metadata"
     },
     { "source": "/claude/connect", "destination": "/index.html" },
+    { "source": "/claude/guide", "destination": "/index.html" },
+    { "source": "/claude/privacy", "destination": "/index.html" },
     { "source": "/api/:path*", "destination": "/api/gateway?relay_path=:path*" },
     { "source": "/billing", "destination": "/index.html" },
     { "source": "/forgot-password", "destination": "/index.html" },

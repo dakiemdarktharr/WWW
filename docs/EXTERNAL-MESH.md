@@ -8,6 +8,8 @@ Gửi yêu cầu tạo PowerPoint ở **Chat → Nhắn Sade**. Sade chuẩn b�
 
 ## Đăng nhập Claude (0.9.9)
 
+[Hướng dẫn connector trên web](https://kivuno.vercel.app/claude/guide) và [thông báo quyền riêng tư](https://kivuno.vercel.app/claude/privacy) áp dụng cho kết nối Claude từ xa.
+
 Trong **Team → Connect Claude**, chọn ứng dụng đang dùng:
 
 - **Claude Desktop**: bấm **Open Claude Desktop** để mở ứng dụng thật. Đăng nhập ở đó. Bấm **Link Kivuno to Claude** để duyệt connector một lần trong trình duyệt bằng cùng tài khoản; connector đồng bộ sang Desktop. Không cần chép JSON để liên kết tài khoản.

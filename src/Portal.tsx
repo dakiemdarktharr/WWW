@@ -925,6 +925,9 @@ function PortalContent() {
                 <span>© {new Date().getFullYear()} Kivuno · NoSleepClub</span>
                 <span>{release?.version || '0.9.15'}</span>
                 <a href="#updates">Update patches</a>
+                <a href="/claude/guide">
+                  {locale === 'vi' ? 'Kết nối Claude' : 'Claude connector'}
+                </a>
                 <button onClick={() => setDownloadsOpen(true)}>{t('Bản cài & checksum')}</button>
                 <button onClick={home}>{t('Về đầu trang')}</button>
                 <a href="/art/photo-credits.html">
