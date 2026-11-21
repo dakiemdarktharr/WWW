@@ -72,6 +72,15 @@ test('Claude web reads use one device and project, preserve retry results and st
       .result.tools.map((tool: { name: string }) => tool.name),
     ['mesh_read'],
   );
+  const published = (await rpc({ id: 'catalog', method: 'tools/list' }, session)).json().result
+    .tools[0];
+  assert.equal(published.title, 'Read shared project messages');
+  assert.deepEqual(published.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
   assert.equal(
     (
       await rpc(
