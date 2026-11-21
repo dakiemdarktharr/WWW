@@ -20,7 +20,16 @@ Kivuno checks the release feed at startup and every 30 minutes while open. When 
 
 Older Windows and Linux builds can require one manual upgrade to a release that includes this updater. On macOS, builds with the in-place ZIP updater can upgrade from inside the app when the target release includes its ZIP. Builds that predate it need one manual DMG install.
 
-To publish a new desktop version, add it to `release-history.json`, newest first, and run the release packaging flow. The Windows installer and Linux archive must match the version and checksum in the feed. Include the matching macOS update ZIP in the Mac release metadata before offering the same version to Mac users. After publishing, check `/api/desktop/release` for all three platforms.
+## Publish a desktop release
+
+Release one version for Windows x64, Linux x64, and macOS Apple Silicon. Wait until all three platforms are ready before promoting a new version to users.
+
+1. Set the shared version in `package.json` and add it to the front of `release-history.json`.
+2. Build and smoke test the macOS installer DMG and in-app update ZIP from the release source. Stage both artifacts at public, versioned HTTPS URLs. Record the DMG and ZIP metadata in `release-artifacts/macos-<version>.json` and set `release-artifacts/macos-stable.json` to the shared version.
+3. Run `node scripts/verify-release-parity.mjs`. GitHub runs the same check. For downloads served by the portal, configure the DMG redirect in `vercel.json` and set the update ZIP's `assetSource` to its GitHub release asset.
+4. Run `npm run build:release` on Linux to build Windows and Linux and verify the update feed. Publish only after this build succeeds. Check that `/api/desktop/release` reports the same version for all three platforms.
+
+The existing Windows/Linux 0.9.9 and macOS 0.9.8 pair can still be redeployed while macOS catches up. Every new version must pass the parity check.
 
 ## Connect a project folder
 
@@ -68,11 +77,11 @@ The desktop download includes Node.js, portable Git from GitHub Desktop and Code
 
 The text workspace requires macOS 13.5. The optional Codex voice libraries target macOS 14.
 
-On the build Mac, use Apple Silicon, Xcode Command Line Tools and Node.js 24.22.1 through 24.x. Run `npm ci`, `KIVUNO_MACOS_VERSION=0.8.7 npm run macos:installer`, then `npm run test:macos-installer`. Use the next unused Mac release number for a new candidate. Omitting the override builds the version recorded in `release-artifacts/macos-stable.json`. The build produces a versioned DMG, updater ZIP, SHA-256 sidecars and `release/macos-arm64.json`. The smoke test checks the DMG hash, mounts it, verifies the application's signature and opens that packaged app from a separate directory with a fresh profile. It exercises the local coordinator, bundled CLI startup and creation of a Git worktree.
+On the build Mac, use Apple Silicon, Xcode Command Line Tools and Node.js 24.22.1 through 24.x. Run `npm ci`, `KIVUNO_MACOS_VERSION="$(node -p "require('./package.json').version")" npm run macos:installer`, then `npm run test:macos-installer`. Omitting the override builds the version recorded in `release-artifacts/macos-stable.json`. The build produces a versioned DMG, updater ZIP, SHA-256 sidecars and `release/macos-arm64.json`. The smoke test checks the DMG hash, mounts it, verifies the application's signature and opens that packaged app from a separate directory with a fresh profile. It exercises the local coordinator, bundled CLI startup and creation of a Git worktree.
 
 Before promoting a demo artifact, download it using Safari on a tester's Apple Silicon Mac. Install it from the DMG using Finder. Confirm the first-open flow, browser sign-in with an explicit approval, project folder initialization, and a short Codex turn using a test account. Test an existing installation with real workspace data and later updates separately. A build in the source checkout or a terminal launch cannot validate Safari's quarantine flow.
 
-Publish a new version rather than replacing an existing artifact. Upload the tested files to public HTTPS storage. Add the DMG URL, SHA-256 and byte size plus an `autoUpdate` object containing the matching version, ZIP URL, SHA-256, size, `platform: "darwin-arm64"` and `format: "zip"` to `release-artifacts/macos-<version>.json`. The website reads the Mac stable pointer independently of the Windows version. To promote, update that pointer after verification. To roll back, point it at the previous metadata and redeploy. Retain the versioned URLs for installed updaters. Use the metadata emitted by the tested build. The portable Git tree includes license files and source provenance. Keep the corresponding source and build instructions available alongside the public installer. [Dugite release](https://github.com/desktop/dugite-native/releases/tag/v2.56.1).
+Use a new version for new artifacts and retain the existing URLs for installed updaters. Record the DMG URL, SHA-256 and byte size from the tested build. Include an `autoUpdate` object with the matching version, ZIP URL, SHA-256, size, `platform: "darwin-arm64"` and `format: "zip"`. For a rollback, redeploy the previous complete release. Keep the corresponding source and build instructions available alongside the public installer. The portable Git tree includes license files and source provenance. [Dugite release](https://github.com/desktop/dugite-native/releases/tag/v2.56.1).
 
 ## Development and packaging
 
