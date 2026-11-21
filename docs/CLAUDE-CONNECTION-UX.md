@@ -20,7 +20,9 @@ Browser sign-in to Claude, browser sign-in to Kivuno, and consent to link a prof
 
 ## Setup and session lifetime
 
-The setup now opens the existing-connector list. First-time manual setup is collapsed under help with Copy address. The documented prefilled install URL was removed from the primary flow: it redirected without a form in live testing and was not permitted by the desktop's exact external-link allowlist. Progress uses the component used by Codex.
+New connections open Claude's documented install URL with the Kivuno name and this deployment's MCP URL filled in. Claude may redirect to its Plugins page before the setup dialog appears. The user confirms Continue, the detected OAuth settings, Add and Connect. The desktop allowlist accepts only the exact setup parameters and its configured Kivuno server, without tokens or arbitrary redirect parameters. Already-installed users have a separate existing-connector action; verified connections in the same Kivuno account can be reused.
+
+A personal custom-connector page is not a public installation link: Claude restricts it to accounts with access. A public Directory listing requires Anthropic approval and a real assigned slug; committing Kivuno code does not publish a Directory listing. Until that exists, the prefilled install flow removes manual name/URL entry while retaining Claude's confirmations. Manual setup remains available under help if the external form does not open.
 
 New account links may last up to thirty days. Access tokens remain limited to one hour. Refresh tokens are stored only as hashes, rotated transactionally, bound to the client, resource, owner and account grant, and capped by the original grant expiry. Replaying a consumed refresh token revokes that grant. New authorization invalidates the previous token family. Revoked devices and account grants prevent refresh. Existing grants retain their original expiry.
 

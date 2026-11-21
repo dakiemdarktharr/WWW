@@ -446,7 +446,9 @@ export function ExternalConnection({
           <p>
             Connect the Antigravity account on this computer. If you are already signed in, Kivuno
             verifies that session. Otherwise, the official CLI opens Google sign-in. Credentials
-            stay with Antigravity; project work requires a separate allowance.
+            stay with Antigravity; project work requires a separate allowance. Multiple Kivuno
+            profiles and accounts can connect. On this Windows/macOS/Linux user, they share the same
+            Google sign-in and quota; they are not separate Google accounts.
           </p>
           <button className="button primary" disabled={busy || googleBusy} onClick={googleSignIn}>
             <ArrowUpRight size={15} /> Connect Antigravity
@@ -627,15 +629,17 @@ export function ExternalConnection({
                   'Approved. Waiting for Claude to verify this connection. Keep Kivuno open.'
                 ) : (
                   <>
-                    In Claude, connect Kivuno and approve <strong>{member.name}</strong> on the
-                    Kivuno page.
+                    Claude opens the Kivuno setup with its name and address filled in. Choose
+                    Continue, keep the detected sign-in settings, then Add and Connect. Approve
+                    <strong> {member.name}</strong> on the Kivuno page.
                   </>
                 )}
               </p>
               <p>
-                If Claude already says Connected, that link may belong to an older profile.
-                Disconnect and reconnect it in Claude, then select {member.name} when asked. Use the
-                same Claude account in Desktop and your browser.
+                Already added Kivuno? Open your existing connector below instead of adding it again.
+                If Claude already says Connected, that link may belong to an older profile or
+                account. Disconnect and reconnect it in Claude, then select {member.name} when
+                asked. Use the same Claude account in Desktop and your browser.
               </p>
               <button
                 className="button primary"
@@ -652,7 +656,24 @@ export function ExternalConnection({
                   }
                 }}
               >
-                <ArrowUpRight size={16} /> Open Claude connectors
+                <ArrowUpRight size={16} /> Add Kivuno to Claude
+              </button>
+              <button
+                className="button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await beginClaudeAccount(member.id, 'existing');
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Open existing Kivuno connector
               </button>
               <details>
                 <summary>First connection or setup did not open?</summary>

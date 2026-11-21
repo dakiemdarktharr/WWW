@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { claudeConnectorInstallUrl } from '../shared/claude-web.ts';
 
 const require = createRequire(import.meta.url);
 const {
@@ -359,6 +360,24 @@ test('desktop external navigation only opens approved HTTPS sites or the configu
   const connectors = 'https://claude.ai/customize/connectors/yours';
   assert.equal(externalUrl(connectors, identity), connectors);
   assert.throws(() => externalUrl(connectors + '?redirect=elsewhere', identity));
+  const install = claudeConnectorInstallUrl(identity + '/api/claude/mcp');
+  assert.equal(externalUrl(install, identity), install);
+  for (const invalid of [
+    install + '&redirect=https://attacker.test',
+    install + '&connectorUrl=https://attacker.test',
+    install + '#fragment',
+    install.replace('connectorName=Kivuno', 'connectorName=Other'),
+    claudeConnectorInstallUrl('https://attacker.test/api/claude/mcp'),
+    install.replace('claude.ai/', 'claude.ai.attacker.test/'),
+  ])
+    assert.throws(() => externalUrl(invalid, identity));
+  for (const endpoint of [
+    identity + '/api/claude/mcp?token=private',
+    identity + '/api/claude/mcp#fragment',
+    identity + '/other',
+    'https://user:password@relay.example/api/claude/mcp',
+  ])
+    assert.throws(() => claudeConnectorInstallUrl(endpoint));
   assert.throws(() => externalUrl('https://claude.ai/login?redirect=elsewhere', identity));
   assert.equal(
     externalUrl('https://auth.openai.com/codex/device', identity),

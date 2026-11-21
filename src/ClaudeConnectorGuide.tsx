@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { claudeMcpPath } from '../shared/claude-web';
+import { claudeMcpPath, claudeConnectorInstallUrl } from '../shared/claude-web';
 import { claudeConnectorsUrl } from './ClaudeAccount';
 import { PortalLanguage, PortalLocaleProvider, usePortalLocale } from './PortalLocale';
 import { PortalThemeProvider, PortalThemeToggle } from './PortalTheme';
@@ -39,12 +39,19 @@ function Guide({ vi }: { vi: boolean }) {
           </li>
           <li>
             {vi ? 'Mở ' : 'Open '}
-            <a href={claudeConnectorsUrl}>
-              {vi ? 'trang Connectors của Claude' : 'Claude’s Connectors settings'}
+            <a href={claudeConnectorInstallUrl(address)}>
+              {vi ? 'biểu mẫu thêm Kivuno trong Claude' : 'the Kivuno setup in Claude'}
             </a>
             {vi
-              ? '. Nếu đã có Kivuno, bấm Connect trên connector đó. Lần đầu kết nối, chọn Add custom connector, đặt tên Kivuno và dán địa chỉ bên dưới.'
-              : '. If Kivuno is already listed there, choose Connect. To set it up for the first time, choose Add custom connector, name it Kivuno, and paste the address below.'}
+              ? '. Tên và địa chỉ được điền sẵn. Chờ biểu mẫu mở, bấm Tiếp tục, giữ cấu hình đăng nhập được phát hiện rồi bấm Thêm và Kết nối.'
+              : '. The name and address are filled in. Wait for the form, choose Continue, keep the detected sign-in settings, then Add and Connect.'}
+            <p>
+              <a href={claudeConnectorsUrl}>
+                {vi
+                  ? 'Đã thêm Kivuno? Mở connector hiện có'
+                  : 'Already added Kivuno? Open your existing connector'}
+              </a>
+            </p>
             <div className="claude-guide-address">
               <code>{address}</code>
               <button className="billing-secondary" onClick={() => void copyAddress()}>

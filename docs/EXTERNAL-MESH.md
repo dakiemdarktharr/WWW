@@ -22,6 +22,8 @@ Nếu Claude đã kết nối với một hồ sơ khác trong cùng tài khoả
 
 Antigravity chưa trả số quota và danh mục skills/plugins qua các phương thức Kivuno đang dùng. Xem quota bằng `/usage` trong CLI chính thức; thiếu số liệu không đồng nghĩa mất kết nối. Chạy model vẫn cần allowance riêng của project.
 
+Nhiều hồ sơ và nhiều tài khoản Kivuno trên cùng người dùng hệ điều hành có thể xác nhận dùng phiên Antigravity của máy. Mỗi hồ sơ phải xác nhận riêng; ngắt một hồ sơ không đăng xuất Google và không ngắt hồ sơ khác. Bản cũ giữ khóa độc quyền được chuyển sang quyền của hồ sơ cũ khi nâng cấp, không tự cấp quyền cho hồ sơ mới. Các hồ sơ này dùng chung phiên Google và quota, kể cả khi tài khoản được đổi trong Antigravity; đây không phải các tài khoản Google độc lập. Dữ liệu workspace, quyền project và allowance vẫn tách riêng.
+
 ## Claude trong trình duyệt
 
 1. Mở **Team → Add account → Claude** trong Kivuno Desktop. Chọn **Claude in browser** và hồ sơ Claude trên máy, rồi bấm **Connect Claude in browser**. Bạn có thể chọn lại hồ sơ hiện có, chẳng hạn Nova.

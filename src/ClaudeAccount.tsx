@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { openExternal, type ClaudeWebAccount, type ClaudeCodeStatus } from './desktop';
+import { claudeConnectorInstallUrl } from '../shared/claude-web';
 
 export type ClaudeClient = 'web' | 'desktop' | 'code';
 
@@ -65,13 +66,18 @@ export function refreshClaudeAccount(memberId: string) {
   inFlight.delete(memberId);
   window.dispatchEvent(new CustomEvent(accountEvent, { detail: memberId }));
 }
-export async function beginClaudeAccount(memberId: string) {
+export async function beginClaudeAccount(
+  memberId: string,
+  target: 'install' | 'existing' = 'install',
+) {
   if (!window.relayDesktop?.beginClaudeWebAccount)
     throw new Error('Open the current Kivuno desktop app to connect Claude.');
   const account = await window.relayDesktop.beginClaudeWebAccount({ memberId });
   refreshClaudeAccount(memberId);
   if (account.status !== 'connected' && !account.reusable?.length)
-    await openExternal(claudeConnectorsUrl);
+    await openExternal(
+      target === 'existing' ? claudeConnectorsUrl : claudeConnectorInstallUrl(account.url),
+    );
   return account;
 }
 

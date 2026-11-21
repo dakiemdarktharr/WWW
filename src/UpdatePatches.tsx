@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.17',
+    date: '2026-11-22',
+    fixes: [
+      {
+        vi: 'Đơn giản hóa kết nối Claude và hỗ trợ dùng Antigravity trên nhiều tài khoản Kivuno.',
+        en: 'Simplify Claude setup and allow Antigravity across Kivuno accounts.',
+      },
+    ],
+  },
+  {
     version: '0.9.16',
     date: '2026-11-22',
     fixes: [

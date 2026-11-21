@@ -41,6 +41,16 @@ function externalUrl(value, identityOrigin) {
     'team1vn.xyz',
   ];
   const known =
+    (url.origin === 'https://claude.ai' &&
+      url.pathname === '/customize/connectors' &&
+      !url.hash &&
+      [...url.searchParams].length === 3 &&
+      url.searchParams.getAll('modal').length === 1 &&
+      url.searchParams.get('modal') === 'add-custom-connector' &&
+      url.searchParams.getAll('connectorName').length === 1 &&
+      url.searchParams.get('connectorName') === 'Kivuno' &&
+      url.searchParams.getAll('connectorUrl').length === 1 &&
+      url.searchParams.get('connectorUrl') === identityOrigin + '/api/claude/mcp') ||
     url.href === 'https://claude.ai/login' ||
     url.href === 'https://claude.ai/settings/usage' ||
     url.href === 'https://claude.ai/customize/connectors/yours' ||
