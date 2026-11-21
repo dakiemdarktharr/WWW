@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowLeft, ChevronDown, ListTodo, Send, Users, X } from 'lucide-react';
 import type { Member, Project } from '../shared/types';
 import { sadeProjectCatalogueMaxBytes } from '../shared/sade-project';
 import type {
@@ -39,6 +40,19 @@ async function catalogueJpeg(file: File) {
   } finally {
     bitmap.close();
   }
+}
+
+const dateLabel = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+const timeLabel = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+
+function initials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0])
+    .join('')
+    .toLocaleUpperCase();
 }
 
 type GroupSadeView = {
@@ -88,6 +102,14 @@ export default function SharedGroups({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [showList, setShowList] = useState(!initialGroupId);
+  const [showLatest, setShowLatest] = useState(false);
+  const groupList = useRef<HTMLElement>(null);
+  const roomHeading = useRef<HTMLHeadingElement>(null);
+  const membersDialog = useRef<HTMLDialogElement>(null);
+  const history = useRef<HTMLDivElement>(null);
+  const nearLatest = useRef(true);
+  const moveRoomFocus = useRef(false);
   const [chosenTeammates, setChosenTeammates] = useState<string[]>([]);
   const [chosenSeats, setChosenSeats] = useState<string[]>([]);
   const [grants, setGrants] = useState<SharedHarnessGrant[]>([]);
@@ -184,6 +206,8 @@ export default function SharedGroups({
     let timer: ReturnType<typeof setTimeout>;
     setRoom(undefined);
     setMessages([]);
+    nearLatest.current = true;
+    setShowLatest(false);
     setEditing(false);
     setContent('');
     setAccount('');
@@ -295,6 +319,8 @@ export default function SharedGroups({
     }
   };
   const choose = (id: string) => {
+    setShowList(!id);
+    moveRoomFocus.current = Boolean(id) && window.matchMedia('(max-width: 660px)').matches;
     setCatalogue(undefined);
     selectedRef.current = id;
     setSelected(id);
@@ -319,6 +345,34 @@ export default function SharedGroups({
       clearInterval(timer);
     };
   }, [editing, grantProject, allowWrites]);
+  const latestMessageId = messages.at(-1)?.id;
+  useEffect(() => {
+    if (!showList && room?.id === selected && moveRoomFocus.current && roomHeading.current) {
+      roomHeading.current.focus({ preventScroll: true });
+      moveRoomFocus.current = false;
+    }
+  }, [room?.id, selected, showList]);
+  useEffect(() => {
+    const dialog = membersDialog.current;
+    if (!dialog || dialog.open === editing) return;
+    if (editing) dialog.showModal();
+    else dialog.close();
+  }, [editing]);
+  useEffect(() => {
+    const stream = history.current;
+    if (!stream || stream.clientHeight === 0) return;
+    if (nearLatest.current) stream.scrollTop = stream.scrollHeight;
+    setShowLatest(stream.scrollHeight - stream.clientHeight - stream.scrollTop > 64);
+  }, [room?.id, latestMessageId, showList]);
+  const backToGroups = () => {
+    setShowList(true);
+    requestAnimationFrame(() =>
+      (
+        groupList.current?.querySelector<HTMLButtonElement>('[aria-current="page"]:enabled') ??
+        groupList.current
+      )?.focus(),
+    );
+  };
   const paired = allowWrites
     ? machines.filter(
         (machine) =>
@@ -355,11 +409,43 @@ export default function SharedGroups({
   const waiting = latestSade?.jobs.find((job) => job.state === 'waiting');
   return (
     <section
-      className={`shared-groups${latestProject ? ' shared-groups-with-project' : ''}`}
+      className="shared-groups"
+      data-pane={selected && !showList ? 'room' : 'list'}
       aria-label="Kivuno groups"
     >
-      <aside className="shared-group-list">
+      <aside className="shared-group-list" ref={groupList} tabIndex={-1} aria-label="Group list">
         <h2>Groups</h2>
+        {!listing && !error && <p role="status">Connecting to your Kivuno groups…</p>}
+        <nav aria-label="Shared groups">
+          {listing?.groups.map((group) => (
+            <button
+              className="shared-group-link"
+              aria-label={group.name}
+              disabled={busy}
+              key={group.id}
+              aria-current={selected === group.id ? 'page' : undefined}
+              onClick={() => choose(group.id)}
+            >
+              <span className="shared-group-avatar" aria-hidden="true">
+                {initials(group.name)}
+              </span>
+              <span className="shared-group-list-copy">
+                <strong title={group.name}>{group.name}</strong>
+                {group.lastMessagePreview && <small>{group.lastMessagePreview}</small>}
+              </span>
+              {group.lastMessageAt && (
+                <time dateTime={group.lastMessageAt}>
+                  {timeLabel.format(new Date(group.lastMessageAt))}
+                </time>
+              )}
+            </button>
+          ))}
+        </nav>
+        {error && (
+          <p className="shared-group-list-error error-text" role="alert">
+            {error}
+          </p>
+        )}
         {listing && (
           <button
             className="text-button"
@@ -452,36 +538,51 @@ export default function SharedGroups({
             ))}
           </div>
         )}
-        <nav aria-label="Shared groups">
-          {listing?.groups.map((group) => (
-            <button
-              className="shared-group-link"
-              disabled={busy}
-              key={group.id}
-              aria-current={selected === group.id ? 'page' : undefined}
-              onClick={() => choose(group.id)}
-            >
-              {group.name}
-            </button>
-          ))}
-        </nav>
       </aside>
       <div className="shared-group-room">
-        {error && (
+        <button
+          className="shared-group-back text-button"
+          type="button"
+          aria-label="Back to group list"
+          onClick={backToGroups}
+        >
+          <ArrowLeft size={17} aria-hidden="true" /> Groups
+        </button>
+        {error && !editing && (
           <p className="error-text" role="alert">
             {error}
           </p>
         )}
-        {!listing && !error && <p role="status">Connecting to your Kivuno groups…</p>}
         {selected && !room && !error && <p role="status">Opening group…</p>}
-        {room && (
+        {listing && !selected && !error && (
+          <p className="shared-group-placeholder">Select a group to open the conversation.</p>
+        )}
+        {room && room.id === selected && (
           <>
-            <header>
-              <h2>{room.name}</h2>
+            <header className="shared-group-heading">
+              <span className="shared-group-avatar" aria-hidden="true">
+                {initials(room.name)}
+              </span>
+              <div>
+                <h2 ref={roomHeading} tabIndex={-1}>
+                  {room.name}
+                </h2>
+                <p>
+                  {room.people.length} {room.people.length === 1 ? 'member' : 'members'}
+                  {room.teammates.length > 0 && (
+                    <>
+                      {' '}
+                      · {room.teammates.length} shared{' '}
+                      {room.teammates.length === 1 ? 'teammate' : 'teammates'}
+                    </>
+                  )}
+                </p>
+              </div>
               <button
                 className="button compact"
+                aria-haspopup="dialog"
                 onClick={() => {
-                  setEditing(!editing);
+                  setEditing(true);
                   setChosenTeammates(
                     room.teammates
                       .filter((member) => member.ownerId === ownerId)
@@ -494,11 +595,43 @@ export default function SharedGroups({
                   );
                 }}
               >
-                Members
+                <Users size={16} aria-hidden="true" /> Members
               </button>
             </header>
-            {editing && (
-              <section className="shared-group-members" aria-label="Group members">
+            <dialog
+              ref={membersDialog}
+              className="shared-group-dialog"
+              aria-labelledby="shared-group-members-title"
+              onClose={(event) => {
+                if (!event.currentTarget.open) setEditing(false);
+              }}
+            >
+              <header>
+                <h3 id="shared-group-members-title">Group members</h3>
+                <button
+                  type="button"
+                  className="text-button"
+                  aria-label="Close group members"
+                  onClick={() => membersDialog.current?.close()}
+                >
+                  <X size={20} aria-hidden="true" />
+                </button>
+              </header>
+              {error && (
+                <p className="error-text" role="alert">
+                  {error}
+                </p>
+              )}
+              <section className="shared-group-members" aria-label="Member settings">
+                <div className="shared-group-roster" aria-label="Shared teammates">
+                  {room.teammates.map((member) => (
+                    <span key={`${member.ownerId}:${member.localId}`}>
+                      {member.name} ·{' '}
+                      {room.people.find((person) => person.id === member.ownerId)?.name}
+                    </span>
+                  ))}
+                </div>
+
                 <ul>
                   {room.people.map((person) => (
                     <li key={person.id}>
@@ -674,7 +807,13 @@ export default function SharedGroups({
                   >
                     Save my teammates
                   </button>
-                  <button className="text-button" onClick={addTeammate}>
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      membersDialog.current?.close();
+                      addTeammate();
+                    }}
+                  >
                     Connect a teammate
                   </button>
                 </div>
@@ -823,386 +962,456 @@ export default function SharedGroups({
                   </button>
                 )}
               </section>
-            )}
-            <div className="shared-group-roster" aria-label="Shared teammates">
-              {room.teammates.map((member) => (
-                <span key={`${member.ownerId}:${member.localId}`}>
-                  {member.name} · {room.people.find((person) => person.id === member.ownerId)?.name}
-                </span>
-              ))}
-            </div>
+            </dialog>
             {latestSade && (
-              <section
-                aria-label="Sade progress"
-                className="shared-group-members"
-                data-sade-run={latestSade.id}
-              >
-                <strong>Sade · {latestSade.state}</strong>
-                {latestSade.error && <p>{latestSade.error}</p>}
-                <ul>
-                  {latestSade.jobs.map((job) => (
-                    <li key={job.id}>
-                      {job.task?.title || (job.phase === 'review' ? 'Independent review' : 'Plan')}{' '}
-                      · {grantLabels.get(job.grantId) || 'Assigned teammate'} · {job.state}
-                      {job.summary && <p>{job.summary}</p>}
-                      {Boolean(job.updateCount) && (
-                        <p aria-live="polite">
-                          {job.updatesRead || 0}/{job.updateCount} task updates read
-                        </p>
-                      )}
-                      {job.canUpdate &&
-                        (taskUpdate?.jobId === job.id ? (
-                          <form
-                            onSubmit={(event) => {
-                              event.preventDefault();
-                              void run(async () => {
-                                await request({
-                                  action: 'sade-update-task',
-                                  groupId: room.id,
-                                  runId: latestSade.id,
-                                  jobId: job.id,
-                                  id: taskUpdate.id,
-                                  text: taskUpdate.text.trim(),
-                                });
-                                setTaskUpdate(null);
-                              });
-                            }}
-                          >
-                            <label>
-                              Task update
-                              <input
-                                value={taskUpdate.text}
-                                maxLength={1000}
-                                required
-                                onChange={(event) =>
+              <details className="shared-group-disclosure" key={room.id}>
+                <summary
+                  aria-label="Sade activity"
+                  aria-describedby={
+                    waiting && latestSade.canAnswer
+                      ? 'shared-sade-state shared-sade-reply'
+                      : 'shared-sade-state'
+                  }
+                >
+                  <ListTodo size={17} aria-hidden="true" />
+                  <strong id="shared-sade-state">Sade · {latestSade.state}</strong>
+                  {waiting && latestSade.canAnswer && (
+                    <span id="shared-sade-reply">Reply requested</span>
+                  )}
+                  <ChevronDown size={16} aria-hidden="true" />
+                </summary>
+                <div className="shared-group-disclosure-body">
+                  <section
+                    aria-label="Sade progress"
+                    className="shared-group-members"
+                    data-sade-run={latestSade.id}
+                  >
+                    <strong>Sade · {latestSade.state}</strong>
+                    {latestSade.error && <p>{latestSade.error}</p>}
+                    <ul>
+                      {latestSade.jobs.map((job) => (
+                        <li key={job.id}>
+                          {job.task?.title ||
+                            (job.phase === 'review' ? 'Independent review' : 'Plan')}{' '}
+                          · {grantLabels.get(job.grantId) || 'Assigned teammate'} · {job.state}
+                          {job.summary && <p>{job.summary}</p>}
+                          {Boolean(job.updateCount) && (
+                            <p aria-live="polite">
+                              {job.updatesRead || 0}/{job.updateCount} task updates read
+                            </p>
+                          )}
+                          {job.canUpdate &&
+                            (taskUpdate?.jobId === job.id ? (
+                              <form
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  void run(async () => {
+                                    await request({
+                                      action: 'sade-update-task',
+                                      groupId: room.id,
+                                      runId: latestSade.id,
+                                      jobId: job.id,
+                                      id: taskUpdate.id,
+                                      text: taskUpdate.text.trim(),
+                                    });
+                                    setTaskUpdate(null);
+                                  });
+                                }}
+                              >
+                                <label>
+                                  Task update
+                                  <input
+                                    value={taskUpdate.text}
+                                    maxLength={1000}
+                                    required
+                                    onChange={(event) =>
+                                      setTaskUpdate({
+                                        jobId: job.id,
+                                        id: crypto.randomUUID(),
+                                        text: event.target.value,
+                                      })
+                                    }
+                                  />
+                                </label>
+                                <button
+                                  className="button compact"
+                                  disabled={busy || !taskUpdate.text.trim()}
+                                >
+                                  Send update
+                                </button>
+                                <button
+                                  className="text-button"
+                                  type="button"
+                                  onClick={() => setTaskUpdate(null)}
+                                >
+                                  Close
+                                </button>
+                              </form>
+                            ) : (
+                              <button
+                                className="button compact"
+                                disabled={busy}
+                                type="button"
+                                onClick={() =>
                                   setTaskUpdate({
                                     jobId: job.id,
                                     id: crypto.randomUUID(),
-                                    text: event.target.value,
+                                    text: '',
                                   })
                                 }
-                              />
-                            </label>
-                            <button
-                              className="button compact"
-                              disabled={busy || !taskUpdate.text.trim()}
-                            >
-                              Send update
-                            </button>
-                            <button
-                              className="text-button"
-                              type="button"
-                              onClick={() => setTaskUpdate(null)}
-                            >
-                              Close
-                            </button>
-                          </form>
-                        ) : (
-                          <button
-                            className="button compact"
-                            disabled={busy}
-                            type="button"
-                            onClick={() =>
-                              setTaskUpdate({ jobId: job.id, id: crypto.randomUUID(), text: '' })
-                            }
-                          >
-                            Update task
-                          </button>
-                        ))}
-                    </li>
-                  ))}
-                </ul>
-                {waiting && latestSade.canAnswer && (
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void run(() =>
-                        submitRoom<GroupSadeView & { sadeGroup?: GroupSadeView }>(
-                          {
-                            action: 'sade-answer',
-                            groupId: room.id,
-                            runId: latestSade.id,
-                            jobId: waiting.id,
-                            answer: answer.trim(),
-                          },
-                          (result) => {
-                            setAnswer('');
-                            const view = result?.sadeGroup ?? result;
-                            if (!view?.sadeRuns || (view.group && view.group.id !== room.id))
-                              return false;
-                            applyGroupView(view);
-                            return true;
-                          },
-                        ),
-                      );
-                    }}
-                  >
-                    <label>
-                      Reply to Sade
-                      <input
-                        value={answer}
-                        maxLength={1000}
-                        onChange={(event) => setAnswer(event.target.value)}
-                        required
-                      />
-                    </label>
-                    <button className="button compact" disabled={busy || !answer.trim()}>
-                      Send reply
-                    </button>
-                  </form>
-                )}
-                {['planning', 'running'].includes(latestSade.state) && (
-                  <button
-                    className="button compact"
-                    disabled={busy}
-                    onClick={() =>
-                      void run(async () => {
-                        await request({
-                          action: 'sade-cancel',
-                          groupId: room.id,
-                          runId: latestSade.id,
-                        });
-                      })
-                    }
-                  >
-                    Cancel Sade request
-                  </button>
-                )}
-              </section>
+                              >
+                                Update task
+                              </button>
+                            ))}
+                        </li>
+                      ))}
+                    </ul>
+                    {waiting && latestSade.canAnswer && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void run(() =>
+                            submitRoom<GroupSadeView & { sadeGroup?: GroupSadeView }>(
+                              {
+                                action: 'sade-answer',
+                                groupId: room.id,
+                                runId: latestSade.id,
+                                jobId: waiting.id,
+                                answer: answer.trim(),
+                              },
+                              (result) => {
+                                setAnswer('');
+                                const view = result?.sadeGroup ?? result;
+                                if (!view?.sadeRuns || (view.group && view.group.id !== room.id))
+                                  return false;
+                                applyGroupView(view);
+                                return true;
+                              },
+                            ),
+                          );
+                        }}
+                      >
+                        <label>
+                          Reply to Sade
+                          <input
+                            value={answer}
+                            maxLength={1000}
+                            onChange={(event) => setAnswer(event.target.value)}
+                            required
+                          />
+                        </label>
+                        <button className="button compact" disabled={busy || !answer.trim()}>
+                          Send reply
+                        </button>
+                      </form>
+                    )}
+                    {['planning', 'running'].includes(latestSade.state) && (
+                      <button
+                        className="button compact"
+                        disabled={busy}
+                        onClick={() =>
+                          void run(async () => {
+                            await request({
+                              action: 'sade-cancel',
+                              groupId: room.id,
+                              runId: latestSade.id,
+                            });
+                          })
+                        }
+                      >
+                        Cancel Sade request
+                      </button>
+                    )}
+                  </section>
+                  {latestProject && latestProject.groupId === selected && (
+                    <SharedSadeProject
+                      key={latestProject.id}
+                      run={latestProject}
+                      localSessions={sessions}
+                      requestStatus={() =>
+                        run(async () => {
+                          await submitRoom<GroupSadeView>(
+                            {
+                              action: 'sade-project-status',
+                              groupId: latestProject.groupId,
+                              runId: latestProject.id,
+                            },
+                            (view) => {
+                              applyGroupView(view);
+                              return true;
+                            },
+                          );
+                        })
+                      }
+                    />
+                  )}
+                </div>
+              </details>
             )}
             <div
               className="shared-group-history"
+              ref={history}
+              onScroll={(event) => {
+                const stream = event.currentTarget;
+                nearLatest.current =
+                  stream.scrollHeight - stream.clientHeight - stream.scrollTop <= 64;
+                setShowLatest(!nearLatest.current);
+              }}
               role="log"
+              tabIndex={0}
               aria-label="Group messages"
               aria-live="polite"
             >
-              {messages.map((message) => (
-                <article key={message.id}>
-                  <strong>{message.author}</strong>
-                  <time dateTime={message.createdAt}>
-                    {new Date(message.createdAt).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </time>
-                  {message.sade?.replyTo && <small>Refers to a group message</small>}
-                  <p>{message.content}</p>
-                  {supportsReferencedMessage &&
-                    linkedProjects.some(
-                      ([key]) => !message.sade || key === message.sade.projectKey,
-                    ) && (
-                      <button
-                        type="button"
-                        className="text-button"
-                        disabled={busy}
-                        onClick={() => {
-                          setReference(message);
-                          if (message.sade) setProjectKey(message.sade.projectKey);
-                          else if (linkedProjects.length === 1) setProjectKey(linkedProjects[0][0]);
-                          composer.current?.focus();
-                        }}
+              <div className="shared-group-feed">
+                {messages.map((message, index) => {
+                  const previous = messages[index - 1];
+                  const date = new Date(message.createdAt);
+                  const previousDate = previous && new Date(previous.createdAt);
+                  const startsDay = date.toDateString() !== previousDate?.toDateString();
+                  const continuation =
+                    !startsDay &&
+                    previous?.ownerId === message.ownerId &&
+                    previous.author === message.author &&
+                    previousDate &&
+                    date.getTime() - previousDate.getTime() <= 5 * 60 * 1000;
+                  const own = message.ownerId === ownerId && message.author !== 'Sade';
+                  return (
+                    <div key={message.id}>
+                      {startsDay && <p className="shared-group-date">{dateLabel.format(date)}</p>}
+                      <article
+                        className="shared-group-message"
+                        data-own={own || undefined}
+                        data-continuation={Boolean(continuation) || undefined}
                       >
-                        Ask Sade about this
-                      </button>
-                    )}
-                </article>
-              ))}
+                        <span className="shared-group-avatar" aria-hidden="true">
+                          {initials(message.author)}
+                        </span>
+                        <div className="shared-group-message-content">
+                          <div className="shared-group-message-meta">
+                            <strong>{message.author}</strong>
+                            <time dateTime={message.createdAt}>{timeLabel.format(date)}</time>
+                          </div>
+                          <div className="shared-group-bubble">
+                            {message.sade?.replyTo && <small>Refers to a group message</small>}
+                            <p>{message.content}</p>
+                          </div>
+                          {supportsReferencedMessage &&
+                            linkedProjects.some(
+                              ([key]) => !message.sade || key === message.sade.projectKey,
+                            ) && (
+                              <button
+                                type="button"
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() => {
+                                  setReference(message);
+                                  if (message.sade) setProjectKey(message.sade.projectKey);
+                                  else if (linkedProjects.length === 1)
+                                    setProjectKey(linkedProjects[0][0]);
+                                  composer.current?.focus();
+                                }}
+                              >
+                                Ask Sade about this
+                              </button>
+                            )}
+                        </div>
+                      </article>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            {reference && (
-              <div
-                className="shared-group-reference"
-                role="group"
-                aria-label="Selected message for Sade"
-              >
-                <div>
-                  <strong>{reference.author}</strong>
-                  <p title={reference.content.slice(0, 160)}>{reference.content.slice(0, 160)}</p>
-                </div>
+            {showLatest && (
+              <div className="shared-group-latest">
                 <button
                   type="button"
-                  className="text-button"
-                  aria-label="Remove message reference"
-                  disabled={busy}
-                  onClick={() => setReference(undefined)}
+                  className="button compact"
+                  onClick={() => {
+                    if (!history.current) return;
+                    history.current.scrollTop = history.current.scrollHeight;
+                    history.current.focus({ preventScroll: true });
+                  }}
                 >
-                  Remove
+                  <ArrowDown size={16} aria-hidden="true" /> Latest messages
                 </button>
               </div>
             )}
-            <form
-              className="shared-group-compose"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (needsReferenceProject || needsSadeProject || !content.trim()) return;
-                void run(async () => {
-                  const draft = messageDraft.current;
-                  const readOnly = Boolean(projectKey) && readOnlyRequest;
-                  const replyTo = reference?.id;
-                  const image = !readOnly && projectKey ? catalogue : undefined;
-                  const next: NonNullable<typeof messageDraft.current> =
-                    draft?.content === content &&
-                    draft.groupId === room.id &&
-                    (draft.sade?.projectKey || '') === projectKey &&
-                    Boolean(draft.sade?.readOnly) === readOnly &&
-                    draft.sade?.replyTo === replyTo &&
-                    draft.catalogue === image
-                      ? draft
-                      : {
-                          id: crypto.randomUUID(),
-                          content,
-                          groupId: room.id,
-                          catalogue: image,
-                          ...(projectKey
-                            ? {
-                                sade: {
-                                  projectKey,
-                                  ...(readOnly ? { readOnly: true } : {}),
-                                  ...(replyTo ? { replyTo } : {}),
-                                  ...(image ? { catalogue: true } : {}),
-                                },
-                              }
-                            : {}),
-                        };
-                  messageDraft.current = next;
-                  if (image)
-                    await window.relayDesktop!.projectCatalogue({
-                      groupId: room.id,
-                      runId: next.id,
-                      projectKey,
-                      data: await catalogueJpeg(image),
-                    });
-                  const { catalogue: _localImage, ...message } = next;
-                  await submitRoom<SharedMessage & { sadeGroup?: GroupSadeView }>(
-                    { action: 'message', ...message },
-                    (saved) => {
-                      messageDraft.current = null;
-                      setContent('');
-                      setProjectKey('');
-                      setReadOnlyRequest(false);
-                      setReference(undefined);
-                      setCatalogue(undefined);
-                      if (saved?.id !== next.id || saved.groupId !== room.id) return false;
-                      const { sadeGroup, ...message } = saved;
-                      if (Number.isSafeInteger(message.sequence))
-                        setMessages((previous) => mergeMessages(previous, [message]));
-                      if (sadeGroup?.group?.id !== room.id) return false;
-                      applyGroupView(sadeGroup);
-                      return true;
-                    },
-                  );
-                });
-              }}
-            >
-              <textarea
-                ref={composer}
-                aria-label="Message group"
-                placeholder="Message group"
-                value={content}
-                onChange={(event) => {
-                  const text = event.target.value;
-                  setContent(text);
-                  if (
-                    !projectKey &&
-                    supportsProjects &&
-                    /^\s*@sade\b/i.test(text) &&
-                    projectOptions.length === 1
-                  )
-                    setProjectKey(projectOptions[0][0]);
-                }}
-                maxLength={8000}
-                required
-              />
-              {(projectOptions.length > 0 || reference) && (
-                <div className="shared-group-compose-controls">
-                  <select
-                    aria-label="Ask Sade in this group"
-                    value={reference && !projectIsAvailable ? '' : projectKey}
-                    onChange={(event) => setProjectKey(event.target.value)}
+            <div className="shared-group-footer">
+              {reference && (
+                <div
+                  className="shared-group-reference"
+                  role="group"
+                  aria-label="Selected message for Sade"
+                >
+                  <div>
+                    <strong>{reference.author}</strong>
+                    <p title={reference.content.slice(0, 160)}>{reference.content.slice(0, 160)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button"
+                    aria-label="Remove message reference"
+                    disabled={busy}
+                    onClick={() => setReference(undefined)}
                   >
-                    <option value="">
-                      {reference ? 'Choose a project' : 'Send a group message'}
-                    </option>
-                    {projectOptions.map(([key, name]) => (
-                      <option key={key} value={key}>
-                        Ask Sade · {name}
-                      </option>
-                    ))}
-                  </select>
-                  {projectKey && (
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={readOnlyRequest}
-                        onChange={(event) => setReadOnlyRequest(event.target.checked)}
-                      />
-                      Read-only request
-                    </label>
-                  )}
-                  {supportsProjects &&
-                    projectKey &&
-                    !readOnlyRequest &&
-                    window.relayDesktop?.projectCatalogue && (
-                      <div className="shared-group-catalogue">
-                        <label>
-                          Catalogue image
-                          <input
-                            ref={catalogueInput}
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            disabled={busy}
-                            onChange={(event) => setCatalogue(event.target.files?.[0])}
-                          />
-                        </label>
-                        {catalogue && (
-                          <button
-                            className="text-button"
-                            type="button"
-                            disabled={busy}
-                            onClick={() => {
-                              if (catalogueInput.current) catalogueInput.current.value = '';
-                              setCatalogue(undefined);
-                            }}
-                          >
-                            Remove catalogue image
-                          </button>
-                        )}
-                      </div>
-                    )}
+                    Remove
+                  </button>
                 </div>
               )}
-              <button
-                className="button primary"
-                disabled={busy || !content.trim() || needsReferenceProject || needsSadeProject}
+              <form
+                className="shared-group-compose"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (needsReferenceProject || needsSadeProject || !content.trim()) return;
+                  void run(async () => {
+                    const draft = messageDraft.current;
+                    const readOnly = Boolean(projectKey) && readOnlyRequest;
+                    const replyTo = reference?.id;
+                    const image = !readOnly && projectKey ? catalogue : undefined;
+                    const next: NonNullable<typeof messageDraft.current> =
+                      draft?.content === content &&
+                      draft.groupId === room.id &&
+                      (draft.sade?.projectKey || '') === projectKey &&
+                      Boolean(draft.sade?.readOnly) === readOnly &&
+                      draft.sade?.replyTo === replyTo &&
+                      draft.catalogue === image
+                        ? draft
+                        : {
+                            id: crypto.randomUUID(),
+                            content,
+                            groupId: room.id,
+                            catalogue: image,
+                            ...(projectKey
+                              ? {
+                                  sade: {
+                                    projectKey,
+                                    ...(readOnly ? { readOnly: true } : {}),
+                                    ...(replyTo ? { replyTo } : {}),
+                                    ...(image ? { catalogue: true } : {}),
+                                  },
+                                }
+                              : {}),
+                          };
+                    messageDraft.current = next;
+                    if (image)
+                      await window.relayDesktop!.projectCatalogue({
+                        groupId: room.id,
+                        runId: next.id,
+                        projectKey,
+                        data: await catalogueJpeg(image),
+                      });
+                    const { catalogue: _localImage, ...message } = next;
+                    await submitRoom<SharedMessage & { sadeGroup?: GroupSadeView }>(
+                      { action: 'message', ...message },
+                      (saved) => {
+                        messageDraft.current = null;
+                        setContent('');
+                        setProjectKey('');
+                        setReadOnlyRequest(false);
+                        setReference(undefined);
+                        setCatalogue(undefined);
+                        if (saved?.id !== next.id || saved.groupId !== room.id) return false;
+                        const { sadeGroup, ...message } = saved;
+                        if (Number.isSafeInteger(message.sequence))
+                          setMessages((previous) => mergeMessages(previous, [message]));
+                        if (sadeGroup?.group?.id !== room.id) return false;
+                        applyGroupView(sadeGroup);
+                        return true;
+                      },
+                    );
+                  });
+                }}
               >
-                {projectKey || reference || needsSadeProject ? 'Ask Sade' : 'Send'}
-              </button>
-              {needsSadeProject && <p role="status">Choose a linked project for @Sade.</p>}
-            </form>
+                <textarea
+                  ref={composer}
+                  aria-label="Message group"
+                  placeholder="Message group"
+                  value={content}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setContent(text);
+                    if (
+                      !projectKey &&
+                      supportsProjects &&
+                      /^\s*@sade\b/i.test(text) &&
+                      projectOptions.length === 1
+                    )
+                      setProjectKey(projectOptions[0][0]);
+                  }}
+                  maxLength={8000}
+                  required
+                />
+                {(projectOptions.length > 0 || reference) && (
+                  <div className="shared-group-compose-controls">
+                    <select
+                      aria-label="Ask Sade in this group"
+                      value={reference && !projectIsAvailable ? '' : projectKey}
+                      onChange={(event) => setProjectKey(event.target.value)}
+                    >
+                      <option value="">
+                        {reference ? 'Choose a project' : 'Send a group message'}
+                      </option>
+                      {projectOptions.map(([key, name]) => (
+                        <option key={key} value={key}>
+                          Ask Sade · {name}
+                        </option>
+                      ))}
+                    </select>
+                    {projectKey && (
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={readOnlyRequest}
+                          onChange={(event) => setReadOnlyRequest(event.target.checked)}
+                        />
+                        Read-only request
+                      </label>
+                    )}
+                    {supportsProjects &&
+                      projectKey &&
+                      !readOnlyRequest &&
+                      window.relayDesktop?.projectCatalogue && (
+                        <div className="shared-group-catalogue">
+                          <label>
+                            Catalogue image
+                            <input
+                              ref={catalogueInput}
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              disabled={busy}
+                              onChange={(event) => setCatalogue(event.target.files?.[0])}
+                            />
+                          </label>
+                          {catalogue && (
+                            <button
+                              className="text-button"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                if (catalogueInput.current) catalogueInput.current.value = '';
+                                setCatalogue(undefined);
+                              }}
+                            >
+                              Remove catalogue image
+                            </button>
+                          )}
+                        </div>
+                      )}
+                  </div>
+                )}
+                <button
+                  className="button primary"
+                  disabled={busy || !content.trim() || needsReferenceProject || needsSadeProject}
+                >
+                  <Send size={16} aria-hidden="true" />
+                  {projectKey || reference || needsSadeProject ? 'Ask Sade' : 'Send'}
+                </button>
+                {needsSadeProject && <p role="status">Choose a linked project for @Sade.</p>}
+              </form>
+            </div>
           </>
         )}
       </div>
-      {latestProject && latestProject.groupId === selected && (
-        <SharedSadeProject
-          key={latestProject.id}
-          run={latestProject}
-          localSessions={sessions}
-          requestStatus={() =>
-            run(async () => {
-              await submitRoom<GroupSadeView>(
-                {
-                  action: 'sade-project-status',
-                  groupId: latestProject.groupId,
-                  runId: latestProject.id,
-                },
-                (view) => {
-                  applyGroupView(view);
-                  return true;
-                },
-              );
-            })
-          }
-        />
-      )}
     </section>
   );
 }

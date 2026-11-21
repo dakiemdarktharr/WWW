@@ -225,6 +225,12 @@ try {
   await a.page.getByLabel('New group name').fill('Shared research');
   await a.page.getByRole('button', { name: 'Create group', exact: true }).click();
   await a.page.getByRole('button', { name: 'Members', exact: true }).click();
+  await a.page.getByRole('button', { name: 'Connect a teammate' }).click();
+  await a.page
+    .getByRole('dialog', { name: 'Add account' })
+    .getByRole('button', { name: 'Close dialog' })
+    .click();
+  await a.page.getByRole('button', { name: 'Members', exact: true }).click();
   await a.page.getByLabel('Kivuno account email or ID').fill('bob@example.test');
   await a.page.getByRole('button', { name: 'Invite account', exact: true }).click();
   await a.page.getByRole('checkbox', { name: 'Alice Codex · codex', exact: true }).check();
@@ -240,8 +246,14 @@ try {
   await b.page.getByRole('checkbox', { name: 'Bob Codex · codex', exact: true }).check();
   await b.page.getByRole('button', { name: 'Save my teammates', exact: true }).click();
   await a.page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  for (const { page } of [a, b]) {
+    await expect(page.getByRole('button', { name: 'Members', exact: true })).toBeFocused();
+  }
+  await a.page.getByRole('button', { name: 'Members', exact: true }).click();
   await expect(a.page.getByLabel('Shared teammates')).toContainText('Bob Codex');
   await expect(a.page.getByLabel('Shared teammates')).toContainText('Alice Codex');
+  await a.page.getByRole('button', { name: 'Close group members' }).click();
+  await expect(a.page.getByRole('button', { name: 'Members', exact: true })).toBeFocused();
   await a.page.getByLabel('Message group', { exact: true }).fill('Hello from Alice');
   await a.page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(b.page.getByRole('log', { name: 'Group messages' })).toContainText(
@@ -259,6 +271,18 @@ try {
   await b.page.getByRole('button', { name: 'Groups', exact: true }).click();
   await b.page.getByRole('button', { name: 'Shared research', exact: true }).click();
   await expect(b.page.getByRole('log')).toContainText('Hello from Alice');
+  const originalViewport = b.page.viewportSize()!;
+  await b.page.setViewportSize({ width: 390, height: 844 });
+  const back = b.page.getByRole('button', { name: 'Back to group list' });
+  await expect(back).toBeVisible();
+  await back.click();
+  const groupButton = b.page.getByRole('button', { name: 'Shared research', exact: true });
+  await expect(groupButton).toBeFocused();
+  await groupButton.click();
+  await expect(b.page.getByRole('heading', { name: 'Shared research' })).toBeFocused();
+  const mobileComposer = await b.page.getByLabel('Message group', { exact: true }).boundingBox();
+  assert.ok(mobileComposer && mobileComposer.width >= 160);
+  await b.page.setViewportSize(originalViewport);
 
   const group = cloud.all<SharedGroup>('sharedGroup')[0];
   const grantId = randomUUID();
@@ -306,6 +330,7 @@ try {
       b.deviceId,
     );
     await a.page.getByRole('button', { name: 'Ask Sade', exact: true }).click();
+    await a.page.getByLabel('Sade activity', { exact: true }).click();
     await expect(progress.getByText('Sade · planning', { exact: true })).toBeVisible();
     await expect(a.page.getByRole('log').getByText('Check the current plan.')).toHaveCount(1);
   } finally {
@@ -354,6 +379,7 @@ try {
   const peerProgress = b.page.getByRole('region', { name: 'Sade progress' });
   for (const { page } of [a, b])
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await b.page.getByLabel('Sade activity', { exact: true }).click();
   await expect(peerProgress).toContainText(question);
   await expect(peerProgress.getByLabel('Reply to Sade')).toHaveCount(0);
   const clarification = progress.getByLabel('Reply to Sade');
@@ -514,6 +540,7 @@ try {
   await a.page.getByRole('button', { name: 'Remove Bob', exact: true }).click();
   await b.page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(b.page.getByRole('log')).toHaveCount(0, { timeout: 10000 });
+  await a.page.getByRole('button', { name: 'Close group members' }).click();
   await a.page
     .getByRole('navigation', { name: 'Main navigation' })
     .getByRole('button', { name: 'Team', exact: true })
