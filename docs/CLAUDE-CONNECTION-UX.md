@@ -1,6 +1,6 @@
 # Claude connection architecture and usability
 
-Verified on 21 November 2026. Release 0.9.7.
+Verified on 21 November 2026. Connection UX updated for 0.9.9.
 
 ## Observed behavior
 
@@ -20,7 +20,7 @@ Claude web currently uses the reverse direction. Claude is an OAuth client of th
 
 ## Changes
 
-The setup uses Anthropic's documented prefilled install URL and exposes the existing-connector route and a visible manual fallback with Copy address. Progress is shown with the component used by Codex.
+The setup now opens the existing-connector list. First-time manual setup is collapsed under help with Copy address. The documented prefilled install URL was removed from the primary flow: it redirected without a form in live testing and was not permitted by the desktop's exact external-link allowlist. Progress uses the component used by Codex.
 
 On the account tested, the documented /customize/connectors install URL redirected to /plugins without displaying the prefilled dialog. The older hash-based variant also failed to open that form. The prefill route therefore cannot be claimed to work on this account. The fallback is necessary until Anthropic's deployed UI honors its documented install link.
 
@@ -42,6 +42,23 @@ TypeScript, production build and five targeted OAuth/MCP tests passed. Regressio
 
 The real Codex round trip succeeded. Claude's new refresh flow is verified through the local HTTP integration tests. Production deployment 75706d6 is READY. The public feed advertises Windows/Linux 0.9.7 and OAuth discovery advertises refresh_token. macOS remains 0.9.2. A live Claude refresh after one hour and the packaged 0.9.7 UI still require verification.
 
+## Desktop, Code, and usage in 0.9.9
+
+- Desktop selection opens the installed native application through Electron, with an explicit installation error rather than silently substituting a browser tab. Browser approval is labeled separately: the remote connector belongs to the Claude account and syncs to Desktop. Project-specific local MCP remains available under optional project sharing.
+- Code selection uses the official, unmodified CLI. Kivuno prepares it when absent, opens its own authentication command in a terminal (which opens Anthropic in the browser), and checks official auth status. Credentials remain in Claude Code. Opening a process alone is not a successful login. The UI distinguishes Code signed-in status from a verified MCP connection or project access. No model request, usage credit purchase, or API fallback is initiated by sign-in.
+- Existing Kivuno profiles can be reused for all three client choices. The client choice is remembered per local profile. Project membership/configuration is not required to sign in.
+- The usage action opens the exact official HTTPS settings page. No private cookie/token scraping is used and no percentage is fabricated. The UI warns that detailed usage requires a supported paid plan.
+
+### Live findings
+
+Claude Desktop on this machine was already signed in to a Free account. Its Plugins page showed the same Kivuno connector as the browser and reported **Connecté**. The separate Kivuno Echo profile was still disconnected, so this observation does not prove Echo was newly linked; the existing grant may belong to a previous profile.
+
+On this same Free account, navigating to https://claude.ai/settings/usage redirected to /upgrade?from=wren and displayed a notice that usage settings are available only with Pro, Max, and Ultra. Desktop settings also had no Usage item. Therefore this account cannot supply a real usage dashboard. A paid-account Code login and usage display remain unverified; no subscription was purchased.
+
+### Checks
+
+TypeScript and production build passed. All 23 targeted tests for the native launcher, sanitized status, OAuth rotation/discovery, relay, package content and desktop security passed. The full Electron desktop E2E passed with updated connection wording, collapsed first-use instructions, verified web account, project scope/revocation, and the Desktop button present. The OAuth server in that automated test is a local fixture, not a live Claude account.
+
 ## Primary references
 
 - https://claude.com/docs/connectors/building/directory-vs-custom
@@ -51,3 +68,7 @@ The real Codex round trip succeeded. Claude's new refresh flow is verified throu
 - https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities
 - https://learn.microsoft.com/en-us/entra/msal/dotnet/acquiring-tokens/using-web-browsers
 - https://docs.slack.dev/authentication/installing-with-oauth/
+
+- https://code.claude.com/docs/en/authentication
+- https://code.claude.com/docs/en/cli-reference
+- https://support.claude.com/en/articles/9797557-usage-limit-best-practices

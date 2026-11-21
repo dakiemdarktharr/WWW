@@ -11,9 +11,10 @@ import { api } from './api';
 import { openExternal } from './desktop';
 import {
   beginClaudeAccount,
+  savedClaudeClient,
+  saveClaudeClient,
   claudeClients,
   claudeConnectorsUrl,
-  claudeInstallUrl,
   refreshClaudeAccount,
   useClaudeAccount,
   type ClaudeClient,
@@ -24,6 +25,7 @@ import HelpDetails from './HelpDetails';
 import type { FoundationRequest } from './Foundation';
 import './ProviderConnect.css';
 import ConnectionProgress from './ConnectionProgress';
+import ClaudeCodeSignIn from './ClaudeCodeSignIn';
 
 export { providerLabels };
 export const providerOf = (member?: Pick<Member, 'provider'>): ProviderId =>
@@ -79,7 +81,7 @@ export default function ProviderConnect({
   );
   const selectedProfile =
     choice ?? (profiles.length === 1 ? profiles[0].id : profiles.length ? '' : 'new');
-  const chooseExisting = provider === 'claude' && client === 'web' && profiles.length > 0;
+  const chooseExisting = provider === 'claude' && profiles.length > 0;
   const [managedRuntime, setManagedRuntime] = useState(true);
   const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
   const [error, setError] = useState('');
@@ -145,8 +147,10 @@ export default function ProviderConnect({
           )}
           <p className="provider-summary">
             {client === 'web'
-              ? 'Kivuno opens your Claude connectors. Link your account first. You can share project messages later.'
-              : 'Use the project MCP connection in your signed-in Claude client.'}
+              ? 'Connect your Claude account, then choose what to share.'
+              : client === 'desktop'
+                ? 'Open Claude Desktop. Link Kivuno once; the connector syncs with your Claude account.'
+                : 'Sign in with the official Claude Code app. Kivuno prepares it if needed.'}
           </p>
         </>
       )}
@@ -192,15 +196,15 @@ export default function ProviderConnect({
           ? `Connecting ${providerLabels[provider]}…`
           : provider === 'claude' && client === 'web'
             ? 'Connect Claude in browser'
-            : isExternalProvider(provider)
-              ? `Add ${providerLabels[provider]} connection`
-              : `Connect ${providerLabels[provider]}`}
+            : provider === 'claude'
+              ? client === 'desktop'
+                ? 'Open Claude Desktop'
+                : 'Continue with Claude Code'
+              : isExternalProvider(provider)
+                ? `Add ${providerLabels[provider]} connection`
+                : `Connect ${providerLabels[provider]}`}
       </button>
-      {!(
-        provider === 'claude' &&
-        client === 'web' &&
-        window.relayDesktop?.beginClaudeWebAccount
-      ) && (
+      {!(provider === 'claude' && window.relayDesktop?.beginClaudeWebAccount) && (
         <button className="text-button" onClick={profile} disabled={busy}>
           Create a profile first
         </button>
@@ -228,7 +232,7 @@ export function ExternalConnection({
   googleSignIn,
   googleBusy,
   enableManaged,
-  initialClaudeClient = 'web',
+  initialClaudeClient,
 }: {
   member: Member;
   projects: Project[];
@@ -243,9 +247,15 @@ export function ExternalConnection({
   const [joinId, setJoinId] = useState('');
   const joinProject = projects.find((project) => project.id === joinId) || projects[0];
   const [minutes, setMinutes] = useState('60');
-  const [claudeClient, setClaudeClient] = useState<ClaudeClient>(initialClaudeClient);
+  const [claudeClient, setClaudeClient] = useState<ClaudeClient>(
+    () => initialClaudeClient || savedClaudeClient(member.id),
+  );
   const web = member.provider === 'claude' && claudeClient === 'web';
-  const { account, error: accountError } = useClaudeAccount(web ? member.id : undefined, true);
+  const remoteAccount = member.provider === 'claude' && claudeClient !== 'code';
+  const { account, error: accountError } = useClaudeAccount(
+    remoteAccount ? member.id : undefined,
+    true,
+  );
   const [claims, setClaims] = useState(false);
   const [quota, setQuota] = useState(false);
   const [sadeTurns, setSadeTurns] = useState('0');
@@ -465,6 +475,7 @@ export function ExternalConnection({
             disabled={busy}
             onChange={(value) => {
               setClaudeClient(value as ClaudeClient);
+              saveClaudeClient(member.id, value as ClaudeClient);
               setCreated(null);
 
               setCopied(false);
@@ -472,19 +483,30 @@ export function ExternalConnection({
             }}
             options={claudeClients}
           />
-          {!web && (
-            <div className="member-provider-actions">
+          {claudeClient === 'desktop' && (
+            <>
               <button
-                className="button"
-                onClick={() =>
-                  void openExternal('https://claude.ai/login').catch((cause) =>
-                    setError(cause.message),
-                  )
-                }
+                className="button primary"
+                disabled={busy}
+                onClick={async () => {
+                  setError('');
+                  try {
+                    if (!window.relayDesktop?.claudeClient)
+                      throw new Error('Update Kivuno desktop to open Claude Desktop.');
+                    await window.relayDesktop.claudeClient('desktop');
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  }
+                }}
               >
-                <ArrowUpRight size={15} /> Open Claude sign-in in browser
+                <ArrowUpRight size={16} /> Open Claude Desktop
               </button>
-              {claudeClient === 'desktop' && (
+              <p>
+                Sign in inside Claude Desktop. To link Kivuno, approve the connector once in your
+                browser with the same Claude account. It syncs to Desktop automatically.
+              </p>
+              <details>
+                <summary>Claude Desktop not installed?</summary>
                 <button
                   className="text-button"
                   onClick={() =>
@@ -493,28 +515,22 @@ export function ExternalConnection({
                     )
                   }
                 >
-                  Get Claude Desktop
+                  Download Claude Desktop
                 </button>
-              )}
-            </div>
+              </details>
+            </>
           )}
-          {!web && (
-            <p>
-              {claudeClient === 'desktop'
-                ? 'After signing in, open Claude Desktop with the same account and connect the project below.'
-                : 'Start Claude Code and use /login to authorize the CLI in your browser. Connect the project below.'}
-            </p>
-          )}
+          {claudeClient === 'code' && <ClaudeCodeSignIn />}
         </>
       )}
-      {web && (
+      {remoteAccount && (
         <section className="form claude-account-step">
           {account?.status === 'connected' ? (
             <>
               <strong role="status">
                 <Check size={16} /> Claude connected
               </strong>
-              <p>Your Claude client verified the Kivuno connector.</p>
+              <p>Your Claude account verified the Kivuno connector.</p>
               {account.canShare !== false ? (
                 <p>
                   To share messages later, open a project in Chat → Group team, add {member.name} to
@@ -571,17 +587,7 @@ export function ExternalConnection({
               >
                 <ArrowUpRight size={16} /> Open Claude connectors
               </button>
-              <button
-                className="text-button"
-                onClick={() =>
-                  void openExternal(claudeInstallUrl(account.url)).catch((cause) =>
-                    setError(cause.message),
-                  )
-                }
-              >
-                Open prefilled Claude setup
-              </button>
-              <details open>
+              <details>
                 <summary>First connection or setup did not open?</summary>
                 <p>
                   Choose Add → Custom → Web. Name it Kivuno, paste the address below and continue
@@ -611,8 +617,8 @@ export function ExternalConnection({
           ) : (
             <>
               <p>
-                Link the Claude account you use in the browser. You can choose a project after
-                Claude verifies the connection.
+                Approve the Kivuno connector with your Claude account. You can share a project
+                later.
               </p>
               <button
                 className="button primary"
@@ -629,7 +635,7 @@ export function ExternalConnection({
                   }
                 }}
               >
-                <ArrowUpRight size={16} /> Connect Claude in browser
+                <ArrowUpRight size={16} /> Link Kivuno to Claude
               </button>
             </>
           )}
@@ -640,7 +646,18 @@ export function ExternalConnection({
           )}
         </section>
       )}
-      {!web && projectControls}
+      {member.provider === 'claude'
+        ? !web && (
+            <details>
+              <summary>Share a project (optional)</summary>
+              <p>
+                Signing in does not share project data. Choose a project only when you want Claude
+                to work with it.
+              </p>
+              {projectControls}
+            </details>
+          )
+        : projectControls}
       {error && (
         <p className="error-text" role="alert">
           {error}

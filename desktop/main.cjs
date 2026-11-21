@@ -35,6 +35,7 @@ const os = require('node:os');
 const execFileAsync = promisify(execFile);
 const { ProjectBrowser } = require('./browser.cjs');
 const createClaudeWebRelay = require('./claude-web.cjs');
+const claudeClient = require('./claude-client.cjs');
 const { workspaceDirectory } = require('./workspaces.cjs');
 const { downloadUpdate } = require('./release-download.cjs');
 const { verifyPortableInstall } = require('./portable-install.cjs');
@@ -1209,6 +1210,22 @@ function registerIpc() {
       pendingUpdate = null;
       throw error;
     }
+  });
+  ipcMain.handle('relay:claude-client', async (event, action) => {
+    trusted(event);
+    if (!identity || identityTransition || Date.parse(identity.expiresAt) <= Date.now())
+      throw new Error('Sign in to Kivuno first.');
+    if (action === 'desktop') return claudeClient.openDesktop(shell);
+    if (action === 'status') return claudeClient.codeStatus();
+    if (action !== 'login' && action !== 'code') throw new Error('Unknown Claude action.');
+    return claudeClient.openCode(
+      {
+        ...runtimePaths(),
+        providerHome: path.join(dataDirectory, 'provider-runtimes'),
+        environment: process.env,
+      },
+      action === 'login',
+    );
   });
   ipcMain.handle('relay:prepare-provider', async (event, provider) => {
     trusted(event);

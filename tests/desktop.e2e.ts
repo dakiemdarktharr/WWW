@@ -833,15 +833,15 @@ try {
     ]);
     assert.ok(response.ok(), 'Team should create the external Claude profile.');
     const { member } = await response.json();
-    await expect(page.getByRole('dialog', { name: 'Claude · MESH connection' })).toBeVisible();
-    const dialog = page.getByRole('dialog', { name: 'Claude · MESH connection' });
-    await expect(dialog.getByText('Waiting for Claude', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Claude · Connect' })).toBeVisible();
+    const dialog = page.getByRole('dialog', { name: 'Claude · Connect' });
+    await expect(dialog.getByText('Approve connection', { exact: true })).toBeVisible();
     await expect(dialog.getByRole('combobox', { name: 'Connection project' })).toHaveCount(0);
     await expect(dialog.getByRole('button', { name: /add .* to this project/i })).toHaveCount(0);
     await expect
       .poll(() => desktop!.evaluate(() => (globalThis as any).claudeConnectorUrls))
       .toEqual(['https://claude.ai/customize/connectors/yours']);
-    await dialog.getByText('Add Kivuno to Claude for the first time').click();
+    await dialog.getByText('First connection or setup did not open?').click();
     await expect(dialog.getByRole('textbox', { name: 'Connector URL' })).toHaveValue(
       fixtureOrigin + '/api/claude/mcp',
     );
@@ -887,10 +887,17 @@ try {
       .filter({ has: page.getByRole('heading', { name: external.name, exact: true }) });
     if (provider === 'claude') {
       await expect(externalCard.locator('.member-presence')).toHaveText('Claude connected');
-      await expect(externalCard.getByText('Claude in browser', { exact: true })).toBeVisible();
+      await expect(externalCard.getByText('Claude account linked', { exact: true })).toBeVisible();
     }
-    await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
-    const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
+    await externalCard
+      .getByRole('button', {
+        name: provider === 'claude' ? 'Manage Claude connection' : 'MESH connection',
+        exact: true,
+      })
+      .click();
+    const externalDialog = page.getByRole('dialog', {
+      name: `${label} · ${provider === 'claude' ? 'Connect' : 'MESH connection'}`,
+    });
     if (provider === 'claude') {
       await expect(externalDialog.getByText('Claude connected', { exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
@@ -924,9 +931,21 @@ try {
         .getByRole('navigation', { name: 'Main navigation' })
         .getByRole('button', { name: 'Team', exact: true })
         .click();
-      await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
+      await externalCard
+        .getByRole('button', {
+          name: provider === 'claude' ? 'Manage Claude connection' : 'MESH connection',
+          exact: true,
+        })
+        .click();
       await externalDialog.getByRole('combobox', { name: 'Claude client' }).click();
       await externalDialog.getByRole('option', { name: 'Claude Desktop · Free or paid' }).click();
+      await expect(
+        externalDialog.getByRole('button', { name: 'Open Claude Desktop', exact: true }),
+      ).toBeVisible();
+      await expect(
+        externalDialog.getByRole('button', { name: 'Open Claude sign-in in browser', exact: true }),
+      ).toHaveCount(0);
+      await externalDialog.getByText('Share a project (optional)', { exact: true }).click();
     }
     await expect(externalDialog.getByRole('checkbox').nth(0)).not.toBeChecked();
     await expect(externalDialog.getByRole('checkbox').nth(1)).not.toBeChecked();

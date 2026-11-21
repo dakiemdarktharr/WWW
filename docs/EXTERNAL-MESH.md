@@ -6,10 +6,20 @@ Kivuno cung cấp MCP server chạy trên máy bạn cho **Claude Desktop**, **C
 
 Gửi yêu cầu tạo PowerPoint ở **Chat → Nhắn Sade**. Sade chuẩn bị tài liệu nguồn, giao việc và kiểm tra nội dung so với yêu cầu. Harness Codex chạy nền qua OpenAI Agents API, soạn slide, gọi công cụ xuất tệp và gửi báo cáo về Kivuno. Trong Chat, chọn **Phiên Codex** để đọc báo cáo và **Tải PowerPoint** để lấy tệp có liên kết nguồn. Luồng này dùng phiên đăng nhập Kivuno và tự thử lại khi kết nối bị gián đoạn.
 
+## Đăng nhập Claude (0.9.9)
+
+Trong **Team → Connect Claude**, chọn ứng dụng đang dùng:
+
+- **Claude Desktop**: bấm **Open Claude Desktop** để mở ứng dụng thật. Đăng nhập ở đó. Bấm **Link Kivuno to Claude** để duyệt connector một lần trong trình duyệt bằng cùng tài khoản; connector đồng bộ sang Desktop. Không cần chép JSON để liên kết tài khoản.
+- **Claude Code**: bấm **Sign in to Claude Code**. Kivuno chuẩn bị CLI chính thức nếu thiếu; CLI mở đăng nhập Anthropic. Kivuno chỉ hiện **Claude Code signed in** sau khi CLI xác nhận. Gói Free không có quyền Code; dùng Desktop hoặc browser. Đăng nhập không tự cấp quyền vào dự án. Phần **Share a project (optional)** dành cho bước tiếp theo.
+- **Claude in browser**: làm theo các bước bên dưới. Free và trả phí đều có thể dùng connector; đây không phải tính năng dành riêng cho Free.
+
+Nút **View usage on Claude** mở trang usage chính thức. Trên tài khoản Free đã thử, Claude không cung cấp bảng usage mà chuyển đến trang nâng cấp. Kivuno ghi rõ giới hạn này và không tạo số quota giả. Không cần mua gói để liên kết connector.
+
 ## Claude trong trình duyệt
 
 1. Mở **Team → Add account → Claude** trong Kivuno Desktop. Chọn **Claude in browser** và hồ sơ Claude trên máy, rồi bấm **Connect Claude in browser**. Bạn có thể chọn lại hồ sơ hiện có, chẳng hạn Nova.
-2. Kivuno mở danh sách connector của bạn trong Claude. Nếu đã có **Kivuno**, bấm **Connect** (**Connecter** trong giao diện tiếng Pháp). Nếu chưa có, mở **Add Kivuno to Claude for the first time** trong Kivuno Desktop để lấy URL HTTPS. Trong Claude, chọn **Add → Custom → Web**, đặt tên Kivuno, dán URL, lưu rồi bấm Connect. [Trang connector của Claude](https://claude.ai/customize/connectors/yours).
+2. Kivuno mở danh sách connector của bạn trong Claude. Nếu đã có **Kivuno**, bấm **Connect** (**Connecter** trong giao diện tiếng Pháp). Nếu chưa có, mở **First connection or setup did not open?** trong Kivuno Desktop để lấy URL HTTPS. Trong Claude, chọn **Add → Custom → Web**, đặt tên Kivuno, dán URL, lưu rồi bấm Connect. [Trang connector của Claude](https://claude.ai/customize/connectors/yours).
 3. Đăng nhập Kivuno bằng tài khoản dùng trên desktop, kiểm tra tên hồ sơ, máy và hạn kết nối, rồi bấm **Liên kết tài khoản**. Sau khi trở về Claude, bật Kivuno trong cuộc trò chuyện nếu desktop vẫn hiện **Waiting for Claude**. Kivuno hiện **Claude connected** khi Claude dùng kết nối đã xác thực. Việc liên kết tài khoản chưa chia sẻ dự án nào.
 4. Khi muốn chia sẻ, vào **Chat → Group team** của dự án trong Kivuno, thêm hồ sơ Claude vào nhóm rồi chọn **Share project messages**. Kiểm tra tên dự án và thời hạn, bấm **Allow read-only project access**. Công cụ `mesh_read` cho Claude đọc tên dự án và tin nhắn đã chia sẻ trong nhóm. Mỗi kết nối chia sẻ được một dự án tại một thời điểm. Nếu Claude chưa thấy công cụ sau khi cấp quyền, làm mới danh sách công cụ hoặc mở cuộc trò chuyện mới.
 5. Giữ desktop đang chạy khi Claude đọc nhóm. Thu hồi quyền dự án hoặc ngắt liên kết tài khoản tại **Team → hồ sơ Claude → MESH connection**. Quyền dự án có thời hạn từ 15 phút tới 8 giờ. Nếu liên kết tài khoản hết hạn, thực hiện lại bước kết nối.

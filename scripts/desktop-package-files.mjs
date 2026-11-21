@@ -3,6 +3,7 @@ export const desktopPackageFiles = [
   'preload.cjs',
   'browser.cjs',
   'claude-web.cjs',
+  'claude-client.cjs',
   'provider-tools.cjs',
   'portable-install.cjs',
   'release-download.cjs',

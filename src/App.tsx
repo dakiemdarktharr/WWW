@@ -1,3 +1,4 @@
+import { openExternal } from './desktop';
 import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
 import ChatHome from './ChatHome';
@@ -77,7 +78,13 @@ import ProviderConnect, {
   providerLabels,
   providerOf,
 } from './ProviderConnect';
-import { beginClaudeAccount, useClaudeAccount, type ClaudeClient } from './ClaudeAccount';
+import {
+  beginClaudeAccount,
+  saveClaudeClient,
+  useClaudeAccount,
+  useClaudeCodeAccount,
+  type ClaudeClient,
+} from './ClaudeAccount';
 import {
   AccountSettings,
   MeshPage,
@@ -710,7 +717,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
     claudeClient?: ClaudeClient,
     existingMemberId?: string,
   ) {
-    if (provider === 'claude' && claudeClient === 'web' && existingMemberId) {
+    if (provider === 'claude' && existingMemberId) {
       const profile = members.find(
         (member) =>
           member.id === existingMemberId &&
@@ -719,10 +726,12 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
           !member.runnerId,
       );
       if (!profile) return;
+      saveClaudeClient(profile.id, claudeClient || 'web');
       setModal({ type: 'external', memberId: profile.id, claudeClient });
       setBusy('connect-claude-account');
       try {
-        await beginClaudeAccount(profile.id);
+        if (claudeClient === 'web') await beginClaudeAccount(profile.id);
+        else if (claudeClient === 'desktop') await window.relayDesktop?.claudeClient('desktop');
       } catch (cause) {
         setToast({ text: (cause as Error).message, error: true });
       } finally {
@@ -776,6 +785,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               error: true,
             });
           }
+        if (provider === 'claude') saveClaudeClient(result.member.id, claudeClient || 'web');
         navigate('team');
         setModal(
           isExternalMember(result.member)
@@ -784,6 +794,8 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
         );
         if (provider === 'claude' && claudeClient === 'web')
           await beginClaudeAccount(result.member.id);
+        else if (provider === 'claude' && claudeClient === 'desktop')
+          await window.relayDesktop?.claudeClient('desktop');
       } else if (reserved && window.relayDesktop) {
         await window.relayDesktop.profiles({ action: 'release', profileId });
       }
@@ -1682,7 +1694,7 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
       {modal?.type === 'external' &&
         members.find((member) => member.id === modal.memberId && !member.entitlementLocked) && (
           <Modal
-            title={`${providerLabels[providerOf(members.find((member) => member.id === modal.memberId))]} · MESH connection`}
+            title={`${providerLabels[providerOf(members.find((member) => member.id === modal.memberId))]} · ${members.find((member) => member.id === modal.memberId)?.provider === 'claude' ? 'Connect' : 'MESH connection'}`}
             close={closeModal}
           >
             <ExternalConnection
@@ -2661,14 +2673,21 @@ function MemberCard({
   children: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [usageError, setUsageError] = useState('');
   const provider = providerOf(member);
   const { account: claudeAccount } = useClaudeAccount(
     provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
   );
+  const codeAccount = useClaudeCodeAccount(
+    provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
+  );
   const webStatus =
     provider === 'claude' && !member.entitlementLocked ? claudeAccount?.status : undefined;
-  const presence =
-    webStatus === 'connected' || webStatus === 'pending' ? webStatus : member.presence || 'offline';
+  const presence = codeAccount?.signedIn
+    ? 'signed in'
+    : webStatus === 'connected' || webStatus === 'pending'
+      ? webStatus
+      : member.presence || 'offline';
   return (
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
@@ -2697,11 +2716,14 @@ function MemberCard({
               : member.account
                 ? 'Connected to Antigravity on this computer'
                 : 'Device account disconnected'
-            : webStatus === 'connected'
-              ? 'Claude in browser'
-              : webStatus === 'pending'
-                ? 'Waiting for Claude'
-                : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
+            : codeAccount?.signedIn
+              ? `Claude Code · ${codeAccount.email || 'Signed in on this computer'}`
+              : webStatus === 'connected'
+                ? 'Claude account linked'
+                : webStatus === 'pending'
+                  ? 'Waiting for Claude'
+                  : member.account?.email ||
+                    (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>
         {member.account?.planType && member.account.planType !== 'unknown' && (
           <span className="plan-tag">{member.account.planType}</span>
@@ -2731,10 +2753,32 @@ function MemberCard({
               <strong>{Math.round(window.remainingPercent)}% left</strong>
             </div>
           ))
+        ) : provider === 'claude' ? (
+          <>
+            <button
+              className="text-button"
+              onClick={() =>
+                void openExternal('https://claude.ai/settings/usage').catch((cause) =>
+                  setUsageError(cause.message),
+                )
+              }
+            >
+              View usage on Claude
+            </button>
+            <small>
+              Detailed usage requires a supported paid Claude plan. Free does not include this
+              dashboard.
+            </small>
+          </>
         ) : (
           <span className="quota-unknown">Unavailable</span>
         )}
       </div>
+      {usageError && (
+        <p className="member-error" role="alert">
+          {usageError}
+        </p>
+      )}
       {member.error && (
         <p className="member-error">
           <AlertTriangle size={13} />
@@ -2835,7 +2879,11 @@ function MemberCard({
         ) : isExternalMember(member) ? (
           <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
             <ExternalLink size={15} />
-            MESH connection
+            {provider === 'claude'
+              ? webStatus === 'connected'
+                ? 'Manage Claude connection'
+                : 'Connect Claude'
+              : 'MESH connection'}
           </Button>
         ) : member.account ? (
           <>

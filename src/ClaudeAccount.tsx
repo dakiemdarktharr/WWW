@@ -1,19 +1,64 @@
 import { useEffect, useState } from 'react';
-import { openExternal, type ClaudeWebAccount } from './desktop';
+import { openExternal, type ClaudeWebAccount, type ClaudeCodeStatus } from './desktop';
 
 export type ClaudeClient = 'web' | 'desktop' | 'code';
+
+export function savedClaudeClient(memberId: string): ClaudeClient {
+  try {
+    const value = localStorage.getItem('kivuno-claude-client:' + memberId);
+    return value === 'desktop' || value === 'code' ? value : 'web';
+  } catch {
+    return 'web';
+  }
+}
+export function saveClaudeClient(memberId: string, client: ClaudeClient) {
+  try {
+    localStorage.setItem('kivuno-claude-client:' + memberId, client);
+  } catch {
+    /* optional preference */
+  }
+  window.dispatchEvent(new CustomEvent('kivuno-claude-client-changed', { detail: memberId }));
+}
+
 export const claudeClients = [
   { value: 'web', label: 'Claude in browser · Free or paid' },
   { value: 'desktop', label: 'Claude Desktop · Free or paid' },
   { value: 'code', label: 'Claude Code · eligible paid plan' },
 ];
 export const claudeConnectorsUrl = 'https://claude.ai/customize/connectors/yours';
-export function claudeInstallUrl(connectorUrl: string) {
-  const url = new URL('https://claude.ai/customize/connectors');
-  url.searchParams.set('modal', 'add-custom-connector');
-  url.searchParams.set('connectorName', 'Kivuno');
-  url.searchParams.set('connectorUrl', connectorUrl);
-  return url.href;
+export function useClaudeCodeAccount(memberId?: string) {
+  const [account, setAccount] = useState<ClaudeCodeStatus>();
+  useEffect(() => {
+    setAccount(undefined);
+    if (!memberId || !window.relayDesktop?.claudeClient) return;
+    let alive = true,
+      revision = 0;
+    const refresh = async () => {
+      const request = ++revision;
+      if (savedClaudeClient(memberId) !== 'code') {
+        setAccount(undefined);
+        return;
+      }
+      if (document.hidden) return;
+      try {
+        const value = await window.relayDesktop!.claudeClient('status');
+        if (alive && request === revision) setAccount(value);
+      } catch {
+        if (alive && request === revision) setAccount(undefined);
+      }
+    };
+    void refresh();
+    const timer = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('kivuno-claude-client-changed', refresh);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('kivuno-claude-client-changed', refresh);
+    };
+  }, [memberId]);
+  return account;
 }
 const accountEvent = 'kivuno-claude-account-changed';
 export function refreshClaudeAccount(memberId: string) {
@@ -25,7 +70,7 @@ export async function beginClaudeAccount(memberId: string) {
     throw new Error('Open the current Kivuno desktop app to connect Claude.');
   const account = await window.relayDesktop.beginClaudeWebAccount({ memberId });
   refreshClaudeAccount(memberId);
-  if (account.status !== 'connected') await openExternal(claudeInstallUrl(account.url));
+  if (account.status !== 'connected') await openExternal(claudeConnectorsUrl);
   return account;
 }
 

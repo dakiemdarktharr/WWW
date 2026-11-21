@@ -1,3 +1,10 @@
+export interface ClaudeCodeStatus {
+  installed: boolean;
+  signedIn: boolean;
+  subscription?: boolean;
+  email?: string;
+  plan?: string;
+}
 export interface JoinedMachine {
   id: string;
   name: string;
@@ -85,6 +92,8 @@ declare global {
       onStatus(callback: (status: DesktopStatus) => void): () => void;
       beginSignIn(): Promise<DesktopStatus>;
       cancelSignIn(): Promise<DesktopStatus>;
+      claudeClient(action: 'status'): Promise<ClaudeCodeStatus>;
+      claudeClient(action: 'desktop' | 'code' | 'login'): Promise<{ opened: boolean }>;
       prepareProvider(provider: import('../shared/types').ProviderId): Promise<{
         provider: import('../shared/types').ProviderId;
         installed: boolean;
