@@ -1,4 +1,5 @@
 import type { PlanTask, ProviderId, Role } from './types';
+import type { SadeProjectTask, SadeProjectView } from './sade-project';
 
 export const sharedTeammatesPerOwnerLimit = 32;
 export const sharedSadePollGrantLimit = 32;
@@ -39,7 +40,7 @@ export interface SharedMessage {
   content: string;
   createdAt: string;
   sequence: number;
-  sade?: { projectKey: string; readOnly?: true; replyTo?: string };
+  sade?: { projectKey: string; readOnly?: true; replyTo?: string; catalogue?: true };
 }
 export type SharedPlatform = 'win32' | 'darwin' | 'linux';
 export interface SharedHarnessGrant {
@@ -55,6 +56,7 @@ export interface SharedHarnessGrant {
   pairedPlatform?: SharedPlatform;
   pairedMachineName?: string;
   patchHandoff?: true;
+  projectOrchestration?: true;
   allowWrites: boolean;
   expiresAt: number;
   turns: number;
@@ -72,6 +74,7 @@ export interface SharedSadeJob {
   canUpdate?: boolean;
   updateCount?: number;
   updatesRead?: number;
+  project?: SadeProjectTask;
 }
 
 export interface SharedSadeRun {
@@ -82,6 +85,7 @@ export interface SharedSadeRun {
   jobs: SharedSadeJob[];
   error?: string;
   canAnswer?: boolean;
+  project?: SadeProjectView;
 }
 export interface GroupListing {
   groups: SharedGroup[];
@@ -115,12 +119,14 @@ export type GroupCommand =
       projectId: string;
       teammateId: string;
       allowWrites: boolean;
+      projectOrchestration?: true;
       machineId?: string;
       turns: number;
     }
   | { action: 'sade-revoke'; groupId: string; grantId: string }
   | { action: 'sade-cancel'; groupId: string; runId: string }
   | { action: 'sade-answer'; groupId: string; runId: string; jobId: string; answer: string }
+  | { action: 'sade-project-status'; groupId: string; runId: string }
   | {
       action: 'sade-update-task';
       groupId: string;

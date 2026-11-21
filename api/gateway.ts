@@ -3,6 +3,8 @@ import { cloudRunner, forgetCloudRunner } from '../cloud/runner.ts';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { waitUntil } from '@vercel/functions';
+import { sadeProjectFileRoute } from '../shared/sade-project.ts';
 import {
   sharedSadeCloudExtended,
   sharedSadeCloudFinishPath,
@@ -126,7 +128,9 @@ export default async function handler(
       url.pathname === '/api/desktop/profiles' ||
       url.pathname === '/api/billing/profiles/select'
         ? 4 * 1024 * 1024
-        : 128 * 1024;
+        : url.pathname === sadeProjectFileRoute
+          ? 768 * 1024
+          : 128 * 1024;
     let length = 0;
     if (!['GET', 'HEAD'].includes(method)) {
       if (request.body !== undefined) {
@@ -151,7 +155,7 @@ export default async function handler(
     }
     const body = Buffer.concat(chunks);
     hosted = url.pathname === '/api/desktop/groups' && method === 'POST' && usesHostedSade(body);
-    const planningBudget = hostedSadeBudgetMs();
+    const planningBudget = hostedSadeBudgetMs(body);
     const deadline = requestStarted + planningBudget;
     const opening = cloudRunner(!machine);
     const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
@@ -193,7 +197,14 @@ export default async function handler(
     if (hosted && upstream.ok) {
       const admitted = Date.now();
       const timing: HostedSadeTiming = {};
-      const decision = await settleHostedSade(upstream, runner.origin, headers, deadline, timing);
+      const decision = await settleHostedSade(
+        upstream,
+        runner.origin,
+        headers,
+        deadline,
+        timing,
+        waitUntil,
+      );
       response.setHeader('Content-Type', 'application/json');
       response.setHeader(
         'Server-Timing',

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Member, Project } from '../shared/types';
+import { sadeProjectCatalogueMaxBytes } from '../shared/sade-project';
 import type {
   GroupCommand,
   GroupListing,
@@ -11,15 +12,41 @@ import type {
 import './SharedGroups.css';
 import { api } from './api';
 import type { Machine } from './Machines';
+import SharedSadeProject from './SharedSadeProject';
 
 const request = <T,>(input: GroupCommand) => window.relayDesktop!.groups<T>(input);
 const roomPollInterval = 3000;
+
+async function catalogueJpeg(file: File) {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('The catalogue image could not be opened.');
+    for (const width of [1600, 1280, 960]) {
+      const scale = Math.min(1, width / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL('image/jpeg', 0.86).split(',')[1];
+      if (data && atob(data).length <= sadeProjectCatalogueMaxBytes) return data;
+    }
+    throw new Error(
+      'This catalogue image is too detailed to send. Crop it or share a public link.',
+    );
+  } finally {
+    bitmap.close();
+  }
+}
 
 type GroupSadeView = {
   group?: SharedGroup;
   sadeGrants?: SharedHarnessGrant[];
   sadeRuns?: SharedSadeRun[];
   supportsReferencedMessage?: true;
+  supportsProjectOrchestration?: true;
 };
 type GroupRead = GroupSadeView & {
   group: SharedGroup;
@@ -41,11 +68,13 @@ function mergeMessages(previous: SharedMessage[], incoming: SharedMessage[]) {
 export default function SharedGroups({
   members,
   projects,
+  sessions = [],
   addTeammate,
   initialGroupId = '',
 }: {
   members: Member[];
   projects: Project[];
+  sessions?: { id: string; title: string }[];
   addTeammate: () => void;
   initialGroupId?: string;
 }) {
@@ -67,12 +96,15 @@ export default function SharedGroups({
   const [grantProject, setGrantProject] = useState('');
   const [grantTurns, setGrantTurns] = useState(3);
   const [allowWrites, setAllowWrites] = useState(false);
+  const [projectOrchestration, setProjectOrchestration] = useState(false);
+  const [supportsProjects, setSupportsProjects] = useState(false);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [machineId, setMachineId] = useState('');
   const [projectKey, setProjectKey] = useState('');
   const [readOnlyRequest, setReadOnlyRequest] = useState(false);
   const [supportsReferencedMessage, setSupportsReferencedMessage] = useState(false);
   const [reference, setReference] = useState<SharedMessage>();
+  const [catalogue, setCatalogue] = useState<File>();
   const composer = useRef<HTMLTextAreaElement>(null);
   const [answer, setAnswer] = useState('');
   const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
@@ -85,12 +117,14 @@ export default function SharedGroups({
     content: string;
     groupId: string;
     sade?: SharedMessage['sade'];
+    catalogue?: File;
   } | null>(null);
   const applyGroupView = (next: GroupSadeView) => {
     if (next.group) setRoom(next.group);
     setGrants(next.sadeGrants || []);
     setSadeRuns(next.sadeRuns || []);
     setSupportsReferencedMessage(next.supportsReferencedMessage === true);
+    setSupportsProjects(next.supportsProjectOrchestration === true);
   };
   const refreshList = async () => {
     const next = await request<GroupListing>({ action: 'list' });
@@ -260,6 +294,7 @@ export default function SharedGroups({
     }
   };
   const choose = (id: string) => {
+    setCatalogue(undefined);
     selectedRef.current = id;
     setSelected(id);
   };
@@ -304,6 +339,7 @@ export default function SharedGroups({
     ? linkedProjects.filter(([key]) => key === referenceProjectKey)
     : linkedProjects;
   const projectIsAvailable = projectOptions.some(([key]) => key === projectKey);
+  const needsSadeProject = supportsProjects && /^\s*@sade\b/i.test(content) && !projectIsAvailable;
   const needsReferenceProject = Boolean(
     reference && (!supportsReferencedMessage || !projectIsAvailable),
   );
@@ -314,9 +350,13 @@ export default function SharedGroups({
     }),
   );
   const latestSade = sadeRuns.at(-1);
+  const latestProject = sadeRuns.findLast(({ project }) => project);
   const waiting = latestSade?.jobs.find((job) => job.state === 'waiting');
   return (
-    <section className="shared-groups" aria-label="Kivuno groups">
+    <section
+      className={`shared-groups${latestProject ? ' shared-groups-with-project' : ''}`}
+      aria-label="Kivuno groups"
+    >
       <aside className="shared-group-list">
         <h2>Groups</h2>
         {listing && (
@@ -648,6 +688,9 @@ export default function SharedGroups({
                         projectId: grantProject,
                         teammateId: grantMember,
                         allowWrites,
+                        ...(supportsProjects && projectOrchestration
+                          ? { projectOrchestration: true }
+                          : {}),
                         machineId: machineId || undefined,
                         turns: grantTurns,
                       });
@@ -711,6 +754,16 @@ export default function SharedGroups({
                     />{' '}
                     Allow local file changes
                   </label>
+                  {supportsProjects && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={projectOrchestration}
+                        onChange={(event) => setProjectOrchestration(event.target.checked)}
+                      />
+                      Allow project orchestration and share assigned session updates
+                    </label>
+                  )}
                   {paired.length > 0 && (
                     <label>
                       Paired machine
@@ -734,6 +787,7 @@ export default function SharedGroups({
                 {localGrants.map((grant) => (
                   <div key={grant.id}>
                     {grant.label} · {grant.projectName} · {grant.used}/{grant.turns} turns
+                    {grant.projectOrchestration && ' · Project orchestration'}
                     <button
                       className="text-button"
                       disabled={busy}
@@ -974,41 +1028,54 @@ export default function SharedGroups({
               className="shared-group-compose"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (needsReferenceProject || !content.trim()) return;
+                if (needsReferenceProject || needsSadeProject || !content.trim()) return;
                 void run(async () => {
                   const draft = messageDraft.current;
                   const readOnly = Boolean(projectKey) && readOnlyRequest;
                   const replyTo = reference?.id;
+                  const image = !readOnly && projectKey ? catalogue : undefined;
                   const next: NonNullable<typeof messageDraft.current> =
                     draft?.content === content &&
                     draft.groupId === room.id &&
                     (draft.sade?.projectKey || '') === projectKey &&
                     Boolean(draft.sade?.readOnly) === readOnly &&
-                    draft.sade?.replyTo === replyTo
+                    draft.sade?.replyTo === replyTo &&
+                    draft.catalogue === image
                       ? draft
                       : {
                           id: crypto.randomUUID(),
                           content,
                           groupId: room.id,
+                          catalogue: image,
                           ...(projectKey
                             ? {
                                 sade: {
                                   projectKey,
                                   ...(readOnly ? { readOnly: true } : {}),
                                   ...(replyTo ? { replyTo } : {}),
+                                  ...(image ? { catalogue: true } : {}),
                                 },
                               }
                             : {}),
                         };
                   messageDraft.current = next;
+                  if (image)
+                    await window.relayDesktop!.projectCatalogue({
+                      groupId: room.id,
+                      runId: next.id,
+                      projectKey,
+                      data: await catalogueJpeg(image),
+                    });
+                  const { catalogue: _localImage, ...message } = next;
                   await submitRoom<SharedMessage & { sadeGroup?: GroupSadeView }>(
-                    { action: 'message', ...next },
+                    { action: 'message', ...message },
                     (saved) => {
                       messageDraft.current = null;
                       setContent('');
                       setProjectKey('');
                       setReadOnlyRequest(false);
                       setReference(undefined);
+                      setCatalogue(undefined);
                       if (saved?.id !== next.id || saved.groupId !== room.id) return false;
                       const { sadeGroup, ...message } = saved;
                       if (Number.isSafeInteger(message.sequence))
@@ -1026,7 +1093,17 @@ export default function SharedGroups({
                 aria-label="Message group"
                 placeholder="Message group"
                 value={content}
-                onChange={(event) => setContent(event.target.value)}
+                onChange={(event) => {
+                  const text = event.target.value;
+                  setContent(text);
+                  if (
+                    !projectKey &&
+                    supportsProjects &&
+                    /^\s*@sade\b/i.test(text) &&
+                    projectOptions.length === 1
+                  )
+                    setProjectKey(projectOptions[0][0]);
+                }}
                 maxLength={8000}
                 required
               />
@@ -1056,18 +1133,54 @@ export default function SharedGroups({
                       Read-only request
                     </label>
                   )}
+                  {supportsProjects &&
+                    projectKey &&
+                    !readOnlyRequest &&
+                    window.relayDesktop?.projectCatalogue && (
+                      <label>
+                        Catalogue image
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          onChange={(event) => setCatalogue(event.target.files?.[0])}
+                        />
+                      </label>
+                    )}
                 </div>
               )}
               <button
                 className="button primary"
-                disabled={busy || !content.trim() || needsReferenceProject}
+                disabled={busy || !content.trim() || needsReferenceProject || needsSadeProject}
               >
-                {projectKey || reference ? 'Ask Sade' : 'Send'}
+                {projectKey || reference || needsSadeProject ? 'Ask Sade' : 'Send'}
               </button>
+              {needsSadeProject && <p role="status">Choose a linked project for @Sade.</p>}
             </form>
           </>
         )}
       </div>
+      {latestProject && latestProject.groupId === selected && (
+        <SharedSadeProject
+          key={latestProject.id}
+          run={latestProject}
+          localSessions={sessions}
+          requestStatus={() =>
+            run(async () => {
+              await submitRoom<GroupSadeView>(
+                {
+                  action: 'sade-project-status',
+                  groupId: latestProject.groupId,
+                  runId: latestProject.id,
+                },
+                (view) => {
+                  applyGroupView(view);
+                  return true;
+                },
+              );
+            })
+          }
+        />
+      )}
     </section>
   );
 }
