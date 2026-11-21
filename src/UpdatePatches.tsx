@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.10',
+    date: '2026-11-21',
+    fixes: [
+      {
+        vi: 'Tối ưu kết nối và đồng bộ trạng thái Claude.',
+        en: 'Improved Claude connection status updates.',
+      },
+    ],
+  },
+  {
     version: '0.9.9',
     date: '2026-11-21',
     fixes: [

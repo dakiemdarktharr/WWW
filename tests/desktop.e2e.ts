@@ -59,6 +59,9 @@ let webGrant:
   { connectionId: string; memberId: string; projectId: string; tokenHash: string } | undefined;
 let webAccount: { connectionId: string; memberId: string; expiresAt: string } | undefined;
 let webVerified = false;
+let webAuthorized = false;
+let webStatusFails = false;
+let webStatusChecks = 0;
 let webRead = false;
 let webRevoked = false;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
@@ -104,6 +107,16 @@ const fixture = createServer(async (request, response) => {
   } else if (request.url === '/api/desktop/claude-web') {
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
     if (payload.action === 'account-status' || payload.action === 'enroll-account') {
+      if (payload.action === 'account-status') {
+        webStatusChecks++;
+        if (webStatusFails) {
+          response.statusCode = 503;
+          response.end(
+            JSON.stringify({ error: 'The Kivuno web connector service is unavailable.' }),
+          );
+          return;
+        }
+      }
       if (payload.action === 'enroll-account' && webAccount?.memberId !== payload.memberId)
         webAccount = payload;
       response.end(
@@ -113,6 +126,7 @@ const fixture = createServer(async (request, response) => {
                 connectionId: webAccount.connectionId,
                 expiresAt: webAccount.expiresAt,
                 status: webVerified ? 'connected' : 'pending',
+                authorized: webAuthorized || webVerified,
                 ...(webVerified ? { verifiedAt: new Date().toISOString(), canShare: true } : {}),
               }
             : { status: 'disconnected' },
@@ -845,9 +859,27 @@ try {
     await expect(dialog.getByRole('textbox', { name: 'Connector URL' })).toHaveValue(
       fixtureOrigin + '/api/claude/mcp',
     );
+    // A failed check must recover without focus, reload, or a second login.
+    webStatusFails = true;
+    await dialog.getByRole('button', { name: 'Check connection', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText(
+      'The Kivuno web connector service is unavailable.',
+    );
+    webStatusFails = false;
+    webAuthorized = true;
+    await expect(dialog.locator('.connection-progress strong')).toHaveText('Verify connection', {
+      timeout: 12000,
+    });
     webVerified = true;
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(dialog.getByText('Claude connected', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('Claude connected', { exact: true })).toBeVisible({
+      timeout: 12000,
+    });
+    const checksAfterConnected = webStatusChecks;
+    await page.waitForTimeout(1500);
+    assert.ok(
+      webStatusChecks - checksAfterConnected < 4,
+      '30-day link must not overflow into a busy polling loop',
+    );
     return member;
   };
   // Both real-client connection types use scoped local MCP, not native model dispatch.

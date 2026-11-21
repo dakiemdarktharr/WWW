@@ -14,7 +14,6 @@ import {
   savedClaudeClient,
   saveClaudeClient,
   claudeClients,
-  claudeConnectorsUrl,
   refreshClaudeAccount,
   useClaudeAccount,
   type ClaudeClient,
@@ -252,10 +251,12 @@ export function ExternalConnection({
   );
   const web = member.provider === 'claude' && claudeClient === 'web';
   const remoteAccount = member.provider === 'claude' && claudeClient !== 'code';
-  const { account, error: accountError } = useClaudeAccount(
-    remoteAccount ? member.id : undefined,
-    true,
-  );
+  const {
+    account,
+    error: accountError,
+    checking,
+    checkedAt,
+  } = useClaudeAccount(remoteAccount ? member.id : undefined, true);
   const [claims, setClaims] = useState(false);
   const [quota, setQuota] = useState(false);
   const [sadeTurns, setSadeTurns] = useState('0');
@@ -571,19 +572,38 @@ export function ExternalConnection({
           ) : account?.status === 'pending' ? (
             <>
               <ConnectionProgress
-                step={1}
+                step={account.authorized ? 2 : 1}
                 labels={['Open Claude', 'Approve connection', 'Verify connection']}
               />
               <p>
-                If Kivuno is already listed in Claude, open it and choose Connect. Confirm the
-                account link on the Kivuno page. This window updates automatically.
+                {account.authorized ? (
+                  'Approved. Waiting for Claude to verify this connection. Keep Kivuno open.'
+                ) : (
+                  <>
+                    In Claude, connect Kivuno and approve <strong>{member.name}</strong> on the
+                    Kivuno page.
+                  </>
+                )}
+              </p>
+              <p>
+                If Claude already says Connected, that link may belong to an older profile.
+                Disconnect and reconnect it in Claude, then select {member.name} when asked. Use the
+                same Claude account in Desktop and your browser.
               </p>
               <button
                 className="button primary"
                 disabled={busy}
-                onClick={() =>
-                  void openExternal(claudeConnectorsUrl).catch((cause) => setError(cause.message))
-                }
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await beginClaudeAccount(member.id);
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
               >
                 <ArrowUpRight size={16} /> Open Claude connectors
               </button>
@@ -638,6 +658,16 @@ export function ExternalConnection({
                 <ArrowUpRight size={16} /> Link Kivuno to Claude
               </button>
             </>
+          )}
+          <button
+            className="button"
+            disabled={checking}
+            onClick={() => refreshClaudeAccount(member.id)}
+          >
+            {checking ? 'Checking connection…' : 'Check connection'}
+          </button>
+          {checkedAt && !accountError && (
+            <small role="status">Last checked {new Date(checkedAt).toLocaleTimeString()}.</small>
           )}
           {accountError && (
             <p className="error-text" role="alert">

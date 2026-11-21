@@ -1,6 +1,20 @@
 # Claude connection architecture and usability
 
-Verified on 21 November 2026. Connection UX updated for 0.9.9.
+Verified on 21 November 2026. Connection UX updated for 0.9.10.
+
+## Status synchronization in 0.9.10
+
+A transient status request failure previously stopped the renderer polling loop. Pending checks also slowed after two minutes, disconnected results were not polled, and a connected grant could schedule a timeout beyond the browser's 32-bit timer limit. The renderer now retries failures after five seconds, checks an open pending connection every 3.5 seconds, and rechecks other states every thirty seconds while visible. Returning to the window or coming online triggers a check. A manual Check connection action and last successful check time are available.
+
+OAuth token exchange is exposed as an authorized-but-unverified phase. Only a valid MCP initialization for the current device/profile grant produces Claude connected. Opening Claude, completing OAuth alone, or a screenshot of a different/older connector is not proof of that state.
+
+During live diagnosis, the user confirmed they had deleted the connector on Claude web while Desktop retained its old Connected screen. The old plugin URL was unavailable on the web. Recreating the connector is required in that case. Kivuno cannot infer that an external connector has been deleted unless Claude revokes its credential or the grant expires; Disconnect Claude in Kivuno immediately revokes the local account grant.
+
+The consent page also contained an old Nova grant and three same-name Echo grants from different desktop sessions. Explicitly starting/reopening a connection now records a server-side request time. Consent highlights and preselects the unique most recently requested valid owner grant from the last ten minutes; older grants remain available and no approval is submitted automatically. Status polling never changes this hint. Tests cover same-name grants, changing the most recent request, and expiry of the hint.
+
+Regression coverage includes recovery from a failed check without focus/reload, the authorized phase, eventual connected status, and avoiding a polling burst for a thirty-day grant.
+
+The focused Electron connection run passed, including failure recovery without focus, authorization progress, verified status and thirty-day timer bounds. The full desktop run encountered an unrelated native fullscreen titlebar hover assertion; that window-chrome block was excluded only in the local focused harness, not removed from the committed full test.
 
 ## Observed behavior
 

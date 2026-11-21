@@ -162,6 +162,7 @@ export interface ClaudeWebConnection {
 }
 
 export interface ClaudeWebAccount {
+  authorized?: boolean;
   status: 'disconnected' | 'pending' | 'connected';
   url: string;
   connectionId?: string;
