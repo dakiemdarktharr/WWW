@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Download, Presentation, Send } from 'lucide-react';
-import { isSadeDeckRequest, type SadeDeckView } from '../shared/sade-deck';
+import { isSadeDeckRequest, sadeDeckProviderNames, type SadeDeckView } from '../shared/sade-deck';
 import './SadeDeckChat.css';
 
 const active = (deck: SadeDeckView) => ['research', 'authoring', 'retrying'].includes(deck.state);
 const progress = {
   research: 'Sade đang chuẩn bị tài liệu nguồn…',
-  authoring: 'Codex đang soạn và xuất PowerPoint…',
+  authoring: 'Sade đang giao việc soạn PowerPoint…',
   retrying: 'Sade đang tự thử lại…',
   ready: '',
   failed: '',
@@ -217,46 +217,65 @@ export default function SadeDeckChat({
         {pending && (
           <p role="status">{retrying ? 'Sade đang kết nối lại…' : 'Sade đang nhận yêu cầu…'}</p>
         )}
-        {decks.map((deck) => (
-          <article key={deck.id}>
-            <strong>{deck.title || deck.prompt}</strong>
-            {active(deck) && <p role="status">{progress[deck.state]}</p>}
-            {deck.state === 'failed' && <p>Sade chưa hoàn tất tệp sau khi tự thử lại.</p>}
-            {deck.worker && (
-              <details>
-                <summary>Phiên Codex</summary>
-                <p>{deck.worker.report}</p>
-              </details>
-            )}
-            {deck.state === 'ready' && (
-              <button
-                className="button compact"
-                disabled={downloading === deck.id}
-                onClick={() => void download(deck.id)}
-              >
-                <Download size={15} /> Tải PowerPoint
-              </button>
-            )}
-            {saved?.id === deck.id && (
-              <p role="status" title={saved.path}>
-                Đã lưu {saved.filename} vào Tải xuống.
-              </p>
-            )}
-            {deck.sources?.length ? (
-              <details>
-                <summary>Nguồn sử dụng</summary>
-                <ul>
-                  {deck.sources.map(({ title, url }) => (
-                    <li key={url}>
-                      <span>{title}</span>
-                      <small>{new URL(url).hostname}</small>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
-          </article>
-        ))}
+        {decks.map((deck) => {
+          const assignments = deck.assignments ?? [];
+          const assigned = assignments.at(-1);
+          const previous = assignments.at(-2);
+          return (
+            <article key={deck.id}>
+              <strong>{deck.title || deck.prompt}</strong>
+              {active(deck) && (
+                <p role="status">
+                  {deck.state === 'authoring' && assigned
+                    ? `Sade đã giao ${sadeDeckProviderNames[assigned.provider]} soạn PowerPoint…`
+                    : progress[deck.state]}
+                </p>
+              )}
+              {assigned && previous && assigned.provider !== previous.provider && (
+                <p>
+                  Sade đã chuyển việc từ {sadeDeckProviderNames[previous.provider]} sang{' '}
+                  {sadeDeckProviderNames[assigned.provider]}.
+                </p>
+              )}
+              {deck.state === 'failed' && <p>Sade chưa hoàn tất tệp sau khi tự thử lại.</p>}
+              {deck.worker && (
+                <details>
+                  <summary title={deck.worker.sessionId}>
+                    Phiên {sadeDeckProviderNames[deck.worker.provider]}
+                  </summary>
+                  <p>{deck.worker.report}</p>
+                </details>
+              )}
+              {deck.state === 'ready' && (
+                <button
+                  className="button compact"
+                  disabled={downloading === deck.id}
+                  onClick={() => void download(deck.id)}
+                >
+                  <Download size={15} /> Tải PowerPoint
+                </button>
+              )}
+              {saved?.id === deck.id && (
+                <p role="status" title={saved.path}>
+                  Đã lưu {saved.filename} vào Tải xuống.
+                </p>
+              )}
+              {deck.sources?.length ? (
+                <details>
+                  <summary>Nguồn sử dụng</summary>
+                  <ul>
+                    {deck.sources.map(({ title, url }) => (
+                      <li key={url}>
+                        <span>{title}</span>
+                        <small>{new URL(url).hostname}</small>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
       {error && (
         <p role="alert" className="error-text">

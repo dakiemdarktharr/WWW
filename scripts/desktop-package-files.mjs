@@ -4,6 +4,7 @@ export const desktopPackageFiles = [
   'browser.cjs',
   'claude-web.cjs',
   'claude-client.cjs',
+  'sade-deck-worker.cjs',
   'provider-tools.cjs',
   'portable-install.cjs',
   'release-download.cjs',

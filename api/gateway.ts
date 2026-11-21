@@ -5,7 +5,12 @@ import path from 'node:path';
 import { isIP } from 'node:net';
 import { waitUntil } from '@vercel/functions';
 import { sadeProjectFileRoute } from '../shared/sade-project.ts';
-import { sadeDeckRoute, sadeDeckFinishRoute, sadeDeckRenderRoute } from '../shared/sade-deck.ts';
+import {
+  sadeDeckRoute,
+  sadeDeckFinishRoute,
+  sadeDeckRenderRoute,
+  sadeDeckWorkerRoute,
+} from '../shared/sade-deck.ts';
 import { settleSadeDeck } from '../cloud/sade-deck.ts';
 import {
   claudeAuthorizePath,
@@ -108,6 +113,7 @@ export default async function handler(
       url.pathname === '/api/cloud/prepare-upgrade' ||
       url.pathname === sadeDeckFinishRoute ||
       url.pathname === sadeDeckRenderRoute ||
+      url.pathname === sadeDeckWorkerRoute ||
       url.pathname === sharedSadeCloudFinishPath
     ) {
       response.writeHead(403).end(JSON.stringify({ error: 'This maintenance route is private.' }));
