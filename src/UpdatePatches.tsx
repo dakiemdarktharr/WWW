@@ -6,6 +6,16 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.15',
+    date: '2026-11-22',
+    fixes: [
+      {
+        vi: 'Tối ưu kết nối Antigravity và liên kết lại Claude.',
+        en: 'Improve Antigravity sign-in and reconnect existing Claude connections.',
+      },
+    ],
+  },
+  {
     version: '0.9.14',
     date: '2026-11-21',
     fixes: [

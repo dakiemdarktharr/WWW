@@ -24,6 +24,7 @@ import {
   loginAccount,
   readAccount,
   readCapabilities,
+  readModels,
   readRateLimits,
   verifyModelSettings,
   startTask,
@@ -488,6 +489,33 @@ export class Workspace {
       throw new DomainError('Connect the Antigravity account on this computer first.', 409);
     return nativeProviderClient(member, home, cwd);
   }
+  async memberModels(id: string) {
+    const member = this.store.get<Member>('member', id);
+    this.assertProfileUnlocked(id);
+    if (isExternalMember(member))
+      throw new DomainError('Choose the model in the connected provider app.', 409);
+    return readModels(await this.client(id));
+  }
+  async setMemberModel(id: string, model: string | null) {
+    const member = this.store.get<Member>('member', id);
+    this.assertProfileUnlocked(id);
+    if (member.removedAt || isExternalMember(member))
+      throw new DomainError('This teammate does not have a Kivuno model selector.', 409);
+    const epoch = this.accountEpoch.get(id) || 0;
+    if (model && !(await this.memberModels(id)).some((entry) => entry.model === model))
+      throw new DomainError('This model is no longer available to this account.', 409);
+    this.assertProfileUnlocked(id);
+    const current = this.store.get<Member>('member', id);
+    if (
+      current.removedAt ||
+      isExternalMember(current) ||
+      current.runnerId !== member.runnerId ||
+      current.account?.email !== member.account?.email ||
+      (this.accountEpoch.get(id) || 0) !== epoch
+    )
+      throw new DomainError('The account changed while checking its models. Try again.', 409);
+    return this.store.updateMember(id, { preferredModel: model ?? undefined });
+  }
   async refresh(id: string) {
     const epoch = this.accountEpoch.get(id) || 0;
     const profile = this.store.get<Member>('member', id);
@@ -644,6 +672,7 @@ export class Workspace {
       ...(deviceAccount ? { deviceAccountLinked: false, connectedAt: undefined } : {}),
       status: 'offline',
       account: null,
+      preferredModel: undefined,
       rateLimits: null,
       error: null,
       signIn: undefined,
@@ -989,10 +1018,10 @@ export class Workspace {
       this.store.get<Task>('task', taskId).projectId,
       this.store.get<Member>('member', memberId).runnerId || 'local',
     );
-    const automatic = this.store.get<Member>('member', memberId).managed;
+    const { managed: automatic, preferredModel } = this.store.get<Member>('member', memberId);
     if (automatic) await this.autonomy.shareSkills(memberId);
     const selection =
-      automatic || workflow?.orchestrator === 'sade'
+      preferredModel || automatic || workflow?.orchestrator === 'sade'
         ? await this.autonomy.model(memberId, initial, { syncPlugins: automatic })
         : undefined;
     if (this.closing) throw new DomainError('The coordinator is shutting down.');

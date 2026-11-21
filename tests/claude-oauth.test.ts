@@ -346,6 +346,66 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
       .tools[0].name,
     'mesh_read',
   );
+  // Reuse the already verified OAuth connection on another owner-approved
+  // desktop/profile without asking Claude to disconnect or authenticate again.
+  const destination = desktop('Charlie'),
+    destinationMember = randomUUID();
+  const destinationStatus = async () =>
+    (
+      await control(destination, {
+        action: 'account-status',
+        memberId: destinationMember,
+      })
+    ).json();
+  assert.deepEqual(
+    (await control(bob, { action: 'account-status', memberId: randomUUID() })).json().reusable,
+    [],
+  );
+  const candidates = (await destinationStatus()).reusable;
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].connectionId, accountId);
+  const expiryBeforeMove = (await status()).expiresAt;
+  const pendingTarget = randomUUID();
+  await control(destination, { ...body, memberId: destinationMember, connectionId: pendingTarget });
+  const move = {
+    action: 'reuse-account',
+    connectionId: accountId,
+    memberId: destinationMember,
+    profileName: 'New laptop',
+    revision: 0,
+    confirmed: true,
+  };
+  assert.equal((await control(bob, move)).statusCode, 409);
+  assert.equal((await control(destination, { ...move, confirmed: false })).statusCode, 400);
+  assert.equal(
+    (await control(destination, { ...move, connectionId: pendingTarget })).statusCode,
+    409,
+  );
+  assert.equal((await control(destination, move)).json().status, 'connected');
+  assert.equal((await status()).status, 'disconnected');
+  assert.equal((await destinationStatus()).expiresAt, expiryBeforeMove);
+  assert.equal((await control(destination, { ...move, memberId: randomUUID() })).statusCode, 409);
+  assert.equal((await initialize(accountToken)).statusCode, 200, 'same credential still works');
+  assert.deepEqual(
+    (await mcp('tools/list', {}, String(renewedHandshake.headers['mcp-session-id']))).json().result
+      .tools,
+    [],
+  );
+  assert.ok(store.all<any>('claudeWebGrant').find((g) => g.connectionId === freshId)?.revoked);
+  assert.ok(
+    store.all<any>('claudeWebGrant').find((g) => g.connectionId === pendingTarget)?.revoked,
+  );
+  assert.equal(
+    (await control(device, { ...projectAccess, connectionId: randomUUID() })).statusCode,
+    403,
+  );
+  assert.equal(
+    (await control(device, { ...move, memberId, profileName: 'New Claude', revision: 1 })).json()
+      .status,
+    'connected',
+  );
+  assert.equal((await destinationStatus()).status, 'disconnected');
+  assert.equal((await status()).expiresAt, expiryBeforeMove);
   const oldFamilyRefresh = lastRefresh;
   const verificationOnly = await accountAuth({ scope: 'connector.connect' });
   assert.equal((await initialize(accountToken)).statusCode, 401);

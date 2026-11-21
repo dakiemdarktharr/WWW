@@ -32,6 +32,8 @@ Claude web có thể đọc tin nhắn nhóm qua connector HTTPS có thời hạ
 
 Thêm một thành viên Claude rồi chọn client trong **MESH connection**. Tài khoản Free có thể dùng chat của Claude Desktop. Tài khoản có quyền Claude Code còn có thể mở CLI tại thư mục dự án. Người dùng đăng nhập, chọn model và gửi yêu cầu trong ứng dụng của Anthropic. Việc tạo hồ sơ Kivuno chỉ dành một chỗ trong Team. Trạng thái kết nối dựa trên MCP handshake của client. [Bảng quyền theo gói](https://claude.com/pricing) · [MCP trên Claude Desktop](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) · [Quy định xác thực của Anthropic](https://code.claude.com/docs/en/legal-and-compliance).
 
+Nút **Model** trong Team có thể mở Claude Web hoặc Claude Desktop để chọn model trong giao diện Claude. Với **Browse Claude Code models**, Kivuno đọc danh sách của tài khoản đang đăng nhập trong CLI trên máy. Chọn một model sẽ mở phiên Claude Code tương tác với model đó. Người dùng nhập và gửi yêu cầu trong terminal mới.
+
 1. Tạo thành viên Claude và thêm vào đúng nhóm.
 2. Tạo kết nối MCP có thời hạn trong desktop; mặc định chỉ đọc/nhắn tin. Cho phép claim task và cho phép quota chưa biết là hai quyết định riêng của người dùng.
 3. Chép cấu hình vào client MCP mà người dùng tự quản lý. Cấu hình chứa bearer token nhạy cảm, chỉ hiển thị khi tạo. Không commit hoặc gửi nó vào group.

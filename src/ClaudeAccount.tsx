@@ -70,7 +70,8 @@ export async function beginClaudeAccount(memberId: string) {
     throw new Error('Open the current Kivuno desktop app to connect Claude.');
   const account = await window.relayDesktop.beginClaudeWebAccount({ memberId });
   refreshClaudeAccount(memberId);
-  if (account.status !== 'connected') await openExternal(claudeConnectorsUrl);
+  if (account.status !== 'connected' && !account.reusable?.length)
+    await openExternal(claudeConnectorsUrl);
   return account;
 }
 

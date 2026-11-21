@@ -922,7 +922,15 @@ export async function buildApp(
   });
   app.get('/api/members/:id/models', async (request) => {
     const member = unlockedMember(request);
-    return readModels(await workspace.client(member.id));
+    return workspace.memberModels(member.id);
+  });
+  app.patch('/api/members/:id/model', async (request) => {
+    const member = unlockedMember(request);
+    const { model } = z
+      .object({ model: z.string().trim().min(1).max(200).nullable() })
+      .strict()
+      .parse(request.body);
+    return workspace.setMemberModel(member.id, model);
   });
   app.post('/api/hackathons', async (request) => createHackathonProject(workspace, request.body));
   app.post('/api/sessions/:id/send', async (request) => {

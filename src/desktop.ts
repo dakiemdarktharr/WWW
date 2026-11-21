@@ -93,6 +93,8 @@ declare global {
       beginSignIn(): Promise<DesktopStatus>;
       cancelSignIn(): Promise<DesktopStatus>;
       claudeClient(action: 'status'): Promise<ClaudeCodeStatus>;
+      claudeClient(action: 'models'): Promise<{ model: string; displayName: string }[]>;
+      claudeClient(action: 'code-model', model: string | null): Promise<{ opened: boolean }>;
       claudeClient(action: 'desktop' | 'code' | 'login'): Promise<{ opened: boolean }>;
       prepareProvider(provider: import('../shared/types').ProviderId): Promise<{
         provider: import('../shared/types').ProviderId;
@@ -106,6 +108,12 @@ declare global {
       }): Promise<ClaudeWebConnection>;
       beginClaudeWebAccount(input: { memberId: string }): Promise<ClaudeWebAccount>;
       claudeWebAccountStatus(input: { memberId: string }): Promise<ClaudeWebAccount>;
+      reuseClaudeWebAccount(input: {
+        memberId: string;
+        connectionId: string;
+        revision: number;
+        confirmed: true;
+      }): Promise<ClaudeWebAccount>;
       revokeClaudeWebConnection(connectionId: string): Promise<{ revoked: true }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
@@ -162,6 +170,7 @@ export interface ClaudeWebConnection {
 }
 
 export interface ClaudeWebAccount {
+  reusable?: { connectionId: string; profileName: string; revision: number; expiresAt: string }[];
   authorized?: boolean;
   status: 'disconnected' | 'pending' | 'connected';
   url: string;

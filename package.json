@@ -1,6 +1,6 @@
 {
   "name": "relay-workspace",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "private": true,
   "overrides": {
     "zod": "$zod",
@@ -27,6 +27,7 @@
     "test:desktop": "tsx tests/desktop.e2e.ts",
     "test:collaboration": "tsx tests/collaboration.e2e.ts",
     "test:chat": "tsx tests/chat.e2e.ts",
+    "test:team-model-picker": "tsx tests/team-model-picker.e2e.ts",
     "test:codex-native": "tsx tests/codex-native.e2e.ts",
     "desktop:stage": "node scripts/build-desktop.mjs",
     "desktop:package": "node scripts/package-desktop.mjs",

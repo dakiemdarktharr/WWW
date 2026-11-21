@@ -71,6 +71,7 @@ import UsageGuide from './UsageGuide';
 import Aegis from './Aegis';
 import DeadlineField from './DeadlineField';
 import HelpDetails from './HelpDetails';
+import TeamModelPicker from './TeamModelPicker';
 import { deadlineFromForm } from './deadline';
 import ProviderConnect, {
   ExternalConnection,
@@ -679,14 +680,27 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
       setToast({ text: 'This profile is locked by your current Kivuno plan.', error: true });
       return;
     }
+    if (!window.relayDesktop) {
+      setToast({ text: 'Open Kivuno desktop to connect Antigravity.', error: true });
+      return;
+    }
+    if (!confirmAntigravity()) return;
     setBusy(`antigravity-google-${member.id}`);
     try {
-      if (!window.relayDesktop)
-        throw new Error('Open this workspace in the Kivuno desktop app to sign in with Google.');
-      await window.relayDesktop.signInAntigravityWithGoogle();
-      setToast({
-        text: 'Antigravity sign-in opened in Terminal. Finish the Google flow there, then return to Kivuno.',
-      });
+      await window.relayDesktop.prepareProvider('antigravity');
+      if (isExternalMember(member)) {
+        const managed = await perform<Member>(
+          'enable-managed',
+          `/members/${member.id}/managed-runtime`,
+          {
+            acknowledgeLocalExecution: true,
+            confirmDeviceAccount: true,
+          },
+        );
+        if (!managed) return;
+        member = managed;
+      }
+      await login(member, 'browser', true);
     } catch (error) {
       setToast({ text: (error as Error).message, error: true });
     } finally {
@@ -1296,6 +1310,17 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
                           'Account status refreshed.',
                         )
                       }
+                      modelSaved={(preferredModel) =>
+                        setState(
+                          (current) =>
+                            current && {
+                              ...current,
+                              members: current.members.map((entry) =>
+                                entry.id === member.id ? { ...entry, preferredModel } : entry,
+                              ),
+                            },
+                        )
+                      }
                       logout={() =>
                         void perform(
                           `logout-${member.id}`,
@@ -1716,29 +1741,6 @@ function WorkspaceApp({ cloud }: { cloud: boolean }) {
               projects={state?.projects || []}
               refreshProjects={refresh}
               googleBusy={pending}
-              enableManaged={async () => {
-                const existing = members.find((member) => member.id === modal.memberId);
-                if (existing?.entitlementLocked) {
-                  setToast({
-                    text: 'This profile is locked by your current Kivuno plan.',
-                    error: true,
-                  });
-                  return;
-                }
-                const deviceAccount = existing?.provider === 'antigravity';
-                if (deviceAccount && !confirmAntigravity()) return;
-                if (existing && window.relayDesktop)
-                  await window.relayDesktop.prepareProvider(providerOf(existing));
-                const member = await perform<Member>(
-                  'enable-managed',
-                  `/members/${modal.memberId}/managed-runtime`,
-                  {
-                    acknowledgeLocalExecution: true,
-                    ...(deviceAccount ? { confirmDeviceAccount: true } : {}),
-                  },
-                );
-                if (member) await login(member, 'browser', deviceAccount);
-              }}
               googleSignIn={() =>
                 void antigravityGoogleSignIn(
                   members.find((member) => member.id === modal.memberId)!,
@@ -2672,6 +2674,7 @@ function MemberCard({
   busy,
   login,
   refresh,
+  modelSaved,
   logout,
   importSkills,
   openTask,
@@ -2687,6 +2690,7 @@ function MemberCard({
   busy: boolean;
   login: (method: 'browser' | 'device') => void;
   refresh: () => void;
+  modelSaved: (model: string | undefined) => void;
   logout: () => void;
   importSkills: () => void;
   openTask: (task: Task) => void;
@@ -2729,7 +2733,14 @@ function MemberCard({
         </div>
         <span className={`member-presence ${presence}`}>
           <i />
-          {presence === 'connected' ? 'Claude connected' : presence}
+          {presence === 'connected'
+            ? 'Claude connected'
+            : presence === 'online' &&
+                provider === 'antigravity' &&
+                member.account &&
+                !isExternalMember(member)
+              ? 'Antigravity connected'
+              : presence}
         </span>
       </div>
       <div className="member-account">
@@ -2794,6 +2805,11 @@ function MemberCard({
               dashboard.
             </small>
           </>
+        ) : provider === 'antigravity' ? (
+          <small>
+            Antigravity does not provide quota totals to Kivuno. Check /usage in the official
+            Antigravity CLI. This is separate from sign-in status.
+          </small>
         ) : (
           <span className="quota-unknown">Unavailable</span>
         )}
@@ -2830,7 +2846,7 @@ function MemberCard({
           ) : (
             <>
               {provider === 'antigravity' && !isExternalMember(member) ? (
-                'Skill and plugin inventory unavailable'
+                'Skills and plugins are managed in Antigravity'
               ) : (
                 <>
                   {member.skills.length} skills<span className="divider-dot">·</span>
@@ -2886,56 +2902,59 @@ function MemberCard({
         </div>
       )}
       <div className={`member-actions ${provider === 'antigravity' ? 'antigravity-actions' : ''}`}>
-        {provider === 'antigravity' && isExternalMember(member) ? (
-          <div className="member-provider-actions">
-            <Button
-              primary
-              onClick={googleSignIn}
-              disabled={busy || member.entitlementLocked}
-              title="Opens the official Antigravity Google sign-in in Terminal."
-            >
-              <ArrowUpRight size={15} /> Sign in with Google
-            </Button>
-            <Button onClick={external} disabled={busy || member.entitlementLocked}>
-              <ExternalLink size={15} /> MESH connection
-            </Button>
-          </div>
-        ) : isExternalMember(member) ? (
-          <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
-            <ExternalLink size={15} />
-            {provider === 'claude'
-              ? webStatus === 'connected'
-                ? 'Manage Claude connection'
-                : 'Connect Claude'
-              : 'MESH connection'}
-          </Button>
-        ) : member.account ? (
-          <>
-            <Button onClick={refresh} disabled={busy || member.entitlementLocked}>
-              <RefreshCw size={14} /> Refresh
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button
-              primary
-              onClick={() => login(member.runnerId ? 'device' : 'browser')}
-              disabled={busy || member.entitlementLocked}
-            >
-              <ArrowUpRight size={15} />{' '}
-              {provider === 'antigravity' ? 'Connect device account' : 'Sign in with OpenAI'}
-            </Button>
-            {provider === 'codex' && (
-              <button
-                className="text-button"
+        <div className="member-action-main">
+          <TeamModelPicker member={member} busy={busy} onSaved={modelSaved} />
+          {provider === 'antigravity' && isExternalMember(member) ? (
+            <div className="member-provider-actions">
+              <Button
+                primary
+                onClick={googleSignIn}
                 disabled={busy || member.entitlementLocked}
-                onClick={() => login('browser')}
+                title="Verify this computer’s Antigravity account or open official Google sign-in."
               >
-                Browser sign-in
-              </button>
-            )}
-          </>
-        )}
+                <ArrowUpRight size={15} /> Connect Antigravity
+              </Button>
+              <Button onClick={external} disabled={busy || member.entitlementLocked}>
+                <ExternalLink size={15} /> MESH connection
+              </Button>
+            </div>
+          ) : isExternalMember(member) ? (
+            <Button primary onClick={external} disabled={busy || member.entitlementLocked}>
+              <ExternalLink size={15} />
+              {provider === 'claude'
+                ? webStatus === 'connected'
+                  ? 'Manage Claude connection'
+                  : 'Connect Claude'
+                : 'MESH connection'}
+            </Button>
+          ) : member.account ? (
+            <>
+              <Button onClick={refresh} disabled={busy || member.entitlementLocked}>
+                <RefreshCw size={14} /> Refresh
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                primary
+                onClick={() => login(member.runnerId ? 'device' : 'browser')}
+                disabled={busy || member.entitlementLocked}
+              >
+                <ArrowUpRight size={15} />{' '}
+                {provider === 'antigravity' ? 'Connect device account' : 'Sign in with OpenAI'}
+              </Button>
+              {provider === 'codex' && (
+                <button
+                  className="text-button"
+                  disabled={busy || member.entitlementLocked}
+                  onClick={() => login('browser')}
+                >
+                  Browser sign-in
+                </button>
+              )}
+            </>
+          )}
+        </div>
         <button
           className="icon-button member-remove"
           aria-label={`Remove ${member.name} from team`}

@@ -15,6 +15,7 @@ import {
   saveClaudeClient,
   claudeClients,
   refreshClaudeAccount,
+  claudeConnectorsUrl,
   useClaudeAccount,
   type ClaudeClient,
 } from './ClaudeAccount';
@@ -230,7 +231,6 @@ export function ExternalConnection({
   refreshProjects,
   googleSignIn,
   googleBusy,
-  enableManaged,
   initialClaudeClient,
 }: {
   member: Member;
@@ -238,7 +238,6 @@ export function ExternalConnection({
   refreshProjects: () => Promise<void>;
   googleSignIn: () => void;
   googleBusy: boolean;
-  enableManaged?: () => void;
   initialClaudeClient?: ClaudeClient;
 }) {
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
@@ -271,6 +270,9 @@ export function ExternalConnection({
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [reuseId, setReuseId] = useState('');
+  const reusable =
+    account?.reusable?.find((entry) => entry.connectionId === reuseId) || account?.reusable?.[0];
   const refresh = async () => {
     const capability = (await api<ProviderCapability[]>('/providers')).find(
       (entry) => entry.id === providerOf(member),
@@ -439,32 +441,15 @@ export function ExternalConnection({
     ) : null;
   return (
     <div className="external-connection form">
-      {enableManaged && member.provider === 'antigravity' && (
-        <section>
-          <p>
-            Let Sade start and stop the official CLI, assign work and request independent reviews.
-            Kivuno will ask you to confirm use of this computer’s Antigravity account. Project
-            prompts require an allowance.
-          </p>
-          <button
-            className="button"
-            disabled={busy || googleBusy}
-            onClick={() =>
-              void Promise.resolve(enableManaged()).catch((cause) => setError(cause.message))
-            }
-          >
-            Enable Sade execution
-          </button>
-        </section>
-      )}
       {providerOf(member) === 'antigravity' && (
         <>
           <p>
-            Sign in to Google through the official Antigravity CLI. Kivuno opens Terminal; your
-            Google credentials stay with Antigravity.
+            Connect the Antigravity account on this computer. If you are already signed in, Kivuno
+            verifies that session. Otherwise, the official CLI opens Google sign-in. Credentials
+            stay with Antigravity; project work requires a separate allowance.
           </p>
           <button className="button primary" disabled={busy || googleBusy} onClick={googleSignIn}>
-            <ArrowUpRight size={15} /> Sign in with Google
+            <ArrowUpRight size={15} /> Connect Antigravity
           </button>
         </>
       )}
@@ -526,7 +511,69 @@ export function ExternalConnection({
       )}
       {remoteAccount && (
         <section className="form claude-account-step">
-          {account?.status === 'connected' ? (
+          {account?.status !== 'connected' && reusable ? (
+            <>
+              <strong>Claude is already connected to Kivuno</strong>
+              <p>
+                Use that connection for {member.name}. You do not need to disconnect the plugin in
+                Claude.
+              </p>
+              <GlassSelect
+                label="Existing Claude connection"
+                value={reusable.connectionId}
+                onChange={setReuseId}
+                disabled={busy}
+                options={account!.reusable!.map((entry) => ({
+                  value: entry.connectionId,
+                  label: `${entry.profileName} · ${entry.connectionId.slice(0, 8)}`,
+                }))}
+              />
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      `Move the Claude connection from ${reusable.profileName} to ${member.name}? Its old project-sharing permissions will be revoked. No project is shared and the connection expiry stays unchanged.`,
+                    )
+                  )
+                    return;
+                  setBusy(true);
+                  setError('');
+                  try {
+                    if (!window.relayDesktop?.reuseClaudeWebAccount)
+                      throw new Error('Update Kivuno desktop to reuse this connection.');
+                    await window.relayDesktop.reuseClaudeWebAccount({
+                      memberId: member.id,
+                      connectionId: reusable.connectionId,
+                      revision: reusable.revision,
+                      confirmed: true,
+                    });
+                    refreshClaudeAccount(member.id);
+                  } catch (cause) {
+                    setError((cause as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <Link2 size={16} /> Use existing Claude connection
+              </button>
+              <small>
+                Moving the link disconnects its previous Kivuno profile and removes its shared
+                project access.
+              </small>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void openExternal(claudeConnectorsUrl).catch((cause) => setError(cause.message))
+                }
+              >
+                Use a different Claude account
+              </button>
+            </>
+          ) : account?.status === 'connected' ? (
             <>
               <strong role="status">
                 <Check size={16} /> Claude connected

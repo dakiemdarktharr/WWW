@@ -27,7 +27,6 @@ export class AntigravityClient extends ScopedCliClient {
   private capabilities: any = {};
   private modelSession: any = null;
   private configOptions: any[] = [];
-  private models: CodexModel[] = [];
   private selectedModel = '';
   private effort: string | undefined;
   private loginId: string | null = null;
@@ -216,41 +215,41 @@ export class AntigravityClient extends ScopedCliClient {
     }
     this.cliPending.clear();
     this.modelSession = null;
-    this.models = [];
     if (error) this.emit('error', error);
     this.emit('exit', {});
   }
   private catalog(session: any) {
-    this.configOptions = session.configOptions || [];
-    const modelOption = this.configOptions.find(
+    const configOptions: any[] = session?.configOptions || [];
+    const modelOption = configOptions.find(
       (option) => option.category === 'model' || option.id === 'model',
     );
-    const thinking = this.configOptions.find(
+    const thinking = configOptions.find(
       (option) => option.category === 'thought_level' || /thinking|effort/i.test(option.id),
     );
     const levels = (thinking?.options || []).filter(
       (option: any) => typeof option.value === 'string',
     );
     const entries =
-      session.models?.availableModels ||
+      session?.models?.availableModels ||
       (modelOption?.options || []).map((option: any) => ({
         modelId: option.value,
         name: option.name,
       }));
-    this.selectedModel = session.models?.currentModelId || modelOption?.currentValue || '';
-    this.models = entries
+    const selectedModel = session?.models?.currentModelId || modelOption?.currentValue || '';
+    const models: CodexModel[] = entries
       .filter((model: any) => typeof model.modelId === 'string')
       .map((model: any) => ({
         id: model.modelId,
         model: model.modelId,
         displayName: model.name || model.modelId,
-        isDefault: model.modelId === this.selectedModel,
+        isDefault: model.modelId === selectedModel,
         defaultReasoningEffort: thinking?.currentValue || '',
         supportedReasoningEfforts: levels.map((option: any) => ({
           reasoningEffort: option.value,
           description: option.name || option.value,
         })),
       }));
+    return { configOptions, selectedModel, models };
   }
   private async account(refresh = false) {
     await this.start();
@@ -266,7 +265,6 @@ export class AntigravityClient extends ScopedCliClient {
         if (!session?.sessionId) throw new Error('Antigravity did not confirm a session.');
         if (this.capabilities.sessionCapabilities?.close)
           await this.rpc('session/close', { sessionId: session.sessionId });
-        this.catalog(session);
         this.modelSession = session;
       } catch (error: any) {
         this.modelSession = null;
@@ -331,7 +329,7 @@ export class AntigravityClient extends ScopedCliClient {
     else if (method === 'plugin/installed') result = { marketplaces: [] };
     else if (method === 'model/list') {
       if (!(await this.account())) throw new Error('Sign in to Antigravity first.');
-      result = { data: this.models };
+      result = { data: this.catalog(this.modelSession).models };
     } else if (method === 'kivuno/policy') {
       this.policy = raw;
       result = {};
@@ -353,9 +351,11 @@ export class AntigravityClient extends ScopedCliClient {
       });
       this.thread = raw.threadId || session.sessionId;
       if (typeof this.thread !== 'string') throw new Error('Antigravity returned no session ID.');
-      this.catalog(session);
+      const { configOptions, selectedModel, models } = this.catalog(session);
+      this.configOptions = configOptions;
+      this.selectedModel = selectedModel;
       if (raw.model && raw.model !== this.selectedModel) {
-        if (!this.models.some((model) => model.model === raw.model))
+        if (!models.some((model) => model.model === raw.model))
           throw new Error('Antigravity model is unavailable.');
         const option = this.configOptions.find(
           (option) => option.category === 'model' || option.id === 'model',

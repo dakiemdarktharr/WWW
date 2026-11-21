@@ -408,11 +408,19 @@ export class Autonomy {
       );
     const floor = grant.length ? Math.min(...grant.map((item) => item.floor)) : 50;
     const client = await this.host.client(memberId);
+    const models = await readModels(client);
+    const { preferredModel } = this.host.store.get<Member>('member', memberId);
+    const preferred = preferredModel && models.find((model) => model.model === preferredModel);
+    if (preferredModel && !preferred)
+      throw new DomainError(
+        'The Team model is no longer available. Choose another model or Automatic in Team.',
+        409,
+      );
     const projects = context.projects.filter(
       (project) => project.assigned.length || project.pendingHumanRequests || project.workflow,
     ).length;
     return chooseModel(
-      await readModels(client),
+      preferred ? [preferred] : models,
       task,
       { projects, remaining, headroom: remaining === null ? null : Math.max(0, remaining - floor) },
       client.provider,

@@ -6,16 +6,17 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
-import { CodexClient } from '../server/codex.ts';
+import { CodexClient, startTask } from '../server/codex.ts';
 import { buildApp } from '../server/app.ts';
 import { ExternalProviders } from '../server/external-provider.ts';
-import type { Member, Project } from '../shared/types.ts';
+import type { CodexModel, Member, Project } from '../shared/types.ts';
 
 // Controlled auth/capability protocol; never launches a model or authenticates a user.
 class ProfileClient extends CodexClient {
   signedIn = false;
   stopFails = false;
   calls: string[] = [];
+  models: CodexModel[] = [];
   constructor(
     public profile: string,
     public email: string,
@@ -33,6 +34,7 @@ class ProfileClient extends CodexClient {
       'account/read': {
         account: this.signedIn ? { type: 'chatgpt', email: this.email, planType: 'plus' } : null,
       },
+      'model/list': { data: this.models },
       'account/login/start': {
         type: 'chatgptDeviceCode',
         loginId: randomUUID(),
@@ -48,6 +50,7 @@ class ProfileClient extends CodexClient {
     return (responses[method] || {}) as T;
   }
 }
+
 async function fixture(t: TestContext) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kivuno-team-test-'));
   const store = new Store(path.join(root, 'workspace.db'));
@@ -99,6 +102,81 @@ async function fixture(t: TestContext) {
   return { root, store, workspace, app, headers, project };
 }
 
+test('Team saves only current account models and uses the preference for automatic work', async (t) => {
+  const f = await fixture(t);
+  const member = f.workspace.autonomy.addAccount();
+  const client = (await f.workspace.client(member.id)) as ProfileClient;
+  client.signedIn = true;
+  const asModel = (id: string, isDefault = false): CodexModel => ({
+    id,
+    model: id,
+    displayName: id,
+    isDefault,
+    defaultReasoningEffort: '',
+    supportedReasoningEfforts: [],
+  });
+  client.models = [asModel('account-standard', true)];
+  const route = `/api/members/${member.id}`;
+  const list = () => f.app.inject({ method: 'GET', url: route + '/models', headers: f.headers });
+  const setModel = (model: string | null) =>
+    f.app.inject({
+      method: 'PATCH',
+      url: route + '/model',
+      payload: { model },
+      headers: f.headers,
+    });
+
+  assert.deepEqual((await list()).json(), client.models);
+  assert.equal((await setModel('new-model')).statusCode, 409);
+  client.models.push(asModel('new-model'));
+  assert.deepEqual((await list()).json(), client.models);
+  assert.equal((await setModel('new-model')).json().preferredModel, 'new-model');
+  f.store.put('project', { ...f.project, memberIds: [member.id] });
+  const task = f.store.addTask({
+    projectId: f.project.id,
+    title: 'Check model preference',
+    description: '',
+    kind: 'research',
+    priority: 'medium',
+    scope: ['.'],
+    acceptance: '',
+    dependsOn: [],
+    assignedTo: member.id,
+  });
+  const select = () => f.workspace.autonomy.model(member.id, task, { syncPlugins: false });
+  const selection = await select();
+  const request = client.request.bind(client);
+  const requestedModels: unknown[] = [];
+  client.request = async <T>(method: string, params?: { model?: string }): Promise<T> => {
+    if (method === 'thread/start') {
+      requestedModels.push(params?.model);
+      return {
+        thread: { id: 'fixture-thread' },
+        model: params?.model,
+        sandbox: { type: 'readOnly' },
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'user',
+      } as T;
+    }
+    if (method === 'turn/start') {
+      requestedModels.push(params?.model);
+      return { turn: { id: 'fixture-turn' } } as T;
+    }
+    return request<T>(method);
+  };
+  const turn = await startTask(client, {
+    ...selection,
+    cwd: f.root,
+    prompt: 'Fixture',
+    readOnly: true,
+  });
+  assert.equal(turn.model, 'new-model');
+  assert.deepEqual(requestedModels, ['new-model', 'new-model']);
+  client.models.pop();
+  await assert.rejects(select(), /Team model is no longer available/);
+  assert.equal((await setModel(null)).json().preferredModel, undefined);
+  assert.equal((await select()).model, 'account-standard');
+});
 test('four accounts on one machine retain distinct profiles, email and quota; cancelled profiles are not silently reused', async (t) => {
   const f = await fixture(t);
   const ids: string[] = [];
