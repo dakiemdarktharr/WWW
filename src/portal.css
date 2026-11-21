@@ -2382,3 +2382,9 @@
     font-size: 10px;
   }
 }
+.kp-account-button span {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

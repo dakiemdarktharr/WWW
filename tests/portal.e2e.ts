@@ -713,6 +713,18 @@ try {
   );
   assert.equal(current.user.email, memberEmail);
   assert.equal(current.user.emailVerified, false);
+  const signedInHome = await reduced.newPage();
+  await signedInHome.goto(origin);
+  const accountMenu = signedInHome.getByRole('navigation', { name: 'Menu Kivuno' });
+  await expect(accountMenu.getByRole('button', { name: 'Tài khoản Ari Test' })).toBeVisible();
+  await expect(accountMenu.getByRole('button', { name: 'Đăng nhập', exact: true })).toHaveCount(0);
+  await expect(accountMenu.getByRole('button', { name: 'Đăng ký', exact: true })).toHaveCount(0);
+  await signedInHome.reload();
+  await accountMenu.getByRole('button', { name: 'Tài khoản Ari Test' }).click();
+  await expect(
+    signedInHome.getByRole('dialog').getByText('Ari Test', { exact: true }),
+  ).toBeVisible();
+  await signedInHome.close();
   assert.equal(approvalRequests, 1);
   await dialog.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await dialog.getByRole('button', { name: 'Chủ workspace cũ', exact: true }).click();

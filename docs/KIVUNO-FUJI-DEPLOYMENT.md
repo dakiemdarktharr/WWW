@@ -80,3 +80,7 @@ $env:KIVUNO_FUJI_TREASURY_ADDRESS = '0x2b5A65B5C404b48Ba775d3A9ea7ee9EAF2BC2805'
 ```
 
 Billing routes require `RELAY_DEPLOYMENT=cloud`. The local demo launcher enables this mode with a loopback-only development origin and its own data directory. A hosted instance requires HTTPS and the deployment addresses at startup. `KIVUNO_FUJI_RPC_URL` defaults to Avalanche's Fuji C-Chain RPC. The verifier checks chain, contract, token, payer, plan, amount and payment intent before applying an entitlement.
+
+For the hosted website, set these three variables in the Vercel project's Production environment and deploy again. `cloud/runner.ts` forwards them to the billing service and includes them in the runtime configuration fingerprint, so a configuration change restarts the service with the new values. The local demo launcher alone does not configure the hosted website.
+
+If checkout is disabled, inspect the authenticated `/api/billing/summary` response. Its configuration must report the Fuji contract as available. The server checks chain ID, deployed bytecode, token and treasury before enabling checkout. Once configuration passes, the buyer still needs enough test USDC for the selected plan and test AVAX for gas. Funding a wallet and confirming a purchase are separate buyer actions.
