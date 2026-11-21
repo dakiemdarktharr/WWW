@@ -126,6 +126,38 @@ test('cloud gateway retains legacy owner access, blocks reserved signup/foreign 
     const bootstrap = await request('GET', '/api/session', undefined, { cookie: ownerCookie });
     assert.equal(bootstrap.statusCode, 200);
     const cookie = `${ownerCookie}; ${cookies(bootstrap.headers['set-cookie'])}`;
+    const authQuery = new URLSearchParams({
+      client_id: 'https://claude.ai/oauth/mcp-oauth-client-metadata',
+      response_type: 'code',
+      redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+      state: 'browser-consent-test',
+      resource: origin + '/api/claude/mcp',
+      scope: 'mesh.read',
+      code_challenge: randomBytes(32).toString('base64url'),
+      code_challenge_method: 'S256',
+    });
+    const authStart = await app.inject({
+      method: 'GET',
+      url: '/api/claude/oauth/authorize?' + authQuery,
+      headers: { host: 'private-worker.vercel.run', 'x-relay-gateway': gatewaySecret },
+    });
+    assert.equal(authStart.statusCode, 302);
+    const requestId = new URL(authStart.headers.location!).searchParams.get('request');
+    const consentPath = '/api/claude/oauth/consent';
+    assert.equal((await request('GET', consentPath + '?request=' + requestId)).statusCode, 401);
+    const consentView = await request('GET', consentPath + '?request=' + requestId, undefined, {
+      cookie,
+    });
+    assert.equal(consentView.statusCode, 200);
+    assert.deepEqual(consentView.json().grants, []);
+    const deny = { request: requestId, decision: 'deny' };
+    assert.equal((await request('POST', consentPath, deny, { cookie })).statusCode, 403);
+    const denied = await request('POST', consentPath, deny, {
+      cookie,
+      'x-relay-token': bootstrap.json().token,
+    });
+    assert.equal(denied.statusCode, 200);
+    assert.equal(new URL(denied.json().redirectUrl).searchParams.get('error'), 'access_denied');
     assert.equal((await request('GET', '/api/state', undefined, { cookie })).statusCode, 200);
     assert.equal(
       (
