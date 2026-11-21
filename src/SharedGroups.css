@@ -186,6 +186,13 @@
 .shared-group-compose-controls input {
   width: auto;
 }
+.shared-group-catalogue {
+  min-width: 0;
+}
+.shared-group-catalogue input[type='file'] {
+  min-width: 0;
+  max-width: 100%;
+}
 @media (max-width: 850px) {
   .shared-groups {
     grid-template-columns: 1fr;

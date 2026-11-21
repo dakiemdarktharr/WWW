@@ -105,6 +105,7 @@ export default function SharedGroups({
   const [supportsReferencedMessage, setSupportsReferencedMessage] = useState(false);
   const [reference, setReference] = useState<SharedMessage>();
   const [catalogue, setCatalogue] = useState<File>();
+  const catalogueInput = useRef<HTMLInputElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const [answer, setAnswer] = useState('');
   const [taskUpdate, setTaskUpdate] = useState<{ id: string; jobId: string; text: string } | null>(
@@ -831,7 +832,11 @@ export default function SharedGroups({
               ))}
             </div>
             {latestSade && (
-              <section aria-label="Sade progress" className="shared-group-members">
+              <section
+                aria-label="Sade progress"
+                className="shared-group-members"
+                data-sade-run={latestSade.id}
+              >
                 <strong>Sade · {latestSade.state}</strong>
                 {latestSade.error && <p>{latestSade.error}</p>}
                 <ul>
@@ -1137,14 +1142,31 @@ export default function SharedGroups({
                     projectKey &&
                     !readOnlyRequest &&
                     window.relayDesktop?.projectCatalogue && (
-                      <label>
-                        Catalogue image
-                        <input
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={(event) => setCatalogue(event.target.files?.[0])}
-                        />
-                      </label>
+                      <div className="shared-group-catalogue">
+                        <label>
+                          Catalogue image
+                          <input
+                            ref={catalogueInput}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            disabled={busy}
+                            onChange={(event) => setCatalogue(event.target.files?.[0])}
+                          />
+                        </label>
+                        {catalogue && (
+                          <button
+                            className="text-button"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => {
+                              if (catalogueInput.current) catalogueInput.current.value = '';
+                              setCatalogue(undefined);
+                            }}
+                          >
+                            Remove catalogue image
+                          </button>
+                        )}
+                      </div>
                     )}
                 </div>
               )}

@@ -2188,12 +2188,17 @@ export class GroupSade {
   private projectStatus(run: Run) {
     const tasks = run.jobs.filter((job) => job.task);
     const active = tasks.filter(({ state }) => state === 'running');
+    const queued = tasks.filter(({ state }) => state === 'queued');
     const waiting = tasks.filter(({ state }) => state === 'waiting');
     const status = [
       `${run.project!.title} · ${run.project!.stage} · ${tasks.filter(({ state }) => state === 'done').length}/${tasks.length} tasks complete.`,
     ];
-    if (active.length)
-      status.push('In progress: ' + active.map(({ task }) => task!.title).join(', ') + '.');
+    const assigned = ({ task, grantId }: Job) => {
+      const label = this.store.lookup<Grant>('sharedSadeGrant', grantId)?.label;
+      return label ? `${task!.title} (${label})` : task!.title;
+    };
+    if (active.length) status.push('In progress: ' + active.map(assigned).join(', ') + '.');
+    if (queued.length) status.push('Queued: ' + queued.map(assigned).join(', ') + '.');
     if (waiting.length)
       status.push('Needs an answer: ' + waiting.map(({ summary }) => summary).join(' ') + '.');
     if (run.error) status.push(run.error);

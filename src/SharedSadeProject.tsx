@@ -69,7 +69,12 @@ export default function SharedSadeProject({
     }
   };
   return (
-    <aside className="sade-project-sidebar" aria-label="Sade project sidebar">
+    <aside
+      className="sade-project-sidebar"
+      aria-label="Sade project sidebar"
+      data-sade-run={run.id}
+      data-sade-project={project.kind}
+    >
       <header>
         <small>
           {run.state === 'blocked'
@@ -79,7 +84,7 @@ export default function SharedSadeProject({
               : stages[project.stage]}
         </small>
         <h3>{project.title}</h3>
-        <p>{project.summary}</p>
+        <p role="status">{project.summary}</p>
         <button className="text-button" onClick={() => void requestStatus()}>
           Ask for project status
         </button>

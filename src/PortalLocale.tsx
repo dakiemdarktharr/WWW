@@ -14,6 +14,18 @@ const english: Record<string, string> = {
   'Sade chia việc ngay trong Chat, phối hợp các trợ lý AI và nhờ một AI khác kiểm tra kết quả. Code đổi, review cũng phải cập nhật.':
     'Sade divides work in Chat, coordinates AI teammates, and brings in another AI to check the result. When code changes, the review must follow.',
   'Điều phối trong Chat': 'Coordination in Chat',
+  'Cách Sade điều phối': 'How Sade works',
+  'Điều phối dự án với Sade': 'Coordinate projects with Sade',
+  'Nhắn @Sade trong Groups trên app để giao một bài nghiên cứu kèm slide, web bán hàng hoặc dashboard. Theo dõi ai đang làm gì ngay cạnh cuộc trò chuyện.':
+    'Message @Sade in Groups in the desktop app to start a research paper with slides, a storefront, or a dashboard. See who is doing what right beside the conversation.',
+  'Tải Kivuno để dùng Sade': 'Download Kivuno to use Sade',
+  'Từ brief đến bàn giao': 'From brief to handoff',
+  'Các bước Sade điều phối': 'Sade project stages',
+  'Chuẩn bị': 'Preparation',
+  'Xác nhận mục tiêu và tài liệu': 'Confirm the goal and source materials',
+  'Giao việc': 'Assign work',
+  'Chạy song song khi đủ dữ liệu': 'Run independent tasks in parallel',
+  'Xem và nhận đầu ra đã duyệt': 'Preview and receive reviewed work',
   'Kiểm tra độc lập': 'Independent review',
   'Review theo phiên bản code': 'Review tied to the code revision',
   'Bạn giữ quyền quyết định.': 'You make the final call.',

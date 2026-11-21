@@ -675,6 +675,11 @@ function PortalContent() {
                   {downloadLink('linux', true)}
                   {downloadLink('macos', true)}
                 </div>
+                <a className="kp-sade-intro-link" href="#sade">
+                  <Workflow size={17} aria-hidden="true" />
+                  {t('Cách Sade điều phối')}
+                  <ArrowRight size={15} aria-hidden="true" />
+                </a>
                 {releaseError && (
                   <p className="kp-error" role="status">
                     {t(releaseError)}
@@ -688,32 +693,44 @@ function PortalContent() {
             <div className="kp-below-fold">
               <MessagingDemo />
               <section className="kp-features" aria-label={t('Tính năng Kivuno')}>
-                <article className="kp-feature sade">
+                <article className="kp-feature sade" id="sade" aria-labelledby="sade-title">
                   <div className="kp-feature-copy">
-                    <h2>
-                      {t('Cả đội vào việc.')}
-                      <br />
-                      {t('Cùng một mục tiêu.')}
-                    </h2>
+                    <h2 id="sade-title">{t('Điều phối dự án với Sade')}</h2>
+                    <p>
+                      {t(
+                        'Nhắn @Sade trong Groups trên app để giao một bài nghiên cứu kèm slide, web bán hàng hoặc dashboard. Theo dõi ai đang làm gì ngay cạnh cuộc trò chuyện.',
+                      )}
+                    </p>
+                    <button className="kp-sade-intro-link" onClick={() => setDownloadsOpen(true)}>
+                      <ArrowDownToLine size={17} aria-hidden="true" />
+                      {t('Tải Kivuno để dùng Sade')}
+                    </button>
                   </div>
                   <div className="kp-sade-visual glass">
                     <span className="kp-sade-icon">
-                      <Workflow size={36} strokeWidth={1.3} />
+                      <Workflow size={36} strokeWidth={1.3} aria-hidden="true" />
                     </span>
                     <div className="kp-sade-heading">
-                      <strong>Sade</strong>
+                      <strong>{t('Từ brief đến bàn giao')}</strong>
                     </div>
-                    <div className="kp-sade-flow">
-                      <span>
-                        <i />
-                        {t('Chia việc')}
-                      </span>
-                      <ArrowRight size={18} />
-                      <span>
-                        <i />
-                        {t('Kiểm tra độc lập')}
-                      </span>
-                    </div>
+                    <ol
+                      className="kp-sade-flow"
+                      aria-label={t('Các bước Sade điều phối')}
+                      role="list"
+                    >
+                      <li>
+                        <strong>{t('Chuẩn bị')}</strong>
+                        <span>{t('Xác nhận mục tiêu và tài liệu')}</span>
+                      </li>
+                      <li>
+                        <strong>{t('Giao việc')}</strong>
+                        <span>{t('Chạy song song khi đủ dữ liệu')}</span>
+                      </li>
+                      <li>
+                        <strong>{t('Kiểm tra độc lập')}</strong>
+                        <span>{t('Xem và nhận đầu ra đã duyệt')}</span>
+                      </li>
+                    </ol>
                   </div>
                 </article>
                 <article className="kp-feature machines">

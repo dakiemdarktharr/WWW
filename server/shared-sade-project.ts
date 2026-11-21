@@ -198,6 +198,12 @@ const shop =
   /\b(?:storefront|e[- ]?commerce|online (?:shop|store)|shop online|(?:web(?:site)?|trang web|trang|site) (?:ban hang|thuong mai dien tu|cua hang)|(?:website|site|landing page) (?:for|to sell)\b)/;
 const dashboard =
   /\b(?:(?:sales|revenue|orders?|commerce) (?:analytics )?dashboard|dashboard\b.{0,45}\b(?:sales|revenue|ban hang|doanh so|doanh thu|don hang)|bang dieu khien\b.{0,45}\b(?:ban hang|doanh so|doanh thu)|bang theo doi\b.{0,45}\b(?:doanh so|doanh thu|don hang))\b/;
+const holdOpening =
+  /^\s*(?:(?:hey\s+)?@?sade(?:\s+oi)?[\s,:]+)?(?:(?:please|kindly|nho|xin)\s+)?(?:(?:thoi )?(?:khoan|tam (?:dung|hoan))|hold off|put (?:this|the project) on hold|postpone|defer|pause)\b/;
+
+export function sadeHoldOpening(input: string) {
+  return holdOpening.exec(fold(input))?.[0];
+}
 
 export function requestedSadeProject(input: string): SadeProjectKind | undefined {
   const visible = fold(input.normalize('NFC').replace(/(?<!\p{L})đừng(?!\p{L})/giu, 'do not'))
@@ -207,9 +213,8 @@ export function requestedSadeProject(input: string): SadeProjectKind | undefined
     .replace(/^\s*(?:hey\s+)?@?sade(?:\s+oi)?[,: ]+/, '');
   if (
     !taskRequest.test(visible) ||
-    /^\s*(?:please )?(?:chua|(?:thoi )?(?:khoan|tam dung)|chi hoi|chi muon hoi|fyi|hold off|don.t|do not|not yet)\b/.test(
-      visible,
-    ) ||
+    sadeHoldOpening(visible) ||
+    /^\s*(?:please )?(?:chua|chi hoi|chi muon hoi|fyi|don.t|do not|not yet)\b/.test(visible) ||
     /\b(?:chua can (?:lam|tao|viet)|(?:dung|do not) (?:lam|tao|viet|mo viec)|not (?:asking|requesting) (?:you )?to|no (?:action|work) (?:needed|yet)|don.t (?:start|build|write) yet|chua giao viec|chi (?:bao|nhac) (?:de|cho) (?:nhom|moi nguoi)|(?:is|co) (?:the|do) .* (?:khong\?|yet\?))\b/.test(
       visible,
     )
@@ -237,7 +242,7 @@ export function asksForProjectStatus(input: string) {
 
 export function projectStatusQuestion(input: string) {
   if (asksForProjectStatus(input)) return true;
-  return /^(?:\s*@sade[ ,:]+)?\s*(?:ai dang lam gi|con viec nao|dang ket o dau|who is working on what|what is blocked)\b/.test(
+  return /^(?:\s*@?sade(?: oi)?[ ,:]+)?\s*(?:ai dang lam gi|(?:cong |con )?viec nao (?:dang|con|da|chua)|dang ket o dau|phan nao (?:dang|con) (?:cho|ket)|who is working on what|what (?:is|'s) (?:blocked|in progress)|which tasks are (?:waiting|blocked|running))\b/.test(
     fold(input),
   );
 }

@@ -11,7 +11,7 @@ import type { SharedSadeRun } from '../shared/collaboration.ts';
 import type { SharedDelivery, SharedFinish, SharedSadeCloudOffer } from '../server/group-sade.ts';
 import type { CodexSession, ProviderId } from '../shared/types.ts';
 import type { SadeProjectContext } from '../shared/sade-project.ts';
-import { requestedSadeProject } from '../server/shared-sade-project.ts';
+import { projectStatusQuestion, requestedSadeProject } from '../server/shared-sade-project.ts';
 import {
   settleHostedSade,
   usesHostedSade,
@@ -197,6 +197,21 @@ test('Vietnamese project intake distinguishes dựng from đừng', () => {
   );
   assert.equal(
     requestedSadeProject('@Sade đừng dựng lại trang bán hàng cho tiệm túi vải vội.'),
+    undefined,
+  );
+});
+
+test('status questions and clear holds stay outside project starts', () => {
+  assert(projectStatusQuestion('@Sade công việc nào đang chạy và phần nào đang chờ dữ liệu?'));
+  assert(projectStatusQuestion('Sade ơi, phần nào đang kẹt?'));
+  assert.equal(
+    requestedSadeProject(
+      'Postpone work on the online shop. We need approval before naming the collectors.',
+    ),
+    undefined,
+  );
+  assert.equal(
+    requestedSadeProject('@Sade defer building the sales dashboard until the counts are checked.'),
     undefined,
   );
 });

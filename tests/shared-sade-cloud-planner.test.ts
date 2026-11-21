@@ -6,6 +6,7 @@ import type { TeamPlan } from '../shared/types.ts';
 import { assertSharedHandoffPlan, type SharedDelivery } from '../server/group-sade.ts';
 import { planSharedSadeCloud } from '../server/shared-sade-cloud-planner.ts';
 import { sharedSadeEvidencePlanChoices } from '../server/shared-sade-responses-plan.ts';
+import { resolveSharedSadeReadAssignment } from '../server/shared-sade-assignment.ts';
 import {
   resolveSharedSadeHandoffAssignment,
   sharedSadeExplicitHandoffReview,
@@ -40,6 +41,96 @@ function delivery(request: string, reference?: string): SharedDelivery {
   };
 }
 const decided = (decision: string) => async () => ({ decision });
+
+test('an explicit hold and a literal one-file copy edit do not call a provider', async () => {
+  const unavailable = async () => assert.fail('This decision must be verified locally.');
+  const hold = await planSharedSadeCloud(
+    delivery(
+      'Sade ơi, thôi tạm dừng làm dashboard bán hàng cho gian dao cắt giấy. Người giữ file đang sửa định dạng tiền, có bản sạch rồi tính tiếp.',
+    ),
+    unavailable,
+  );
+  assert.equal(hold.kind, 'plan');
+  assert.deepEqual((hold.plan as TeamPlan).tasks, []);
+  assert.match((hold.plan as TeamPlan).summary, /tạm hoãn/);
+
+  const request = delivery(
+    'Only change the heading in ui/takings/summary.tsx. Leave the rest of the current sales dashboard for the existing owner.',
+  );
+  const missing = await planSharedSadeCloud(request, unavailable);
+  assert.equal(missing.kind, 'question');
+  assert.match(missing.summary, /summary\.tsx.*nội dung gì/);
+
+  const given = await planSharedSadeCloud(
+    { ...request, clarification: { question: missing.summary, answer: 'Use “Daily takings”.' } },
+    unavailable,
+  );
+  assert.equal(given.kind, 'plan');
+  const [task] = (given.plan as TeamPlan).tasks;
+  assert.deepEqual(task.scope, ['ui/takings/summary.tsx']);
+  assert.match(task.description, /Daily takings/);
+
+  const narrow = await planSharedSadeCloud(
+    delivery('Chỉ đổi nhãn trong orders/empty.tsx thành “Bản 1.5”. Giữ nguyên phần còn lại.'),
+    unavailable,
+  );
+  assert.equal(narrow.kind, 'plan');
+  assert.deepEqual((narrow.plan as TeamPlan).tasks[0].scope, ['orders/empty.tsx']);
+  assert.match((narrow.plan as TeamPlan).tasks[0].description, /Bản 1\.5/);
+});
+
+test('a combined hold and current request still needs a grounded interpretation', async () => {
+  let calls = 0;
+  const result = await planSharedSadeCloud(
+    delivery('Sade ơi, khoan sửa phần thanh toán. Nhờ Mây của Bình đọc docs/settlement.md.'),
+    async () => {
+      calls++;
+      return { decision: 'question' };
+    },
+  );
+  assert.equal(calls, 1);
+  assert.notEqual(result.kind === 'plan' && (result.plan as TeamPlan).tasks.length, 0);
+});
+
+test('a shop name containing an action word does not override a hold', async () => {
+  const result = await planSharedSadeCloud(
+    delivery(
+      'Sade, khoan mo viec dashboard cho tiem sua thuyen. Dot phieu tra hang dang can doi soat.',
+    ),
+    async () => assert.fail('This hold has no separate active instruction.'),
+  );
+  assert.equal(result.kind, 'plan');
+  assert.deepEqual((result.plan as TeamPlan).tasks, []);
+  assert.match((result.plan as TeamPlan).summary, /tạm hoãn/);
+});
+
+test('the published owner Minh is distinct from the Vietnamese first-person possessive', () => {
+  const group: Pick<SharedGroup, 'people' | 'teammates'> = {
+    people: ['Linh', 'Minh'].map((name) => ({ id: name, name, state: 'active' })),
+    teammates: ['Linh', 'Minh'].map((ownerId) => ({
+      name: 'Lúa',
+      localId: randomUUID(),
+      ownerId,
+      provider: 'codex',
+    })),
+  };
+  for (const [qualifier, ownerId] of [
+    ['Minh', 'Minh'],
+    ['mình', 'Linh'],
+  ]) {
+    const assignment = resolveSharedSadeReadAssignment(
+      `Nhờ Lúa của ${qualifier} đọc handoff/stock-check.md và báo chỗ xác nhận tồn kệ. Chỉ đọc thôi.`,
+      'Linh',
+      group,
+    );
+    assert.equal(assignment?.scope, 'handoff/stock-check.md');
+    assert.deepEqual(
+      assignment?.candidates.map((entry) => entry.ownerId),
+      [ownerId],
+    );
+  }
+});
+
 const handoffGroup: Pick<SharedGroup, 'people' | 'teammates'> = {
   people: team.map(({ owner }) => ({ id: owner, name: owner, state: 'active' })),
   teammates: team.map(({ id, name, owner, provider }) => ({

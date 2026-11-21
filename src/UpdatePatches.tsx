@@ -13,6 +13,14 @@ const patches = [
         vi: 'Mở Gói & thanh toán từ thanh bên để xem gói, nâng cấp hoặc gia hạn. Quyền dự án trong Advanced hướng dẫn cấp quyền máy và duyệt gộp mã.',
         en: 'Open Billing from the sidebar to view, upgrade or renew your plan. Project permissions under Advanced guides machine access and merge approvals.',
       },
+      {
+        vi: 'Sade lập kế hoạch, điều phối và kiểm tra đầu ra cho bài nghiên cứu kèm slide, trang bán hàng và dashboard. Groups hiển thị tiến độ và hoạt động từ các session đã cấp quyền.',
+        en: 'Sade plans, coordinates, and reviews research papers with slides, storefronts, and dashboards. Groups shows progress and activity from sessions shared with permission.',
+      },
+      {
+        vi: 'Sade xác nhận lệnh hoãn rõ ràng và xử lý yêu cầu đổi chữ trong một tệp ngay tại Kivuno. Nếu thiếu nội dung mới, Sade hỏi trước khi giao việc.',
+        en: 'Sade handles clear holds and one-file copy edits directly in Kivuno. If the new wording is missing, Sade asks before dispatching work.',
+      },
     ],
   },
   {
