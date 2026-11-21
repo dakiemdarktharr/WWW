@@ -230,7 +230,7 @@ Windows cục bộ qua 85/85 ca Shared Sade và 172/172 ca Sade, gồm corpus 1.
 Phép đo `frontend-style` đối chiếu prompt cũ với phiên bản giao việc hỏi phong cách cho frontend sau khi đủ phụ thuộc. Bốn ca dùng cùng bản đồ project tổng hợp từ tin trước, gồm nguyên văn A, thêm phong cách cụ thể, cho Astra tự chọn, và thiếu quyền project của Astra. Hai prompt dùng cùng model, schema và seed, chạy theo cặp trên cùng runner. Thứ tự đảo ở hai shard. Báo cáo giữ prompt, kỳ vọng, phản hồi thô, digest model, thời gian và bộ nhớ model do Ollama báo sau lượt gọi. Đây là số bộ nhớ cấp cho model, chưa đo đỉnh RAM của cả runner. [Ollama API](https://docs.ollama.com/api/ps)
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=frontend-style
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=sade-eval -f sade_suite=frontend-style
 ```
 
 Qwen3 4B Instruct 2507 trên `74f938a` đạt **0/4 với cả hai prompt**. Khi Gemini và Astra đều có quyền, model vẫn hỏi lại việc phân công trước khi lập kế hoạch. Khi thiếu quyền của Astra, model hỏi về khả năng nhầm tên thay vì yêu cầu chủ Astra cấp quyền. Cả hai lượt ở ca giao Astra tự chọn đều hết thời gian 120 giây. Trong sáu lượt có phản hồi, bốn câu hỏi vượt giới hạn 500 ký tự. Không có kế hoạch được chấp nhận trong phép đo này. [Kết quả và artifact của bốn cặp](https://github.com/dakiemdarktharr/WWW/actions/runs/44693097763)
@@ -240,7 +240,7 @@ Thời gian của các lượt có phản hồi là 47,2–84,3 giây với prom
 Phép đo `owner-routing` trên `0dd3f05` đối chiếu prompt đang dùng với biến thể đưa quyết định về chủ harness lên đầu. Biến thể dùng ngay một harness khớp duy nhất trong danh sách có quyền, hỏi đúng lựa chọn khi trùng chủ, hỏi quyền hoặc khả dụng khi không có harness phù hợp, và đưa quyết định phong cách vào tác vụ frontend. Tám tin mới được giữ riêng khỏi phần viết prompt. Chúng gồm tên chủ rõ ràng, cách gọi không dấu, hai harness trùng tên, chủ chỉ định chưa cấp quyền, phủ định việc giao cho một harness, trích dẫn để báo nhóm và hai quyết định dự phòng quota. Bốn ca A trước đó chạy cùng phép đo. Mỗi cặp dùng cùng digest, bộ công cụ, đầu vào, seed và runner. Thứ tự chạy đảo ở các shard lẻ.
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=owner-routing
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=sade-eval -f sade_suite=owner-routing
 ```
 
 Cả hai prompt đạt **2/8** trên tập độc lập và **0/4** trên nhóm A. Prompt đang dùng giữ đúng hai chủ trong ca bàn giao có hai Astra trùng tên. Biến thể hỏi lại ở ca đó, nhưng giữ đúng Astra khi người gửi cấm chuyển việc do hết quota. Cả hai đóng đúng tin chỉ báo nhóm. Cả hai tự chọn Astra của Bình khi người gửi nói rõ Astra của Chi và người này chưa cấp quyền. Chúng cũng tự chọn Bình trong ca có hai Astra mà người gửi chưa phân biệt. Bộ điều phối nhận được kế hoạch hợp lệ theo quyền của Bình và xếp việc trong fixture. Sai ở đây là chủ được chọn khác yêu cầu. [CI và 24 đầu ra](https://github.com/dakiemdarktharr/WWW/actions/runs/44698224337)
@@ -278,7 +278,7 @@ Phép đo `handoff-planning` trên `780f775aa87069ee666765c6e229d4cc187cacaf` d�
 Hai lựa chọn dùng cùng Qwen3 4B, digest, tin nhắn, roster, seed, mức sinh tối đa 1.600 token và hạn 180 giây. Mỗi lựa chọn gọi model một lần trong mỗi ca. Baseline dùng các tool hiện có. Biến thể thử nghiệm giảm kích thước đầu ra bằng JSON theo schema của Ollama, thêm gợi ý chủ harness nếu câu có cấu trúc bàn giao rõ, rồi đưa kết quả qua cùng bộ phân tích và bộ điều phối. Các runner chạy theo cặp và đảo thứ tự ở các shard lẻ. Đây là phép so cả cách biểu diễn đầu vào và cách nhận đầu ra, nên kết quả không quy riêng cho prompt hoặc schema. [Tài liệu JSON theo schema của Ollama](https://docs.ollama.com/capabilities/structured-outputs)
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=handoff-planning
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=sade-eval -f sade_suite=handoff-planning
 ```
 
 Hai nhánh đều đạt **0/4** ở A. Trên sáu ca giữ riêng, bộ chấm tự động ghi baseline 1/6 và JSON gọn 0/6. Đọc lại đầu ra duy nhất đạt điểm cho thấy baseline hỏi đúng nên dùng Astra của Bình hay Chi, nhưng hỏi thêm người làm backend và test dù Sade đã được giao quyền chọn. Biến thể JSON gửi chín kế hoạch và một câu hỏi sai trọng tâm. Các kế hoạch gộp API với bộ test, mở rộng phạm vi file, đặt hệ điều hành chưa được yêu cầu hoặc chọn sai người. Trong ca chỉ định Astra của Chi mà thiếu grant, biến thể giao việc cho Astra của Bình. Khi có hai Astra và người gửi chưa phân biệt, biến thể cũng tự chọn Bình. Các gợi ý nhận diện chủ xuất hiện ở bốn ca A, còn sáu ca giữ riêng dùng phần hướng dẫn JSON chung. [CI và 20 đầu ra gốc](https://github.com/dakiemdarktharr/WWW/actions/runs/44702757247)
@@ -357,7 +357,7 @@ node --import tsx scripts/eval-shared-sade-planner.ts .local/sade-handoff-review
 Commit thử nghiệm `8a186babfe1d33acdd2c20188b408ad0c37c4d9e` thêm cách biên dịch bản nháp bàn giao thành lời gọi công cụ Shared Sade chuẩn. Bộ biên dịch dùng chủ đã được điều phối xác định và các file có bằng chứng trong tin hiện tại hoặc tin tham chiếu. Model chọn file còn thiếu, phong cách và trọng tâm rà soát còn chưa rõ qua một JSON ngắn. Phần biên dịch điền phụ thuộc, phạm vi review hai file, phân công theo quyền, và giữ lựa chọn máy chạy mở trong tập bàn giao không yêu cầu hệ điều hành. Yêu cầu ngoài phạm vi nhận diện dùng cùng cách lập kế hoạch JSON đối chứng. Cách này chỉ chạy trong phép đo.
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=sade-eval -f sade_suite=handoff-compiled
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=sade-eval -f sade_suite=handoff-compiled
 ```
 
 Trên cùng input, digest Qwen 4B, seed và hạn 180 giây, bản biên dịch đạt 2/7, còn JSON tự viết cả kế hoạch đạt 0/7. Hai ca đạt là đặt bàn tiếng Việt không dấu và bàn giao bổ sung nước tiếng Anh. Bản biên dịch có trung vị 17,6 giây, khoảng 7,3–24,1 giây, với 277–378 token đầu vào. JSON đối chứng có trung vị 77,1 giây, khoảng 71,2–136,6 giây, với 899–993 token đầu vào. Mỗi ca dùng một lượt model qua Ollama trên runner chuẩn của kho công khai. Ba ca chờ cho mỗi phương án dùng 0 lượt model và 0 lượt grant. Mẫu bộ nhớ Ollama bằng nhau trong từng cặp. Bốn cặp báo 3,19 GB RAM và 0 VRAM, ba cặp báo 1,01 GB RAM và 2,54 GB VRAM. Đây là ước lượng phân bổ sau phản hồi.
@@ -473,7 +473,7 @@ node --import tsx --test --test-concurrency=2 tests/codex.test.ts tests/managed-
 CI trên `026b515758e526a3b483be7727833cb86c8c4097` qua 458 ca Windows, 454 Ubuntu và 453 macOS arm64, không có ca lỗi. Số ca bỏ qua theo hệ điều hành lần lượt là một, năm và sáu. Ba nền tảng đều qua corpus 1.000 tin với kế hoạch mô phỏng. Windows cục bộ qua 85/85 ca Shared Sade và 172/172 ca Sade. [CI Windows và Ubuntu](https://github.com/dakiemdarktharr/WWW/actions/runs/44698275592) · [CI macOS](https://github.com/dakiemdarktharr/WWW/actions/runs/44698280109)
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=antigravity-preflight
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=antigravity-preflight
 ```
 
 ### Kiểm tra thông tin xác thực trong bản vá
@@ -493,7 +493,7 @@ node --import tsx --test --test-name-pattern 'private review data|desktop replac
 Chế độ `paired-files` của **Verify RELAY** dùng hai runner Windows và một runner macOS arm64 để thử riêng việc trao đổi snapshot và biên nhận có chữ ký. Windows chạy baseline rồi xuất đúng hai file tổng hợp. macOS tái hiện lỗi đường dẫn bằng lệnh chẩn đoán, sửa `path-label.cjs` và ký kết quả xác minh bằng lệnh khác. Windows đối chiếu chữ ký và trạng thái file, kiểm tra biên nhận của bản sửa còn ở trạng thái cũ trước khi áp dụng patch, rồi chỉ nhận `path-label.cjs`. File cấu hình tổng hợp `.env.local` ở lại Windows. GitHub Actions chuyển các file thử giữa các job. Phép thử này đo luồng file và bằng chứng của tính năng ghép máy. [GitHub Actions artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts)
 
 ```powershell
-gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref codex/sade-shared-groups-verification -f platform=paired-files
+gh workflow run ci.yml --repo dakiemdarktharr/WWW --ref main -f platform=paired-files
 ```
 
 Lượt `662c8d9` qua cả ba job. Lệnh chẩn đoán trên macOS trả mã 1, lệnh xác minh sau sửa trả mã 0. Hai biên nhận có cùng khóa công khai và digest khác nhau cho hai snapshot. Windows báo `stale` trước khi áp dụng đúng `path-label.cjs`, rồi báo kiểm tra đạt và chạy lại thành công. Đối chiếu bằng cách tải hai gói `paired-source-1` và `paired-results-1` về cùng một thư mục rồi chạy `node --import tsx scripts/verify-shared-sade-paired-files.ts verify <thư-mục>` trên Windows ở đúng commit đã thử. Lượt chạy lại trên máy Windows cục bộ cho báo cáo JSON trùng SHA-256 với báo cáo của CI. Cùng commit, 80 bài runner và Shared Sade cục bộ đạt, gồm bộ 1.000 tin với planner mô phỏng. [Kết quả Windows–macOS–Windows](https://github.com/dakiemdarktharr/WWW/actions/runs/44682178974)
