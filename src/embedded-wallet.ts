@@ -15,7 +15,7 @@ const provisioning = new Map<string, Promise<string>>();
 
 // Run at authentication, not checkout. A bound account on another browser keeps
 // its original address; only this device's encrypted key material stays local.
-export function ensureAccountWallet(accountId: string): Promise<string> {
+export function ensureAccountWallet(accountId: string, accountEmail: string): Promise<string> {
   const existing = provisioning.get(accountId);
   if (existing) return existing;
   const pending = (async () => {
@@ -24,17 +24,12 @@ export function ensureAccountWallet(accountId: string): Promise<string> {
     );
     if (summary.account.id !== accountId) {
       // Better Auth keeps the bootstrap owner's UUID; the cloud API deliberately
-      // aliases that same owner to workspace-owner. Verify the live identity before
-      // using the alias, rather than accepting an arbitrary account mismatch.
-      const response = await fetch('/api/auth/get-session', {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      const session = response.ok ? await response.json() : null;
+      // aliases that same owner to workspace-owner. Match the authenticated
+      // caller's email against the fresh summary without another auth request.
       if (
         summary.account.id !== 'workspace-owner' ||
-        session?.user?.id !== accountId ||
-        session.user.email !== summary.account.email
+        accountEmail !== 'owner@relay.invalid' ||
+        accountEmail !== summary.account.email
       )
         throw new Error('Phiên tài khoản đã thay đổi. Đăng nhập lại.');
     }

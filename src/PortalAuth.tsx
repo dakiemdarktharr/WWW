@@ -147,7 +147,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
       .then(async (response) => {
         if (!response.ok) throw new Error('Authentication unavailable');
         const result = await response.json();
-        if (isUser(result?.user)) await ensureAccountWallet(result.user.id);
+        if (isUser(result?.user)) await ensureAccountWallet(result.user.id, result.user.email);
         if (alive.current && !abort.signal.aborted) {
           setUser(isUser(result?.user) ? result.user : null);
           if (isUser(result?.user)) onSignedIn?.();
@@ -263,7 +263,7 @@ export default function PortalAuth({ mode, activationCode, onClose, onSignedIn }
       if (!isUser(result.user))
         throw new Error(t('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.'));
       resetApiSession();
-      await ensureAccountWallet(result.user.id);
+      await ensureAccountWallet(result.user.id, result.user.email);
       if (alive.current) {
         setPassword('');
         setUser(result.user);

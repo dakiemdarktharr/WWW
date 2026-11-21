@@ -282,7 +282,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
         const account = body.user as AuthUser | null | undefined;
         if (!mounted) return;
         if (account && typeof account.id === 'string') {
-          await ensureAccountWallet(account.id);
+          await ensureAccountWallet(account.id, account.email);
           setUser(account);
           await refreshSummary();
         }
@@ -347,7 +347,7 @@ function BillingContent({ rail }: { rail: 'bank' | 'fuji' }) {
       if (!body.user || typeof (body.user as AuthUser).id !== 'string')
         throw new Error('Chưa xác nhận được phiên đăng nhập. Hãy đăng nhập lại.');
       resetApiSession();
-      await ensureAccountWallet((body.user as AuthUser).id);
+      await ensureAccountWallet((body.user as AuthUser).id, (body.user as AuthUser).email);
       setUser(body.user as AuthUser);
       setShowSignIn(false);
       setPassword('');

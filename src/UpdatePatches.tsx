@@ -6,6 +6,20 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
+    version: '0.9.16',
+    date: '2026-11-22',
+    fixes: [
+      {
+        vi: 'Thanh toán demo thực trả 0 USDC; Kivuno trả gas để ghi biên nhận thật trên Fuji. Giá 2 và 6 chỉ mô phỏng.',
+        en: 'Demo checkout charges 0 USDC; Kivuno sponsors real Fuji receipt transactions. Prices 2 and 6 are simulated.',
+      },
+      {
+        vi: 'Tạo ví riêng khi đăng ký hoặc đăng nhập, trước khi mở thanh toán.',
+        en: 'Provision an account wallet at signup or sign-in, before checkout.',
+      },
+    ],
+  },
+  {
     version: '0.9.15',
     date: '2026-11-22',
     fixes: [

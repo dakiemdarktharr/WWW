@@ -423,7 +423,7 @@ function PortalContent() {
           setAccount(
             user && typeof user.name === 'string' && typeof user.email === 'string' ? user : null,
           );
-          if (typeof user?.id === 'string') await ensureAccountWallet(user.id);
+          if (typeof user?.id === 'string') await ensureAccountWallet(user.id, user.email);
         }
       } catch {
         // Preserve the current account during temporary network failures.
