@@ -508,6 +508,7 @@ export class ExternalProviders {
   async claudeWeb(input: unknown) {
     const command = z
       .discriminatedUnion('action', [
+        z.object({ action: z.literal('account-profile'), memberId: id }).strict(),
         z
           .object({
             action: z.literal('create'),
@@ -531,6 +532,19 @@ export class ExternalProviders {
           .strict(),
       ])
       .parse(input);
+    if (command.action === 'account-profile') {
+      const member = this.host.store.lookup<Member>('member', command.memberId);
+      if (
+        !member ||
+        member.removedAt ||
+        member.entitlementLocked ||
+        member.provider !== 'claude' ||
+        member.managedRuntime ||
+        member.runnerId
+      )
+        throw new DomainError('Choose an active, unlocked Claude profile on this computer.', 403);
+      return { profileName: member.name.slice(0, 100) };
+    }
     if (command.action === 'create') {
       const { memberId, projectId, durationMinutes } = command;
       const grant = this.register({ memberId, projectId, durationMinutes }, '', 'claude-web');

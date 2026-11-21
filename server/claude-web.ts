@@ -4,7 +4,12 @@ import { z } from 'zod';
 import { claudeMcpPath, claudeWebBearer, claudeWebControlPath } from '../shared/claude-web.ts';
 import { DesktopIdentity, type DesktopDevice } from './desktop-auth.ts';
 import { Store, DomainError } from './store.ts';
-import { claudeOAuthGrant, registerClaudeOAuth, type ClaudeOAuthOptions } from './claude-oauth.ts';
+import {
+  claudeOAuthAccess,
+  claudeOAuthGrant,
+  registerClaudeOAuth,
+  type ClaudeOAuthOptions,
+} from './claude-oauth.ts';
 
 const uuid = z.string().uuid();
 const resultSchema = z
@@ -30,9 +35,27 @@ const failure = (text: string): Result => ({ content: [{ type: 'text', text }], 
 const command = z.discriminatedUnion('action', [
   z
     .object({
+      action: z.literal('enroll-account'),
+      connectionId: uuid,
+      memberId: uuid,
+      profileName: z.string().trim().min(1).max(100).optional(),
+      expiresAt: z.iso.datetime({ offset: true }),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('account-status'),
+      memberId: uuid.optional(),
+      connectionId: uuid.optional(),
+    })
+    .strict()
+    .refine((q) => !!q.memberId || !!q.connectionId),
+  z
+    .object({
       action: z.literal('enroll'),
       connectionId: uuid,
       projectId: uuid,
+      accountConnectionId: uuid.optional(),
       memberId: uuid,
       tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
       projectName: z.string().trim().min(1).max(100).optional(),
@@ -88,7 +111,12 @@ const publishedTool = {
 export interface ClaudeWebGrant {
   id: string;
   connectionId: string;
-  projectId: string;
+  projectId?: string;
+  kind?: 'account';
+  accountGrantId?: string;
+  verifiedAt?: string;
+  verifiedCredential?: string;
+  latestCredential?: string;
   memberId: string;
   ownerId: string;
   deviceId: string;
@@ -192,6 +220,19 @@ export function registerClaudeWeb(
 
   function valid(grant: Grant | undefined): grant is Grant {
     if (!grant || grant.revoked || grant.expiresAt <= Date.now()) return false;
+    if (grant.accountGrantId) {
+      const parent = store.lookup<Grant>('claudeWebGrant', grant.accountGrantId);
+      if (
+        !parent ||
+        parent.kind !== 'account' ||
+        parent.revoked ||
+        parent.expiresAt <= Date.now() ||
+        parent.deviceId !== grant.deviceId ||
+        parent.ownerId !== grant.ownerId ||
+        parent.memberId !== grant.memberId
+      )
+        return false;
+    }
     const device = store.lookup<DesktopDevice>('desktopDevice', grant.deviceId);
     return (
       !!device &&
@@ -209,20 +250,97 @@ export function registerClaudeWeb(
         createHash('sha256').update(token).digest('hex'),
       );
     else if (token && oauth) grant = claudeOAuthGrant(store, token, oauth.origin + claudeMcpPath);
-    if (!valid(grant))
+    if (
+      !valid(grant) ||
+      (token?.startsWith('kwc_') && (grant.kind === 'account' || grant.accountGrantId))
+    )
       throw new DomainError('The Claude connector credential has expired or is invalid.', 401);
     return grant;
   }
+  const accountStatus = (account?: Grant) => {
+    if (!valid(account)) return { status: 'disconnected' as const, canShare: false };
+    const access =
+      account.verifiedCredential && oauth
+        ? claudeOAuthAccess(store, account.verifiedCredential, oauth.origin + claudeMcpPath)
+        : undefined;
+    const connected = access && access.grantId === account.id && access.ownerId === account.ownerId;
+    return {
+      status: connected ? ('connected' as const) : ('pending' as const),
+      connectionId: account.connectionId,
+      expiresAt: new Date(
+        connected ? Math.min(account.expiresAt, access.expiresAt) : account.expiresAt,
+      ).toISOString(),
+      ...(connected
+        ? {
+            verifiedAt: account.verifiedAt,
+            canShare: access.scope.split(' ').includes('mesh.read'),
+          }
+        : {}),
+    };
+  };
   if (oauth) registerClaudeOAuth(app, store, oauth, valid);
   app.post(claudeWebControlPath, { bodyLimit: 450000 }, async (request) => {
     const device = identity.authenticate(request.headers.authorization);
     const owner = identity.publicDevice(device).owner;
     const input = command.parse(request.body);
+    const deviceAccounts = () =>
+      store
+        .all<Grant>('claudeWebGrant')
+        .filter(
+          (g) =>
+            g.kind === 'account' && g.deviceId === device.id && g.ownerId === owner.id && valid(g),
+        );
+    if (input.action === 'account-status')
+      return accountStatus(
+        deviceAccounts().find(
+          (g) =>
+            (!input.memberId || g.memberId === input.memberId) &&
+            (!input.connectionId || g.connectionId === input.connectionId),
+        ),
+      );
+    if (input.action === 'enroll-account')
+      return store.transaction(() => {
+        const existing = deviceAccounts().find((g) => g.memberId === input.memberId);
+        if (existing) return { enrolled: true, ...accountStatus(existing) };
+        const now = Date.now(),
+          expiry = Date.parse(input.expiresAt);
+        if (expiry <= now || expiry > now + 8 * 3600000)
+          throw new DomainError('Choose an expiry within eight hours.', 400);
+        const rows = store.all<Grant>('claudeWebGrant');
+        for (const grant of rows)
+          if (grant.expiresAt <= now) store.remove('claudeWebGrant', grant.id);
+        const active = rows.filter((g) => g.expiresAt > now);
+        if (active.some((g) => g.deviceId === device.id && g.connectionId === input.connectionId))
+          throw new DomainError('This connector ID is already registered.', 409);
+        if (active.length >= 1024 || active.filter((g) => g.ownerId === owner.id).length >= 32)
+          throw new DomainError('Connector enrollment limit reached.', 429);
+        const account = store.put<Grant>('claudeWebGrant', {
+          id: 'account:' + randomUUID(),
+          kind: 'account',
+          deviceId: device.id,
+          ownerId: owner.id,
+          connectionId: input.connectionId,
+          memberId: input.memberId,
+          profileName: input.profileName,
+          expiresAt: expiry,
+        });
+        return { enrolled: true, ...accountStatus(account) };
+      });
     if (input.action === 'enroll') {
       const expiry = Date.parse(input.expiresAt);
       if (expiry <= Date.now() || expiry > Date.now() + 8 * 3600000)
         throw new DomainError('Choose an expiry within the next eight hours.', 400);
       return store.transaction(() => {
+        const account = input.accountConnectionId
+          ? deviceAccounts().find(
+              (g) => g.connectionId === input.accountConnectionId && g.memberId === input.memberId,
+            )
+          : undefined;
+        if (input.accountConnectionId && !accountStatus(account).canShare)
+          throw new DomainError(
+            'Verify this Claude connector with project sharing enabled first.',
+            403,
+          );
         const grants = store.all<Grant>('claudeWebGrant');
         const active = grants.filter((grant) => grant.expiresAt > Date.now());
         for (const grant of grants)
@@ -241,6 +359,7 @@ export function registerClaudeWeb(
             previous.ownerId !== owner.id ||
             previous.projectId !== input.projectId ||
             previous.memberId !== input.memberId ||
+            previous.accountGrantId !== account?.id ||
             previous.expiresAt !== expiry
           )
             throw new DomainError(
@@ -248,6 +367,8 @@ export function registerClaudeWeb(
               409,
             );
         } else {
+          if (account && active.some((g) => g.accountGrantId === account.id && valid(g)))
+            throw new DomainError('Revoke the current shared project before sharing another.', 409);
           if (
             active.length >= 1024 ||
             active.filter((grant) => grant.ownerId === owner.id).length >= 32
@@ -260,6 +381,7 @@ export function registerClaudeWeb(
             memberId: input.memberId,
             projectName: input.projectName,
             profileName: input.profileName,
+            accountGrantId: account?.id,
             ownerId: owner.id,
             deviceId: device.id,
             expiresAt: expiry,
@@ -358,6 +480,14 @@ export function registerClaudeWeb(
           ? params.data.protocolVersion
           : versions[0];
         const id = randomUUID();
+        if (grant.kind === 'account') {
+          const raw = request.headers.authorization!.slice(7);
+          store.put<Grant>('claudeWebGrant', {
+            ...grant,
+            verifiedAt: new Date().toISOString(),
+            verifiedCredential: createHash('sha256').update(raw).digest('hex'),
+          });
+        }
         sessions.set(id, {
           grantId: grant.id,
           credentialId,
@@ -368,7 +498,10 @@ export function registerClaudeWeb(
         return response({
           protocolVersion: version,
           capabilities: { tools: {} },
-          serverInfo: { name: 'kivuno-project', version: '1.0.0' },
+          serverInfo: {
+            name: grant.kind === 'account' ? 'kivuno-account' : 'kivuno-project',
+            version: '1.0.0',
+          },
         });
       }
       if (!sessionId)
@@ -394,8 +527,24 @@ export function registerClaudeWeb(
         return reply.code(202).send();
       }
       if (parsed.method === 'ping') return response({});
-      if (parsed.method === 'tools/list') return response({ tools: [publishedTool] });
+      const readGrant =
+        grant.kind === 'account'
+          ? oauth &&
+            claudeOAuthGrant(
+              store,
+              request.headers.authorization!.slice(7),
+              oauth.origin + claudeMcpPath,
+              true,
+            )
+            ? store
+                .all<Grant>('claudeWebGrant')
+                .find((g) => g.accountGrantId === grant.id && valid(g))
+            : undefined
+          : grant;
+      if (parsed.method === 'tools/list')
+        return response({ tools: readGrant ? [publishedTool] : [] });
       if (parsed.method !== 'tools/call') return error(-32601, 'Method not found');
+      if (!readGrant) return error(-32602, 'This connection has no shared project tools.');
       const call = readTool.safeParse(parsed.params);
       if (!call.success)
         return error(-32602, 'Only mesh_read with an optional message cursor is available');
@@ -403,7 +552,7 @@ export function registerClaudeWeb(
       const retries = [...jobs.values()].filter(
         (job) => job.sessionId === sessionId && job.requestId === parsed.id,
       );
-      if (retries.some((job) => job.after !== after))
+      if (retries.some((job) => job.after !== after || job.grantId !== readGrant.id))
         return error(-32600, 'Request ID was reused with different arguments');
       const existing = retries.find((job) => !job.resultHash);
       if (existing && existing.waiters >= 3)
@@ -411,15 +560,17 @@ export function registerClaudeWeb(
       if (
         !existing &&
         (jobs.size >= 256 ||
-          [...jobs.values()].filter((job) => !job.resultHash && job.grantId === grant.id).length >=
-            4)
+          [...jobs.values()].filter((job) => !job.resultHash && job.grantId === readGrant.id)
+            .length >= 4)
       )
         return reply.code(429).send(error(-32000, 'The read queue is full'));
-      const job = existing || queueRead(grant.id, sessionId, parsed.id, after);
+      const job = existing || queueRead(readGrant.id, sessionId, parsed.id, after);
       job.waiters++;
       const result = await job.promise!;
       job.waiters--;
       authenticate(request.headers.authorization);
+      if (!valid(store.lookup<Grant>('claudeWebGrant', readGrant.id)))
+        return error(-32000, 'Project sharing was revoked.');
       if (!sessions.has(sessionId))
         return reply.code(404).send(error(-32000, 'Connector session unavailable'));
       return response(result);

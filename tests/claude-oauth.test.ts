@@ -81,11 +81,14 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
     code_challenge_method: 'S256',
     code_challenge: createHash('sha256').update(verifier).digest('base64url'),
   };
-  const start = (fields: Record<string, string> = {}) =>
-    app.inject({
+  const start = (fields: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ ...authFields, ...fields });
+    if (fields.scope === '') params.delete('scope');
+    return app.inject({
       method: 'GET',
-      url: prefix + 'authorize?' + new URLSearchParams({ ...authFields, ...fields }),
+      url: prefix + 'authorize?' + params,
     });
+  };
   for (const fields of [
     { client_id: 'unknown' },
     { resource: origin + '/another' },
@@ -200,4 +203,127 @@ test('Claude OAuth binds public clients, owner consent, project, PKCE, and token
   });
   assert.equal((await initialize(a.bearer)).statusCode, 401);
   assert.equal((await initialize(second)).statusCode, 401);
+
+  // A newly signed-in member has no project at all. Verify the Claude client
+  // first, then grant and revoke access from the same desktop and MCP session.
+  owner = 'Charlie';
+  const device = desktop(owner),
+    memberId = randomUUID(),
+    accountId = randomUUID(),
+    sharedId = randomUUID();
+  const control = (accessToken: string, payload: object) =>
+    app.inject({
+      method: 'POST',
+      url: claudeWebControlPath,
+      headers: { authorization: 'Bearer ' + accessToken },
+      payload,
+    });
+  const body = {
+    action: 'enroll-account',
+    connectionId: accountId,
+    memberId,
+    profileName: 'New Claude',
+    expiresAt: new Date(Date.now() + 600000).toISOString(),
+  };
+  assert.equal((await control(device, body)).json().status, 'pending');
+  assert.equal(
+    (await control(device, { ...body, connectionId: randomUUID() })).json().connectionId,
+    accountId,
+  );
+  const status = async () => (await control(device, { action: 'account-status', memberId })).json();
+  assert.equal(
+    (await control(bob, { action: 'account-status', connectionId: accountId })).json().status,
+    'disconnected',
+  );
+  const projectAccess = {
+    action: 'enroll',
+    connectionId: sharedId,
+    accountConnectionId: accountId,
+    memberId,
+    projectId: randomUUID(),
+    tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+    expiresAt: body.expiresAt,
+  };
+  assert.equal((await control(device, projectAccess)).statusCode, 403);
+  const accountAuth = async (fields: Record<string, string>) => {
+    const auth = await start({ client_id: published, ...fields });
+    assert.equal(auth.statusCode, 302);
+    const req = new URL(auth.headers.location!).searchParams.get('request')!;
+    const { grants } = (await inspect(req)).json();
+    assert.deepEqual(
+      grants.map((g: any) => [g.kind, g.connectionId, g.projectId]),
+      [['account', accountId, undefined]],
+    );
+    const c = new URL((await decide(req, accountId)).json().redirectUrl).searchParams.get('code')!;
+    return (await exchange(c, { client_id: published })).json().access_token;
+  };
+  const accountToken = await accountAuth({ scope: '' });
+  assert.equal(
+    (await status()).status,
+    'pending',
+    'OAuth approval and exchange alone do not verify an MCP client',
+  );
+  const sessionResponse = await initialize(accountToken);
+  assert.equal(sessionResponse.statusCode, 200);
+  const verified = await status();
+  assert.equal(verified.status, 'connected');
+  assert.ok(verified.verifiedAt);
+  assert.equal(verified.canShare, true);
+  const mcp = (
+    method: string,
+    params = {},
+    session = String(sessionResponse.headers['mcp-session-id']),
+    t = accountToken,
+  ) =>
+    app.inject({
+      method: 'POST',
+      url: claudeMcpPath,
+      headers: { authorization: 'Bearer ' + t, 'mcp-session-id': session },
+      payload: { jsonrpc: '2.0', method, id: 5, params },
+    });
+  assert.deepEqual((await mcp('tools/list')).json().result.tools, []);
+  assert.ok((await mcp('tools/call', { name: 'mesh_read', arguments: {} })).json().error);
+  assert.equal((await control(device, { action: 'poll' })).json().jobs.length, 0);
+  assert.equal((await control(bob, projectAccess)).statusCode, 403);
+  assert.equal(
+    (await control(device, { ...projectAccess, memberId: randomUUID() })).statusCode,
+    403,
+  );
+  assert.equal((await control(device, projectAccess)).statusCode, 200);
+  assert.equal((await mcp('tools/list')).json().result.tools[0].name, 'mesh_read');
+  assert.equal(
+    (
+      await control(device, {
+        ...projectAccess,
+        connectionId: randomUUID(),
+        projectId: randomUUID(),
+        tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+      })
+    ).statusCode,
+    409,
+  );
+  await control(device, { action: 'revoke', connectionId: sharedId });
+  assert.deepEqual((await mcp('tools/list')).json().result.tools, []);
+  const freshId = randomUUID();
+  await control(device, {
+    ...projectAccess,
+    connectionId: freshId,
+    tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+  });
+  const verificationOnly = await accountAuth({ scope: 'connector.connect' });
+  assert.equal((await initialize(accountToken)).statusCode, 401);
+  assert.equal((await status()).status, 'pending');
+  const handshake = await initialize(verificationOnly);
+  assert.equal(handshake.statusCode, 200);
+  assert.equal((await status()).canShare, false);
+  assert.deepEqual(
+    (
+      await mcp('tools/list', {}, String(handshake.headers['mcp-session-id']), verificationOnly)
+    ).json().result.tools,
+    [],
+  );
+  assert.equal((await control(device, projectAccess)).statusCode, 403);
+  await control(device, { action: 'revoke', connectionId: accountId });
+  assert.equal((await status()).status, 'disconnected');
+  assert.equal((await initialize(verificationOnly)).statusCode, 401);
 });

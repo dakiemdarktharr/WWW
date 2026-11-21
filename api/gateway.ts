@@ -51,11 +51,20 @@ export function gatewayTarget(requestUrl: string) {
 
 class HostedSadeDeadline extends Error {}
 
-export function isClaudeWebPoll(pathname: string, method: string, body: Buffer): boolean {
+export function claudeBackgroundRequest(pathname: string, method: string, body: Buffer) {
   if (pathname !== claudeWebControlPath || method !== 'POST') return false;
   try {
     const input = JSON.parse(body.toString('utf8'));
-    return input?.action === 'poll' && Object.keys(input).length === 1;
+    if (input?.action === 'poll' && Object.keys(input).length === 1) return 'poll';
+    if (input?.action === 'account-status' && Object.keys(input).length === 2) {
+      const id = input.memberId ?? input.connectionId;
+      if (
+        typeof id === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+      )
+        return 'account-status';
+    }
+    return false;
   } catch {
     return false;
   }
@@ -249,15 +258,17 @@ export default async function handler(
     hosted = url.pathname === '/api/desktop/groups' && method === 'POST' && usesHostedSade(body);
     const planningBudget = hostedSadeBudgetMs(body);
     const deadline = requestStarted + planningBudget;
-    const pollingClaude = isClaudeWebPoll(url.pathname, method, body);
-    const opening = cloudRunner(!machine && !connector && !oauthPublic && !pollingClaude);
+    const background = claudeBackgroundRequest(url.pathname, method, body);
+    const opening = cloudRunner(!machine && !connector && !oauthPublic && !background);
     const runner = hosted ? await beforeSadeDeadline(opening, deadline - 150) : await opening;
     if (!runner) {
-      if (pollingClaude) {
+      if (background === 'poll') {
         response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"jobs":[]}');
         return;
       }
-      response.writeHead(connector || oauthPublic ? 503 : 204).end();
+      response
+        .writeHead(connector || oauthPublic || background === 'account-status' ? 503 : 204)
+        .end();
       return;
     }
     const headers = new Headers({ 'X-Relay-Gateway': runner.secret });

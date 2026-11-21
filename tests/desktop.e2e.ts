@@ -57,6 +57,8 @@ let recoveredReservation = false;
 const webJob = randomUUID();
 let webGrant:
   { connectionId: string; memberId: string; projectId: string; tokenHash: string } | undefined;
+let webAccount: { connectionId: string; memberId: string; expiresAt: string } | undefined;
+let webVerified = false;
 let webRead = false;
 let webRevoked = false;
 const expiresAt = new Date(Date.now() + 600000).toISOString();
@@ -101,7 +103,22 @@ const fixture = createServer(async (request, response) => {
     response.end(JSON.stringify(identity));
   } else if (request.url === '/api/desktop/claude-web') {
     assert.equal(request.headers.authorization, `Bearer ${accessToken}`);
-    if (payload.action === 'enroll') {
+    if (payload.action === 'account-status' || payload.action === 'enroll-account') {
+      if (payload.action === 'enroll-account' && webAccount?.memberId !== payload.memberId) webAccount = payload;
+      response.end(
+        JSON.stringify(
+          webAccount?.memberId === payload.memberId && webAccount
+            ? {
+                connectionId: webAccount.connectionId,
+                expiresAt: webAccount.expiresAt,
+                status: webVerified ? 'connected' : 'pending',
+                ...(webVerified ? { verifiedAt: new Date().toISOString(), canShare: true } : {}),
+              }
+            : { status: 'disconnected' },
+        ),
+      );
+    } else if (payload.action === 'enroll') {
+      assert.equal(payload.accountConnectionId, webAccount?.connectionId);
       assert.match(payload.tokenHash, /^[0-9a-f]{64}$/);
       assert.doesNotMatch(input, /kwc_|KIVUNO_MCP_TOKEN/);
       webGrant = payload;
@@ -784,6 +801,13 @@ try {
   await page.getByRole('button', { name: 'Close context panel', exact: true }).click();
   await expect.poll(rendererCount).toBe(baselineRenderers);
 
+  await desktop.evaluate(({ shell }) => {
+    const opened: string[] = [];
+    (globalThis as any).claudeConnectorUrls = opened;
+    shell.openExternal = async (url: string) => {
+      opened.push(url);
+    };
+  });
   const addClaudeFromTeam = async (): Promise<Member> => {
     await page
       .getByRole('navigation', { name: 'Main navigation' })
@@ -798,11 +822,25 @@ try {
       page.waitForResponse(
         (response) => new URL(response.url()).pathname === '/api/accounts/connect',
       ),
-      picker.getByRole('button', { name: 'Add Claude connection', exact: true }).click(),
+      picker.getByRole('button', { name: 'Connect Claude in browser', exact: true }).click(),
     ]);
     assert.ok(response.ok(), 'Team should create the external Claude profile.');
     const { member } = await response.json();
     await expect(page.getByRole('dialog', { name: 'Claude · MESH connection' })).toBeVisible();
+    const dialog = page.getByRole('dialog', { name: 'Claude · MESH connection' });
+    await expect(dialog.getByText('Waiting for Claude', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('combobox', { name: 'Connection project' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: /add .* to this project/i })).toHaveCount(0);
+    await expect
+      .poll(() => desktop!.evaluate(() => (globalThis as any).claudeConnectorUrls))
+      .toEqual(['https://claude.ai/customize/connectors/yours']);
+    await dialog.getByText('Add Kivuno to Claude for the first time').click();
+    await expect(dialog.getByRole('textbox', { name: 'Connector URL' })).toHaveValue(
+      fixtureOrigin + '/api/claude/mcp',
+    );
+    webVerified = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(dialog.getByText('Claude connected', { exact: true })).toBeVisible();
     return member;
   };
   // Both real-client connection types use scoped local MCP, not native model dispatch.
@@ -843,26 +881,36 @@ try {
     await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
     const externalDialog = page.getByRole('dialog', { name: `${label} · MESH connection` });
     if (provider === 'claude') {
+      await expect(externalDialog.getByText('Claude connected', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+      const reservedBefore = profileReservations;
+      await page.getByRole('button', { name: 'Add account', exact: true }).first().click();
+      const picker = page.getByRole('dialog', { name: 'Add account' });
+      await picker.getByRole('combobox', { name: 'AI provider' }).click();
+      await picker.getByRole('option', { name: 'Claude', exact: true }).click();
       await expect(
-        externalDialog.getByRole('button', { name: 'Open Claude sign-in in browser' }),
-      ).toBeVisible();
-      await expect(externalDialog.getByRole('checkbox')).toHaveCount(0);
-      await externalDialog.getByRole('button', { name: 'Create read-only web connector' }).click();
-      const header = externalDialog.getByLabel('Private header value');
-      await expect(header).toBeHidden();
-      await expect(externalDialog.getByText(/choose Connect \(Connecter\)/)).toBeVisible();
-      await externalDialog.getByText('Advanced: connect with a private request header').click();
-      await expect(header).toBeVisible();
-      assert.equal(
-        await externalDialog.getByLabel('Connector URL').inputValue(),
-        fixtureOrigin + '/api/claude/mcp',
-      );
-      const value = await header.inputValue();
-      assert.ok(/^Bearer kwc_[A-Za-z0-9_-]{43}$/.test(value));
-      assert.ok(createHash('sha256').update(value.slice(7)).digest('hex') === webGrant?.tokenHash);
+        picker.getByRole('combobox', { name: 'Claude profile on this computer' }),
+      ).toContainText(external.name);
+      await picker.getByRole('button', { name: 'Connect Claude in browser', exact: true }).click();
+      await expect(externalDialog.getByText('Claude connected', { exact: true })).toBeVisible();
+      assert.equal(profileReservations, reservedBefore);
+      await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+      await page
+        .getByRole('navigation', { name: 'Main navigation' })
+        .getByRole('button', { name: 'Chat', exact: true })
+        .click();
+      await page.getByRole('button', { name: 'Group team', exact: true }).click();
+      const group = page.locator('.group-member').filter({ hasText: external.name });
+      await group.getByText('Share project messages', { exact: true }).click();
+      await group.getByRole('button', { name: 'Allow read-only project access' }).click();
       await expect.poll(() => webRead).toBe(true);
-      await externalDialog.getByRole('button', { name: 'Revoke connection' }).click();
+      await group.getByRole('button', { name: 'Revoke project access' }).click();
       await expect.poll(() => webRevoked).toBe(true);
+      await page
+        .getByRole('navigation', { name: 'Main navigation' })
+        .getByRole('button', { name: 'Team', exact: true })
+        .click();
+      await externalCard.getByRole('button', { name: 'MESH connection', exact: true }).click();
       await externalDialog.getByRole('combobox', { name: 'Claude client' }).click();
       await externalDialog.getByRole('option', { name: 'Claude Desktop · Free or paid' }).click();
     }

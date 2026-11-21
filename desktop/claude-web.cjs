@@ -1,12 +1,13 @@
 'use strict';
 
-const { createHash, randomBytes } = require('node:crypto');
+const { createHash, randomBytes, randomUUID } = require('node:crypto');
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Each instance belongs to one signed-in desktop workspace. The only remote
 // operation accepted from the queue is a read against an already enrolled grant.
 module.exports = function claudeWebRelay({ origin, current, local, cloud, pause }) {
   const grants = new Map();
+  const accounts = new Map();
   const revocations = new Set();
   const pending = new Map();
   let running = false;
@@ -135,8 +136,49 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
       running = false;
     }
   }
+  async function account(input, enroll) {
+    check();
+    if (!uuid.test(input?.memberId)) throw new Error('Select a Claude profile on this computer.');
+    const { memberId } = input;
+    const localProfile = await local({ action: 'account-profile', memberId });
+    check();
+    const state = await cloud(
+      enroll
+        ? {
+            action: 'enroll-account',
+            connectionId: randomUUID(),
+            memberId,
+            profileName: localProfile.profileName,
+            expiresAt: new Date(Date.now() + 8 * 3600000).toISOString(),
+          }
+        : { action: 'account-status', memberId },
+    );
+    check();
+    if (
+      !['pending', 'connected', 'disconnected'].includes(state?.status) ||
+      (state.status !== 'disconnected' &&
+        (!uuid.test(state.connectionId) ||
+          !Number.isFinite(Date.parse(state.expiresAt)) ||
+          Date.parse(state.expiresAt) <= Date.now())) ||
+      (state.status === 'connected' &&
+        (!Number.isFinite(Date.parse(state.verifiedAt)) ||
+          Date.parse(state.verifiedAt) > Date.parse(state.expiresAt)))
+    )
+      throw new Error('Could not verify the current Claude connector status.');
+    if (state.connectionId) accounts.set(state.connectionId, memberId);
+    return {
+      status: state.status,
+      connectionId: state.connectionId,
+      expiresAt: state.expiresAt,
+      verifiedAt: state.verifiedAt,
+      canShare: state.canShare,
+      url: origin + '/api/claude/mcp',
+    };
+  }
   return {
     current: active,
+    beginAccount: (input) => account(input, true),
+    accountStatus: (input) => account(input, false),
     async enroll(input) {
       check();
       if (
@@ -148,13 +190,16 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
         input.durationMinutes > 480
       )
         throw new Error('Choose a project, Claude profile and connector duration.');
-      const { projectId, memberId, durationMinutes } = input;
+      const { projectId, memberId, durationMinutes, accountConnectionId } = input;
+      if (accountConnectionId !== undefined && !uuid.test(accountConnectionId))
+        throw new Error('Choose a verified Claude connector.');
       const grant = await local({ action: 'create', projectId, memberId, durationMinutes });
       const token = 'kwc_' + randomBytes(32).toString('base64url');
       try {
         check();
         const response = await cloud({
           action: 'enroll',
+          ...(accountConnectionId ? { accountConnectionId } : {}),
           projectName: grant.projectName,
           profileName: grant.profileName,
           projectId,
@@ -173,20 +218,28 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
         }
         throw error;
       }
-      grants.set(grant.id, grant);
+      grants.set(grant.id, { ...grant, accountConnectionId });
       void poll();
       return {
         id: grant.id,
         expiresAt: grant.expiresAt,
         url: origin + '/api/claude/mcp',
-        headerName: 'Authorization',
-        headerValue: 'Bearer ' + token,
+        ...(accountConnectionId
+          ? {}
+          : { headerName: 'Authorization', headerValue: 'Bearer ' + token }),
       };
     },
     async revoke(connectionId) {
       check();
       if (!uuid.test(connectionId)) throw new Error('Invalid connector.');
-      await local({ action: 'revoke', connectionId });
+      if (accounts.has(connectionId)) {
+        for (const grant of grants.values()) {
+          if (grant.accountConnectionId === connectionId) {
+            grants.delete(grant.id);
+            await local({ action: 'revoke', connectionId: grant.id }).catch(() => {});
+          }
+        }
+      } else await local({ action: 'revoke', connectionId });
       grants.delete(connectionId);
       for (const [id, entry] of pending)
         if (entry.job.connectionId === connectionId) pending.delete(id);
@@ -194,6 +247,7 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
       revocations.add(connectionId);
       try {
         await cloud({ action: 'revoke', connectionId });
+        accounts.delete(connectionId);
         revocations.delete(connectionId);
       } catch {
         throw new Error(
@@ -204,6 +258,7 @@ module.exports = function claudeWebRelay({ origin, current, local, cloud, pause 
     },
     stop() {
       stopped = true;
+      accounts.clear();
       grants.clear();
       pending.clear();
       revocations.clear();

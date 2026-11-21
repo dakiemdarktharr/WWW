@@ -42,6 +42,7 @@ function externalUrl(value, identityOrigin) {
   ];
   const known =
     url.href === 'https://claude.ai/login' ||
+    url.href === 'https://claude.ai/customize/connectors/yours' ||
     url.href === 'https://claude.com/download' ||
     url.hostname === 'testnet.snowtrace.io' ||
     domains.some((domain) => url.hostname === domain || url.hostname.endsWith('.' + domain));

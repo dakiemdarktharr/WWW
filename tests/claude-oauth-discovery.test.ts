@@ -43,7 +43,7 @@ test('Claude can discover Kivuno OAuth from an unauthenticated MCP request throu
   assert.match(challenge, /^Bearer\s/i);
   const metadataUrl = /resource_metadata="([^"]+)"/.exec(challenge)?.[1];
   assert.equal(metadataUrl, origin + '/.well-known/oauth-protected-resource/api/claude/mcp');
-  assert.match(challenge, /scope="mesh\.read"/);
+  assert.match(challenge, /scope="connector\.connect mesh\.read"/);
 
   async function metadata(url: string) {
     const target = new URL(url);
@@ -56,7 +56,7 @@ test('Claude can discover Kivuno OAuth from an unauthenticated MCP request throu
   const protectedResource = await metadata(metadataUrl);
   assert.equal(protectedResource.resource, resource);
   assert.deepEqual(protectedResource.authorization_servers, [origin]);
-  assert.deepEqual(protectedResource.scopes_supported, ['mesh.read']);
+  assert.deepEqual(protectedResource.scopes_supported, ['connector.connect', 'mesh.read']);
   assert.deepEqual(
     await metadata(origin + '/.well-known/oauth-protected-resource'),
     protectedResource,

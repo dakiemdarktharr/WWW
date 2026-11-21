@@ -1320,6 +1320,12 @@ function registerIpc() {
     return claudeWeb;
   };
   ipcMain.handle('relay:claude-web-create', (event, input) => webConnector(event).enroll(input));
+  ipcMain.handle('relay:claude-web-begin', (event, input) =>
+    webConnector(event).beginAccount(input),
+  );
+  ipcMain.handle('relay:claude-web-status', (event, input) =>
+    webConnector(event).accountStatus(input),
+  );
   ipcMain.handle('relay:claude-web-revoke', (event, id) => webConnector(event).revoke(id));
   ipcMain.handle('relay:groups', async (event, input) => {
     trusted(event);

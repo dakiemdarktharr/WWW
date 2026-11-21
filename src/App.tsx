@@ -75,6 +75,7 @@ import ProviderConnect, {
   providerLabels,
   providerOf,
 } from './ProviderConnect';
+import { beginClaudeAccount, useClaudeAccount, type ClaudeClient } from './ClaudeAccount';
 import {
   AccountSettings,
   MeshPage,
@@ -86,7 +87,7 @@ import {
 type View = 'mesh' | 'sessions' | 'workroom' | 'tasks' | 'team' | 'reviews' | 'settings' | 'aegis';
 type ModalState =
   | { type: 'member' | 'project' | 'task' | 'search' | 'connect' }
-  | { type: 'external'; memberId: string }
+  | { type: 'external'; memberId: string; claudeClient?: ClaudeClient }
   | { type: 'detail'; taskId: string }
   | { type: 'login'; memberId: string; result: LoginResult }
   | { type: 'setup'; memberId: string; home: string; instructions: string }
@@ -664,7 +665,32 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       setBusy('');
     }
   }
-  async function connectAccount(provider: ProviderId, managedRuntime = false) {
+  async function connectAccount(
+    provider: ProviderId,
+    managedRuntime = false,
+    claudeClient?: ClaudeClient,
+    existingMemberId?: string,
+  ) {
+    if (provider === 'claude' && claudeClient === 'web' && existingMemberId) {
+      const profile = members.find(
+        (member) =>
+          member.id === existingMemberId &&
+          member.provider === 'claude' &&
+          !member.entitlementLocked &&
+          !member.runnerId,
+      );
+      if (!profile) return;
+      setModal({ type: 'external', memberId: profile.id, claudeClient });
+      setBusy('connect-claude-account');
+      try {
+        await beginClaudeAccount(profile.id);
+      } catch (cause) {
+        setToast({ text: (cause as Error).message, error: true });
+      } finally {
+        setBusy('');
+      }
+      return;
+    }
     const runnerId = selectedMachine && !isExternalProvider(provider) ? selectedMachine : '';
     const deviceAccount = provider === 'antigravity' && managedRuntime;
     if (deviceAccount && !confirmAntigravity()) return;
@@ -714,9 +740,11 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
         navigate('team');
         setModal(
           isExternalMember(result.member)
-            ? { type: 'external', memberId: result.member.id }
+            ? { type: 'external', memberId: result.member.id, claudeClient }
             : { type: 'login', memberId: result.member.id, result: result.login },
         );
+        if (provider === 'claude' && claudeClient === 'web')
+          await beginClaudeAccount(result.member.id);
       } else if (reserved && window.relayDesktop) {
         await window.relayDesktop.profiles({ action: 'release', profileId });
       }
@@ -1574,6 +1602,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       {modal?.type === 'connect' && (
         <Modal title="Add account" close={closeModal}>
           <ProviderConnect
+            members={members}
             busy={pending}
             runnerId={selectedMachine || undefined}
             connect={connectAccount}
@@ -1588,6 +1617,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             close={closeModal}
           >
             <ExternalConnection
+              initialClaudeClient={modal.claudeClient}
               member={members.find((member) => member.id === modal.memberId)!}
               projects={state?.projects || []}
               refreshProjects={refresh}
@@ -2563,6 +2593,9 @@ function MemberCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const provider = providerOf(member);
+  const { account: claudeAccount } = useClaudeAccount(
+    provider === 'claude' && !member.entitlementLocked ? member.id : undefined,
+  );
   return (
     <section className="panel member-card" data-usage="account-card">
       <div className="member-top">
@@ -2591,7 +2624,11 @@ function MemberCard({
               : member.account
                 ? 'Connected to Antigravity on this computer'
                 : 'Device account disconnected'
-            : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
+            : provider === 'claude' && claudeAccount?.status === 'connected'
+              ? 'Claude web connector verified'
+              : provider === 'claude' && claudeAccount?.status === 'pending'
+                ? 'Waiting for Claude'
+                : member.account?.email || (member.account ? 'Email unavailable' : 'Not signed in')}
         </span>
         {member.account?.planType && member.account.planType !== 'unknown' && (
           <span className="plan-tag">{member.account.planType}</span>

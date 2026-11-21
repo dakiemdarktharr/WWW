@@ -4,14 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../server/store.ts';
 import { Workspace } from '../server/service.ts';
 import { buildApp } from '../server/app.ts';
-import gateway, { gatewayTarget, isClaudeWebPoll } from '../api/gateway.ts';
+import gateway, { gatewayTarget, claudeBackgroundRequest } from '../api/gateway.ts';
 
 test('only the exact Claude desktop poll takes the dormant-runner path', () => {
   const route = '/api/desktop/claude-web';
   const poll = Buffer.from('{ "action": "poll" }');
-  assert.equal(isClaudeWebPoll(route, 'POST', poll), true);
-  assert.equal(isClaudeWebPoll(route, 'GET', poll), false);
-  assert.equal(isClaudeWebPoll(route + '/other', 'POST', poll), false);
+  assert.equal(claudeBackgroundRequest(route, 'POST', poll), 'poll');
+  assert.equal(claudeBackgroundRequest(route, 'GET', poll), false);
+  assert.equal(claudeBackgroundRequest(route + '/other', 'POST', poll), false);
+  for (const key of ['memberId', 'connectionId']) {
+    const status = Buffer.from(JSON.stringify({ action: 'account-status', [key]: randomUUID() }));
+    assert.equal(claudeBackgroundRequest(route, 'POST', status), 'account-status');
+  }
   for (const body of [
     'null',
     '[]',
@@ -20,7 +24,7 @@ test('only the exact Claude desktop poll takes the dormant-runner path', () => {
     '{"action":"poll","other":true}',
     'invalid',
   ])
-    assert.equal(isClaudeWebPoll(route, 'POST', Buffer.from(body)), false);
+    assert.equal(claudeBackgroundRequest(route, 'POST', Buffer.from(body)), false);
 });
 
 test('Vercel rewrite metadata never reaches strict desktop lookup and bridge query schemas', () => {

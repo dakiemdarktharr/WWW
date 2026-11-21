@@ -35,6 +35,7 @@ import {
 import GlassSelect from './GlassSelect';
 import SessionGraph from './SessionGraph';
 import BrowserPanel from './BrowserPanel';
+import ClaudeProjectSharing from './ClaudeProjectSharing';
 import { providerLabels, providerOf } from './ProviderConnect';
 import './workspace.css';
 import './chat-interactions.css';
@@ -1016,6 +1017,9 @@ export default function ProjectChat({
                       </div>
                       <Presence member={member} />
                     </div>
+                    {project && member.provider === 'claude' && (
+                      <ClaudeProjectSharing key={project.id} member={member} project={project} />
+                    )}
                     <div className="member-workload">
                       {member.activeSessions || 0} active sessions ·{' '}
                       {member.runnerName || 'This computer'}

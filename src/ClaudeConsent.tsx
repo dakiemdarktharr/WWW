@@ -12,7 +12,8 @@ interface Consent {
   scope: string;
   grants: {
     connectionId: string;
-    projectId: string;
+    kind?: 'account' | 'project';
+    projectId?: string;
     memberId: string;
     projectName?: string;
     memberName?: string;
@@ -68,7 +69,14 @@ function ConsentForm() {
         '/claude/oauth/consent?request=' + encodeURIComponent(requestId),
       );
       if (controller.signal.aborted) return;
-      if (consent.scope !== 'mesh.read' || !Array.isArray(consent.grants) || !consent.account?.name)
+      if (
+        typeof consent.scope !== 'string' ||
+        !consent.scope
+          .split(' ')
+          .every((scope) => ['connector.connect', 'mesh.read'].includes(scope)) ||
+        !Array.isArray(consent.grants) ||
+        !consent.account?.name
+      )
         throw new Error(vi ? 'Yêu cầu cấp quyền không hợp lệ.' : 'The access request is invalid.');
       setData(consent);
       if (consent.grants.length === 1) setSelected(consent.grants[0].connectionId);
@@ -109,6 +117,8 @@ function ConsentForm() {
       setBusy(false);
     }
   }
+  const selectedGrant = data?.grants.find((grant) => grant.connectionId === selected);
+  const accountLink = selectedGrant?.kind === 'account';
   return (
     <main className="billing-page claude-consent">
       <header className="billing-header">
@@ -135,8 +145,8 @@ function ConsentForm() {
           <>
             <p>
               {vi
-                ? 'Đăng nhập bằng tài khoản Kivuno đang dùng trên máy chứa project bạn muốn chia sẻ.'
-                : 'Sign in with the Kivuno account used on the computer that holds your project.'}
+                ? 'Đăng nhập bằng tài khoản Kivuno đang dùng trong Kivuno Desktop.'
+                : 'Sign in with the Kivuno account you use in Kivuno Desktop.'}
             </p>
             <button className="billing-primary" onClick={() => setLogin(true)}>
               {vi ? 'Đăng nhập Kivuno' : 'Sign in to Kivuno'}
@@ -150,27 +160,43 @@ function ConsentForm() {
             <div className="claude-consent-permission">
               <Eye size={18} aria-hidden="true" />
               <p>
-                {vi
-                  ? 'Claude được đọc tên project và tin nhắn đã chia sẻ trong nhóm dự án bạn chọn.'
-                  : 'Claude can read the project name and messages shared in the selected project group.'}
+                {accountLink
+                  ? vi
+                    ? 'Liên kết Claude với hồ sơ đã chọn. Chỉ khi bạn cấp quyền riêng trong Group team thì Claude mới đọc được tin nhắn dự án.'
+                    : 'Link Claude to the selected profile. Project messages stay private until you share a project from Group team.'
+                  : !selectedGrant
+                    ? vi
+                      ? 'Chọn hồ sơ để liên kết hoặc chọn một dự án đã có quyền chia sẻ.'
+                      : 'Choose a profile to link or a previously shared project.'
+                    : vi
+                      ? 'Claude được đọc tên project và tin nhắn đã chia sẻ trong nhóm dự án bạn chọn.'
+                      : 'Claude can read the project name and messages shared in the selected project group.'}
               </p>
             </div>
             {data.grants.length ? (
               <fieldset disabled={busy}>
-                <legend>{vi ? 'Chọn project để chia sẻ' : 'Choose the project to share'}</legend>
+                <legend>{vi ? 'Chọn kết nối' : 'Choose a connection'}</legend>
                 {data.grants.map((grant) => (
                   <label className="claude-consent-choice" key={grant.connectionId}>
                     <input
                       type="radio"
-                      name="project"
+                      name="connection"
                       checked={selected === grant.connectionId}
                       onChange={() => setSelected(grant.connectionId)}
                     />
                     <span>
-                      <strong>{grant.projectName || grant.projectId}</strong>
+                      <strong>
+                        {grant.kind === 'account'
+                          ? grant.memberName || grant.memberId
+                          : grant.projectName || grant.projectId}
+                      </strong>
                       <span>
                         <Monitor size={14} aria-hidden="true" /> {grant.deviceName} ·{' '}
-                        {grant.memberName || grant.memberId}
+                        {grant.kind === 'account'
+                          ? vi
+                            ? 'Liên kết tài khoản'
+                            : 'Account link'
+                          : grant.memberName || grant.memberId}
                       </span>
                       <small>
                         {vi ? 'Hết hạn' : 'Expires'}{' '}
@@ -189,15 +215,15 @@ function ConsentForm() {
               <>
                 <p>
                   {vi
-                    ? 'Trong Kivuno Desktop, mở Team → Claude → MESH connection → Claude in browser. Chọn project, đặt thời hạn rồi tạo kết nối chỉ đọc. Quay lại đây để làm mới danh sách.'
-                    : 'In Kivuno Desktop, open Team → Claude → MESH connection → Claude in browser. Choose a project and duration, then create the read-only connector. Return here to refresh the list.'}
+                    ? 'Trong Kivuno Desktop, mở Team → Add account → Claude → Connect Claude in browser. Quay lại đây và làm mới danh sách.'
+                    : 'In Kivuno Desktop, open Team → Add account → Claude → Connect Claude in browser. Return here and refresh the list.'}
                 </p>
                 <button
                   className="billing-secondary"
                   disabled={busy}
                   onClick={() => setReload((n) => n + 1)}
                 >
-                  {vi ? 'Làm mới danh sách' : 'Refresh projects'}
+                  {vi ? 'Làm mới danh sách' : 'Refresh connections'}
                 </button>
               </>
             )}
@@ -214,7 +240,13 @@ function ConsentForm() {
                 disabled={busy || !selected}
                 onClick={() => void decide(true)}
               >
-                {vi ? 'Cho phép chỉ đọc' : 'Allow read-only access'}
+                {accountLink
+                  ? vi
+                    ? 'Liên kết tài khoản'
+                    : 'Link account'
+                  : vi
+                    ? 'Cho phép chỉ đọc'
+                    : 'Allow read-only access'}
               </button>
             </div>
           </>

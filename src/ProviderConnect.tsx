@@ -8,7 +8,15 @@ import type {
   WorkspaceState,
 } from '../shared/types';
 import { api } from './api';
-import { openExternal, type ClaudeWebConnection } from './desktop';
+import { openExternal } from './desktop';
+import {
+  beginClaudeAccount,
+  claudeClients,
+  claudeConnectorsUrl,
+  refreshClaudeAccount,
+  useClaudeAccount,
+  type ClaudeClient,
+} from './ClaudeAccount';
 import { activeProviderIds, isExternalProvider, providerLabels } from '../shared/providers';
 import GlassSelect from './GlassSelect';
 import HelpDetails from './HelpDetails';
@@ -41,13 +49,28 @@ export default function ProviderConnect({
   runnerId,
   connect,
   profile,
+  members,
 }: {
   busy: boolean;
   runnerId?: string;
-  connect: (provider: ProviderId, managedRuntime?: boolean) => void;
+  connect: (
+    provider: ProviderId,
+    managedRuntime?: boolean,
+    client?: ClaudeClient,
+    existingMemberId?: string,
+  ) => void;
   profile: () => void;
+  members: Member[];
 }) {
   const [provider, setProvider] = useState<ProviderId>('codex');
+  const [client, setClient] = useState<ClaudeClient>('web');
+  const [choice, setChoice] = useState<string>();
+  const profiles = members.filter(
+    (member) => member.provider === 'claude' && !member.runnerId && !member.entitlementLocked,
+  );
+  const selectedProfile =
+    choice ?? (profiles.length === 1 ? profiles[0].id : profiles.length ? '' : 'new');
+  const chooseExisting = provider === 'claude' && client === 'web' && profiles.length > 0;
   const [managedRuntime, setManagedRuntime] = useState(true);
   const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
   const [error, setError] = useState('');
@@ -92,18 +115,41 @@ export default function ProviderConnect({
       )}
 
       {provider === 'claude' && (
-        <p className="provider-summary">
-          Use your signed-in Claude browser or desktop app. Claude Code is also available with an
-          eligible plan. Start tasks in your Claude client.
-        </p>
+        <>
+          <GlassSelect
+            label="Claude client"
+            value={client}
+            onChange={(value) => setClient(value as ClaudeClient)}
+            options={claudeClients}
+          />
+          {chooseExisting && (
+            <GlassSelect
+              label="Claude profile on this computer"
+              value={selectedProfile}
+              onChange={setChoice}
+              options={[
+                ...(profiles.length > 1 ? [{ value: '', label: 'Choose a Claude profile' }] : []),
+                ...profiles.map((profile) => ({ value: profile.id, label: profile.name })),
+                { value: 'new', label: 'Create a new Claude profile' },
+              ]}
+            />
+          )}
+          <p className="provider-summary">
+            {client === 'web'
+              ? 'Kivuno opens your Claude connectors. Link your account first. You can share project messages later.'
+              : 'Use the project MCP connection in your signed-in Claude client.'}
+          </p>
+        </>
       )}
       <HelpDetails title="Connection help">
         <p>
           {provider === 'codex'
             ? 'Add each ChatGPT account separately on this computer. Each has its own sign-in, usage, skills and plugins. Finish one sign-in before adding the next; choose the intended account on OpenAI.'
-            : useManaged
-              ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Connect the account, then choose a project and a limited number of prompts.`
-              : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
+            : provider === 'claude' && client === 'web'
+              ? 'In Claude, choose Kivuno and then Connect (Connecter). Approve the account link in Kivuno.'
+              : useManaged
+                ? `Sade can assign work and independent reviews to ${providerLabels[provider]}. Connect the account, then choose a project and a limited number of prompts.`
+                : `Connect your own ${providerLabels[provider]} client to this project through MESH MCP.`}
         </p>
       </HelpDetails>
       {canPrepare && (
@@ -120,19 +166,36 @@ export default function ProviderConnect({
       )}
       <button
         className="button primary"
-        disabled={busy || loading || (!available && !canPrepare)}
-        onClick={() => connect(provider, useManaged)}
+        disabled={
+          busy || loading || (!available && !canPrepare) || (chooseExisting && !selectedProfile)
+        }
+        onClick={() =>
+          connect(
+            provider,
+            useManaged,
+            provider === 'claude' ? client : undefined,
+            chooseExisting && selectedProfile !== 'new' ? selectedProfile : undefined,
+          )
+        }
       >
         {busy || loading ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
         {busy
           ? `Connecting ${providerLabels[provider]}…`
-          : isExternalProvider(provider)
-            ? `Add ${providerLabels[provider]} connection`
-            : `Connect ${providerLabels[provider]}`}
+          : provider === 'claude' && client === 'web'
+            ? 'Connect Claude in browser'
+            : isExternalProvider(provider)
+              ? `Add ${providerLabels[provider]} connection`
+              : `Connect ${providerLabels[provider]}`}
       </button>
-      <button className="text-button" onClick={profile} disabled={busy}>
-        Create a profile first
-      </button>
+      {!(
+        provider === 'claude' &&
+        client === 'web' &&
+        window.relayDesktop?.beginClaudeWebAccount
+      ) && (
+        <button className="text-button" onClick={profile} disabled={busy}>
+          Create a profile first
+        </button>
+      )}
     </div>
   );
 }
@@ -156,6 +219,7 @@ export function ExternalConnection({
   googleSignIn,
   googleBusy,
   enableManaged,
+  initialClaudeClient = 'web',
 }: {
   member: Member;
   projects: Project[];
@@ -163,15 +227,16 @@ export function ExternalConnection({
   googleSignIn: () => void;
   googleBusy: boolean;
   enableManaged?: () => void;
+  initialClaudeClient?: ClaudeClient;
 }) {
   const eligible = projects.filter((project) => project.memberIds?.includes(member.id));
   const [projectId, setProjectId] = useState(eligible[0]?.id || '');
   const [joinId, setJoinId] = useState('');
   const joinProject = projects.find((project) => project.id === joinId) || projects[0];
   const [minutes, setMinutes] = useState('60');
-  const [claudeClient, setClaudeClient] = useState('web');
+  const [claudeClient, setClaudeClient] = useState<ClaudeClient>(initialClaudeClient);
   const web = member.provider === 'claude' && claudeClient === 'web';
-  const [webConnection, setWebConnection] = useState<ClaudeWebConnection | null>(null);
+  const { account, error: accountError } = useClaudeAccount(web ? member.id : undefined, true);
   const [claims, setClaims] = useState(false);
   const [quota, setQuota] = useState(false);
   const [connections, setConnections] = useState<ExternalMetadata[]>([]);
@@ -208,7 +273,7 @@ export function ExternalConnection({
       () => {
         if (!document.hidden) void refresh().catch((cause) => setError(cause.message));
       },
-      created || webConnection ? 1500 : 10000,
+      created ? 1500 : 10000,
     );
     const focus = () => void refresh().catch((cause) => setError(cause.message));
     window.addEventListener('focus', focus);
@@ -216,12 +281,11 @@ export function ExternalConnection({
       clearInterval(timer);
       window.removeEventListener('focus', focus);
     };
-  }, [member.id, created?.id, webConnection?.id]);
+  }, [member.id, created?.id]);
   useEffect(() => {
     if (!eligible.some((project) => project.id === projectId)) {
       setProjectId(eligible[0]?.id || '');
       setCreated(null);
-      setWebConnection(null);
     }
   }, [eligible.map((project) => project.id).join(',')]);
   async function create() {
@@ -229,29 +293,17 @@ export function ExternalConnection({
     setError('');
     setCopied(false);
     setCreated(null);
-    setWebConnection(null);
+
     try {
-      if (web) {
-        const desktop = window.relayDesktop;
-        if (!desktop?.createClaudeWebConnection)
-          throw new Error('Open the Kivuno desktop app to connect Claude on the web.');
-        setWebConnection(
-          await desktop.createClaudeWebConnection({
-            memberId: member.id,
-            projectId,
-            durationMinutes: Number(minutes),
-          }),
-        );
-      } else
-        setCreated(
-          await api('/external-connections', {
-            memberId: member.id,
-            projectId,
-            durationMinutes: Number(minutes),
-            allowTaskClaims: claims,
-            allowUnknownQuota: quota,
-          }),
-        );
+      setCreated(
+        await api('/external-connections', {
+          memberId: member.id,
+          projectId,
+          durationMinutes: Number(minutes),
+          allowTaskClaims: claims,
+          allowUnknownQuota: quota,
+        }),
+      );
       await refresh();
     } catch (cause) {
       setError((cause as Error).message);
@@ -259,6 +311,93 @@ export function ExternalConnection({
       setBusy(false);
     }
   }
+  const projectControls =
+    available && eligible.length ? (
+      <>
+        <GlassSelect
+          label="Connection project"
+          value={projectId}
+          onChange={(value) => {
+            setProjectId(value);
+            setCreated(null);
+          }}
+          options={eligible.map((project) => ({ value: project.id, label: project.name }))}
+        />
+        <GlassSelect
+          label="Connection duration"
+          value={minutes}
+          onChange={setMinutes}
+          options={[15, 30, 60, 120, 480].map((minutes) => ({
+            value: String(minutes),
+            label: `${minutes} minutes`,
+          }))}
+        />
+        {!web && (
+          <>
+            <label className="foundation-checkbox">
+              <input
+                type="checkbox"
+                checked={claims}
+                onChange={(event) => setClaims(event.target.checked)}
+              />
+              Allow task claims, isolated worktrees and checkpoint pushes
+            </label>
+            <label className="foundation-checkbox">
+              <input
+                type="checkbox"
+                checked={quota}
+                onChange={(event) => setQuota(event.target.checked)}
+              />
+              I will monitor {providerLabels[providerOf(member)]} usage in my client
+            </label>
+          </>
+        )}
+        <button
+          className="button primary"
+          disabled={busy || !projectId}
+          onClick={() => void create()}
+        >
+          <Link2 size={15} />
+          Generate MCP config
+        </button>
+      </>
+    ) : available ? (
+      <div>
+        {member.provider === 'claude' && joinProject ? (
+          <>
+            <GlassSelect
+              label="Project to join"
+              value={joinProject.id}
+              onChange={setJoinId}
+              options={projects.map((project) => ({ value: project.id, label: project.name }))}
+            />
+            <button
+              className="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError('');
+                try {
+                  await api(`/projects/${joinProject.id}/member`, { memberId: member.id });
+                  await refreshProjects();
+                } catch (cause) {
+                  setError((cause as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Add {member.name} to this project
+            </button>
+          </>
+        ) : (
+          <span>No project membership</span>
+        )}
+        <HelpDetails title="Add to a group">
+          <p>Chat → Group team → select {member.name}, then reopen this connection.</p>
+        </HelpDetails>
+      </div>
+    ) : null;
   return (
     <div className="external-connection form">
       {enableManaged && member.provider === 'antigravity' && (
@@ -297,120 +436,138 @@ export function ExternalConnection({
             value={claudeClient}
             disabled={busy}
             onChange={(value) => {
-              setClaudeClient(value);
+              setClaudeClient(value as ClaudeClient);
               setCreated(null);
-              setWebConnection(null);
+
               setCopied(false);
               setError('');
             }}
-            options={[
-              { value: 'web', label: 'Claude in browser · Free or paid' },
-              { value: 'desktop', label: 'Claude Desktop · Free or paid' },
-              { value: 'code', label: 'Claude Code · eligible paid plan' },
-            ]}
+            options={claudeClients}
           />
-          <div className="member-provider-actions">
-            <button
-              className="button"
-              onClick={() =>
-                void openExternal('https://claude.ai/login').catch((cause) =>
-                  setError(cause.message),
-                )
-              }
-            >
-              <ArrowUpRight size={15} /> Open Claude sign-in in browser
-            </button>
-            {claudeClient === 'desktop' && (
+          {!web && (
+            <div className="member-provider-actions">
               <button
-                className="text-button"
+                className="button"
                 onClick={() =>
-                  void openExternal('https://claude.com/download').catch((cause) =>
+                  void openExternal('https://claude.ai/login').catch((cause) =>
                     setError(cause.message),
                   )
                 }
               >
-                Get Claude Desktop
+                <ArrowUpRight size={15} /> Open Claude sign-in in browser
               </button>
-            )}
-          </div>
-          <p>
-            {web
-              ? 'Keep Kivuno open. Your browser account can read messages from the selected project through a private connector. Claude Free allows one custom connector.'
-              : claudeClient === 'desktop'
+              {claudeClient === 'desktop' && (
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    void openExternal('https://claude.com/download').catch((cause) =>
+                      setError(cause.message),
+                    )
+                  }
+                >
+                  Get Claude Desktop
+                </button>
+              )}
+            </div>
+          )}
+          {!web && (
+            <p>
+              {claudeClient === 'desktop'
                 ? 'After signing in, open Claude Desktop with the same account and connect the project below.'
                 : 'Start Claude Code and use /login to authorize the CLI in your browser. Connect the project below.'}
-          </p>
+            </p>
+          )}
         </>
       )}
-      {available && eligible.length ? (
-        <>
-          <GlassSelect
-            label="Connection project"
-            value={projectId}
-            onChange={(value) => {
-              setProjectId(value);
-              setCreated(null);
-              setWebConnection(null);
-            }}
-            options={eligible.map((project) => ({ value: project.id, label: project.name }))}
-          />
-          <GlassSelect
-            label="Connection duration"
-            value={minutes}
-            onChange={setMinutes}
-            options={[15, 30, 60, 120, 480].map((minutes) => ({
-              value: String(minutes),
-              label: `${minutes} minutes`,
-            }))}
-          />
-          {!web && (
+      {web && (
+        <section className="form claude-account-step">
+          {account?.status === 'connected' ? (
             <>
-              <label className="foundation-checkbox">
-                <input
-                  type="checkbox"
-                  checked={claims}
-                  onChange={(event) => setClaims(event.target.checked)}
-                />
-                Allow task claims, isolated worktrees and checkpoint pushes
-              </label>
-              <label className="foundation-checkbox">
-                <input
-                  type="checkbox"
-                  checked={quota}
-                  onChange={(event) => setQuota(event.target.checked)}
-                />
-                I will monitor {providerLabels[providerOf(member)]} usage in my client
-              </label>
+              <strong role="status">
+                <Check size={16} /> Claude connected
+              </strong>
+              <p>Your Claude client verified the Kivuno connector.</p>
+              {account.canShare !== false ? (
+                <p>
+                  To share messages later, open a project in Chat → Group team, add {member.name} to
+                  that group, then choose Share project messages.
+                </p>
+              ) : (
+                <p>
+                  This connection can verify your account only. Reconnect from Claude to request
+                  project-sharing access.
+                </p>
+              )}
+              {account.expiresAt && (
+                <small>Account link expires {new Date(account.expiresAt).toLocaleString()}.</small>
+              )}
+              {account.connectionId && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError('');
+                    try {
+                      await window.relayDesktop!.revokeClaudeWebConnection(account.connectionId!);
+
+                      refreshClaudeAccount(member.id);
+                      await refresh();
+                    } catch (cause) {
+                      setError((cause as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Disconnect Claude
+                </button>
+              )}
             </>
-          )}
-          <button
-            className="button primary"
-            disabled={busy || !projectId}
-            onClick={() => void create()}
-          >
-            <Link2 size={15} />
-            {web ? 'Create read-only web connector' : 'Generate MCP config'}
-          </button>
-        </>
-      ) : available ? (
-        <div>
-          {member.provider === 'claude' && joinProject ? (
+          ) : account?.status === 'pending' ? (
             <>
-              <GlassSelect
-                label="Project to join"
-                value={joinProject.id}
-                onChange={setJoinId}
-                options={projects.map((project) => ({ value: project.id, label: project.name }))}
-              />
+              <strong role="status">Waiting for Claude</strong>
+              <p>
+                In your Claude connectors, choose Kivuno → Connect (Connecter), then confirm the
+                account link on Kivuno.
+              </p>
               <button
-                className="button"
+                className="button primary"
                 disabled={busy}
+                onClick={() =>
+                  void openExternal(claudeConnectorsUrl).catch((cause) => setError(cause.message))
+                }
+              >
+                <ArrowUpRight size={16} /> Open Claude connectors
+              </button>
+              <details>
+                <summary>Add Kivuno to Claude for the first time</summary>
+                <p>
+                  Choose Add → Custom → Web, name it Kivuno and enter this URL. Save it, then choose
+                  Connect.
+                </p>
+                <input
+                  aria-label="Connector URL"
+                  readOnly
+                  value={account.url}
+                  onFocus={(event) => event.target.select()}
+                />
+              </details>
+            </>
+          ) : (
+            <>
+              <p>
+                Link the Claude account you use in the browser. You can choose a project after
+                Claude verifies the connection.
+              </p>
+              <button
+                className="button primary"
+                disabled={busy || !available}
                 onClick={async () => {
                   setBusy(true);
                   setError('');
                   try {
-                    await api(`/projects/${joinProject.id}/member`, { memberId: member.id });
-                    await refreshProjects();
+                    await beginClaudeAccount(member.id);
                   } catch (cause) {
                     setError((cause as Error).message);
                   } finally {
@@ -418,73 +575,24 @@ export function ExternalConnection({
                   }
                 }}
               >
-                Add {member.name} to this project
+                <ArrowUpRight size={16} /> Connect Claude in browser
               </button>
             </>
-          ) : (
-            <span>No project membership</span>
           )}
-          <HelpDetails title="Add to a group">
-            <p>Chat → Group team → select {member.name}, then reopen this connection.</p>
-          </HelpDetails>
-        </div>
-      ) : null}
+          {accountError && (
+            <p className="error-text" role="alert">
+              {accountError}
+            </p>
+          )}
+        </section>
+      )}
+      {!web && projectControls}
       {error && (
         <p className="error-text" role="alert">
           {error}
         </p>
       )}
-      {web && webConnection && (
-        <section className="provider-secret">
-          <strong>Connect in Claude</strong>
-          <p>
-            In Claude, open Customize → Connectors → Add → Custom → Web. Name the connector Kivuno
-            and enter this URL.
-          </p>
-          <input
-            aria-label="Connector URL"
-            readOnly
-            value={webConnection.url}
-            onFocus={(event) => event.target.select()}
-          />
-          <p>
-            Save the connector, then choose Connect (Connecter). Sign in to Kivuno in the browser,
-            select this computer and project, and confirm read-only access.
-          </p>
-          <p>
-            Enable Kivuno in your Claude chat and ask it to read the project group. Keep Kivuno
-            Desktop open. Access expires at {new Date(webConnection.expiresAt).toLocaleString()}.
-          </p>
-          <details>
-            <summary>Advanced: connect with a private request header</summary>
-            <p>
-              If Claude shows Request headers for your organization, choose No sign-in and add an <code>Authorization</code> header.
-              Paste the full private value into that header.
-            </p>
-            <button
-              className="button"
-              onClick={() =>
-                void navigator.clipboard
-                  .writeText(webConnection.headerValue)
-                  .then(() => setCopied(true))
-                  .catch(() =>
-                    setError('Clipboard unavailable. Select the private header value and copy it.'),
-                  )
-              }
-            >
-              <Copy size={14} />
-              {copied ? 'Copied' : 'Copy private header value'}
-            </button>
-            <input
-              aria-label="Private header value"
-              type="password"
-              readOnly
-              value={webConnection.headerValue}
-              onFocus={(event) => event.target.select()}
-            />
-          </details>
-        </section>
-      )}
+
       {created && (
         <section className="provider-secret">
           <ConnectionProgress
@@ -552,7 +660,7 @@ export function ExternalConnection({
           </HelpDetails>
         </section>
       )}
-      {connections.length > 0 && (
+      {connections.length > 0 && (!web || account?.status === 'connected') && (
         <div className="provider-connections">
           <strong>Connections</strong>
           {connections.map((connection) => {
@@ -583,7 +691,6 @@ export function ExternalConnection({
                         if (!window.relayDesktop)
                           throw new Error('Revoke this connector from Kivuno desktop.');
                         await window.relayDesktop.revokeClaudeWebConnection(connection.id);
-                        if (webConnection?.id === connection.id) setWebConnection(null);
                       } else await api(`/external-connections/${connection.id}/revoke`, {});
                       if (created?.id === connection.id) setCreated(null);
                       await refresh();

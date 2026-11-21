@@ -93,7 +93,10 @@ declare global {
         projectId: string;
         memberId: string;
         durationMinutes: number;
+        accountConnectionId?: string;
       }): Promise<ClaudeWebConnection>;
+      beginClaudeWebAccount(input: { memberId: string }): Promise<ClaudeWebAccount>;
+      claudeWebAccountStatus(input: { memberId: string }): Promise<ClaudeWebAccount>;
       revokeClaudeWebConnection(connectionId: string): Promise<{ revoked: true }>;
       signInAntigravityWithGoogle(): Promise<void>;
       groups<T>(input: import('../shared/collaboration').GroupCommand): Promise<T>;
@@ -143,8 +146,17 @@ export interface ClaudeWebConnection {
   id: string;
   expiresAt: string;
   url: string;
-  headerName: 'Authorization';
-  headerValue: string;
+  headerName?: 'Authorization';
+  headerValue?: string;
+}
+
+export interface ClaudeWebAccount {
+  status: 'disconnected' | 'pending' | 'connected';
+  url: string;
+  connectionId?: string;
+  expiresAt?: string;
+  verifiedAt?: string;
+  canShare?: boolean;
 }
 
 export async function openExternal(url: string) {

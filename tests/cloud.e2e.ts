@@ -313,7 +313,7 @@ try {
   await page.getByRole('combobox', { name: 'AI provider' }).click();
   await page.getByRole('option', { name: 'Claude', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: 'Add Claude connection', exact: true }),
+    page.getByRole('button', { name: 'Connect Claude in browser', exact: true }),
   ).toBeDisabled();
   await page.getByRole('button', { name: 'Create a profile first', exact: true }).click();
   await page.getByRole('combobox', { name: 'AI provider' }).click();
