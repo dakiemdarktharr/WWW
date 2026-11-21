@@ -2,6 +2,7 @@ import { isExternalProvider } from '../shared/providers';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
+  ArrowUp,
   Bell,
   Check,
   Circle,
@@ -14,7 +15,6 @@ import {
   Plus,
   Reply,
   Search,
-  Send,
   SmilePlus,
   ThumbsDown,
   ThumbsUp,
@@ -48,6 +48,7 @@ const feedback = [
 ] as const;
 const time = (value: string) =>
   new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const mentionHandle = (name: string) => `@${name.toLowerCase().replace(/\s+/g, '-')}`;
 function Avatar({ member, human = false }: { member?: Member; human?: boolean }) {
   return (
     <span
@@ -329,7 +330,7 @@ export default function ProjectChat({
               </button>
             )}
             <button
-              className="button compact primary"
+              className="button compact"
               aria-label="Plan project"
               title="Plan and build with your team"
               disabled={!project}
@@ -407,6 +408,7 @@ export default function ProjectChat({
           <button
             className="text-button"
             onClick={() => toggle('usage')}
+            aria-pressed={panel === 'usage'}
             data-usage="mesh-usage"
             aria-label="Account usage"
           >
@@ -415,6 +417,7 @@ export default function ProjectChat({
           <button
             className="text-button"
             onClick={() => toggle('handoffs')}
+            aria-pressed={panel === 'handoffs'}
             data-usage="mesh-handoff"
           >
             Handoffs
@@ -451,11 +454,13 @@ export default function ProjectChat({
                 <div className="chat-message-content">
                   <div className="chat-message-meta">
                     <strong>{human ? 'You' : author?.name || 'Kivuno'}</strong>
-                    {author?.presence && (
-                      <i
-                        className={`presence-dot ${author.presence}`}
-                        aria-label={author.presence}
-                      />
+                    {author && (
+                      <span className="chat-message-badge">
+                        {providerLabels[providerOf(author)]}
+                      </span>
+                    )}
+                    {message.kind !== 'message' && message.kind !== 'handoff' && (
+                      <span className="chat-message-badge">{message.kind}</span>
                     )}
                     <time
                       dateTime={message.createdAt}
@@ -463,9 +468,15 @@ export default function ProjectChat({
                     >
                       {time(message.createdAt)}
                     </time>
-                    {message.kind !== 'message' && <span>{message.kind}</span>}
                   </div>
-                  <div className="chat-bubble">
+                  <div
+                    className={`chat-bubble${message.kind === 'handoff' ? ' chat-checkpoint' : ''}`}
+                  >
+                    {message.kind === 'handoff' && (
+                      <strong className="chat-checkpoint-label">
+                        <GitBranch size={15} /> Checkpoint
+                      </strong>
+                    )}
                     {parent && (
                       <button className="chat-reply-preview" onClick={() => setThread(parent.id)}>
                         <Reply size={12} />
@@ -486,7 +497,19 @@ export default function ProjectChat({
                         </details>
                       </>
                     ) : (
-                      <p>{message.content}</p>
+                      <p>
+                        {message.content.split(/(@[\p{L}\p{N}_-]+)/gu).map((part, index) =>
+                          part.startsWith('@') &&
+                          message.mentions?.some((id) => {
+                            const member = members.find((entry) => entry.id === id);
+                            return part.toLowerCase() === mentionHandle(member?.name || id);
+                          }) ? (
+                            <mark key={index}>{part}</mark>
+                          ) : (
+                            part
+                          ),
+                        )}
+                      </p>
                     )}
                     {!!message.mentions?.length && (
                       <div className="chat-tags">
@@ -836,7 +859,7 @@ export default function ProjectChat({
               aria-label="Send"
               disabled={!project || !content.trim() || busy || sending}
             >
-              <Send size={17} />
+              <ArrowUp size={19} />
             </button>
           </div>
         </form>

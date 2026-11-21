@@ -2,7 +2,7 @@ import ProviderSignIn from './ProviderSignIn';
 import SharedGroups from './SharedGroups';
 import ChatHome from './ChatHome';
 import { isExternalProvider, isExternalMember } from '../shared/providers';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -568,6 +568,52 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   const selectedTask =
     modal?.type === 'detail' ? state?.tasks.find((t) => t.id === modal.taskId) : undefined;
   const pageTitle = [...nav, ...advancedNav].find((item) => item.id === view)?.label ?? 'Settings';
+  const chatRoom =
+    view === 'mesh' && state
+      ? chatMode === 'projects' && chatOpen
+        ? 'project'
+        : chatMode === 'groups' && window.relayDesktop
+          ? 'group'
+          : undefined
+      : undefined;
+  const projectRoster =
+    chatRoom === 'project'
+      ? members.filter((member) => project?.memberIds?.includes(member.id))
+      : [];
+  const chatModes = view === 'mesh' && state && window.relayDesktop && (
+    <div className="neralu-mode" aria-label="Chat view">
+      <button
+        className="button compact"
+        aria-pressed={chatMode === 'home'}
+        onClick={() => {
+          setChatMode('home');
+          setChatOpen(false);
+        }}
+      >
+        Chats
+      </button>
+      <button
+        className="button compact"
+        aria-pressed={chatMode === 'projects'}
+        onClick={() => {
+          setChatMode('projects');
+          setChatOpen(false);
+        }}
+      >
+        Projects
+      </button>
+      <button
+        className="button compact"
+        aria-pressed={chatMode === 'groups'}
+        onClick={() => {
+          setSelectedShared('');
+          setChatMode('groups');
+        }}
+      >
+        Groups
+      </button>
+    </div>
+  );
   const pending = !!busy;
   async function openBilling() {
     const desktop = window.relayDesktop;
@@ -839,6 +885,7 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
   return (
     <div
       className={`app ${sidebar ? 'sidebar-open' : ''} ${focusedSessionId ? 'session-popout' : ''}`}
+      data-chat-room={chatRoom}
     >
       {sidebar && (
         <button
@@ -849,7 +896,10 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
       )}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <Logo />
+          <div className={chatRoom ? 'chat-sidebar-brand' : undefined}>
+            <Logo />
+            {chatRoom && <small>Workspace</small>}
+          </div>
           <button
             className="icon-button mobile-only"
             aria-label="Close navigation"
@@ -885,27 +935,69 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
                 <option value="">Select project</option>
               )}
             </select>
+            {chatRoom === 'project' && project?.goal && (
+              <small className="chat-project-summary" title={project.goal}>
+                {project.goal}
+              </small>
+            )}
           </div>
           <ChevronDown size={13} />
         </div>
         <nav aria-label="Main navigation">
           {nav.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => navigate(item.id)}
-              className={`nav-item ${view === item.id ? 'active' : ''}`}
-              aria-current={view === item.id ? 'page' : undefined}
-              aria-label={item.label}
-            >
-              <item.icon size={18} />
-              <span>{item.label}</span>
-              {item.id === 'team' && members.length > 0 && (
-                <span className="nav-count">{members.length}</span>
+            <Fragment key={item.id}>
+              <button
+                onClick={() => navigate(item.id)}
+                className={`nav-item ${view === item.id ? 'active' : ''}`}
+                aria-current={view === item.id ? 'page' : undefined}
+                aria-label={item.label}
+              >
+                <item.icon size={18} />
+                <span>{item.label}</span>
+                {item.id === 'mesh' && projectRoster.length > 0 && (
+                  <span className="nav-count" aria-hidden="true">
+                    {projectRoster.length}
+                  </span>
+                )}
+                {item.id === 'team' && members.length > 0 && (
+                  <span className="nav-count">{members.length}</span>
+                )}
+                {item.id === 'reviews' && reviews.length + approvals.length > 0 && (
+                  <span className="nav-count highlight">{reviews.length + approvals.length}</span>
+                )}
+              </button>
+              {item.id === 'mesh' && projectRoster.length > 0 && (
+                <div className="chat-sidebar-roster">
+                  <p id="chat-roster-label">Project teammates</p>
+                  <ul aria-labelledby="chat-roster-label">
+                    {projectRoster.map((member) => {
+                      const presence =
+                        member.presence ||
+                        (member.status === 'offline' || member.status === 'error'
+                          ? 'offline'
+                          : 'online');
+                      return (
+                        <li key={member.id}>
+                          <span
+                            className="chat-avatar"
+                            style={{ '--avatar-color': member.color } as React.CSSProperties}
+                            aria-hidden="true"
+                          >
+                            {member.name.slice(0, 1).toUpperCase()}
+                            <i className={`presence-dot ${presence}`} />
+                          </span>
+                          <span>
+                            <strong>{member.name}</strong>
+                            <small>{providerLabels[providerOf(member)]}</small>
+                            <span className="sr-only">{presence}</span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
-              {item.id === 'reviews' && reviews.length + approvals.length > 0 && (
-                <span className="nav-count highlight">{reviews.length + approvals.length}</span>
-              )}
-            </button>
+            </Fragment>
           ))}
           {window.relayDesktop ? (
             <button
@@ -971,6 +1063,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             <span className="breadcrumb-slash">/</span>
             <strong>{pageTitle}</strong>
           </div>
+          {chatRoom === 'project' && chatModes && (
+            <div className="project-topbar-modes">{chatModes}</div>
+          )}
           <div className="topbar-actions">
             {state && !focusedSessionId && (
               <UsageGuide stage={view} enabled={!modal} cloud={cloud} />
@@ -1043,40 +1138,9 @@ export default function App({ cloud = false }: { cloud?: boolean }) {
             </div>
           )}
 
-          {view === 'mesh' && state && window.relayDesktop && (
-            <div className="neralu-mode" aria-label="Chat view">
-              <button
-                className="button compact"
-                aria-pressed={chatMode === 'home'}
-                onClick={() => {
-                  setChatMode('home');
-                  setChatOpen(false);
-                }}
-              >
-                Chats
-              </button>
-              <button
-                className="button compact"
-                aria-pressed={chatMode === 'projects'}
-                onClick={() => {
-                  setChatMode('projects');
-                  setChatOpen(false);
-                }}
-              >
-                Projects
-              </button>
-              <button
-                className="button compact"
-                aria-pressed={chatMode === 'groups'}
-                onClick={() => {
-                  setSelectedShared('');
-                  setChatMode('groups');
-                }}
-              >
-                Groups
-              </button>
-            </div>
-          )}
+          {chatRoom === 'project'
+            ? chatModes && <div className="project-page-modes">{chatModes}</div>
+            : chatModes}
           {view === 'mesh' && state && chatMode === 'groups' && window.relayDesktop && (
             <SharedGroups
               members={availableMembers}

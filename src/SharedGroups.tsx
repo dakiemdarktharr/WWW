@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowLeft, ChevronDown, ListTodo, Send, Users, X } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowLeft,
+  ChevronDown,
+  ListTodo,
+  Send,
+  Sparkles,
+  Users,
+  X,
+} from 'lucide-react';
 import type { Member, Project } from '../shared/types';
 import { sadeProjectCatalogueMaxBytes } from '../shared/sade-project';
 import type {
@@ -1174,21 +1183,24 @@ export default function SharedGroups({
                     previous.author === message.author &&
                     previousDate &&
                     date.getTime() - previousDate.getTime() <= 5 * 60 * 1000;
-                  const own = message.ownerId === ownerId && message.author !== 'Sade';
+                  const isSade = message.author === 'Sade';
+                  const own = message.ownerId === ownerId && !isSade;
                   return (
                     <div key={message.id}>
                       {startsDay && <p className="shared-group-date">{dateLabel.format(date)}</p>}
                       <article
                         className="shared-group-message"
                         data-own={own || undefined}
+                        data-sade={isSade || undefined}
                         data-continuation={Boolean(continuation) || undefined}
                       >
                         <span className="shared-group-avatar" aria-hidden="true">
-                          {initials(message.author)}
+                          {isSade ? <Sparkles size={16} /> : initials(message.author)}
                         </span>
                         <div className="shared-group-message-content">
                           <div className="shared-group-message-meta">
                             <strong>{message.author}</strong>
+                            {isSade && <span className="shared-group-kind">Coordinator</span>}
                             <time dateTime={message.createdAt}>{timeLabel.format(date)}</time>
                           </div>
                           <div className="shared-group-bubble">
@@ -1326,6 +1338,7 @@ export default function SharedGroups({
                   ref={composer}
                   aria-label="Message group"
                   placeholder="Message group"
+                  rows={1}
                   value={content}
                   onChange={(event) => {
                     const text = event.target.value;
