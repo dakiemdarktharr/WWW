@@ -30,6 +30,8 @@ const {
   rm,
 } = require('node:fs/promises');
 const { existsSync } = require('node:fs');
+// Clean up extracted app bundles through the real filesystem so app.asar is removed as a file.
+const { rm: removeMacUpdatePath } = require('original-fs').promises;
 const path = require('node:path');
 const os = require('node:os');
 const execFileAsync = promisify(execFile);
@@ -383,10 +385,10 @@ async function prepareMacUpdate(artifact, latestVersion, cancel) {
     );
     if (bundleId.trim() !== 'club.nosleep.relay' || bundleVersion.trim() !== latestVersion)
       throw new Error('The downloaded Kivuno app identity or version is incorrect.');
-    await rm(extractDirectory, { recursive: true, force: true });
+    await removeMacUpdatePath(extractDirectory, { recursive: true, force: true });
     return { updateDirectory, archive };
   } catch (error) {
-    await rm(updateDirectory, { recursive: true, force: true }).catch(() => {});
+    await removeMacUpdatePath(updateDirectory, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
 }
@@ -455,7 +457,9 @@ async function installMacUpdate(artifact, latestVersion, cancel) {
       cancel,
     );
   } catch (error) {
-    await rm(prepared.updateDirectory, { recursive: true, force: true }).catch(() => {});
+    await removeMacUpdatePath(prepared.updateDirectory, { recursive: true, force: true }).catch(
+      () => {},
+    );
     throw error;
   }
 }
