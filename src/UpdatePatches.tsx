@@ -6,7 +6,7 @@ import { usePortalLocale } from './PortalLocale';
 // Sources: docs/RELEASE-*.md.
 const patches = [
   {
-    version: '0.9.12',
+    version: '0.9.14',
     date: '2026-11-21',
     fixes: [
       {

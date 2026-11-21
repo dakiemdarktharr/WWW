@@ -1,7 +1,7 @@
 {
   "name": "relay-desktop",
   "productName": "Kivuno",
-  "version": "0.9.12",
+  "version": "0.9.14",
   "private": true,
   "description": "Kivuno desktop workspace for real Codex teams",
   "author": "NoSleepClub",
