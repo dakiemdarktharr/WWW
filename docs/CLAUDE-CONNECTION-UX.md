@@ -40,7 +40,7 @@ Anthropic distinguishes running its unmodified Claude Code with user-owned crede
 
 TypeScript, production build and five targeted OAuth/MCP tests passed. Regression coverage includes expired access renewal, rotation, client/resource/scope mismatch, token-family replacement, replay revocation, project preservation and account revocation.
 
-The real Codex round trip succeeded. Claude's new refresh flow is verified through the local HTTP integration tests. A live Claude refresh after deployment and the packaged 0.9.7 UI still require verification.
+The real Codex round trip succeeded. Claude's new refresh flow is verified through the local HTTP integration tests. Production deployment 75706d6 is READY. The public feed advertises Windows/Linux 0.9.7 and OAuth discovery advertises refresh_token. macOS remains 0.9.2. A live Claude refresh after one hour and the packaged 0.9.7 UI still require verification.
 
 ## Primary references
 
