@@ -1,6 +1,9 @@
 name: Publish verified macOS package
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/billing-activation-release-0913]
+    paths: [.github/workflows/publish-verified-mac.yml]
 permissions:
   contents: write
   actions: read
